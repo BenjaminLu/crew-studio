@@ -5,8 +5,8 @@ in a real terminal, in a registered project's folder, started from Studio with o
 pane per agent, and its state (working, waiting for you, done, exited) at a glance.
 
 Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state heuristics), `public/terminals.js` and
-`public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 5.5.0 and its fit addon 0.10.0,
-pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
+`public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 6.0.0, its fit addon 0.11.0 and its
+Unicode 11 addon 0.9.0, pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
 `tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs`, `tests/terminal-keys.ts`, `tests/terminal-launch.ts`,
 `tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs`, `tests/terminal-theme.ts`, `tests/terminal-reattach-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`. Colours: `public/term-theme.js`.
 
@@ -73,14 +73,26 @@ itself, so those chords are not taken and reach the terminal.
 ## Typing
 
 An input method (Zhuyin, Pinyin, Japanese, Korean) composes in xterm.js's own hidden textarea; nothing is sent while it
-composes, and what it commits is sent once. One case is Studio's: an input method that commits the front of what it
-composes while the rest goes on composing (compositionend, then compositionstart, in one keystroke: Zhuyin and Pinyin do
-when the buffer fills or a word is confirmed) made xterm.js 5.5.0 send the committed text together with the part still
-composing, and that part again once committed (中文 came out as 中文文; a longer run repeated every tail). 6.0.0 fixed
-it upstream; until the pin moves, `imeOnce` in `public/terminals.js` sends, when a new composition starts, what the last
-one committed up to where the new one starts, and cancels the send xterm had queued. `tests/terminal-input-ui.mjs` drives
-Chromium's input-method layer over CDP (`Input.imeSetComposition`, `Input.insertText`) and reads the bytes the page posts;
-it is not the operating system's Zhuyin keyboard, which no test here presses.
+composes, and what it commits is sent once. xterm.js 5.5.0 sent some of it twice: an input method that commits the front
+of what it composes while the rest goes on composing (compositionend, then compositionstart, in one keystroke: Zhuyin and
+Pinyin do when the buffer fills or a word is confirmed) came out as 中文文, and Caps Lock pressed while composing (a Mac
+switches to and from ABC with it; the key reaches the page before the input method commits) sent the composition on the
+key and again on the commit (中文中文). 6.0.0 fixes both in its own composition helper, so Studio runs 6.0.0 and patches
+nothing. `tests/terminal-input-ui.mjs` drives Chromium's input-method layer over CDP (`Input.imeSetComposition`,
+`Input.insertText`, `Input.dispatchKeyEvent` for Caps Lock and the keyCode 229 keys of Enter, Space and punctuation
+commits) and reads the bytes the page posts; it is not the operating system's Zhuyin keyboard, which no test here presses.
+
+## What it draws
+
+The font stack is the Mac's own monospace, then the Nerd Fonts a shell prompt is drawn for (MesloLGS NF, which
+powerlevel10k installs, Symbols Nerd Font Mono, and other common ones): the browser falls back glyph by glyph, so text
+keeps the first font and the Powerline separators and icons in the private use area (U+E0A0-E0D4, U+F000-F8FF) come
+from the installed Nerd Font instead of empty boxes. A machine with no Nerd Font (a phone watching) still draws boxes
+there; Studio ships no font. Widths are Unicode 11's (`@xterm/addon-unicode11`, a proposed API, hence
+`allowProposedApi`): an emoji takes two cells, as programs that measure it count, instead of one with the next character
+drawn over it. The shell gets a UTF-8 `LC_CTYPE` when Studio's environment names no locale (`terminalEnv` in
+`src/terminals.ts`; only the encoding, so messages and dates are untouched); without one zsh echoed 中文 typed at its prompt as `<00ad><0096><0087>`. Box
+drawing comes from the font too: the DOM renderer has no custom glyphs, so lines can show small gaps between rows.
 
 Tab is the shell's: xterm sends it as `\t` and keeps the focus (the login shell, `$SHELL -l` on a PTY with
 `TERM=xterm-256color`, is interactive, so bash and zsh complete). A press on the pane around the terminal (its bar, the
