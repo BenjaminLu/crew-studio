@@ -256,7 +256,8 @@ function readRegion(rect) {
 function pauseAsk(id, v) { const vid = L.video; if (!vid) return; try { vid.pause(); } catch {} X.sel.set(id, { time: Math.round((vid.currentTime || 0) * 100) / 100, text: "", headings: [], nodes: [] }); refresh(id); requestAnimationFrame(() => document.querySelector("[data-explain-q]")?.focus()); }
 function tick() {
   const slot = document.querySelector("[data-x-slot]"), modal = document.querySelector(".rx-modalbg");
-  if (!slot) { if (L.el) { L.el.hidden = true; } L.on = false; return; }
+  // off the room (or on the tutor's board): the output is unloaded, so its scripts stop
+  if (!slot) { if (L.el) { L.el.hidden = true; L.el.replaceChildren(); L.key = null; L.frame = null; L.video = null; } L.on = false; return; }
   const [id, n] = [slot.dataset.xSlot.split("/").slice(0, -1).join("/"), Number(slot.dataset.xSlot.split("/").at(-1))], v = state(id)?.versions.find((x) => x.n === n);
   if (v) mount(id, v);
   const b = slot.getBoundingClientRect(), el = layerEl();
@@ -266,7 +267,7 @@ function tick() {
 function tickStart() { if (!L.on) { L.on = true; requestAnimationFrame(tick); } }
 addEventListener("keydown", (e) => { if (e.key !== "Escape") return; const id = S.route?.name === "room" ? S.route.arg : null; if (!id) return;
   if (X.confirm) { X.confirm = null; render(); e.preventDefault(); } else if (X.pick) { X.pick = null; render(); e.preventDefault(); } else if (X.boxing === id) { X.boxing = null; L.key = null; refresh(id); e.preventDefault(); } }, true);
-addEventListener("hashchange", () => { X.boxing = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id) load(id); });
+addEventListener("hashchange", () => { X.boxing = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
 
 window.crewRoomExplain = { ensure, state, active, picker, view, load, dialogs };
 })();

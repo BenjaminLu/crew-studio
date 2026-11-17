@@ -269,9 +269,10 @@ export function installExplainer(d: ExplainerDeps) {
   /** one run: rounds until the skill says it is done, the captain stops it, the time limit passes, or it stalls */
   async function loop(k: any, s: any, room: any, run: XRun, adm: any, ws: { root: string; mat: string; skill: string; out: string }, skillFiles: string[], from: XVersion | null) {
     const st = read(k), live = running.get(k.id)!, end: { done?: any; answer?: any } = {}, deadline = Date.parse(run.at) + run.limitMin * 60_000;
-    const subj = d.subjectRecord(k, s, room); let stalled = 0, last = "";
+    let subj: any = { kind: k.kind, room: k.id, head: s.head, base: s.base }, stalled = 0, last = "";
     const save = () => write(k, st);
     try {
+      subj = d.subjectRecord(k, s, room);
       run.progress.push({ at: now(), text: "Studio is reading the materials (read-only)" }); save(); d.notify(k);
       const mats = await materials(k, s, room, ws.mat);
       for (let n = 1; ; n++) {
@@ -327,7 +328,7 @@ export function installExplainer(d: ExplainerDeps) {
     if (!k.open()) throw refuse("This room no longer takes paid runs / 這間審查室不再接受付費執行", "closed");
     if (running.has(k.id)) throw refuse("The skill is already working in this room: stop it or wait / 這間審查室的 skill 正在執行：請先停止或等它完成", "busy");
     if (d.tutorBusy(k.id)) throw refuse("A tutor turn is running in this room / 這個審查室已有一回合在進行", "busy");
-    const st0 = read(k), skill = kind === "ask" ? st0.selected?.id : a.skill;
+    const st0 = read(k);
     let from: XVersion | null = null, question = "", selection: Selection | null = null;
     if (kind === "ask") {
       question = String(a.question ?? "").trim(); if (!question || question.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
@@ -335,11 +336,14 @@ export function installExplainer(d: ExplainerDeps) {
       if (!from) throw refuse("There is no output to ask about yet / 還沒有可以追問的產出", "not_found");
       selection = selectionOf(a.selection, from);
     }
+    // a follow-up runs with the skill that made the version asked about (an older version in the rail may be another skill's)
+    const skill = kind === "ask" ? from!.skill.id : a.skill;
     const o0: any = offer(k, skill, kind); if (o0.error) throw refuse(o0.error, o0.code ?? "no_tutor");
     const agreed = kind === "ask" && a.confirm !== o0.hash && st0.consent?.plan === o0.hash;
     if (a.confirm !== o0.hash && !agreed) throw refuse(`Each run is paid, on ${o0.provider} ${o0.model ?? "(default model)"}: confirm it to start / 每次執行都要付費（${o0.provider} ${o0.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer: o0 });
     try { await engine.deps.refreshUsable?.(); } catch {}
-    { const s0 = d.subjectOf(k); if (!s0.run || !s0.node) { await d.ensureHost(k, d.offerOf(k), by); k = d.keyOf(id); } }
+    // only a pull request or directory room is hosted by a Task Studio makes; a merge card or branch room always has its Task
+    { const s0 = d.subjectOf(k); if ((!s0.run || !s0.node) && (k.kind === "pr" || k.kind === "dir")) { await d.ensureHost(k, d.offerOf(k), by); k = d.keyOf(id); } }
     const s = d.subjectOf(k); if (!s.run || !s.node) throw refuse("No Task hosts this room's paid rounds / 沒有任務能承載這間審查室的付費回合", "no_host");
     const { pin, body, dir: skillDir, files: skillFiles } = pinOf(skill);
     if (pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind) });
@@ -349,11 +353,14 @@ export function installExplainer(d: ExplainerDeps) {
     if (tutor.pick.provider !== o0.provider || (tutor.pick.model ?? null) !== (o0.model ?? null)) throw refuse("The room's tutor changed: confirm again / 審查室的導師變了：請再確認一次", "confirm_required", { offer: offer(k, skill, kind) });
     const adm = await d.admit(k, s, tutor, { seat, texts: texts(pin, body) });
     if (running.has(k.id) || d.tutorBusy(k.id)) { adm.held?.release(); throw refuse("Something else started in this room meanwhile / 這間審查室剛好開始了別的執行", "busy"); }
-    const st = read(k), room = d.load(k);
+    // from here the admission is held: anything that fails before the run is handed to its loop releases it and says why
+    let run: XRun | null = null; const st = read(k);
+    try {
+    const room = d.load(k);
     if (kind === "generate") st.selected = { id: pin.id, v: pin.v };
     if (kind === "ask" && a.consent === true && a.confirm === o0.hash) st.consent = { plan: o0.hash, by: clip(by || "captain", 80), at: now() };
     else if (kind === "ask" && a.confirm === o0.hash && st.consent) delete st.consent;
-    const run: XRun = { n: (st.runs.at(-1)?.n ?? 0) + 1, kind, skill: pin, status: "running", by: clip(by || "captain", 80), at: now(), ended: null, provider: adm.provider?.id ?? tutor.pick.provider, model: adm.provider?.model ?? tutor.pick.model ?? "",
+    run = { n: (st.runs.at(-1)?.n ?? 0) + 1, kind, skill: pin, status: "running", by: clip(by || "captain", 80), at: now(), ended: null, provider: adm.provider?.id ?? tutor.pick.provider, model: adm.provider?.model ?? tutor.pick.model ?? "",
       effort: tutor.pick.effort ?? null, confirm: o0.hash, limitMin: o0.limitMin, rounds: [], cost: null, error: null, progress: [], from: from?.n ?? null, version: null, ...(kind === "ask" ? { question, selection } : {}), ...(agreed ? { auto: true } : {}) };
     st.runs.push(run); if (st.runs.length > 500) st.runs.splice(0, st.runs.length - 500); write(k, st);
     // the run's workspace: the skill's supporting files (a read-only copy), the output folder (a follow-up's starts as its version)
@@ -363,6 +370,11 @@ export function installExplainer(d: ExplainerDeps) {
     if (from) for (const f of from.files) { mkdirSync(dirname(join(ws.out, f.path)), { recursive: true }); cpSync(join(dirOf(k), `v${from.n}`, f.path), join(ws.out, f.path)); }
     running.set(k.id, { run: run.n, job: null, stop: null }); d.notify(k);
     void loop(k, s, room, run, adm, ws, skillFiles, from);
+    } catch (e: any) {
+      adm.held?.release(); running.delete(k.id);
+      if (run) { Object.assign(run, { status: "failed", error: `the run could not start: ${clip(e?.message ?? e, 300)}`, ended: now() }); try { write(k, st); } catch {} d.notify(k); }
+      throw refuse(`The skill's run could not start: ${clip(e?.message ?? e, 300)}`, e?.code ?? "start_failed");
+    }
     return viewOf(k);
   }
   const selectionOf = (x: any, from: XVersion): Selection | null => {

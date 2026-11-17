@@ -2094,7 +2094,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const agreed = () => !!plan && a.confirm !== offer.hash && agreedTo(load(k), offer);
       if (a.confirm !== offer.hash && !agreed()) throw refuse(`Each turn is a paid model round on ${offer.provider} ${offer.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer.provider} ${offer.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer });
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor } = await admit(k, s, a.pick ? pickedTutor(s.run, a.pick) : tutorFor(k, s));
-      if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
+      if (live.has(k.id) || explainer.running(k.id)) { held?.release(); throw refuse("A turn, a translation or a skill's run is already running in this room / 這個審查室已有執行在進行", "busy"); }
       const room: Room = load(k) ?? fresh(k, s);
       // started over (or the question's place gone) while it was admitted: nothing is added to the fresh room
       if (plan) { try { if (plan.thread != null && !room.lesson?.threads.some((t) => t.n === plan!.thread)) throw refuse("No such question on the board / 白板上沒有這個問題", "not_found"); anchorOf(room, plan.anchor); }
@@ -2131,7 +2131,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const k = keyOf(id), lang = String(a.lang ?? ""); if (!(ROOM_LANGS as readonly string[]).includes(lang)) throw refuse(`lang is one of ${ROOM_LANGS.join(", ")}`, "bad_lang");
       if (!k.open()) throw refuse("This room no longer takes paid turns; it shows the languages it has / 這間審查室不再付費，只顯示已有的語言", "closed");
       const room0 = load(k); const todo = room0 ? untranslated(room0, lang) : []; if (!todo.length) return this.view(id);
-      if (live.has(k.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
+      if (live.has(k.id) || explainer.running(k.id)) throw refuse("A turn, a translation or a skill's run is already running in this room / 這個審查室已有執行在進行", "busy");
       const s = subjectOf(k); if (!s.run || !s.node) throw noHost();
       // what is usable is read first: the tutor confirmed is the one admitted (a pick changed meanwhile asks again)
       try { await engine.deps.refreshUsable?.(); } catch {}
@@ -2140,7 +2140,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const hash = sha(`${offer.hash}:translate`).slice(0, 16), estimate = translateEstimate(room0);
       if (room0!.translateOk?.hash !== hash && a.confirm !== hash) throw refuse(`Translating this room's explanation is a small paid round on ${offer.provider} ${offer.model ?? "(default model)"} (~${estimate ?? "?"}): confirm it once / 翻譯這間房間的解說是一次小的付費回合（約 ${estimate ?? "?"}），請確認一次`, "confirm_required", { offer: { ...offer, translate: { hash, estimate, lang } } });
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, tutor);
-      if (live.has(k.id)) { held?.release(); throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy"); }
+      if (live.has(k.id) || explainer.running(k.id)) { held?.release(); throw refuse("A turn, a translation or a skill's run is already running in this room / 這個審查室已有執行在進行", "busy"); }
       const room = load(k); if (!room || !untranslated(room, lang).length) { held?.release(); throw refuse("The room was started over while the translation was being admitted / 審查室在翻譯開始前被清空了", "reset"); }
       room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
       live.set(k.id, -2); notify(k);

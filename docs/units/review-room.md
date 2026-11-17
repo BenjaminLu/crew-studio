@@ -708,7 +708,8 @@ The room can be presented by one of the captain's own skills instead of the tuto
   in `~/.claude/skills` or `~/.codex/skills` is imported there first). The captain's own skills (a folder, a skills home, a git
   URL) come first, then the ones Studio ships. Picking is free: the tutor, or a skill that already has an output in this room,
   switches at once (`POST /api/review-room/<room>/explain/select {skill | null}`); a skill with none asks for its first run.
-  While a skill is selected, the tutor picker pill steps aside and the room shows the skill's output instead of the board.
+  While a skill is selected, the tutor picker pill steps aside and the room shows the skill's output instead of the board. Arriving in the room
+  then starts no tutor lesson by itself (auto-teach waits for the board).
 - **A run is paid and confirmed** like a tutor turn: the offer (`GET …/explain/offer?skill=&kind=generate|ask`) names the
   room tutor's provider, model and effort (the same pick and independence label as a turn), the skill and its version,
   the materials it gets, "no round cap", the expected time (the median of this skill's earlier finished runs here, else

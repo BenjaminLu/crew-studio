@@ -7,7 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // the output is a new version; a follow-up carries the boxed selection; a version's page is served only with its capability,
 // under a CSP with no network, with Studio's storage shim and selection helper first; every run is on the ledger with its cost.
 //        bun tests/review-room-explain.ts
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harness, suite, until } from "./rt-harness";
@@ -158,10 +158,27 @@ X.stop(id);
 const run4 = await waitRun(4, 20000);
 ok(run4.status === "stopped" && /captain/.test(run4.stop) && run4.version === null && X.view(id).versions.length === 2 && X.view(id).running === null, "Stop ends the run at once; nothing half-made becomes a version", JSON.stringify(run4));
 
+// ---------- a run that cannot start after its admission: it says why, and holds nothing (the next one starts) ----------
+const v2file = join(E.rdir(r.id), "review-room", `${id}-explain`, "v2", "index.html"), v2text = readFileSync(v2file, "utf8"); rmSync(v2file);
+e = await refused(() => X.ask(id, { question: "And halves?", version: 2 }, "captain"));
+const broken = X.view(id).runs.at(-1);
+ok(!!e && broken.status === "failed" && /could not start/.test(broken.error) && X.view(id).running === null, "a follow-up whose version's files are gone fails at once, recorded as failed, nothing left running", JSON.stringify({ e: e?.message, broken }));
+writeFileSync(v2file, v2text);
+script.push([["explain_answer", { answer: "Halves round up.", updated: false }]]);
+await X.ask(id, { question: "And halves?", version: 2 }, "captain");
+const after = await waitRun(broken.n + 1);
+ok(after.status === "done", "the admission was released: the next run is admitted and finishes", JSON.stringify(after));
+// a follow-up runs with the skill that made the version asked about, whatever the picker shows now
+X.select(id, null); script.push([["explain_answer", { answer: "Yes.", updated: false }]]);
+await X.ask(id, { question: "Still there?", version: 1 }, "captain");
+const other = await waitRun(after.n + 1);
+ok(other.status === "done" && other.skill.id === lib.id, "a follow-up on an older version runs with that version's skill", JSON.stringify(other.skill));
+X.select(id, lib.id);
+
 // ---------- the stall guard and the safety limit ----------
 script.push([["msg", "thinking"]], [["msg", "still thinking"]]);
 await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
-const run5 = await waitRun(5);
+const run5 = await waitRun(X.view(id).runs.at(-1).n);
 ok(run5.status === "failed" && /did nothing/.test(run5.error) && run5.rounds.length === 2, "two rounds in a row that do nothing stop the run (never an endless paid loop)", JSON.stringify(run5));
 e = await refused(() => X.setSettings({ limitMin: 0 })); ok(e?.code === "bad_request", "the safety limit is a number of minutes, at least one");
 ok(X.setSettings({ limitMin: 45 }).limitMin === 45 && X.offer(id, lib.id, "generate").limitMin === 45, "the safety limit is the captain's setting, and the offer names it");
@@ -169,10 +186,10 @@ ok(X.setSettings({ limitMin: 45 }).limitMin === 45 && X.offer(id, lib.id, "gener
 writeFileSync(join(data, "review-room-explain.json"), "{}"); process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN = "0.02";
 script.push([["hang", null]]);
 await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
-const run6 = await waitRun(6, 30000);
+const run6 = await waitRun(X.view(id).runs.at(-1).n, 30000);
 ok(run6.status === "stopped" && /safety limit/.test(run6.stop), "the wall-clock safety limit stops a run that is still going", JSON.stringify(run6));
 delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
 
-ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === 6, "every run is on the ledger");
+ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === X.view(id).runs.filter((x: any) => x.rounds.length).length, "every run that started a round is on the ledger");
 globalThis.fetch = realFetch; H.stop();
 end();
