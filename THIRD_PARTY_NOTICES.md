@@ -22,10 +22,11 @@
   type-state, type-sequence, type-architecture, type-data-flow and type-flowchart are adapted, not vendored as is, in
   `workflows/skills/diagram-design/` for the review room's figures. The changes and the full MIT License text are in
   `workflows/skills/diagram-design/NOTICE.md`.
-- **xterm.js 5.5.0** (`@xterm/xterm`, `public/vendor/xterm-5.5.0.min.js` and `xterm-5.5.0.css`) and **@xterm/addon-fit 0.10.0**
-  (`public/vendor/xterm-addon-fit-0.10.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the web
-  terminal's renderer (docs/units/web-terminal.md). MIT License, copyright the xterm.js authors, SourceLair Private Company and
-  Christopher Jeffrey; both texts are in `public/vendor/xterm-LICENSE.txt`.
+- **xterm.js 6.0.0** (`@xterm/xterm`, `public/vendor/xterm-6.0.0.min.js` and `xterm-6.0.0.css`), **@xterm/addon-fit 0.11.0**
+  (`public/vendor/xterm-addon-fit-0.11.0.min.js`) and **@xterm/addon-unicode11 0.9.0**
+  (`public/vendor/xterm-addon-unicode11-0.9.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the
+  web terminal's renderer (docs/units/web-terminal.md). MIT License, copyright the xterm.js authors, SourceLair Private Company
+  and Christopher Jeffrey; the texts are in `public/vendor/xterm-LICENSE.txt`.
 - **LXGW WenKai TC** (Regular; SIL Open Font License 1.1, copyright 2024 The LXGW WenKai Project Authors,
   https://github.com/lxgw/LxgwWenkaiTC) and **Caveat** (SemiBold; SIL Open Font License 1.1, copyright 2014 The Caveat
   Project Authors, https://github.com/googlefonts/caveat): the review room's handwriting, for the board's titles and
