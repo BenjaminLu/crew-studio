@@ -34,6 +34,7 @@ import * as R from "./pr-watch-rules";
 import * as Rel from "./pr-watch-release";
 import * as F from "./pr-watch-follow";
 import * as S from "./pr-watch-slack";
+import * as Env from "./pr-watch-envs";
 
 export const APPLY_WORKFLOW = "pr-watch-apply-depends", FOLLOW_WORKFLOW = "pr-follow";
 export const INTERVAL_MS = 5 * 60_000;
@@ -90,6 +91,9 @@ async function call(api: string, token: string, method: "GET" | "POST" | "PATCH"
 }
 /** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
 export const READ_BUDGET = 1500, MAX_ROWS = 60, MAX_MERGED = 40;
+/** Find environments automatically reads at most this many times, of which at most DISCOVER_FILES manifest files. */
+/** A config repository too large to list at once is walked one folder per read, at most DISCOVER_DIRS folders. */
+export const DISCOVER_BUDGET = 300, DISCOVER_FILES = 60, DISCOVER_DIRS = 80, DISCOVER_MS = 120_000;
 export class OverBudget extends Error { constructor() { super(`a refresh would read GitHub more than ${READ_BUDGET} times: watch fewer repositories or pull requests`); } }
 const CLOSED_PER = 20, CLOSED_PAGES = 5; // closed pull requests read a refresh: at most 100, in pages small enough for 1 MB
 /** pages: up to max pages of 100; the list carries capped: true when GitHub has more past the last page read */
@@ -143,7 +147,9 @@ export type State = { schema: 1; settings: Settings; watch: { repos: string[]; p
   hooks: Record<string, string>;
   /** the optional Slack bot token (a secret like the webhooks: never sent to the browser) and each Slack contact's last
    *  check (key: the GitHub login in lower case): the member id and workspace checked, the name Slack reported, the verdict */
-  botToken?: string | null; slackChecks?: Record<string, SlackCheck> };
+  botToken?: string | null; slackChecks?: Record<string, SlackCheck>;
+  /** the GitOps/config repository the captain named for Find environments automatically (offered again next time) */
+  envConfig?: { repository: string; ref: string | null } | null };
 type SlackCheck = { id: string; team: string | null; name: string; ok: boolean; problem: F.L | null; at: string };
 type FollowOpen = { run: string; card: string | null; pr: string; kind: FollowKind; head: string; at: string };
 export type FollowKind = "qa" | "nudge" | "approve" | "merge" | "ask" | "push";
@@ -182,6 +188,21 @@ export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: 
   offBase?: Record<string, string> };
 const emptySnap = (): Snapshot => ({ schema: 1, at: null, me: null, rows: [], errors: [], single: {}, depState: {}, proposal: { deps: [], hints: [] }, changed: {}, finger: {}, heads: {} });
 
+/** At most this many named environments, each covering many repositories through its per-repository detection. */
+export const MAX_ENVS = 20, MAX_ENV_REPOS = 60, MAX_ENV_REPOS_ALL = 400;
+/** How one environment is detected, validated (name: what a message names). */
+function cleanDetect(v: any, name: string): R.EnvDetect {
+  const d = v && typeof v === "object" ? v : {};
+  const txt = (x: unknown, n = 100) => { const t = String(x ?? "").trim(); if (!t || t.length > n || /[\u0000-\u001f]/.test(t)) throw new Error(`${name}: fill in every field of how it is detected`); return t; };
+  if (d.kind === "deployment") return { kind: "deployment", environment: txt(d.environment) };
+  if (d.kind === "check") return { kind: "check", name: txt(d.name) };
+  if (d.kind === "branch") return { kind: "branch", branch: txt(d.branch, 200), ...(String(d.environment ?? "").trim() ? { environment: txt(d.environment) } : {}) };
+  if (d.kind === "file") { const repository = txt(d.repository); if (!R.repoOk(repository)) throw new Error(`${name}: the file's repository must be owner/repo`);
+    const path = txt(d.path, 300); if (path.split("/").some((p) => !p || p === "." || p === "..")) throw new Error(`${name}: the file path is not a plain path`);
+    const template = txt(d.template, 200), bad = R.templateProblem(template); if (bad) throw new Error(`${name}: ${bad}`);
+    return { kind: "file", repository, path, template, ...(String(d.ref ?? "").trim() ? { ref: txt(d.ref, 200) } : {}) }; }
+  throw new Error(`${name}: choose how it is detected`);
+}
 const list = (v: unknown, max = 50, each = 100) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\n]/) : []).map((s) => String(s ?? "").trim()).filter(Boolean).filter((s) => s.length <= each).slice(0, max);
 const login = (s: string) => /^[A-Za-z0-9_.\-[\]]{1,60}$/.test(s);
 /** Settings from the page, validated field by field; throws a message the page shows. */
@@ -189,21 +210,20 @@ export function cleanSettings(v: any): Settings {
   const s = v && typeof v === "object" ? v : {}, w = s.which ?? {};
   const accounts = list(s.evidence?.accounts).map((a) => a.replace(/^@/, "")), req = list(s.requiredReviewers).map((a) => a.replace(/^@/, ""));
   for (const a of [...accounts, ...req]) if (!login(a)) throw new Error(`"${a}" is not a GitHub account name`);
-  const envs: R.EnvSetting[] = (Array.isArray(s.environments) ? s.environments : []).slice(0, 12).map((e: any) => {
-    const name = String(e?.name ?? "").trim(), d = e?.detect ?? {}, repos = list(e?.repos, 30);
+  let perRepo = 0;
+  const envs: R.EnvSetting[] = (Array.isArray(s.environments) ? s.environments : []).slice(0, MAX_ENVS).map((e: any) => {
+    const name = String(e?.name ?? "").trim(), repos = [...new Map(list(e?.repos, 30).map((r) => [r.toLowerCase(), r] as const)).values()];
     if (!name || name.length > 40) throw new Error("Each environment needs a short name");
     for (const r of repos) if (!R.repoOk(r)) throw new Error(`"${r}" is not owner/repo`);
-    let detect: R.EnvDetect;
-    const txt = (x: unknown, n = 100) => { const t = String(x ?? "").trim(); if (!t || t.length > n || /[\u0000-\u001f]/.test(t)) throw new Error(`${name}: fill in every field of how it is detected`); return t; };
-    if (d.kind === "deployment") detect = { kind: "deployment", environment: txt(d.environment) };
-    else if (d.kind === "check") detect = { kind: "check", name: txt(d.name) };
-    else if (d.kind === "branch") detect = { kind: "branch", branch: txt(d.branch, 200), ...(String(d.environment ?? "").trim() ? { environment: txt(d.environment) } : {}) };
-    else if (d.kind === "file") { const repository = txt(d.repository); if (!R.repoOk(repository)) throw new Error(`${name}: the file's repository must be owner/repo`);
-      const path = txt(d.path, 300); if (path.split("/").some((p) => !p || p === "." || p === "..")) throw new Error(`${name}: the file path is not a plain path`);
-      const template = txt(d.template, 200), bad = R.templateProblem(template); if (bad) throw new Error(`${name}: ${bad}`);
-      detect = { kind: "file", repository, path, template, ...(String(d.ref ?? "").trim() ? { ref: txt(d.ref, 200) } : {}) }; }
-    else throw new Error(`${name}: choose how it is detected`);
-    return { name, production: !!e?.production, repos, detect };
+    const rawEach = Array.isArray(e?.each) ? e.each : [];
+    if (rawEach.length > MAX_ENV_REPOS) throw new Error(`${name}: at most ${MAX_ENV_REPOS} repositories with their own detection`);
+    const each = rawEach.map((x: any) => { const repo = String(x?.repo ?? "").trim(); if (!R.repoOk(repo)) throw new Error(`${name}: "${repo}" is not owner/repo`); return { repo, detect: cleanDetect(x?.detect, `${name} (${repo})`) }; });
+    if (new Set(each.map((x: R.EnvEach) => x.repo.toLowerCase())).size !== each.length) throw new Error(`${name}: a repository is listed twice`);
+    if ((perRepo += each.length) > MAX_ENV_REPOS_ALL) throw new Error(`At most ${MAX_ENV_REPOS_ALL} repositories with their own detection in all`);
+    // with a detection per repository the environment needs no detect of its own
+    const d = e?.detect;
+    if (each.length && (!d || typeof d !== "object" || !d.kind || d.kind === "none")) return { name, production: !!e?.production, repos, each };
+    return { name, production: !!e?.production, repos, detect: cleanDetect(d, name), ...(each.length ? { each } : {}) };
   });
   const lang = ["en", "zh-TW", "zh-CN"].includes(s.messageLang) ? s.messageLang : null;
   const rules = (k: keyof Rel.OpsRules) => { const v = s.opsRules?.[k]; if (v === undefined) return [...Rel.DEFAULT_OPS_RULES[k]];
@@ -220,11 +240,11 @@ export function cleanSettings(v: any): Settings {
     const bad = F.contactProblem(x); if (bad) throw new Error(bad); return x; });
   const slackTeam = String(sd.slackTeam ?? "").trim() || null; if (slackTeam && !/^T[A-Z0-9]{2,20}$/.test(slackTeam)) throw new Error("A Slack workspace id looks like T0123ABCD");
   return { which: { mine: w.mine !== false, assigned: w.assigned !== false, reviewRequested: !!w.reviewRequested },
-    evidence: { accounts, checks: list(s.evidence?.checks), labels: list(s.evidence?.labels) }, requiredReviewers: req, environments: envs, groups: list(s.groups, 20, 30), shortForm: !!s.shortForm, messageLang: lang, opsRules, follow: { enabled: !!s.follow?.enabled }, sending: { targets, contacts, slackTeam } };
+    evidence: { accounts, checks: list(s.evidence?.checks), labels: list(s.evidence?.labels) }, requiredReviewers: req, environments: R.mergeEnvs(envs, MAX_ENV_REPOS), groups: list(s.groups, 20, 30), shortForm: !!s.shortForm, messageLang: lang, opsRules, follow: { enabled: !!s.follow?.enabled }, sending: { targets, contacts, slackTeam } };
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
-  /** tests lower the caps; production uses MAX_ROWS, MAX_MERGED and READ_BUDGET */ limits?: { rows?: number; reads?: number; autoReads?: number; merged?: number } };
+  /** tests lower the caps; production uses MAX_ROWS, MAX_MERGED, READ_BUDGET, DISCOVER_BUDGET and DISCOVER_FILES */ limits?: { rows?: number; reads?: number; autoReads?: number; merged?: number; discoverReads?: number; discoverFiles?: number; discoverDirs?: number } };
 /** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
 class OverAuto extends Error {}
 
@@ -384,7 +404,7 @@ export function createPrWatch(d: PrWatchDeps) {
         catch (e) { if (e instanceof RateLimited || e instanceof OverBudget || (e as any)?.name === "AbortError") throw e; return null; } })()); return defaultCache.get(k)!; };
     for (const [k, m] of [...mergedFound]) { const base = String(m.pr?.base?.ref ?? ""), def = await defaultOf(m.repo, m.pr);
       if (!base || def === null || eq(base, def)) continue; // the default branch unreadable: followed as before, never dropped on a guess
-      if (s.settings.environments.some((e) => e.production && e.detect.kind === "branch" && eq(e.detect.branch, base) && R.envApplies(e, m.repo))) continue;
+      if (R.envsFor(s.settings.environments, m.repo).some((e) => e.production && e.detect.kind === "branch" && eq(e.detect.branch, base))) continue;
       mergedFound.delete(k); (out.offBase ??= {})[R.prId(m.repo, Number(m.pr.number))] = base; }
     // a followed one a merged pull request in its repository reverts (by anyone, read from the closed pull requests above)
     // never reaches production as itself: dropped, and recorded so it is not followed again
@@ -450,7 +470,7 @@ export function createPrWatch(d: PrWatchDeps) {
       return null; });
     /** whether an environment runs `head`; for a merged pull request (`merged`) `head` is its merge commit, and an environment
      *  has it when the commit it runs contains it (a later deployment carries every earlier merge) */
-    const envOn = async (e: R.EnvSetting, repo: string, head: string, checks: any[], merged = false): Promise<boolean | null> => {
+    const envOn = async (e: R.EnvFor, repo: string, head: string, checks: any[], merged = false): Promise<boolean | null> => {
       try {
         const dt = e.detect;
         if (merged && dt.kind === "deployment") { const dep = await successful(repo, `environment=${enc(dt.environment)}`); return dep ? await contains(repo, head, dep) : false; }
@@ -469,7 +489,7 @@ export function createPrWatch(d: PrWatchDeps) {
       } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return null; }
     };
     // a repository's own GitHub environments, used when the settings name none (at most 6, production last)
-    const envCache = new Map<string, Promise<R.EnvSetting[]>>();
+    const envCache = new Map<string, Promise<R.EnvFor[]>>();
     const repoEnvs = (repo: string) => once(envCache, repo.toLowerCase(), async () => {
       try { const j = await autoGet(`${repoPath(repo)}/environments?per_page=30`);
         const names = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n.length > 0 && n.length <= 60 && !/[\u0000-\u001f]/.test(n));
@@ -562,7 +582,7 @@ export function createPrWatch(d: PrWatchDeps) {
       out.heads[id.toLowerCase()] = { sha: head, at: headSeenAt };
       const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,
         checks: checks.map((c: any) => ({ name: String(c.name ?? ""), status: String(c.status ?? ""), conclusion: c.conclusion ? String(c.conclusion) : null, at: c.completed_at ? String(c.completed_at) : null, url: c.html_url ? String(c.html_url) : null })) });
-      const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : s.settings.environments.filter((e) => R.envApplies(e, repo));
+      const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : R.envsFor(s.settings.environments, repo);
       const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks), ...(auto ? { auto: true } : {}) })));
       const reviewers = new Set(reviews.map((x) => x.login.toLowerCase()));
       // without the reviews (or comments) read, reviewers cannot be told apart: such a row offers no one
@@ -586,7 +606,7 @@ export function createPrWatch(d: PrWatchDeps) {
     if (mergedList.length > maxMerged) { out.errors.push({ target: "", en: `${mergedList.length} merged pull requests are followed: only the ${maxMerged} merged last are read per refresh`, tw: `追蹤中的已合併 PR 有 ${mergedList.length} 個：每次刷新只讀最近合併的 ${maxMerged} 個` }); mergedList = mergedList.slice(0, maxMerged); }
     out.merged = (await pool(mergedList, 2, async ({ pr: p, repo, single }): Promise<MergedRow> => {
       const n = Number(p.number), mergeSha = String(p.merge_commit_sha ?? ""), partial: string[] = [], body = String(p.body ?? "").slice(0, 65536);
-      const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : s.settings.environments.filter((e) => R.envApplies(e, repo));
+      const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : R.envsFor(s.settings.environments, repo);
       const checks = SHA.test(mergeSha) && envList.some((e) => e.detect.kind === "check") ? await soft(async () => (await g.get(`${repoPath(repo)}/commits/${mergeSha}/check-runs?per_page=100`))?.check_runs ?? [], [] as any[], partial, "checks") : [];
       const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: SHA.test(mergeSha) ? await envOn(e, repo, mergeSha, checks, true) : null, ...(auto ? { auto: true } : {}) })));
       if (!SHA.test(mergeSha)) partial.push("merge commit");
@@ -701,7 +721,7 @@ export function createPrWatch(d: PrWatchDeps) {
     const projects = (() => { try { return new Projects(d.dataDir).nativeSnapshot().records; } catch { return []; } })();
     return {
       enabled: !disabled(), connected: !!tok.token, settingsWarning, me: snap.me, refreshedAt: snap.at, refreshing: live.refreshing, error: live.error, backoffUntil: live.backoffUntil, errors: snap.errors, intervalMs: interval(),
-      settings: state.settings, suggest: snap.suggest ?? { evidenceAccounts: [] }, sending: sendingView(),
+      settings: state.settings, envConfig: state.envConfig ?? null, suggest: snap.suggest ?? { evidenceAccounts: [] }, sending: sendingView(),
       watch: { repos: state.watch.repos.map((repo) => { const p = projects.find((x) => x.github?.repository && eq(x.github.repository, repo)); return { repo, count: repoCount(repo), project: p ? { id: p.id, name: p.name || p.id } : null }; }),
         prs: state.watch.prs.map((id) => ({ id, state: snap.single[id] ?? (rows.some((r) => eq(r.id, id)) ? "open" : null) })), excluded: state.watch.excluded },
       rows, rules: R.RULES, count: rows.filter((r) => r.next.kind === "approve" || r.next.kind === "merge").length, merged: mergedRows(snap, state),
@@ -1264,6 +1284,127 @@ export function createPrWatch(d: PrWatchDeps) {
   /** The selected merged pull requests in batches, each with, per deploy unit, the line to change in each production
    *  environment's image-tag file (old tag → new tag) and what it asks for before going live. Reads GitHub (the file, the
    *  repository's tags, compares and the tag's CI) at most 300 times; writes nothing. */
+  // ---------- Find environments automatically (docs/units/pr-watch.md) ----------
+  /** A proposal of how each watched repository's environments are detected: its GitHub environments that have a
+   *  deployment, and the manifest lines of a GitOps/config repository that name its image. Reads only (GET), within
+   *  DISCOVER_BUDGET; past it the proposal holds what was read and says so. Nothing is saved: envs/accept does that. */
+  const watchedRepos = () => [...new Map([...state.watch.repos, ...state.watch.prs.map((id) => R.splitId(id)?.repo ?? "")].filter(Boolean).map((r) => [r.toLowerCase(), r] as const)).values()];
+  const noToken = () => Object.assign(new Error("GitHub is not connected: Studio has no token"), { tw: "GitHub 尚未連線：Studio 沒有權杖" });
+  const rateLimited = () => Object.assign(new Error("GitHub rate limit: wait a little and search again"), { tw: "GitHub 限流：請稍等再搜尋一次" });
+  /** where a search runs now, for the dialog's progress line (GET /api/prs/envs/progress) */
+  let discoverStop: AbortController | null = null; // envs/cancel: the dialog closed while its search ran
+  let discovering: { phase: "config" | "files" | "deployments"; what: string; reads: () => number; budget: number } | null = null;
+  /** The sources step: the watched repositories, the config repository used last, and repositories that look like one (one read). */
+  async function envSources() {
+    const token = tokenNow(); if (!token) throw noToken();
+    const repos = watchedRepos(), g = reader(apiBase(), token, AbortSignal.timeout(15_000), null, null, { budget: { left: 1 } });
+    let suggestions: string[] = [];
+    try { const l = await g.get("/user/repos?per_page=100&sort=pushed"); suggestions = (Array.isArray(l) ? l : []).map((r: any) => String(r?.full_name ?? "")).filter((n: string) => R.repoOk(n) && Env.CONFIG_NAME.test(n.split("/")[1]) && !repos.some((x) => eq(x, n))).slice(0, 8); }
+    catch (e) { if (e instanceof RateLimited) throw rateLimited(); }
+    const saved = state.envConfig?.repository ? [state.envConfig.repository] : [];
+    return { repos, envConfig: state.envConfig ?? null, configSuggestions: [...new Map([...saved, ...suggestions].map((r) => [r.toLowerCase(), r] as const)).values()] };
+  }
+  async function discoverEnvs(b: any) {
+    if (discovering) throw Object.assign(new Error("Another search is still running (another window?): it ends within 2 minutes; search again then"), { tw: "另一個搜尋還在跑（別的視窗？）：最多 2 分鐘內結束，之後再搜尋一次" });
+    const token = tokenNow(); if (!token) throw noToken();
+    const repos = watchedRepos();
+    if (!repos.length) throw Object.assign(new Error("Watch a repository first"), { tw: "請先追蹤 repo" });
+    discoverStop = new AbortController();
+    try { return await discoverRun(b, token, repos, discoverStop.signal); } finally { discovering = null; discoverStop = null; }
+  }
+  async function discoverRun(b: any, token: string, repos: string[], stop: AbortSignal) {
+    const cfg = String(b?.config ?? "").trim(), refIn = String(b?.ref ?? "").trim();
+    if (cfg && !R.repoOk(cfg)) throw Object.assign(new Error("The config repository is owner/repo"), { tw: "設定 repo 要寫成 owner/repo" });
+    if (refIn && (refIn.length > 200 || /[\u0000- ~^:?*\\[]|\.\./.test(refIn))) throw Object.assign(new Error("The ref is a branch, tag or commit"), { tw: "ref 要是 branch、tag 或 commit" });
+    const total = d.limits?.discoverReads ?? DISCOVER_BUDGET, budget = { left: total };
+    // the whole search ends within DISCOVER_MS: past it nothing more is read, what was read is proposed
+    const g = reader(apiBase(), token, AbortSignal.any([AbortSignal.timeout(DISCOVER_MS), stop]), null, null, { budget });
+    const at = (phase: "config" | "files" | "deployments", what: string) => { discovering = { phase, what, reads: () => total - Math.max(0, budget.left), budget: total }; };
+    at("config", cfg);
+    const notes: { en: string; tw: string }[] = []; let over = false, late = false;
+    // one read: past the budget nothing more is read (what was read stays); a rate limit fails the search
+    const step = async <T>(f: () => Promise<T>, fallback: T, onError?: (e: any) => void): Promise<T> => { if (over || late) return fallback;
+      try { return await f(); } catch (e: any) { if (e instanceof RateLimited) throw rateLimited(); if (e instanceof OverBudget) { over = true; return fallback; }
+        if (e?.name === "TimeoutError" || e?.name === "AbortError") { late = true; return fallback; } onError?.(e); return fallback; } };
+    // the config repository: the commit its branch points at, its tree (walked folder by folder when GitHub cannot list
+    // it in one answer), then the manifest files most likely to name a watched repository's image
+    let config: { repository: string; ref: string } | null = null; const files: Env.FileSeen[] = [];
+    if (cfg) {
+      const cant = (what: string, wtw: string) => (e: any) => notes.push({ en: `${cfg}: ${what} could not be read (${why(e).en})`, tw: `${cfg}：讀不到${wtw}（${why(e).tw}）` });
+      const ref = refIn || await step(async () => { const j = await g.get(repoPath(cfg)); return typeof j?.default_branch === "string" && j.default_branch ? String(j.default_branch) : null; }, null, cant("the repository", " repo"));
+      // a branch with a slash in its name goes in a query, never in the path; the tree and files are read at that commit
+      const commit = ref ? await step(async () => { const l = await g.get(`${repoPath(cfg)}/commits?sha=${enc(ref)}&per_page=1`); const s = Array.isArray(l) ? String(l[0]?.sha ?? "") : ""; return /^[0-9a-f]{40}$/i.test(s) ? s : null; }, null, cant(`the branch ${ref}`, ` ${ref} 這個 branch`)) : null;
+      let big = false;
+      const tree = commit ? await step(() => g.get(`${repoPath(cfg)}/git/trees/${commit}?recursive=1`), null, (e) => { if (e instanceof GitHubTooLarge) big = true; else cant(`the file tree at ${ref}`, ` ${ref} 的檔案樹`)(e); }) : null;
+      const okBlob = (path: string, size: unknown) => path.length <= 300 && /\.(ya?ml|json)$/i.test(path) && !path.split("/").some((x) => !x || x === "." || x === "..") && !(Number(size) > 200_000);
+      let blobs: string[] = [];
+      const nm = (x: string) => x.toLowerCase().replace(/[-_.]/g, ""), names = repos.map((r) => nm(r.split("/")[1])).filter((n) => n.length >= 3), raw = repos.map((r) => r.split("/")[1]);
+      if (commit && tree && !tree.truncated) blobs = (Array.isArray(tree.tree) ? tree.tree : []).slice(0, 20000).filter((t: any) => t?.type === "blob" && typeof t.path === "string" && okBlob(t.path, t.size)).map((t: any) => String(t.path));
+      else if (commit && (big || tree?.truncated)) {
+        // too large for one answer: one folder at a time, those naming a watched repository or an environment first
+        const GITOPS = /^(apps?|applications?|services?|overlays?|envs?|environments?|charts?|helm|clusters?|deploy(ments?)?|k8s|kube|kubernetes|manifests?|releases?|values|workloads?|stacks?|namespaces?|tenants?|teams?|projects?)$/i;
+        const score = (name: string) => (names.some((n) => nm(name).includes(n)) ? 4 : 0) + (Env.envOfPath(name) ? 3 : 0) + (GITOPS.test(name) ? 1 : 0);
+        const queue: { path: string; sha: string; depth: number; score: number }[] = [{ path: "", sha: commit, depth: 0, score: 99 }];
+        const cap = d.limits?.discoverDirs ?? DISCOVER_DIRS; let walked = 0;
+        while (queue.length && walked < cap && !over && !late) {
+          queue.sort((a, z) => z.score - a.score || a.depth - z.depth || a.path.localeCompare(z.path)); const dir = queue.shift()!;
+          const j = await step(() => g.get(`${repoPath(cfg)}/git/trees/${dir.sha}`), null); if (over || late) { queue.unshift(dir); break; } walked++;
+          for (const t of Array.isArray(j?.tree) ? j.tree.slice(0, 5000) : []) {
+            const name = String(t?.path ?? ""); if (!name || name.includes("/")) continue; const path = dir.path ? `${dir.path}/${name}` : name;
+            if (t.type === "blob" && okBlob(path, t.size)) blobs.push(path);
+            else if (t.type === "tree" && /^[0-9a-f]{40}$/i.test(String(t.sha ?? "")) && dir.depth < 8) { const s = score(name); queue.push({ path, sha: String(t.sha), depth: dir.depth + 1, score: s + (dir.score === 99 ? 0 : dir.score) }); } } }
+        notes.push({ en: `${cfg}: its file tree is too large for GitHub to list at once, so Studio walked it folder by folder (${walked} folder${walked === 1 ? "" : "s"}, those naming a watched repository or an environment first)${queue.length ? `; ${queue.length} more were not looked at` : ""}`,
+          tw: `${cfg}：檔案樹太大，GitHub 無法一次列出，Studio 改成一層一層看（看了 ${walked} 個資料夾，有 repo 名或環境名的優先）${queue.length ? `；還有 ${queue.length} 個沒看` : ""}` }); }
+      if (commit && (tree || big)) { config = { repository: cfg, ref };
+        const ranked = blobs.map((p) => ({ p, m: p.split("/").some((seg) => names.some((n) => nm(seg).includes(n))), e: !!Env.envOfPath(p, raw) })).filter((x) => x.m || x.e)
+          .sort((a, z) => Number(z.m && z.e) - Number(a.m && a.e) || Number(z.m) - Number(a.m) || a.p.split("/").length - z.p.split("/").length || a.p.localeCompare(z.p));
+        const cap = d.limits?.discoverFiles ?? DISCOVER_FILES;
+        if (ranked.length > cap) notes.push({ en: `${cfg}: ${ranked.length} files could name an image; Studio read the ${cap} most likely (a path naming a watched repository and an environment first)`, tw: `${cfg}：有 ${ranked.length} 個檔案可能寫了 image；Studio 只讀最可能的 ${cap} 個（路徑同時有 repo 名和環境名的優先）` });
+        let unread = 0; at("files", cfg);
+        await pool(ranked.slice(0, cap), 4, async ({ p }) => {
+          const j = await step(() => g.get(`${repoPath(cfg)}/contents/${p.split("/").map(enc).join("/")}?ref=${commit}`), null, () => { unread++; });
+          if (j?.type === "file" && j.encoding === "base64" && typeof j.content === "string" && Number(j.size) <= 200_000) files.push({ repository: cfg, ref, path: p, text: Buffer.from(j.content, "base64").toString("utf8"), pinned: !!refIn }); });
+        if (unread) notes.push({ en: `${cfg}: ${unread} file${unread === 1 ? "" : "s"} could not be read`, tw: `${cfg}：有 ${unread} 個檔案讀不到` });
+        files.sort((a, z) => a.path.localeCompare(z.path)); }
+    }
+    // the config repository named could not be read at all: the search fails with why, as a rate limit does
+    if (stop.aborted) return { cancelled: true };
+    if (cfg && !config && !over && !late) { const n = notes.find((x) => x.en.startsWith(`${cfg}:`)); throw Object.assign(new Error(n?.en ?? `${cfg} could not be read`), { tw: n?.tw ?? `讀不到 ${cfg}` }); }
+    // each repository's GitHub environments that have a deployment (at most 8 a repository)
+    const deployments: Env.DeploymentSeen[] = [];
+    if (b?.deployments !== false) await pool(repos, 4, async (repo) => { at("deployments", repo);
+      const j = await step(() => g.get(`${repoPath(repo)}/environments?per_page=30`), null, (e) => notes.push({ en: `${repo}: its GitHub environments could not be read (${why(e).en})`, tw: `${repo}：讀不到它的 GitHub 環境（${why(e).tw}）` }));
+      const names: string[] = (Array.isArray(j?.environments) ? j.environments : []).map((e: any) => String(e?.name ?? "")).filter((n: string) => n && n.length <= 40 && !/[\u0000-\u001f]/.test(n) && n.toLowerCase() !== "github-pages").slice(0, 8);
+      for (const n of names) { const l = await step(() => g.get(`${repoPath(repo)}/deployments?environment=${enc(n)}&per_page=1`), null);
+        const dep = Array.isArray(l) ? l[0] : null;
+        if (dep) deployments.push({ repo, environment: n, sha: SHA.test(String(dep.sha ?? "")) ? String(dep.sha) : null, ref: typeof dep.ref === "string" ? dep.ref : null }); } });
+    deployments.sort((a, z) => a.repo.localeCompare(z.repo) || a.environment.localeCompare(z.environment));
+    // repositories that look like a GitOps/config repository, offered when none is named (one read)
+    const suggestions: string[] = cfg ? [] : await step(async () => { const l = await g.get("/user/repos?per_page=100&sort=pushed");
+      return (Array.isArray(l) ? l : []).map((r: any) => String(r?.full_name ?? "")).filter((n: string) => R.repoOk(n) && Env.CONFIG_NAME.test(n.split("/")[1]) && !repos.some((x) => eq(x, n))).slice(0, 8); }, [] as string[]);
+    if (late) notes.push({ en: `Studio stopped reading after ${DISCOVER_MS / 1000} s: the table holds what it read.`, tw: `Studio 讀了 ${DISCOVER_MS / 1000} 秒就停了：表格只有已讀到的部分。` });
+    if (over) notes.push({ en: `Studio stopped after ${total} reads, the most one search makes: the table holds what it read. Name the config repository's branch, or watch fewer repositories, and search again.`, tw: `Studio 讀了 ${total} 次（一次搜尋的上限）就停了：表格只有已讀到的部分。可以指定設定 repo 的 branch，或少追蹤一些 repo，再搜尋一次。` });
+    if (stop.aborted) return { cancelled: true };
+    const p = Env.propose(repos, state.settings.environments, deployments, files);
+    const saved = state.envConfig?.repository && !cfg ? [state.envConfig.repository] : [];
+    return { repos, config, configSuggestions: [...new Set([...saved, ...suggestions])], ...p, notes, reads: total - Math.max(0, budget.left), budget: total, over };
+  }
+  /** The captain's picks from the review table, saved as settings (the one click that saves; nothing is written to GitHub). */
+  async function acceptEnvs(b: any, actor: { grant: string } | null) {
+    const picks: Env.Pick[] = (Array.isArray(b?.picks) ? b.picks : []).slice(0, MAX_ENV_REPOS_ALL).map((x: any) => {
+      const repo = String(x?.repo ?? "").trim(), env = String(x?.env ?? "").trim();
+      if (!R.repoOk(repo)) throw new Error(`"${repo}" is not owner/repo`); if (!env || env.length > 40 || /[\u0000-\u001f]/.test(env)) throw new Error("Each environment needs a short name");
+      return { repo, env, detect: cleanDetect(x?.detect, `${env} (${repo})`) }; });
+    const production = Object.fromEntries(Object.entries(b?.production && typeof b.production === "object" ? b.production : {}).filter(([k, v]) => typeof v === "boolean" && k.length <= 40).slice(0, MAX_ENVS)) as Record<string, boolean>;
+    if (!picks.length && !Object.keys(production).length) throw Object.assign(new Error("Tick at least one environment to accept"), { tw: "請至少勾一個環境" });
+    const environments = Env.applyPicks(state.settings.environments, picks, production);
+    if (environments.length > MAX_ENVS) throw Object.assign(new Error(`At most ${MAX_ENVS} environments: remove some in Advanced first`), { tw: `最多 ${MAX_ENVS} 個環境：請先在進階設定移除一些` });
+    const c = b?.config, repository = String(c?.repository ?? "").trim(), ref = String(c?.ref ?? "").trim();
+    const out = await act("settings", { settings: { ...state.settings, environments }, base: b?.base }, actor);
+    if (repository && R.repoOk(repository) && ref.length <= 200 && !/[\u0000-\u001f]/.test(ref)) { state.envConfig = { repository, ref: ref || null }; save(); }
+    return { ...out, envConfig: state.envConfig ?? null };
+  }
+
   async function buildBrief(ids: string[]) {
     const token = tokenNow(); if (!token) throw new Error("GitHub is not connected: Studio has no token");
     const rows = mergedRows(snap, state), waiting = rows.filter((r) => r.tab === "merged");
@@ -1292,7 +1433,7 @@ export function createPrWatch(d: PrWatchDeps) {
       for (const repo of repos) {
         const mine = plan.batches.slice(0, i + 1).flat().filter((id) => eq(row(id).repo, repo)).map((id) => row(id).mergeSha).filter(Boolean);
         const later = plan.batches.slice(i + 1).flat().filter((id) => eq(row(id).repo, repo)).map((id) => row(id).mergeSha).filter(Boolean);
-        const prodFiles = state.settings.environments.filter((e) => e.production && e.detect.kind === "file" && R.envApplies(e, repo));
+        const prodFiles = R.envsFor(state.settings.environments, repo).filter((e) => e.production && e.detect.kind === "file");
         const lines = [], carries = new Set<string>();
         for (const e of prodFiles) { const dt = e.detect as Extract<R.EnvDetect, { kind: "file" }>, key = `${repo}|${e.name}`.toLowerCase();
           const prev = prevTag.get(key), text = prev ? null : await fileOf(dt.repository, dt.path, dt.ref);
@@ -1344,6 +1485,10 @@ export function createPrWatch(d: PrWatchDeps) {
       case "sending/test": if (actor) throw new Error("Only the captain sends a test"); return await sendTest(b);
       case "sending/test-dm": if (actor) throw new Error("Only the captain sends a test DM"); return await sendTestDm(b);
       case "push-check": return await pushCheck(b);
+      case "envs/sources": if (actor) throw new Error("Only the captain looks for environments"); return await envSources();
+      case "envs/cancel": discoverStop?.abort(); return { ok: true, running: !!discovering };
+      case "envs/discover": if (actor) throw new Error("Only the captain looks for environments"); return await discoverEnvs(b);
+      case "envs/accept": if (actor) throw new Error("Only the captain accepts environments"); return await acceptEnvs(b, actor);
       case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };
         await refresh().catch(() => {}); return view(); }
       case "watch": { const got = watchUrl(b?.url); ensure(); kick(); return { ...view(), added: got }; }
@@ -1425,7 +1570,7 @@ export function createPrWatch(d: PrWatchDeps) {
     { name: "prs_watch", description: "Watch a repository (its open pull requests the captain opened or is assigned to) or one pull request, by its GitHub address.", inputSchema: { type: "object", required: ["url"], additionalProperties: false, properties: { url: { type: "string", description: "https://github.com/<owner>/<repo> or …/pull/<n>" } } } },
     { name: "prs_unwatch", description: "Stop watching a repository ({repo: owner/repo}) or leave one pull request out of the list ({pr: owner/repo#N}).", inputSchema: { type: "object", additionalProperties: false, properties: { repo: { type: "string" }, pr: { type: "string" } } } },
     { name: "prs_restore", description: "Bring back a pull request left out of the list ({pr}), or all of them ({}).", inputSchema: { type: "object", additionalProperties: false, properties: { pr: { type: "string" } } } },
-    { name: "prs_settings", description: "Change the list's settings. Pass only what changes; the rest is kept. Fields: which {mine, assigned, reviewRequested}, evidence {accounts, checks, labels}, requiredReviewers, environments, groups, shortForm, messageLang.", inputSchema: { type: "object", required: ["settings"], additionalProperties: false, properties: { settings: { type: "object" } } } },
+    { name: "prs_settings", description: "Change the list's settings. Pass only what changes; the rest is kept. Fields: which {mine, assigned, reviewRequested}, evidence {accounts, checks, labels}, requiredReviewers, environments (each {name, production, repos, detect, each: [{repo, detect}]}: one environment may detect each repository its own way), groups, shortForm, messageLang.", inputSchema: { type: "object", required: ["settings"], additionalProperties: false, properties: { settings: { type: "object" } } } },
     { name: "prs_order", description: "Set the release order: pull request ids first to last (owner/repo#N). Rows not named follow in Studio's proposed order.", inputSchema: { type: "object", required: ["order"], additionalProperties: false, properties: { order: { type: "array", items: { type: "string" } } } } },
     { name: "prs_deps", description: "Set what one pull request waits for: {pr, on: [ids]} (an empty list clears it). Studio's record only; nothing is written to GitHub.", inputSchema: { type: "object", required: ["pr", "on"], additionalProperties: false, properties: { pr: { type: "string" }, on: { type: "array", items: { type: "string" } } } } },
     { name: "prs_group", description: "Put a pull request in one of the release groups from the settings ({pr, group}); an empty group takes it out.", inputSchema: { type: "object", required: ["pr", "group"], additionalProperties: false, properties: { pr: { type: "string" }, group: { type: "string" } } } },
@@ -1472,6 +1617,7 @@ export function createPrWatch(d: PrWatchDeps) {
       if (p === "/api/prs") { ensure(); return json(view()); }
       if (p === "/api/prs/count") return json({ count: count(), refreshedAt: snap.at });
       if (p === "/api/prs/sending") return json(sendingView());
+      if (p === "/api/prs/envs/progress") return json(discovering ? { running: true, phase: discovering.phase, what: discovering.what, reads: discovering.reads(), budget: discovering.budget } : { running: false });
       return json({ error: "not found" }, 404);
     }
     if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
