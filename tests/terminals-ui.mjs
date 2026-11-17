@@ -27,11 +27,11 @@ const until = async (f, ms = 8000) => { const t0 = Date.now(); while (Date.now()
 // the vendored copies are the pinned packages, byte for byte
 {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies;
-  ok(pkg["@xterm/xterm"] === "5.5.0" && pkg["@xterm/addon-fit"] === "0.10.0", "xterm.js and its fit addon are pinned exactly");
+  ok(pkg["@xterm/xterm"] === "6.0.0" && pkg["@xterm/addon-fit"] === "0.11.0" && pkg["@xterm/addon-unicode11"] === "0.9.0", "xterm.js, its fit addon and its Unicode 11 addon are pinned exactly");
   const same = (a, b) => readFileSync(join(root, a)).equals(readFileSync(join(root, b)));
-  ok(same("public/vendor/xterm-5.5.0.min.js", "node_modules/@xterm/xterm/lib/xterm.js") && same("public/vendor/xterm-5.5.0.css", "node_modules/@xterm/xterm/css/xterm.css")
-    && same("public/vendor/xterm-addon-fit-0.10.0.min.js", "node_modules/@xterm/addon-fit/lib/addon-fit.js"), "public/vendor holds the packages' own files (bun scripts/vendor-xterm.ts)");
-  ok(/xterm\.js 5\.5\.0/.test(readFileSync(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")) && /MIT/.test(readFileSync(join(root, "public/vendor/xterm-LICENSE.txt"), "utf8")), "THIRD_PARTY_NOTICES.md and the license file name it");
+  ok(same("public/vendor/xterm-6.0.0.min.js", "node_modules/@xterm/xterm/lib/xterm.js") && same("public/vendor/xterm-6.0.0.css", "node_modules/@xterm/xterm/css/xterm.css")
+    && same("public/vendor/xterm-addon-fit-0.11.0.min.js", "node_modules/@xterm/addon-fit/lib/addon-fit.js") && same("public/vendor/xterm-addon-unicode11-0.9.0.min.js", "node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"), "public/vendor holds the packages' own files (bun scripts/vendor-xterm.ts)");
+  ok(/xterm\.js 6\.0\.0/.test(readFileSync(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")) && /addon-unicode11 0\.9\.0/.test(readFileSync(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")) && /MIT/.test(readFileSync(join(root, "public/vendor/xterm-LICENSE.txt"), "utf8")), "THIRD_PARTY_NOTICES.md and the license file name it");
 }
 
 // a project that is a git repository, for Send for review (the repository lives in a checked temp folder)
@@ -166,8 +166,8 @@ try {
   // an xterm stub: what the page asks of xterm on a phone
   const sctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await sctx.addInitScript((t) => { try { localStorage.setItem("crew.remoteToken", t); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} }, ptok);
-  await sctx.route("**/vendor/xterm-5.5.0.min.js", (r) => r.fulfill({ contentType: "text/javascript", body: `window.__xt={opts:null,writes:[],onData:0};window.Terminal=class{constructor(o){__xt.opts=o;this.cols=80;this.rows=24}loadAddon(){}open(el){el.append(document.createElement('textarea'));const d=document.createElement('div');d.className='xterm-rows';el.append(d);this.d=d}write(x){const s=typeof x==='string'?x:new TextDecoder().decode(x);__xt.writes.push(s);this.d.textContent+=s}reset(){this.d.textContent=''}onData(){__xt.onData++}onResize(){}focus(){}dispose(){}};` }));
-  await sctx.route("**/vendor/xterm-addon-fit-0.10.0.min.js", (r) => r.fulfill({ contentType: "text/javascript", body: "window.FitAddon={FitAddon:class{fit(){}}};" }));
+  await sctx.route("**/vendor/xterm-6.0.0.min.js", (r) => r.fulfill({ contentType: "text/javascript", body: `window.__xt={opts:null,writes:[],onData:0};window.Terminal=class{constructor(o){__xt.opts=o;this.cols=80;this.rows=24}loadAddon(){}open(el){el.append(document.createElement('textarea'));const d=document.createElement('div');d.className='xterm-rows';el.append(d);this.d=d}write(x){const s=typeof x==='string'?x:new TextDecoder().decode(x);__xt.writes.push(s);this.d.textContent+=s}reset(){this.d.textContent=''}onData(){__xt.onData++}onResize(){}focus(){}dispose(){}};` }));
+  await sctx.route("**/vendor/xterm-addon-fit-0.11.0.min.js", (r) => r.fulfill({ contentType: "text/javascript", body: "window.FitAddon={FitAddon:class{fit(){}}};" }));
   const sp = await sctx.newPage(); sp.on("pageerror", (e) => errors.push(`stub: ${e}`));
   await sp.goto(`${phoneBase}/#/terminals/${encodeURIComponent(claudeId)}`);
   const xt = await until(async () => { const v = await sp.evaluate(() => window.__xt); return v?.writes?.length && v; });

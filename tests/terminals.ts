@@ -50,6 +50,24 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
     "wrapped, escaped, upper-case, percent-encoded and the bare session id: none survives", JSON.stringify(wout));
   const env = terminalEnv({ PATH: "/bin", HOME: "/h", CREW_SESSION_TOKEN: "s".repeat(24), CREW_DATA: "/d", FM_IN_ROUND: "1", COPY: "secret-session-value-xyz", MINE: "kept" }, ["secret-session-value-xyz"]);
   ok(env.PATH === "/bin" && env.MINE === "kept" && !("CREW_SESSION_TOKEN" in env) && !("CREW_DATA" in env) && !("FM_IN_ROUND" in env) && !("COPY" in env) && env.TERM === "xterm-256color", "terminalEnv drops CREW_*, FM_* and Studio's secret values under any name", JSON.stringify(env));
+  // a Studio started without a locale: the shell gets a UTF-8 one (zsh otherwise echoes 中文 as <00ad><0096><0087>)
+  ok(/UTF-8$/.test(env.LC_CTYPE ?? "") && !("LANG" in env) && !("LC_ALL" in env), "with no locale set, terminalEnv makes only the encoding UTF-8 (LC_CTYPE)", JSON.stringify(env.LC_CTYPE));
+  ok(terminalEnv({ LANG: "zh_TW.UTF-8" }).LANG === "zh_TW.UTF-8" && !("LC_CTYPE" in terminalEnv({ LANG: "zh_TW.UTF-8" })), "the user's own LANG is kept");
+  const chosen = terminalEnv({ LC_ALL: "C" }); ok(chosen.LC_ALL === "C" && !("LC_CTYPE" in chosen), "a locale the user chose (LC_ALL) is left alone, nothing added");
+  const ctype = terminalEnv({ LC_CTYPE: "UTF-8" }); ok(ctype.LC_CTYPE === "UTF-8" && Object.keys(ctype).filter((k) => /^(LANG|LC_)/.test(k)).length === 1, "LC_CTYPE alone (as ssh from a Mac sets it) is left alone");
+  // and in a real PTY: zsh with no locale in Studio's environment echoes 中文 typed at its prompt as 中文
+  const zsh = ["/bin/zsh", "/usr/bin/zsh"].find((z) => existsSync(z));
+  if (zsh) {
+    const d = mkdtempSync(join(tmpdir(), "crew-terminals-locale-")), pr = join(d, "p"); mkdirSync(pr);
+    const svc = new Terminals({ dataDir: d, projects: () => [{ id: "p", name: "P", path: pr }], transcripts: false, shell: zsh, env: { PATH: "/usr/bin:/bin", HOME: d } });
+    const v = await svc.create({ project: "p", command: `${zsh} -f -i` });
+    const out = () => new TextDecoder().decode(svc.get(v.id)!.ring.bytes());
+    for (let i = 0; i < 50 && !/%\s*$/.test(out()); i++) await new Promise((r) => setTimeout(r, 100));
+    svc.input(v.id, "echo 中文é\r");
+    for (let i = 0; i < 50 && !/\n中文é/.test(out()); i++) await new Promise((r) => setTimeout(r, 100));
+    ok(/echo 中文é/.test(out()) && /\n中文é/.test(out()) && !/<00/.test(out()), "zsh started with no locale in Studio's environment echoes 中文é intact", JSON.stringify(out().slice(-200)));
+    svc.kill?.(v.id); await svc.shutdown?.(); rmSync(d, { recursive: true, force: true });
+  } else console.log("skip zsh locale check: no zsh");
 }
 
 // ---------- transcripts off; the records folder is private ----------

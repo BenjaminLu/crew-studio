@@ -60,6 +60,11 @@ export function terminalEnv(base: Record<string, string | undefined>, secrets: (
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) { if (v === undefined || ENV_INTERNAL.test(k) || bad.has(v.trim())) continue; out[k] = v; }
   out.TERM = "xterm-256color"; out.COLORTERM = "truecolor"; out.TERM_PROGRAM = "CrewStudio";
+  // xterm.js speaks UTF-8. A Studio started without a locale (launchd, an app, a bare environment) gave the shell none, and
+  // zsh then echoed 中文 typed at its prompt as <00ad><0096><0087>. With no locale set, only the character encoding is
+  // made UTF-8 (LC_CTYPE, as ssh from a Mac sets it): messages and dates stay as they were. A locale the user chose (LANG,
+  // LC_ALL or LC_CTYPE) is left as it is.
+  if (!out.LANG && !out.LC_ALL && !out.LC_CTYPE) out.LC_CTYPE = process.platform === "darwin" ? "UTF-8" : "C.UTF-8";
   return out;
 }
 

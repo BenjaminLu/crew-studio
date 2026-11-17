@@ -267,8 +267,9 @@ try {
     ok(open.length <= 2 && open.includes("/api/terminals/mux"), "the page holds two event streams in all: its own and one for every pane", JSON.stringify(open));
     let typed = 0;
     for (const [i, x] of ps8.entries()) {
+      // the narrowest pane is 7 columns: its output wraps, so the rows are read joined
       await e8.locator(`.wt-pane[data-pane="${x.pane}"] .wt-xterm`).click(); await e8.keyboard.type(`echo mux-${i}-$((${i}*7))`); await e8.keyboard.press("Enter");
-      if (await until(async () => new RegExp(`mux-${i}-${i * 7}`).test(await rows(e8, x.term)), 6000)) typed++;
+      if (await until(async () => new RegExp(`mux-${i}-${i * 7}`).test((await rows(e8, x.term)).replace(/\n/g, "")), 6000)) typed++;
     }
     ok(typed === 8, "typing reaches the shell in every one of the eight panes", `${typed} of 8`);
     ok(await e8.evaluate(() => crewTerminals.resets) === 0 && /mux-0-0/.test(await rows(e8, ps8[0].term)), "adding seven panes reset none of the others: the first pane keeps what it had", String(await e8.evaluate(() => crewTerminals.resets)));
