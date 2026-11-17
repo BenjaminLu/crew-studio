@@ -636,6 +636,11 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-steps li { min-width: 0; }
 .rx-call { min-width: 0; overflow-wrap: anywhere; }
 .rx-call > summary { cursor: pointer; list-style: none; }
+.rx-call > summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--text-3); transition: transform .12s; }
+.rx-call[open] > summary::before { transform: rotate(90deg); }
+.rx-call > summary:hover b { text-decoration: underline; }
+.rx-callrow { display: flex; gap: 6px; align-items: baseline; }
+.rx-callrow > .rx-call { flex: 1; }
 .rx-call > summary::-webkit-details-marker { display: none; }
 .rx-calldetail { margin: 6px 0 0; font: 11px/1.45 var(--f-mono, ui-monospace, monospace); background: var(--surface-2); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
 .rx-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle; }

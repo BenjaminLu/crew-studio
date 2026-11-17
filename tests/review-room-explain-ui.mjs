@@ -151,7 +151,8 @@ try {
     { at: "t", text: "fetch.py — exit 0", script: SL({ script: "scripts/fetch.py", args: "--url https://api.model-vendor.example/v1", outcome: "ok", exit: 0, ms: 3400, hosts: ["api.model-vendor.example"], refused: [{ host: "169.254.169.254", why: "a metadata address" }] }) },
     { at: "t", text: "check.py — exit 3", script: SL({ script: "scripts/check.py", args: "index.html", outcome: "fail", exit: 3, ms: 90, stderr: "Traceback: missing <h1>" }) },
     { at: "t", text: "spin.py — CPU", script: SL({ script: "scripts/spin.py", outcome: "limit", limit: "cpu", signal: "SIGXCPU", ms: 300200 }) },
-    { at: "t", text: "passwd — refused", script: SL({ script: "../../etc/passwd", outcome: "refused", refusal: "../../etc/passwd is not a script of walkthrough@v1" }) },
+    { at: "t", text: "passwd — refused", script: SL({ script: "../../etc/passwd", outcome: "refused", refusalCode: "not-script", refusal: "../../etc/passwd is not a script of walkthrough@v1 (scripts: scripts/build.py, scripts/check.py)" }) },
+    { at: "t", text: "wait.sh — time", script: SL({ script: "scripts/wait.sh", outcome: "limit", limit: "time", ms: 5100, limits: { cpuS: 300, fileMB: 60, wallS: 5, diskMB: 120 } }) },
     { at: "t", text: "drawing the rounding figure" }] })], log: [{ ts: "2026-11-01T10:01:00Z", kind: "tool", text: "mat_read {\"path\":\"diff.txt\"}" }] }; answer(r, X); };
   await p.click("[data-explain-start]"); await p.waitForSelector("[data-explain-progress]");
   ok(posts.at(-1)[0] === "generate" && posts.at(-1)[1].skill === "walkthrough" && posts.at(-1)[1].confirm === OFFER.hash, "Confirm and start sends the skill and the exact confirmation", JSON.stringify(posts.at(-1)));
@@ -161,7 +162,13 @@ try {
     "the run shows live progress: done, current and upcoming steps, a bar of the time used, in the stage and in the rail", prog);
   const callRows = () => p.$$eval("[data-explain-progress] li.rx-callrow", (es) => es.map((e) => ({ mark: e.querySelector(".d").textContent, cls: e.className, sum: e.querySelector("summary").textContent })));
   let cr = await callRows();
-  ok(cr.length === 5 && cr[0].mark === "✓" && /^build\.py — done · 0\.1 s$/.test(cr[0].sum) && cr[1].mark === "⚠" && /reached api\.model-vendor\.example/.test(cr[1].sum) && /refused 169\.254\.169\.254/.test(cr[1].sum)
+  ok(cr.length === 6 && cr[5].mark === "⚠" && /wait\.sh — hit the time limit \(5 s\)/.test(cr[5].sum), "a time limit names the call's own wall clock (its timeout_s), not the configured one", JSON.stringify(cr[5]));
+  ok(/^\.\.\/\.\.\/etc\/passwd — refused: not a script of this skill$/.test(cr[4].sum) && /Studio said: .*\(scripts: scripts\/build\.py, scripts\/check\.py\)/.test(await p.$eval('[data-explain-call="refused"] .rx-calldetail', (e) => e.textContent)),
+    "a refused call shows the path as written and a short reason; Studio's full message is in its detail", JSON.stringify(cr[4]));
+  const geo = await p.$$eval("[data-explain-progress] li.rx-callrow", (es) => es.map((e) => { const d = e.querySelector(".d").getBoundingClientRect(), s = e.querySelector("summary").getBoundingClientRect(); return Math.abs(d.top - s.top) < 12; }));
+  const affordance = await p.$eval("[data-explain-progress] .rx-call summary", (e) => getComputedStyle(e, "::before").content);
+  ok(geo.every(Boolean) && /▸/.test(affordance), "each line's marker sits on the line it marks, and an expandable line shows ▸", JSON.stringify({ geo, affordance }));
+  ok(cr.length >= 5 && cr[0].mark === "✓" && /^build\.py — done · 0\.1 s$/.test(cr[0].sum) && cr[1].mark === "⚠" && /reached api\.model-vendor\.example/.test(cr[1].sum) && /refused 169\.254\.169\.254/.test(cr[1].sum)
     && cr[2].mark === "✗" && /check\.py — failed, exit 3/.test(cr[2].sum) && cr[3].mark === "⚠" && /spin\.py — hit the CPU limit \(300 s\)/.test(cr[3].sum) && cr[4].mark === "✗" && /passwd — refused: .*not a script/.test(cr[4].sum),
     "each script call is a line with its outcome: ✓ done, ⚠ a limit or a refused host, ✗ failed or refused; the result first", JSON.stringify(cr));
   await p.click('[data-explain-call="fail"] summary');
@@ -172,7 +179,7 @@ try {
   // the same lines in Traditional Chinese (built by the page from the call, not the server's English text)
   await p.evaluate(() => { sessionStorage.setItem("keep-lang", "1"); localStorage.setItem("crew.lang", "zh-TW"); }); await p.reload(); await p.waitForSelector("[data-explain-progress] [data-explain-call]");
   cr = await callRows();
-  ok(/build\.py — 完成/.test(cr[0].sum) && /碰到 CPU 上限（300 秒）/.test(cr[3].sum) && /被拒/.test(cr[4].sum) && /連到 api\.model-vendor\.example/.test(cr[1].sum), "the lines are in the captain's language", JSON.stringify(cr));
+  ok(/build\.py — 完成/.test(cr[0].sum) && /碰到 CPU 上限（300 秒）/.test(cr[3].sum) && /被拒：不是這個 skill 的腳本/.test(cr[4].sum) && /碰到時間上限（5 秒）/.test(cr[5].sum) && /連到 api\.model-vendor\.example/.test(cr[1].sum), "the lines are in the captain's language", JSON.stringify(cr));
   await p.screenshot({ path: join(shots, "3b-progress-zh.png") });
   await p.evaluate(() => { sessionStorage.removeItem("keep-lang"); localStorage.setItem("crew.lang", "en"); }); await p.reload(); await p.waitForSelector("[data-explain-progress]");
   onStop = (r) => { X = { ...X, running: null, runs: [run(1, "generate", "stopped", { stop: "stopped by the captain", why: "captain" })] }; answer(r, X); };
@@ -224,7 +231,7 @@ try {
   ok(kept.box && kept.pop === 4 && kept.x && !kept.under, "the box stays drawn with quick questions beside it; ✕ sits on the About line", JSON.stringify(kept));
   await p.screenshot({ path: join(shots, "5-boxed.png") });
   onAsk = (r) => { const b = JSON.parse(r.request().postData() || "{}"); if (!b.confirm) return answer(r, { error: "confirm", code: "confirm_required", offer: ASK_OFFER }, 409);
-    X = { ...X, running: 3, runs: [...X.runs, run(3, "ask", "running", { question: b.question, selection: b.selection, from: 1, progress: [{ at: "t", text: "reading the figure" }] })] }; answer(r, X);
+    X = { ...X, running: 3, runs: [...X.runs, run(3, "ask", "running", { question: b.question, selection: b.selection, from: 1, progress: [{ at: "t", text: "reading the figure" }, { at: "t", text: "render.py — done", script: SL({ script: "scripts/render.py", outcome: "ok", exit: 0, ms: 800 }) }] })] }; answer(r, X);
     setTimeout(() => { X = { ...X, running: null, consent: { plan: ASK_OFFER.hash }, versions: versions.slice(0, 2), runs: [...X.runs.slice(0, -1), run(3, "ask", "done", { question: b.question, selection: b.selection, from: 1, version: 2, answer: 'Rounding happens once, at the end. <img src=x onerror="window.__pwned=1">', cites: ["src/percent.ts:L3", "commit:abc1234"], summary: "added a note on halves" })] }; }, 1500); };
   await p.fill("[data-explain-q]", "Why round here?"); await p.click("[data-explain-send]");
   await p.waitForSelector("[data-explain-askconfirm]");
@@ -236,6 +243,8 @@ try {
   ok(/Its scripts run in this follow-up too: sandboxed, with network/.test(askc.scripts) && JSON.stringify(askc.chips) === '["ANTHROPIC_API_KEY"]' && /approves this run only/.test(askc.warn) && /their scripts included \(sandboxed, with network\)/.test(askc.consent),
     "the follow-up's confirmation says its scripts run (network, the credential, unapproved), and so does the don't-ask-again consent", JSON.stringify(askc));
   await p.check("[data-explain-consent]"); await p.click("[data-explain-askok]");
+  const chatRow = await p.waitForSelector("[data-explain-answer] .rx-callrow", { timeout: 1200 }).then(() => p.$eval("[data-explain-answer] .rx-callrow", (e) => { const d = e.querySelector(".d").getBoundingClientRect(), s = e.querySelector("summary").getBoundingClientRect(); return { same: Math.abs(d.top - s.top) < 12, text: e.textContent }; }), () => null);
+  ok(chatRow?.same === true && /render\.py — done/.test(chatRow.text), "in the chat, a running follow-up's script line keeps its marker on the same line", JSON.stringify(chatRow));
   await p.waitForSelector('[data-explain-answer="3"][data-status="running"]', { timeout: 5000 });
   const busy = await p.evaluate(() => ({ send: document.querySelector("[data-explain-send]").disabled, box: document.querySelector("[data-explain-box]").disabled, why: document.querySelector("[data-x-askrow]").textContent }));
   ok(busy.send && busy.box && /Wait for the answer/.test(busy.why), "while the follow-up runs, Ask and Box wait and say why", JSON.stringify(busy));

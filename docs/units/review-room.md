@@ -801,8 +801,11 @@ The room can be presented by one of the captain's own skills instead of the tuto
     milliseconds, the last 2000 characters of stdout and stderr, the hosts reached and refused, its outcome: ok, failed, a
     limit it hit, or refused before it ran and why), and in the run's ledger entry. The progress list shows each call as a
     line the page words in the captain's language, the result first ("build.py — done · 0.1 s · reached …"; "hit the CPU
-    limit (300 s)"), paths shortened (relative to the output folder, `$MATERIALS_DIR`, `$SKILL_DIR`), marked ✓ done, ⚠ a
-    limit or a refused host, ✗ failed or refused; a line opens to its stderr tail and every host it reached or was refused.
+    limit (300 s)"; a time limit is the call's own wall clock, its `timeout_s` when lower), paths shortened (relative to the
+    output folder, `$MATERIALS_DIR`, `$SKILL_DIR`), marked ✓ done, ⚠ a limit or a refused host, ✗ failed or refused. A
+    refused call shows the path as the skill wrote it and a short reason (not a script of this skill, the round's calls
+    used, the output folder full, its arguments); a line opens (▸) to Studio's full message, its stderr tail and every host
+    it reached or was refused.
   - *Confirmed*: the offer's `scripts` says the scripts run, sandboxed, with network, the interpreters, the credentials by
     name (endpoints apart), the caps, the browser and what is missing, each a row of the confirmation (the unapproved note a
     warning line of its own); a follow-up's confirmation in the chat says its scripts run too, with the credentials and the

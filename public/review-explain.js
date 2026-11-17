@@ -162,18 +162,22 @@ function scriptSummary(s) {
 /** a script call in the progress list, in the captain's language: the result first, then the time and the hosts; it opens to
  *  its stderr tail and every host it reached or was refused */
 function scriptLine(c) {
-  const name = String(c.script || "").split("/").pop(), L = c.limits || {};
-  const how = c.outcome === "refused" ? T(`refused: ${c.refusal || ""}`, `被拒：${c.refusal || ""}`)
+  // a refused call shows its path as the skill wrote it (it is not one of the package's scripts); a run one, its file name
+  const L = c.limits || {}, name = c.outcome === "refused" ? String(c.script || "") : String(c.script || "").split("/").pop();
+  const wall = Number(L.wallS) || 0, span = wall < 120 ? T(`${wall} s`, `${wall} 秒`) : T(`${Math.round(wall / 60)} min`, `${Math.round(wall / 60)} 分鐘`);
+  const why = { "not-script": T("not a script of this skill", "不是這個 skill 的腳本"), count: T(`the ${L.calls ?? ""} calls of this round are used`, `這一輪的 ${L.calls ?? ""} 次呼叫已用完`),
+    full: T(`the output folder is over ${(L.diskMB || 120) / 2} MB`, `產出資料夾超過 ${(L.diskMB || 120) / 2} MB`), args: T("its arguments were not accepted", "參數不被接受"), other: T("Studio could not run it", "Studio 沒辦法執行它") }[c.refusalCode || "other"];
+  const how = c.outcome === "refused" ? T(`refused: ${why}`, `被拒：${why}`)
     : c.limit === "cpu" ? T(`hit the CPU limit (${L.cpuS} s)`, `碰到 CPU 上限（${L.cpuS} 秒）`)
     : c.limit === "file" ? T(`hit the file-size limit (${L.fileMB} MB)`, `碰到檔案大小上限（${L.fileMB} MB）`)
-    : c.limit === "time" ? T(`hit the time limit (${Math.round((L.wallS || 0) / 60)} min)`, `碰到時間上限（${Math.round((L.wallS || 0) / 60)} 分鐘）`)
+    : c.limit === "time" ? T(`hit the time limit (${span})`, `碰到時間上限（${span}）`)
     : c.limit === "disk" ? T(`hit the disk limit (${L.diskMB} MB)`, `碰到磁碟上限（${L.diskMB} MB）`)
     : c.signal ? T(`stopped by ${c.signal}`, `被 ${c.signal} 停止`) : c.exit === 0 ? T("done", "完成") : T(`failed, exit ${c.exit}`, `失敗，exit ${c.exit}`);
   const bits = [c.outcome === "refused" ? null : `${((c.ms || 0) / 1000).toFixed(1)} s`, (c.hosts || []).length ? T(`reached ${c.hosts.join(", ")}`, `連到 ${c.hosts.join("、")}`) : null,
     (c.refused || []).length ? T(`refused ${c.refused.map((x) => x.host).join(", ")}`, `被擋 ${c.refused.map((x) => x.host).join("、")}`) : null].filter(Boolean);
   const mark = c.outcome === "ok" && !(c.refused || []).length ? "✓" : c.outcome === "limit" || (c.outcome === "ok" && (c.refused || []).length) ? "⚠" : "✗";
   const cls = mark === "✓" ? "done" : mark === "⚠" ? "warn" : "bad";
-  const detail = [c.args ? `${T("args", "參數")}: ${c.args}` : null, ...(c.hosts || []).map((x) => `${T("reached", "連到")} ${x}`), ...(c.refused || []).map((x) => `${T("refused", "被擋")} ${x.host} (${x.why})`), c.stderr ? `stderr:\n${c.stderr}` : null].filter(Boolean).join("\n");
+  const detail = [c.outcome === "refused" && c.refusal ? `${T("Studio said", "Studio 的說明")}: ${c.refusal}` : null, c.args ? `${T("args", "參數")}: ${c.args}` : null, ...(c.hosts || []).map((x) => `${T("reached", "連到")} ${x}`), ...(c.refused || []).map((x) => `${T("refused", "被擋")} ${x.host} (${x.why})`), c.stderr ? `stderr:\n${c.stderr}` : null].filter(Boolean).join("\n");
   return { cls, mark, body: h("details", { class: "rx-call", "data-explain-call": c.outcome, "data-explain-limit": c.limit || "" }, h("summary", {}, h("b", {}, name), ` — ${how}`, bits.length ? h("span", { class: "faint" }, ` · ${bits.join(" · ")}`) : null),
     h("pre", { class: "rx-calldetail" }, detail || T("(nothing more)", "（沒有更多）"))) };
 }

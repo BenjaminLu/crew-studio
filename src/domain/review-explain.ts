@@ -89,10 +89,10 @@ type Pin = { id: string; v: number; sha256: string; filesSha256: string; name: s
 /** one skill_run call, as its round keeps it: the command, how it ended, its time, the tail of its output, the hosts it reached */
 export type ScriptCall = { round: number; at: string; script: string; scriptSha256: string; argv: string[]; exit: number | null; ms: number; timedOut: boolean; signal: string | null;
   stdout: string; stderr: string; hosts: string[]; refused: { host: string; why: string }[];
-  /** how it ended, for the captain: ok, failed, a limit it hit, or refused before it ran (and why) */ outcome?: "ok" | "fail" | "limit" | "refused"; limit?: "cpu" | "file" | "time" | "disk" | null; refusal?: string };
+  /** how it ended, for the captain: ok, failed, a limit it hit, or refused before it ran (and why) */ outcome?: "ok" | "fail" | "limit" | "refused"; limit?: "cpu" | "file" | "time" | "disk" | null; refusal?: string; wallS?: number };
 /** a script call as the progress list shows it (the page words it in the captain's language) */
-export type ScriptLine = { script: string; args: string; outcome: "ok" | "fail" | "limit" | "refused"; limit: "cpu" | "file" | "time" | "disk" | null; limits: { cpuS: number; fileMB: number; wallS: number; diskMB?: number };
-  exit: number | null; signal: string | null; ms: number; hosts: string[]; refused: { host: string; why: string }[]; refusal: string | null; stderr: string };
+export type ScriptLine = { script: string; args: string; outcome: "ok" | "fail" | "limit" | "refused"; limit: "cpu" | "file" | "time" | "disk" | null; limits: { cpuS: number; fileMB: number; wallS: number; diskMB?: number; calls?: number };
+  exit: number | null; signal: string | null; ms: number; hosts: string[]; refused: { host: string; why: string }[]; refusal: string | null; refusalCode?: string | null; stderr: string };
 type Round = { n: number; job: string | null; status: string; tools: number; cost: any; at: string; ended: string | null; error: string | null; scripts?: ScriptCall[] };
 type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running" | "done" | "failed" | "stopped"; by: string; at: string; ended: string | null;
   provider: string; model: string; effort: string | null; confirm: string; limitMin: number; rounds: Round[]; cost: any; error: string | null; stop?: string;
@@ -242,7 +242,7 @@ export function installExplainer(d: ExplainerDeps) {
     // the confirmation's rows, each in both languages (credentials and endpoints by name: the page shows them as chips)
     const rows = {
       network: p.network ? { en: "Through Studio's proxy, public hosts only (never this Mac or its network); every host is logged", zh: "經過 Studio 的代理，只能連公開主機（連不到這台 Mac 或區網）；每個主機都會記錄" } : { en: "None here: Studio's egress proxy is not running", zh: "這裡不能連網：Studio 的對外代理沒有在跑" },
-      access: { en: "Writes only the output folder and its temp folder; reads the materials, the skill's files, the system's runtimes and the folders on Studio's PATH (read only); never a key Studio stores, its GitHub token or its session and ledger keys", zh: "只寫產出資料夾和自己的暫存資料夾；能讀材料、skill 的檔案和系統執行環境，以及 Studio 的 PATH 上的資料夾（唯讀）；絕不會拿到 Studio 保存的金鑰、它的 GitHub token 或 session／ledger 金鑰" },
+      access: { en: "Writes only the output folder and its temp folder; reads the materials, the skill's files, the system's runtimes and the folders on Studio's PATH (read only)", zh: "只寫產出資料夾和自己的暫存資料夾；能讀材料、skill 的檔案和系統執行環境，以及 Studio 的 PATH 上的資料夾（唯讀）" },
       limits: { en: `${l.cpuS} s of CPU · files up to ${l.fileMB} MB · ${Math.round(l.wallS / 60)} min · ${l.calls} calls per round`, zh: `CPU ${l.cpuS} 秒 · 檔案 ${l.fileMB} MB · ${Math.round(l.wallS / 60)} 分鐘 · 每輪 ${l.calls} 次` },
       browser: p.browser ? { en: "A headless browser is available", zh: "有無頭瀏覽器可用" } : { en: "None installed (Playwright's headless shell): steps that need one fail", zh: "沒有安裝（Playwright 的 headless shell）：需要它的步驟會失敗" },
       missing: p.missing.length ? { en: p.missing.join(", "), zh: p.missing.join("、") } : null,
@@ -352,10 +352,14 @@ export function installExplainer(d: ExplainerDeps) {
     /** a call kept on its round, its line in the progress list, the room told */
     const keep = (c: ScriptCall) => {
       (round.scripts ??= []).push(c); if (round.scripts.length > 200) round.scripts.shift();
-      const line: ScriptLine = { script: c.script, args: clip(c.argv.map(shortArg).join(" "), 120), outcome: c.outcome ?? "fail", limit: c.limit ?? null, limits: { cpuS: l.cpuS, fileMB: l.fileMB, wallS: l.wallS, diskMB: 2 * OUT_CAP() / 1048576 },
-        exit: c.exit, signal: c.signal, ms: c.ms, hosts: c.hosts, refused: c.refused, refusal: c.refusal ?? null, stderr: clip(c.stderr.slice(-600), 600) };
-      const sec = `${(c.ms / 1000).toFixed(1)} s`, how = c.outcome === "refused" ? `refused: ${c.refusal}` : c.limit === "cpu" ? `hit the CPU limit (${l.cpuS} s)` : c.limit === "file" ? `hit the file-size limit (${l.fileMB} MB)` : c.limit === "time" ? `hit the time limit (${Math.round(l.wallS / 60)} min)` : c.limit === "disk" ? `hit the disk limit (${2 * OUT_CAP() / 1048576} MB)` : c.signal ? `stopped by ${c.signal}` : `exit ${c.exit}`;
-      run.progress.push({ at: now(), text: clip(`${c.script.split("/").pop()} — ${how}${c.outcome === "refused" ? "" : ` · ${sec}`}${c.hosts.length ? ` · reached ${c.hosts.join(", ")}` : ""}${c.refused.length ? ` · refused ${c.refused.map((x) => x.host).join(", ")}` : ""}`, 300), script: line });
+      // the wall clock this call had (timeout_s lowers the configured one), and why a refused call was refused, as a code
+      const wallS = c.wallS ?? l.wallS, code = c.outcome !== "refused" ? null : /is not a script of/.test(c.refusal ?? "") ? "not-script" : /skill_run limit reached/.test(c.refusal ?? "") ? "count" : /output folder is over/.test(c.refusal ?? "") ? "full" : /^args:/.test(c.refusal ?? "") ? "args" : "other";
+      const line: ScriptLine = { script: c.script, args: clip(c.argv.map(shortArg).join(" "), 120), outcome: c.outcome ?? "fail", limit: c.limit ?? null, limits: { cpuS: l.cpuS, fileMB: l.fileMB, wallS, diskMB: 2 * OUT_CAP() / 1048576, calls: l.calls },
+        exit: c.exit, signal: c.signal, ms: c.ms, hosts: c.hosts, refused: c.refused, refusal: c.refusal ?? null, refusalCode: code, stderr: clip(c.stderr.slice(-600), 600) };
+      const span = (s: number) => s < 120 ? `${s} s` : `${Math.round(s / 60)} min`;
+      const short = { "not-script": "not a script of this skill", count: `the ${l.calls} calls of this round are used`, full: `the output folder is over ${OUT_CAP() / 1048576} MB`, args: "its arguments were not accepted", other: "Studio could not run it" } as Record<string, string>;
+      const sec = `${(c.ms / 1000).toFixed(1)} s`, how = c.outcome === "refused" ? `refused: ${short[code!]}` : c.limit === "cpu" ? `hit the CPU limit (${l.cpuS} s)` : c.limit === "file" ? `hit the file-size limit (${l.fileMB} MB)` : c.limit === "time" ? `hit the time limit (${span(wallS)})` : c.limit === "disk" ? `hit the disk limit (${2 * OUT_CAP() / 1048576} MB)` : c.signal ? `stopped by ${c.signal}` : `exit ${c.exit}`;
+      run.progress.push({ at: now(), text: clip(`${c.outcome === "refused" ? c.script : c.script.split("/").pop()} — ${how}${c.outcome === "refused" ? "" : ` · ${sec}`}${c.hosts.length ? ` · reached ${c.hosts.join(", ")}` : ""}${c.refused.length ? ` · refused ${c.refused.map((x) => x.host).join(", ")}` : ""}`, 300), script: line });
       if (run.progress.length > 200) run.progress.shift(); write(k, read(k)); d.notify(k); };
     const refusedCall = (a: any, why: string) => keep({ round: round.n, at: now(), script: clip(String(a?.script ?? "?").replace(/^\.\//, ""), 200), scriptSha256: "", argv: (Array.isArray(a?.args) ? a.args : []).slice(0, 64).map((x: unknown) => clip(x, 300)),
       exit: null, ms: 0, timedOut: false, signal: null, stdout: "", stderr: "", hosts: [], refused: [], outcome: "refused", limit: null, refusal: clip(why, 300) });
@@ -370,6 +374,7 @@ export function installExplainer(d: ExplainerDeps) {
     const describe = `Run one of the skill's own scripts in Studio's sandbox. script: its path inside the skill (e.g. scripts/render.py); args: its arguments, with paths relative to your output folder (the working folder) or under $MATERIALS_DIR, $SKILL_DIR or $OUT_DIR. It reads the materials, the skill and the system's runtimes, writes only the output folder and $TMPDIR, reaches public hosts through Studio's proxy. Limits per call: ${l.cpuS} s CPU, files up to ${l.fileMB} MB, ${l.wallS} s (timeout_s lowers it); at most ${l.calls} calls per round; output is cut to its last 64 KiB. No package installs.${browser ? " A headless browser: $CHROME_BIN." : ""}`;
     const once = async (a: any) => {
       const ctl = new AbortController(), runSig: AbortSignal = engine.abortOf(s.run).signal; let overDisk = false;
+      const callWall = Math.min(l.wallS, Math.max(5, Number(a?.timeout_s) || l.wallS)); // what skill_run gives this call (src/skillpkg/run.ts)
       const onAbort = () => ctl.abort(); if (runSig.aborted) ctl.abort(); else runSig.addEventListener("abort", onAbort, { once: true });
       // only skill_run: the skill's files are already read with skill_list / skill_read / skill_search
       const t = skillTools({ skills: [{ id: run.skill.id, v: run.skill.v, sha256: run.skill.sha256, filesSha256: run.skill.filesSha256, dir: ws.skill, status: plan.status!, run: true }], packages: pk, budget, max: l.calls,
@@ -379,7 +384,7 @@ export function installExplainer(d: ExplainerDeps) {
           const limit = overDisk ? "disk" : r.timedOut ? "time" : r.signal === "SIGXCPU" ? "cpu" : r.signal === "SIGXFSZ" || (r.exit !== 0 && /File too large|EFBIG|\[Errno 27\]/.test(out)) ? "file" : null;
           keep({ round: round.n, at: now(), script: r.script, scriptSha256: r.scriptSha256, argv: r.argv.slice(0, 64).map((x) => clip(redact(x), 300)), exit: r.exit, ms: r.ms, timedOut: r.timedOut, signal: r.signal ?? null,
             stdout: clip(redact(r.stdoutTail), 2000), stderr: clip(redact(r.stderrTail), 2000), hosts: r.egress.allowed.slice(0, 40), refused: r.egress.refused.slice(0, 40),
-            outcome: limit ? "limit" : r.exit === 0 && !r.signal ? "ok" : "fail", limit: limit as any }); },
+            outcome: limit ? "limit" : r.exit === 0 && !r.signal ? "ok" : "fail", limit: limit as any, wallS: callWall }); },
         run: { net: { hosts: [], anyHost: true, strict: false }, readOnly: [ws.mat, ...(browser ? [bin, browser.dir] : [])], path: browser ? [bin] : [], limits: { cpuS: l.cpuS, fileMB: l.fileMB, wallS: l.wallS }, browser: !!browser,
           env: { ...creds, MATERIALS_DIR: ws.mat, OUT_DIR: live, ...(browser ? { CHROME_BIN: browser.shim, CHROME_PATH: browser.shim, PUPPETEER_EXECUTABLE_PATH: browser.shim } : {}) }, describe } }).find((x: any) => x.name === "skill_run") as any;
       if (!t) throw new Error("skill_run is not available");
