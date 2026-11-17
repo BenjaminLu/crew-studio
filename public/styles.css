@@ -277,7 +277,7 @@ pre.json{margin:0;background:var(--surface-2);border:1px solid var(--border);bor
 .live{position:absolute;top:6px;right:8px;font:600 10px var(--f-sans);letter-spacing:.02em;color:#fff;background:rgba(207,34,46,.9);border-radius:4px;padding:1px 5px;display:flex;gap:4px;align-items:center}
 .live i{width:5px;height:5px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
 @keyframes blink{50%{opacity:.25}}
-.focus{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px}
+.crew-focus{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px}
 .steps{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .steps li{display:flex;gap:8px;align-items:center;font-size:13px}
 .steps .d{width:8px;height:8px;border-radius:50%}
@@ -364,7 +364,7 @@ body.chat-closed .fab{display:inline-flex}
   .grip,.chat-expand{display:none}
   body.chat-wide{--chat-w:auto}
 }
-@media (max-width: 900px){.focus{grid-template-columns:minmax(0,1fr)}}
+@media (max-width: 900px){.crew-focus{grid-template-columns:minmax(0,1fr)}}
 @media (max-width: 760px){
   body{overflow:auto}
   .shell{display:block;height:auto}

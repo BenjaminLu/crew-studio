@@ -94,6 +94,14 @@ drawn over it. The shell gets a UTF-8 `LC_CTYPE` when Studio's environment names
 `src/terminals.ts`; only the encoding, so messages and dates are untouched); without one zsh echoed 中文 typed at its prompt as `<00ad><0096><0087>`. Box
 drawing comes from the font too: the DOM renderer has no custom glyphs, so lines can show small gaps between rows.
 
+xterm.js 6.0.0 scrolls through its own scrolling element, and puts class `focus` on its element when focused. Studio's
+stylesheet had a page-wide `.focus` grid (the crew page's layout, now `.crew-focus`) that laid that element into a 1.6fr
+column and left the rest of a focused pane black (xterm's viewport, black in its own stylesheet, is transparent here now).
+The pane's padding is on xterm's element, which the fit addon subtracts, so the last column stays clear of the
+scrollbar. The wheel scrolls back a row per row height of pixels, as 5.5.0 did (`wheelRows`): 6.0.0's scrollbar steps by
+`wheelDelta`, a fixed amount per event, so a trackpad flick moved a line or two. On the alternate screen, or when a
+program asks for mouse reports, the wheel is left to xterm.
+
 Tab is the shell's: xterm sends it as `\t` and keeps the focus (the login shell, `$SHELL -l` on a PTY with
 `TERM=xterm-256color`, is interactive, so bash and zsh complete). A press on the pane around the terminal (its bar, the
 frame's padding) used to take the focus to the page, and the next Tab moved it to the pane's × instead of completing;

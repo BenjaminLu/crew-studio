@@ -26,7 +26,11 @@
 .wt-remote p{margin:2px 0 4px;font-size:12px}
 .wt-remote a{font-size:12px;overflow-wrap:anywhere}
 .wt-qr{background:#fff;padding:6px;border-radius:8px;flex:none;line-height:0}
-.wt-xterm{height:min(68vh,720px);min-height:260px;border-radius:10px;overflow:hidden;background:var(--surface-2);border:1px solid var(--border);padding:6px}
+.wt-xterm{height:min(68vh,720px);min-height:260px;border-radius:10px;overflow:hidden;background:var(--surface-2);border:1px solid var(--border)}
+/* the padding is on xterm's own element, which its fit addon subtracts (on the host, border-box, it was counted as room and
+   the last column ran under the scrollbar); xterm's viewport is painted by the theme, never by its stylesheet's black */
+.wt-xterm .xterm{display:block;height:100%;padding:6px}
+.wt-xterm .xterm .xterm-viewport{background:transparent}
 .wt-empty{min-height:200px;justify-content:center;align-items:center}
 .chat-tabs{display:flex;gap:4px;padding:6px 12px;border-bottom:1px solid var(--border)}
 .chat-tabs button{font:inherit;font-size:13px;border:0;background:none;color:var(--text-2);padding:4px 10px;border-radius:7px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}

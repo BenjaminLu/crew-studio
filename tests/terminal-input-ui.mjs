@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 import { freePort, waitUp, withSession } from "./boot.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url)), root = join(here, ".."), tmp = mkdtempSync(join(tmpdir(), "crew-terminal-input-ui-"));
@@ -124,6 +125,44 @@ try {
   ok(g2?.cells[3]?.[0] === "✅" && g2.cells[3][1] === 2 && g2.cells[5]?.[0] === "x", "an emoji (✅) takes two cells and the next character follows it, not drawn over it", JSON.stringify(g2?.cells));
   ok(g3?.text === "G3 中文y|" && g3.cells[3][1] === 2 && g3.cells[5][0] === "文" && g3.cells[7][0] === "y", "CJK takes two cells each", JSON.stringify(g3?.cells));
   await p.evaluate((id) => fetch(`/api/terminals/${id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), gid).catch(() => {});
+
+  // ---------- the focused terminal's layout, and the wheel ----------
+  // xterm puts class "focus" on its element when focused; Studio's stylesheet once had a page-wide .focus grid, which laid
+  // xterm 6's scrolling element into a 1.6fr column and left the rest of the pane black
+  const sid = await open({ command: "seq 1 400; sleep 60" });
+  await until(() => p.evaluate((id) => (window.crewTerminals.panes.get(id)?.term?.buffer.active.baseY ?? 0) > 100, sid));
+  const lay = await p.evaluate((id) => {
+    const host = document.querySelector(`[data-term-host="${CSS.escape(id)}"]`), x = host.querySelector(".xterm"), se = host.querySelector(".xterm-scrollable-element");
+    const sc = host.querySelector(".xterm-screen"), bar = host.querySelector(".xterm-scrollable-element > .scrollbar.vertical");
+    const r = (e) => e.getBoundingClientRect(), xs = getComputedStyle(x), inner = x.clientWidth - parseFloat(xs.paddingLeft) - parseFloat(xs.paddingRight);
+    const hr = r(host);
+    return { focus: x.classList.contains("focus"), display: getComputedStyle(x).display, inner, se: r(se).width, seRight: r(se).right, xRight: r(x).right, screenRight: r(sc).right, barLeft: bar ? r(bar).left : null, host: { x: hr.left, y: hr.top, w: hr.width, h: hr.height }, bg: getComputedStyle(se).backgroundColor };
+  }, sid);
+  ok(lay.focus && lay.display === "block" && Math.abs(lay.se - lay.inner) <= 1 && lay.seRight <= lay.xRight + 0.5, "the focused terminal's scrolling area fills the pane's width (no page-wide .focus grid on xterm)", JSON.stringify(lay));
+  // the pixels as drawn, across the pane's width on a row the short numbers leave blank to the right
+  const pixel = async (x, y) => { // a 1×1 screenshot: its one scanline, whatever the PNG filter, is the pixel itself
+    const png = await p.screenshot({ clip: { x, y, width: 1, height: 1 } }); let i = 8; const idat = [];
+    while (i < png.length) { const n = png.readUInt32BE(i), t = png.toString("ascii", i + 4, i + 8); if (t === "IDAT") idat.push(png.subarray(i + 8, i + 8 + n)); i += 12 + n; }
+    const raw = inflateSync(Buffer.concat(idat)); return "#" + [1, 2, 3].map((k) => raw[k].toString(16).padStart(2, "0")).join(""); };
+  const bgHex = "#" + lay.bg.match(/\d+/g).slice(0, 3).map((v) => (+v).toString(16).padStart(2, "0")).join("");
+  const probes = []; for (const f of [0.3, 0.5, 0.7, 0.9, 0.97]) probes.push(await pixel(Math.round(lay.host.x + lay.host.w * f), Math.round(lay.host.y + lay.host.h / 2)));
+  ok(probes.every((c) => c === bgHex), `across the pane's width the terminal is drawn on its theme's background (${bgHex}), nowhere black`, JSON.stringify(probes));
+  ok(lay.barLeft === null || lay.screenRight <= lay.barLeft + 0.5, "the scrollbar sits beside the last column, not over it", JSON.stringify(lay));
+  const top = () => p.evaluate((id) => { const b = window.crewTerminals.panes.get(id).term.buffer.active; return { y: b.viewportY, base: b.baseY, rowPx: document.querySelector(`[data-term-host="${CSS.escape(id)}"] .xterm-screen`).clientHeight / window.crewTerminals.panes.get(id).term.rows }; }, sid);
+  const box = await p.locator(`[data-term-host="${sid}"] .xterm-screen`).boundingBox(); await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const wh0 = await top(); await p.mouse.wheel(0, -400); await p.waitForTimeout(400); const wh1 = await top();
+  const want = Math.trunc(400 / wh0.rowPx);
+  ok(wh0.y === wh0.base && Math.abs((wh0.y - wh1.y) - want) <= 1, `a 400 px wheel up scrolls back about 400 px of rows (${want}), as 5.5.0 did, not a line or two`, JSON.stringify({ wh0, wh1, want }));
+  await p.mouse.wheel(0, 4000); await p.waitForTimeout(400);
+  ok((await top()).y === wh0.base, "and wheeling down returns to the bottom", JSON.stringify(await top()));
+  await p.evaluate((id) => fetch(`/api/terminals/${id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), sid).catch(() => {});
+  // a full-screen program (alternate screen, no mouse reporting): the wheel still reaches it from xterm as arrow keys
+  const aid = await open({ command: String.raw`printf '\033[?1049hALT'; cat >/dev/null` });
+  await until(async () => /ALT/.test(await rows())); sent.length = 0;
+  const abox = await p.locator(`[data-term-host="${aid}"] .xterm-screen`).boundingBox(); await p.mouse.move(abox.x + abox.width / 2, abox.y + abox.height / 2);
+  await p.mouse.wheel(0, -200); s = await typed();
+  ok(/\x1b(\[|O)A/.test(s), "on the alternate screen the wheel still reaches the program as arrow keys (xterm's own handling)", JSON.stringify(s));
+  await p.evaluate((id) => fetch(`/api/terminals/${id}/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), aid).catch(() => {});
 
   // ---------- Tab ----------
   const shell = await open({ preset: "shell" });
