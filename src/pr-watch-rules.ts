@@ -449,8 +449,43 @@ export function nextStep(p: StepInput): Step {
 /** "deployed" is never a setting: Studio uses it for a repository's own GitHub environments when none are set (the
  *  environment's latest successful deployment contains the head). */
 export type EnvDetect = { kind: "deployed"; environment: string } | { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; template: string; ref?: string };
-export type EnvSetting = { name: string; production: boolean; repos: string[]; detect: EnvDetect };
-export const envApplies = (e: EnvSetting, repo: string) => !e.repos.length || e.repos.some((r) => sameRepo(r, repo));
+/** One repository's own way to detect an environment (a GitOps file per service, a GitHub environment named differently). */
+export type EnvEach = { repo: string; detect: EnvDetect };
+/** One named environment. `detect`, when set, applies to every repository (or to `repos` when it names some); `each`
+ *  gives one repository its own detect and wins over `detect`. So one "production" covers many repositories. */
+export type EnvSetting = { name: string; production: boolean; repos: string[]; detect?: EnvDetect; each?: EnvEach[] };
+/** An environment as one repository sees it: always with the detect that repository uses. */
+export type EnvFor = { name: string; production: boolean; repos: string[]; detect: EnvDetect };
+export const envDetectFor = (e: EnvSetting, repo: string): EnvDetect | null =>
+  e.each?.find((x) => sameRepo(x.repo, repo))?.detect ?? (e.detect && (!e.repos.length || e.repos.some((r) => sameRepo(r, repo))) ? e.detect : null);
+export const envApplies = (e: EnvSetting, repo: string) => !!envDetectFor(e, repo);
+/** The environments one repository has, in the settings' order, each with the detect it uses there. */
+export const envsFor = (envs: EnvSetting[], repo: string): EnvFor[] =>
+  envs.flatMap((e) => { const detect = envDetectFor(e, repo); return detect ? [{ name: e.name, production: e.production, repos: [repo], detect }] : []; });
+/**
+ * Settings from before `each` had one environment per repository: the same name again and again, each limited to its
+ * repositories. Such an entry is folded into the first earlier one of the same name and production flag, as a detect
+ * per repository, only where no repository sees a difference: the entry names its repositories (no catch-all detect),
+ * none of them already has that environment, and no environment between the two applies to them (each repository keeps
+ * its environments in the same order). Anything else stays as it was.
+ */
+export function mergeEnvs(envs: EnvSetting[], maxEach = 60): EnvSetting[] {
+  const out: EnvSetting[] = [];
+  const contributions = (e: EnvSetting): EnvEach[] | null => {
+    if (e.detect && !e.repos.length) return null; // a catch-all: never folded
+    const list: EnvEach[] = [];
+    for (const x of [...(e.each ?? []), ...(e.detect ? e.repos.map((repo) => ({ repo, detect: e.detect! })) : [])]) if (!list.some((y) => sameRepo(y.repo, x.repo))) list.push(x);
+    return list.length ? list : null; };
+  for (const e of envs) {
+    const add = contributions(e), i = add ? out.findIndex((t) => t.name === e.name && t.production === e.production) : -1;
+    const fits = i >= 0 && (contributions(out[i])?.length ?? 0) + add!.length <= maxEach && add!.every((x, k) => !add!.slice(0, k).some((y) => sameRepo(y.repo, x.repo)) && !envApplies(out[i], x.repo) && out.slice(i + 1).every((m) => !envApplies(m, x.repo)));
+    if (!fits) { out.push(structuredClone(e)); continue; }
+    const t = out[i], own = contributions(t);
+    // the target becomes one environment with a detect per repository (its own catch-all detect, if any, stays)
+    out[i] = own && !(t.detect && !t.repos.length) ? { name: t.name, production: t.production, repos: [], each: [...own, ...structuredClone(add!)] } : { ...t, each: [...(t.each ?? []), ...structuredClone(add!)] };
+  }
+  return out;
+}
 /** A tag template: literal text around exactly one `{tag}`, e.g. `image: registry/app:{tag}`. No regular expression is
  *  taken from the settings; Studio matches the literal prefix, then a tag of [0-9A-Za-z._-]{1,128}, then the literal suffix. */
 export function templateProblem(t: string): string | null {
@@ -476,10 +511,13 @@ export function commitOfTag(tag: string): string | null {
  */
 export function tagCommit(text: string, template: string): string | null { const t = tagOf(text, template); return t ? commitOfTag(t) : null; }
 /** The tag itself (as tagCommit finds it), or null: what a release brief replaces on that line. */
-export function tagOf(text: string, template: string): string | null {
+export function tagOf(text: string, template: string): string | null { return tagAt(text, template)?.tag ?? null; }
+/** The tag tagOf finds and its line (0-based): a proposed template is kept only when this is the line it was built from. */
+export function tagAt(text: string, template: string): { tag: string; line: number } | null {
   if (templateProblem(template)) return null;
   const [pre, post] = template.split("{tag}");
-  for (const line of String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000)) {
+  const lines = String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000);
+  for (let n = 0; n < lines.length; n++) { const line = lines[n];
     if (line.length > 500) continue;
     for (let from = 0; from < line.length;) {
       const at = line.indexOf(pre, from); if (at < 0 || at >= line.length) break;
@@ -487,7 +525,7 @@ export function tagOf(text: string, template: string): string | null {
       if (post) { j = line.indexOf(post, i); if (j < 0) break; }
       else { j = i; while (j < line.length && TAG_CHAR.test(line[j])) j++; }
       const tag = line.slice(i, j);
-      if (isTag(tag)) return tag;
+      if (isTag(tag)) return { tag, line: n };
       from = at + 1;
     }
   }

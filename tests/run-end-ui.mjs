@@ -115,7 +115,7 @@ try {
   ok(!/ r\d\b/.test(await text(p, ".rt-ledger")) && /Ship\?, round 1/.test(await text(p, ".rt-ledger")), "the evidence ledger spells out where an entry comes from (node name, round), in Simple view", await text(p, ".rt-ledger"));
   ok(await p.evaluate(() => { const a = document.querySelector("[data-runview] .phead p a"); const d = document.createElement("span"); d.style.color = "var(--accent-text)"; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return !!a && getComputedStyle(a).color === c; }), "the workflow link uses the project's link colour");
   ok(await text(p, "[data-runview] [data-run-state]") === "Closed without merging" && await color(p, "[data-runview] [data-run-state]") !== green, "the run page reads Closed without merging, not in the success colour");
-  await p.goto(`${base}/#/workflows/cardy`); await seen(p, `[data-overlay-run="${CLOSED}"]`, 10000, "attached");
+  await p.goto(`${base}/#/workflows/cardy/advanced`); await seen(p, `[data-overlay-run="${CLOSED}"]`, 10000, "attached");
   { const o = await text(p, `[data-overlay-run="${CLOSED}"]`); ok(/Closed without merging/.test(o) && !/succeeded/.test(o), "the workflow's run picker names the run's state in the same words (no raw status)", o); }
   await p.goto(`${base}/#/board`); await seen(p, `[data-task="${CLOSED}"]`, 10000);
   ok(await p.getAttribute(`[data-task="${CLOSED}"]`, "data-group") === "done" && await text(p, `[data-task="${CLOSED}"] [data-run-state]`) === "Closed without merging" && await color(p, `[data-task="${CLOSED}"] [data-run-state]`) !== green, "the Board lists the closed run under Done today with the same word, not green");

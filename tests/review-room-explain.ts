@@ -183,7 +183,7 @@ X.select(id, lib.id);
 script.push(...[1, 2, 3].map((i) => [["explain_progress", { text: `still reading (${i})` }], ["mat_read", { path: "README.md" }]]));
 await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
 const run5 = await waitRun(X.view(id).runs.at(-1).n);
-ok(run5.status === "failed" && run5.why === "stalled" && /left the output unchanged/.test(run5.error) && run5.rounds.length === 3 && run5.rounds.every((x: any) => x.tools === 2), "three rounds in a row that leave the output unchanged stop the run, whatever tools they call (never an endless paid loop)", JSON.stringify(run5));
+ok(run5.status === "failed" && run5.why === "stalled" && run5.stalled === 3 && /left the output unchanged/.test(run5.error) && run5.rounds.length === 3 && run5.rounds.every((x: any) => x.tools === 2), "three rounds in a row that leave the output unchanged stop the run, whatever tools they call (never an endless paid loop)", JSON.stringify(run5));
 // one cap for every write into the output folder (text tools too)
 process.env.CREW_REVIEW_EXPLAIN_OUT_BYTES = "1000";
 script.push([["out_write", { path: "big.html", content: "x".repeat(1500) }], ["out_write", { path: "a.html", content: "x".repeat(600) }], ["out_write", { path: "b.html", content: "x".repeat(600) }], ["out_write", { path: "index.html", content: "<p>ok</p>" }], ["explain_done", { entry: "index.html", summary: "small" }]]);

@@ -29,7 +29,7 @@ try{
   ok(await p.locator('[data-workflow-rename-dialog]').count()===0,'Save closes the dialog and the list shows the new name');
   ok(versions('code-firstmate')===bytes,'a rename from the UI writes no definition version');
   // the editor header shows the rename and renames again; Enter submits
-  await p.locator('[data-wf="code-firstmate"]').click();await p.locator('[data-ed-name="code-firstmate"]').waitFor();
+  await p.locator('[data-wf="code-firstmate"]').click();await p.locator('[data-rail-wrap]').waitFor();await p.click('[data-rail-advanced]');await p.locator('[data-editor] [data-ed-name="code-firstmate"]').waitFor();
   ok(await text(p,'[data-ed-name="code-firstmate"]')==='My coding crew','the editor header shows the display name');
   await p.locator('.phead [data-workflow-rename="code-firstmate"]').click();await p.locator('[data-workflow-rename-input]').fill('Ship it');await p.keyboard.press('Enter');
   await p.waitForFunction(()=>document.querySelector('[data-ed-name="code-firstmate"]')?.textContent==='Ship it');ok(true,'Rename from the editor header updates it in place (Enter submits)');
