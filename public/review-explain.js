@@ -55,14 +55,14 @@ function ended(id, was) {
   const watching = onRoom(id) && active(id) && !document.hidden;
   if (!watching) { const msg = r.status === "done" ? (r.version ? T(`${r.skill.name}: v${r.version} is ready`, `${r.skill.name}：v${r.version} 好了`) : T(`${r.skill.name} answered your question`, `${r.skill.name} 回答了你的問題`)) : `${r.skill.name}: ${whyOf(r).text}`;
     try { toast(h("span", { "data-explain-toast": id }, msg, " ", h("a", { href: `#/room/${enc(id)}` }, T("Open the room", "打開審查室")))); } catch {} }
-  const q = X.queue.get(id); if (q && r.kind === "generate" && r.status === "done" && onRoom(id)) { X.queue.delete(id); X.shown.delete(id); queueMicrotask(() => X.send?.(q)); }
+  const q = X.queue.get(id); if (q && r.kind === "generate" && r.status === "done" && onRoom(id) && active(id)) { X.queue.delete(id); X.shown.delete(id); queueMicrotask(() => send(id, q)); }
   // the generation stopped or failed: the waiting question goes back into the ask box (nothing is asked, nothing is lost)
   else if (q && r.kind === "generate" && r.status !== "done") { X.queue.delete(id); if (!X.draft.get(id)) X.draft.set(id, q); const ta = document.querySelector("[data-explain-q]"); if (ta && !ta.value) ta.value = q; }
 }
 /** a question that waited for the first output, its run finished while the captain was away: asked on coming back to the room
  *  (the paid confirmation still comes first, in the chat) */
-function flushQueue(id) { const q = X.queue.get(id), st = state(id); if (!q || !onRoom(id) || !st || st.running != null || !latest(st) || !X.send) return;
-  X.queue.delete(id); X.shown.delete(id); queueMicrotask(() => X.send?.(q)); }
+function flushQueue(id) { const q = X.queue.get(id), st = state(id); if (!q || !onRoom(id) || !active(id) || !st || st.running != null || !latest(st)) return;
+  X.queue.delete(id); X.shown.delete(id); queueMicrotask(() => send(id, q)); }
 window.liveListen?.("review-explain", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (!d.card || !X.st.has(d.card)) return;
   // on the room, or a run it knew of still going elsewhere: read it (so its end is told even off the room)
   if (onRoom(d.card) || state(d.card)?.running != null) load(d.card); });
@@ -227,7 +227,8 @@ const dialogs = (r) => { if (X.pick || X.confirm) focusLater(); return [pickerDi
 function view(r) {
   const id = r.card.id, st = state(id);
   if (!st) return h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"));
-  queueMicrotask(() => { tickStart(); syncAsk(r, st); });
+  // shown with its skill: a question that waited for this room's first output goes now (once; behind its confirmation)
+  queueMicrotask(() => { tickStart(); syncAsk(r, st); flushQueue(id); });
   return h("div", { class: "rx-body", "data-explain-room": id }, rail(r, st), h("main", { class: "rx-stage" }, stage(r, st)), chat(r, st), dialogs(r));
 }
 /** show a version; one made by another skill switches the room to that skill (so the header, the chat and Generate agree) */
@@ -303,30 +304,34 @@ function syncAsk(r, st) {
   ta.disabled = m === "closed" || m === "none";
   ta.placeholder = m === "queue" ? T("Ask now: it is sent once the output is ready", "現在就可以問：產出好了就送出") : m === "none" ? T("Generate an output first", "先產生一份產出") : T("Ask about this explanation…", "問這份說明…");
 }
+/** Ask in room id: its own state, version, selection and draft, only while that room is the one shown and explained by a skill
+ *  (a question never goes to another room's /ask, whatever was drawn last). The paid confirmation comes back as an offer. */
+async function send(id, q, confirm, consent) {
+  const r = window.crewReviewRoomData?.(id); if (!r || !onRoom(id) || !active(id)) return;
+  const text = String(q ?? X.draft.get(id) ?? "").trim(); if (!text) return; const m = askMode(r, state(id));
+  // the first output is still being made: the question waits for it (sent when the run ends with a version)
+  if (m === "queue") { X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
+  if (m !== "ask") return;
+  const v = shownVersion(id); X.posting.add(`${id}/ask`); X.ask = null; refresh(id);
+  const s = X.sel.get(id);
+  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, selection: s ? { ...s, version: v.n } : null, ...(confirm ? { confirm, consent: !!consent } : {}) })); X.draft.delete(id); X.sel.delete(id); X.boxing = null;
+    const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; schedule(id); }
+  catch (e) { if (e.code === "confirm_required" && e.offer) { X.ask = { id, q: text, offer: e.offer }; want = "[data-explain-askok]"; } else X.err.set(id, bi(e.message)); }
+  finally { X.posting.delete(`${id}/ask`); refresh(id); }
+}
 function chat(r, st) {
   const id = r.card.id;
-  const send = async (q, confirm, consent) => { const text = String(q ?? X.draft.get(id) ?? "").trim(); if (!text) return; const st0 = state(id), m = askMode(window.crewReviewRoomData?.(id) || r, st0);
-    // the first output is still being made: the question waits for it (sent when the run ends with a version)
-    if (m === "queue") { X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector("[data-explain-q]"); if (ta) ta.value = ""; refresh(id); return; }
-    if (m !== "ask") return;
-    const v = shownVersion(id); X.posting.add(`${id}/ask`); X.ask = null; refresh(id);
-    const s = X.sel.get(id);
-    try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, selection: s ? { ...s, version: v.n } : null, ...(confirm ? { confirm, consent: !!consent } : {}) })); X.draft.delete(id); X.sel.delete(id); X.boxing = null;
-      const ta = document.querySelector("[data-explain-q]"); if (ta) ta.value = ""; schedule(id); }
-    catch (e) { if (e.code === "confirm_required" && e.offer) { X.ask = { id, q: text, offer: e.offer }; want = "[data-explain-askok]"; } else X.err.set(id, bi(e.message)); }
-    finally { X.posting.delete(`${id}/ask`); refresh(id); } };
-  X.send = send;
   if (readOnly()) return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st), h("p", { class: "rx-ro faint", "data-explain-readonly": "" }, T("Read only here: ask and run the skill on the Mac.", "這裡只能看：在 Mac 上追問和執行 skill。")));
   return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st),
     h("div", { class: "rx-ask" },
-      h("textarea", { "data-explain-q": "", rows: "3", "aria-label": T("Your question", "你的問題"), oninput: (e) => X.draft.set(id, e.target.value), onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } } }, X.draft.get(id) || ""),
+      h("textarea", { "data-explain-q": "", rows: "3", "aria-label": T("Your question", "你的問題"), oninput: (e) => X.draft.set(id, e.target.value), onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(id); } } }, X.draft.get(id) || ""),
       scope(r, st), askRow(r, st)));
 }
 function askRow(r, st) {
   const id = r.card.id, m = askMode(r, st), sk = shownSkill(id);
   const why = m === "answering" ? T("Wait for the answer to this question", "等這個問題回答完") : m === "busy" ? T("Wait for the skill to finish", "等 skill 做完") : m === "none" ? T("Generate an output first", "先產生一份產出") : "";
   return h("div", { class: "rx-row", "data-x-askrow": "" }, h("span", { class: "grow faint" }, why), h("span", { class: "faint" }, T("skill: ", "skill："), h("b", { "data-explain-skillname": sk?.id || "" }, sk?.name || "")),
-    h("button", { type: "button", class: "rr-chip lead", "data-explain-send": "", disabled: (m === "ask" || m === "queue") && !X.posting.has(`${id}/ask`) ? null : true, title: why, onclick: () => X.send?.() }, m === "queue" ? T("Ask when ready", "好了再問") : T("Ask", "問")));
+    h("button", { type: "button", class: "rr-chip lead", "data-explain-send": "", disabled: (m === "ask" || m === "queue") && !X.posting.has(`${id}/ask`) ? null : true, title: why, onclick: () => send(id) }, m === "queue" ? T("Ask when ready", "好了再問") : T("Ask", "問")));
 }
 function scope(r, st) {
   const id = r.card.id, s = X.sel.get(id), v = shownVersion(id);
@@ -366,7 +371,7 @@ function msgs(r, st) {
       a.offer.scripts?.run ? T(` Ask the next follow-ups here on this plan without confirming each, their scripts included (sandboxed${a.offer.scripts.network ? ", with network" : ""})`, ` 之後在這裡用同樣的設定追問時不用再確認，包括執行它的腳本（在沙盒裡${a.offer.scripts.network ? "、可以連網" : ""}）`)
         : T(" Ask the next follow-ups here on this plan without confirming each", " 之後在這裡用同樣的設定追問時不用再確認")),
     h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; refresh(id); focusLater("[data-explain-q]"); } }, T("Cancel", "取消")),
-      h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => X.send?.(a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並追問")))));
+      h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並追問")))));
   const err = X.err.get(id); if (err) out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), err));
   return h("div", { class: "rx-msgs", "data-x-msgs": "" }, out);
 }
@@ -399,7 +404,7 @@ function keptBox(id, s) {
   const W = L.el.clientWidth || 800, H = L.el.clientHeight || 600, right = r.x + r.w + 268 < W, left = Math.max(8, right ? r.x + r.w + 10 : Math.min(r.x, W - 268)), top = right ? Math.max(8, Math.min(r.y, H - 190)) : Math.min(r.y + r.h + 10, H - 190);
   const pop = h("div", { class: "rx-pop", role: "group", "aria-label": T("Ask about the boxed region", "問框起來的這塊"), "data-explain-pop": "", style: `left:${left}px;top:${Math.max(8, top)}px` },
     h("div", { class: "rx-pophead" }, h("b", {}, T("Ask about this region", "問框起來的這塊")), h("button", { type: "button", class: "rx-x", "aria-label": T("Clear the box", "取消框選"), onclick: () => clearSel(id) }, "✕")),
-    h("div", { class: "rx-chips" }, quick.map((q) => h("button", { type: "button", class: "rr-chip", "data-explain-quick": "", onclick: () => X.send?.(q) }, q))),
+    h("div", { class: "rx-chips" }, quick.map((q) => h("button", { type: "button", class: "rr-chip", "data-explain-quick": "", onclick: () => send(id, q) }, q))),
     h("button", { type: "button", class: "rx-own", onclick: () => focusLater("[data-explain-q]") }, T("…or type your own question", "…或自己打問題")));
   return [box, pop];
 }
@@ -436,9 +441,13 @@ function tick() {
   if (!slot) { if (L.el) { L.el.hidden = true; L.el.replaceChildren(); L.key = null; L.frame = null; L.video = null; } L.on = false; return; }
   const [id, n] = [slot.dataset.xSlot.split("/").slice(0, -1).join("/"), Number(slot.dataset.xSlot.split("/").at(-1))], v = state(id)?.versions.find((x) => x.n === n);
   if (v) mount(id, v);
-  // the layer never draws over the room's header: it is clipped to the stage's part of the window
-  const b = slot.getBoundingClientRect(), el = layerEl(), top = Math.max(b.top, document.querySelector(".rr-head")?.getBoundingClientRect().bottom ?? 0);
-  Object.assign(el.style, { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px`, clipPath: top > b.top ? `inset(${top - b.top}px 0 0 0)` : "" }); el.hidden = !!modal || !v || b.height < 4;
+  // the layer only ever draws (and takes clicks) where its slot is visible inside the room's scrolling body: clipped to the
+  // body's rect, below the room's header and inside the window; hidden once nothing of it is in view
+  const b = slot.getBoundingClientRect(), el = layerEl(), body = slot.closest(".rx-body")?.getBoundingClientRect(), head = document.querySelector(".rr-head")?.getBoundingClientRect();
+  const top = Math.max(b.top, body?.top ?? b.top, head?.bottom ?? 0, 0), bottom = Math.min(b.bottom, body?.bottom ?? b.bottom, innerHeight), shown = bottom - top >= 4;
+  Object.assign(el.style, { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px`,
+    clipPath: shown && (top > b.top || bottom < b.bottom) ? `inset(${top - b.top}px 0 ${b.bottom - bottom}px 0)` : "" });
+  el.hidden = !!modal || !v || b.height < 4 || !shown;
   requestAnimationFrame(tick);
 }
 function tickStart() { if (!L.on) { L.on = true; requestAnimationFrame(tick); } }

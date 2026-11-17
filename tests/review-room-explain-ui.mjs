@@ -316,12 +316,45 @@ try {
     await q.goto(`${base}/#/room/${ID}`); await q.waitForSelector("[data-explain-empty]", { timeout: 15000 });
     const zt = await q.$eval("[data-explain-empty]", (e) => e.textContent);
     ok(/安全時限/.test(zt) && !/safety limit/.test(zt), "zh-TW: why it stopped is said in Chinese (from the server's reason code)", zt);
-    const pick = await q.$eval("[data-explain-picker]", (e) => getComputedStyle(e).display).catch(() => "none");
+    // the picker is drawn with the header (state loaded), and hidden by the narrow layout: wait for both, then read it
+    await q.waitForSelector("[data-explain-picker]", { state: "attached", timeout: 10000 });
+    const pick = await q.waitForFunction(() => { const e = document.querySelector("[data-explain-picker]"); return e && getComputedStyle(e).display === "none" && e.getBoundingClientRect().width === 0; }, null, { timeout: 5000 }).then(() => "none", async () => q.$eval("[data-explain-picker]", (e) => getComputedStyle(e).display));
     ok(pick === "none", "at 390 the picker is not shown (no clipped label)", pick);
     await q.evaluate(() => { window.crewRemote.token = () => "phone"; render(); }); await q.waitForSelector("[data-explain-readonly]");
     ok(!(await q.$("[data-explain-q]")) && !(await q.$("[data-explain-again]")) && /在 Mac 上/.test(await q.$eval("[data-explain-readonly]", (e) => e.textContent)), "a paired phone reads only: no ask box, no Generate, a note says to use the Mac");
     await q.screenshot({ path: join(shots, "7-phone-zh.png") });
     await c2.close(); }
+
+  // ---------- two rooms: a question queued in room B is only ever asked in room B, never in the room drawn last ----------
+  { const ID_A = `PR-${sha("sample-org/other-kit").slice(0, 12)}-3`, c4 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await c4.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await c4.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const ROOM_A = { ...ROOM, card: { ...ROOM.card, id: ID_A, title: { en: "Pull request #3: Other" } }, subject: { ...ROOM.subject, room: ID_A, number: 3 } };
+    // room A already agreed to unconfirmed follow-ups: a question sent there by mistake would start a paid run
+    let B = { ...X, selected: { id: "walkthrough", v: 1 }, versions: [], consent: null, running: 5, runs: [run(5, "generate", "running")] };
+    const A = { ...X, selected: { id: "walkthrough", v: 1 }, versions: versions.slice(0, 1), consent: { plan: ASK_OFFER.hash }, running: null, runs: [run(1, "generate", "done", { version: 1 })] };
+    const asks = [];
+    await c4.route(new RegExp(`/api/review-room/(${ID}|${ID_A})(\\?open=1)?$`), (r) => r.fulfill({ json: r.request().url().includes(ID_A) ? ROOM_A : ROOM }));
+    await c4.route(/\/arrive$/, (r) => r.fulfill({ json: {} }));
+    await c4.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: B }));
+    await c4.route(new RegExp(`/api/review-room/${ID_A}/explain$`), (r) => r.fulfill({ json: A }));
+    await c4.route(new RegExp(`/api/review-room/${ID_A}/explain/cap`), (r) => r.fulfill({ status: 404, json: { error: "no" } }));
+    await c4.route(new RegExp(`/api/review-room/(${ID}|${ID_A})/explain/ask$`), (r) => { asks.push([r.request().url().includes(ID_A) ? "A" : "B", JSON.parse(r.request().postData() || "{}")]); r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: ASK_OFFER } }); });
+    await c4.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); B = { ...B, selected: b.skill ? { id: b.skill, v: 1 } : null }; r.fulfill({ json: B }); });
+    const w = await c4.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-progress]", { timeout: 15000 });
+    await w.fill("[data-explain-q]", "Question for B"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-queued]");
+    await w.click("[data-explain-tutor]"); await w.waitForSelector("[data-board]");
+    await w.evaluate((a) => { location.hash = `#/room/${a}`; }, ID_A); await w.waitForSelector(`[data-explain-room="${ID_A}"] [data-explain-q]`, { timeout: 15000 });
+    B = { ...B, running: null, versions: versions.slice(0, 1), runs: [run(5, "generate", "done", { version: 1 })] };
+    await w.evaluate((b) => window.crewRoomExplain.load(b), ID); await w.waitForTimeout(400);
+    ok(!asks.length, "room B's run ends while room A is shown: nothing is asked anywhere", JSON.stringify(asks));
+    await w.evaluate((b) => { location.hash = `#/room/${b}`; }, ID); await w.waitForSelector("[data-board]"); await w.waitForTimeout(400);
+    ok(!asks.length, "back in room B, still on the tutor's board: nothing is asked", JSON.stringify(asks));
+    await w.click("[data-explain-open]"); await w.click('[data-explain-skill="walkthrough"]'); await w.waitForSelector("[data-explain-askconfirm]", { timeout: 8000 });
+    ok(asks.length === 1 && asks[0][0] === "B" && asks[0][1].question === "Question for B" && !asks[0][1].confirm, "explained with the skill again, room B asks its own question, at its own /ask, behind its confirmation", JSON.stringify(asks));
+    await c4.close(); }
 
   // ---------- narrow windows (a phone-sized browser, a split-screen Mac): the chat keeps room, its confirmation is clickable ----------
   for (const width of [390, 900]) {
@@ -342,6 +375,17 @@ try {
     const ok1 = await hit("[data-explain-askok]"), ok2 = await hit("[data-explain-consent]"), list = await w.$eval("[data-x-msgs]", (e) => Math.round(e.getBoundingClientRect().height));
     ok(ok1.ok && ok2.ok && list >= 120, `at ${width} wide the chat's messages have room (${list}px) and its Confirm and ask and consent are clickable`, JSON.stringify({ ok1, ok2, list }));
     await w.click("[data-explain-consent]"); ok(await w.$eval("[data-explain-consent]", (e) => e.checked), `at ${width} wide the consent box takes the click`);
+    // scrolled anywhere, the output's layer never draws over the room's header (the title stays visible and clickable)
+    const over = [];
+    for (const frac of [0, 0.35, 0.7, 1]) {
+      await w.$eval(".rx-body", (e, f) => { e.scrollTop = (e.scrollHeight - e.clientHeight) * f; }, frac); await w.waitForTimeout(120);
+      over.push(await w.evaluate(() => { const L = document.querySelector("[data-x-layer]"), H = document.querySelector(".rr-head").getBoundingClientRect(), body = document.querySelector(".rx-body").getBoundingClientRect();
+        const r = L.getBoundingClientRect(), m = /inset\(([\d.]+)px 0px ([\d.]+)px 0px\)|inset\(([\d.]+)px 0px ([\d.]+)px\)/.exec(L.style.clipPath || ""), ct = m ? Number(m[1] ?? m[3]) : 0, cb = m ? Number(m[2] ?? m[4]) : 0;
+        const drawnTop = r.top + ct, drawnBottom = r.bottom - cb, title = document.querySelector(".rr-htitle b") || document.querySelector(".rr-head"), tb = title.getBoundingClientRect();
+        const atTitle = document.elementFromPoint(tb.left + Math.min(10, tb.width / 2), tb.top + tb.height / 2);
+        return { hidden: L.hidden, drawnTop: Math.round(drawnTop), headBottom: Math.round(H.bottom), bodyTop: Math.round(body.top), titleOk: !!atTitle && document.querySelector(".rr-head").contains(atTitle) && !L.contains(atTitle), drawnBottom: Math.round(drawnBottom) }; }));
+    }
+    ok(over.every((o) => (o.hidden || o.drawnTop >= o.headBottom - 1 && o.drawnTop >= o.bodyTop - 1 || o.drawnBottom <= o.drawnTop) && o.titleOk), `at ${width} wide, scrolled top to bottom, the output never draws over the header and its title stays clickable`, JSON.stringify(over));
     await w.screenshot({ path: join(shots, `8-narrow-${width}.png`), fullPage: true });
     if (width === 900) {
       // a question queued during a generation that then stops goes back into the ask box
