@@ -716,8 +716,9 @@ function discoverModal(o = {}) {
   const foot_ = () => { const n = picks().length, need = open().length; acceptBtn.disabled = saving || busy || !res || need > 0 || !n;
     acceptBtn.textContent = n ? T(`Accept ${n}`, `採用 ${n} 個`) : T("Accept", "採用");
     left.textContent = need ? T(`${need} need${need === 1 ? "s" : ""} a pick`, `還有 ${need} 個要選`) : res && !n ? T("Nothing ticked", "沒有勾任何一個") : ""; };
-  const run = async () => { busy = true; error = null; draw();
-    try { res = await postJ("/api/prs/envs/discover", { config: cfg.trim(), ref: ref.trim() }); choice.clear();
+  let asked = "";
+  const run = async () => { if (busy) return; busy = true; error = null; asked = ref.trim(); draw();
+    try { res = await postJ("/api/prs/envs/discover", { config: cfg.trim(), ref: asked }); choice.clear();
       for (const g of res.groups) choice.set(g.id, g.state === "ok" ? g.candidates[0].id : g.state === "set" || !g.candidates.some(usable) ? "skip" : null);
       for (const e of res.envs) prod[e.name] = e.production; }
     catch (e) { error = e.message; } finally { busy = false; draw(); } };
@@ -768,7 +769,7 @@ function discoverModal(o = {}) {
   async function accept() {
     if (!res || open().length) return; saving = true; foot_(); err.hidden = true;
     const ps = picks(), names = new Set([...ps.map((p) => p.env), ...res.envs.filter((e) => e.existing).map((e) => e.name)]);
-    try { PW.data = await postJ("/api/prs/envs/accept", { picks: ps, production: Object.fromEntries([...names].map((n) => [n, !!prod[n]])), config: res.config ? { repository: res.config.repository, ref: ref.trim() } : null, base });
+    try { PW.data = await postJ("/api/prs/envs/accept", { picks: ps, production: Object.fromEntries([...names].map((n) => [n, !!prod[n]])), config: res.config ? { repository: res.config.repository, ref: asked } : null, base });
       setCount(PW.data.count); done = true; close(); render(); flash(T(`Environments saved: ${ps.length} repository detection${ps.length === 1 ? "" : "s"} (nothing written to GitHub)`, `環境已儲存：${ps.length} 個 repo 偵測（沒有寫入 GitHub）`)); o.onDone?.(); }
     catch (e) { err.hidden = false; err.textContent = e.message; saving = false; foot_(); }
   }
@@ -802,7 +803,7 @@ function settingsModal(o = {}) {
   const drawEnvs = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i), "data-prs-env-name": e.name || null, "data-prs-env-new": e === added ? "" : null },
     h("input", { class: "input pw-envname", value: e.name || "", placeholder: T("name", "名稱"), "aria-label": T("Environment name", "環境名稱"), oninput: (ev) => { e.name = ev.target.value; } }),
     h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!e.production, onchange: (ev) => { e.production = ev.target.checked; } }), T(" production", " 正式")),
-    h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, [...KINDS, ...(e.each?.length || !e.detect?.kind ? [NONE] : [])].map(([k, l]) => h("option", { value: k, selected: (e.detect?.kind || "none") === k }, l))),
+    h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, [...KINDS, ...(e.each?.length || !e.detect?.kind || e.detect.kind === "none" ? [NONE] : [])].map(([k, l]) => h("option", { value: k, selected: (e.detect?.kind || "none") === k }, l))),
     ...fieldsOf(e.detect, "data-prs-env-field", firstEmpty(e)),
     e.detect?.kind && e.detect.kind !== "none" ? h("input", { class: "input", value: (e.repos || []).join(", "), placeholder: T("only these repositories (optional)", "只用在這些 repo（可省略）"), "aria-label": T("Repositories", "repo"), oninput: (ev) => { e.repos = ev.target.value.split(",").map((x) => x.trim()).filter(Boolean); } }) : null,
     h("button", { class: "pw-x", "aria-label": T("Remove this environment", "移除這個環境"), onclick: () => { envs.splice(i, 1); drawEnvs(); } }, icon("x")),
@@ -832,7 +833,7 @@ function settingsModal(o = {}) {
         h("p", { class: "pw-small", style: "margin:0" }, T("Studio reads every watched repository's GitHub deployments and, if you name one, a GitOps/config repository's manifests, and proposes each repository's environments in one table. Nothing is saved until you accept, and nothing is written to any repository.", "Studio 讀每個追蹤中 repo 的 GitHub deployment，和（若有指定）GitOps／設定 repo 裡的 manifest，把每個 repo 的環境列成一張表。按「採用」之前什麼都不存，也不會寫入任何 repo。")),
         h("div", {}, h("button", { class: "btn sm primary", "data-prs-envs-find": "", onclick: () => {
           if (JSON.stringify({ ...s, environments: envs }) !== JSON.stringify(base) && !confirm(T("Leave these settings without saving? Your changes here are dropped.", "不儲存就離開這些設定嗎？這裡的修改會被丟掉。"))) return;
-          saved = true; discoverModal({ onDone: () => settingsModal() }); } }, icon("wand"), T("Find environments automatically", "自動找環境")))),
+          saved = true; discoverModal({ onDone: () => settingsModal({ onSaved: o.onSaved, onCancel: o.onCancel }) }); } }, icon("wand"), T("Find environments automatically", "自動找環境")))),
       h("details", { class: "pw-adv", "data-prs-envs-advanced": "", ...(added || envs.some((e) => !e.each?.length) ? { open: true } : {}) },
         h("summary", {}, T("Advanced: edit environments by hand", "進階：手動編輯環境")), envBox,
         h("button", { class: "btn", "data-prs-env-add": "", onclick: () => { envs.push({ name: "", production: false, repos: [], detect: { kind: "deployment", environment: "" } }); drawEnvs(); } }, icon("plus"), T("Add an environment", "加入環境"))),

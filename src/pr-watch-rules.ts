@@ -469,15 +469,16 @@ export const envsFor = (envs: EnvSetting[], repo: string): EnvFor[] =>
  * none of them already has that environment, and no environment between the two applies to them (each repository keeps
  * its environments in the same order). Anything else stays as it was.
  */
-export function mergeEnvs(envs: EnvSetting[]): EnvSetting[] {
+export function mergeEnvs(envs: EnvSetting[], maxEach = 60): EnvSetting[] {
   const out: EnvSetting[] = [];
   const contributions = (e: EnvSetting): EnvEach[] | null => {
     if (e.detect && !e.repos.length) return null; // a catch-all: never folded
-    const list = [...(e.each ?? []), ...(e.detect ? e.repos.filter((r) => !(e.each ?? []).some((x) => sameRepo(x.repo, r))).map((repo) => ({ repo, detect: e.detect! })) : [])];
+    const list: EnvEach[] = [];
+    for (const x of [...(e.each ?? []), ...(e.detect ? e.repos.map((repo) => ({ repo, detect: e.detect! })) : [])]) if (!list.some((y) => sameRepo(y.repo, x.repo))) list.push(x);
     return list.length ? list : null; };
   for (const e of envs) {
     const add = contributions(e), i = add ? out.findIndex((t) => t.name === e.name && t.production === e.production) : -1;
-    const fits = i >= 0 && add!.every((x, k) => !add!.slice(0, k).some((y) => sameRepo(y.repo, x.repo)) && !envApplies(out[i], x.repo) && out.slice(i + 1).every((m) => !envApplies(m, x.repo)));
+    const fits = i >= 0 && (contributions(out[i])?.length ?? 0) + add!.length <= maxEach && add!.every((x, k) => !add!.slice(0, k).some((y) => sameRepo(y.repo, x.repo)) && !envApplies(out[i], x.repo) && out.slice(i + 1).every((m) => !envApplies(m, x.repo)));
     if (!fits) { out.push(structuredClone(e)); continue; }
     const t = out[i], own = contributions(t);
     // the target becomes one environment with a detect per repository (its own catch-all detect, if any, stays)

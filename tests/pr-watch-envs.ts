@@ -28,6 +28,8 @@ const J = (v: unknown) => JSON.stringify(v);
   ok(p("apps/shop/overlays/prod/deployment.yaml") === "production" && p("envs/stg/shop.yaml") === "staging" && p("charts/shop/values-dev.yaml") === "dev", "a directory or a file name part names the environment");
   ok(p("envs/pre-prod/shop.yaml") === "preprod" && p("envs/nonprod/shop.yaml") === null && p("apps/shop/base/deployment.yaml") === null, "pre-prod is not prod; nonprod and base name none");
   ok(p("prod/apps/shop/overlays/staging/x.yaml") === "staging", "the deepest segment that names an environment wins");
+  ok(p("staging/live-feed/deployment.yaml") === "staging" && p("prod/test-runner/values.yaml") === "production" && p("envs/nonprod-staging/app.yaml") === "staging", "a name that is exactly an environment wins over a service named live-feed or test-runner; non-prod drops only itself");
+  ok(E.envOfPath("apps/live-feed/overlays/x.yaml", [E.repoKey("acme/live-feed")]) === null && E.envOfPath("apps/live-feed/overlays/x.yaml")?.name === "production", "a directory named after a watched repository is no environment");
 }
 // ---------- images ----------
 {
@@ -83,6 +85,12 @@ const J = (v: unknown) => JSON.stringify(v);
   const oldView = (repo: string) => J(old.filter((e) => R.envApplies(e, repo)).map((e) => [e.name, e.production, e.detect]));
   ok(["acme/a", "acme/b", "acme/c", "acme/d", "acme/e", "acme/z"].every((r) => view(merged, r) === oldView(r)), "lossless: every repository sees the same environments, in the same order, with the same detects");
   ok(J(R.mergeEnvs(merged)) === J(merged) && J(cleanSettings({ environments: old }).environments) === J(merged), "folding twice changes nothing; the settings fold on the way in");
+  // a repository listed twice in an old entry, and a fold past 60 repositories: what comes out passes the checks again
+  const dup = cleanSettings({ environments: [{ name: "production", production: true, repos: ["acme/a", "ACME/a"], detect: f("a.yaml") }, { name: "production", production: true, repos: ["acme/b"], detect: f("b.yaml") }] });
+  ok(J(cleanSettings(dup).environments) === J(dup.environments) && dup.environments[0].each!.length === 2, "a repository listed twice is kept once; the folded settings pass the checks again", J(dup.environments));
+  const wide = Array.from({ length: 3 }, (_, k) => ({ name: "production", production: true, repos: Array.from({ length: 30 }, (_, i) => `acme/r${k}-${i}`), detect: f(`${k}.yaml`) }));
+  const w = cleanSettings({ environments: wide });
+  ok(w.environments.every((e) => (e.each?.length ?? 0) <= 60) && J(cleanSettings(w).environments) === J(w.environments) && w.environments.length === 2, "folding stops at 60 repositories in one environment", J(w.environments.map((e) => e.each?.length ?? e.repos.length)));
   const catchAll = R.mergeEnvs([{ name: "prod", production: true, repos: [], detect: { kind: "check", name: "a" } }, { name: "prod", production: true, repos: ["acme/a"], detect: { kind: "check", name: "b" } }]);
   ok(catchAll.length === 2, "an entry for every repository is never folded into (it would change what acme/a sees)");
 }
@@ -107,6 +115,9 @@ const J = (v: unknown) => JSON.stringify(v);
   const out = E.applyPicks(envs, [{ repo: "acme/a", env: "production", detect: { kind: "check", name: "new" } }, { repo: "acme/b", env: "production", detect: { kind: "check", name: "b" } }, { repo: "acme/a", env: "staging", detect: { kind: "check", name: "s" } }], { staging: false });
   ok(out.map((e) => e.name).join() === "dev,staging,production" && J(out[2].each) === J([{ repo: "acme/a", detect: { kind: "check", name: "new" } }, { repo: "acme/b", detect: { kind: "check", name: "b" } }]), "a pick replaces the repository's detect in that environment, adds another, and a new name goes in the usual order", J(out));
   ok(J(envs[1].each) === J([{ repo: "acme/a", detect: { kind: "check", name: "old" } }]), "the settings given are not changed in place");
+  const two: R.EnvSetting[] = [{ name: "production", production: true, repos: [], each: [{ repo: "acme/a", detect: { kind: "check", name: "a" } }] }, { name: "production", production: false, repos: ["acme/e"], detect: { kind: "check", name: "e" } }];
+  const t2 = E.applyPicks(two, [{ repo: "acme/b", env: "production", detect: { kind: "check", name: "b" } }], { production: true });
+  ok(t2[0].each!.length === 2 && t2[1].production === false && !t2[1].each, "a second environment of the same name (another production flag) is left as it is");
 }
 
 // ---------- the module against the fictional GitHub ----------

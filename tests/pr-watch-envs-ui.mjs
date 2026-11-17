@@ -53,7 +53,7 @@ try {
   ok(await G('northwind/checkout-api|production').getAttribute('data-state') === 'ok' && await G('northwind/checkout-api|production').locator('input[type=checkbox]').isChecked()
     && (await G('northwind/checkout-api|production').innerText()).includes('apps/checkout-api/overlays/prod/deployment.yaml:6'), 'checkout-api production: ticked, with the manifest path and line');
   ok(await G('northwind/checkout-api|production').locator(`a[href="https://github.com/${cfg}/blob/main/apps/checkout-api/overlays/prod/deployment.yaml#L6"]`).count() === 1, 'the evidence links the line on GitHub');
-  ok(await G('northwind/web-app|staging').getAttribute('data-state') === 'pick' && await G('northwind/web-app|staging').locator('.need, [data-prs-discover-pick]').count() >= 2, 'web-app staging: two manifests, a pick');
+  ok(await G('northwind/web-app|staging').getAttribute('data-state') === 'pick' && await G('northwind/web-app|staging').locator('[data-prs-discover-pick]').count() === 2, 'web-app staging: two manifests, a pick');
   const ledger = G('northwind/ledger|production');
   ok(await ledger.locator('[data-prs-discover-pick]:disabled').count() === 1 && /does not end in a commit/.test(await ledger.innerText()) && /only resembles/.test(await ledger.innerText()), 'ledger: the tag with no commit cannot be picked; the look-alike is marked weak');
   const need = await p.locator('[data-prs-discover-group][data-state="pick"]').count();

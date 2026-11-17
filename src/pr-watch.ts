@@ -92,7 +92,7 @@ async function call(api: string, token: string, method: "GET" | "POST" | "PATCH"
 /** A refresh reads at most this many times; past it the refresh fails and the last list stays (src: docs/units/pr-watch.md). */
 export const READ_BUDGET = 1500, MAX_ROWS = 60, MAX_MERGED = 40;
 /** Find environments automatically reads at most this many times, of which at most DISCOVER_FILES manifest files. */
-export const DISCOVER_BUDGET = 300, DISCOVER_FILES = 60;
+export const DISCOVER_BUDGET = 300, DISCOVER_FILES = 60, DISCOVER_MS = 120_000;
 export class OverBudget extends Error { constructor() { super(`a refresh would read GitHub more than ${READ_BUDGET} times: watch fewer repositories or pull requests`); } }
 const CLOSED_PER = 20, CLOSED_PAGES = 5; // closed pull requests read a refresh: at most 100, in pages small enough for 1 MB
 /** pages: up to max pages of 100; the list carries capped: true when GitHub has more past the last page read */
@@ -211,7 +211,7 @@ export function cleanSettings(v: any): Settings {
   for (const a of [...accounts, ...req]) if (!login(a)) throw new Error(`"${a}" is not a GitHub account name`);
   let perRepo = 0;
   const envs: R.EnvSetting[] = (Array.isArray(s.environments) ? s.environments : []).slice(0, MAX_ENVS).map((e: any) => {
-    const name = String(e?.name ?? "").trim(), repos = list(e?.repos, 30);
+    const name = String(e?.name ?? "").trim(), repos = [...new Map(list(e?.repos, 30).map((r) => [r.toLowerCase(), r] as const)).values()];
     if (!name || name.length > 40) throw new Error("Each environment needs a short name");
     for (const r of repos) if (!R.repoOk(r)) throw new Error(`"${r}" is not owner/repo`);
     const rawEach = Array.isArray(e?.each) ? e.each : [];
@@ -239,7 +239,7 @@ export function cleanSettings(v: any): Settings {
     const bad = F.contactProblem(x); if (bad) throw new Error(bad); return x; });
   const slackTeam = String(sd.slackTeam ?? "").trim() || null; if (slackTeam && !/^T[A-Z0-9]{2,20}$/.test(slackTeam)) throw new Error("A Slack workspace id looks like T0123ABCD");
   return { which: { mine: w.mine !== false, assigned: w.assigned !== false, reviewRequested: !!w.reviewRequested },
-    evidence: { accounts, checks: list(s.evidence?.checks), labels: list(s.evidence?.labels) }, requiredReviewers: req, environments: R.mergeEnvs(envs), groups: list(s.groups, 20, 30), shortForm: !!s.shortForm, messageLang: lang, opsRules, follow: { enabled: !!s.follow?.enabled }, sending: { targets, contacts, slackTeam } };
+    evidence: { accounts, checks: list(s.evidence?.checks), labels: list(s.evidence?.labels) }, requiredReviewers: req, environments: R.mergeEnvs(envs, MAX_ENV_REPOS), groups: list(s.groups, 20, 30), shortForm: !!s.shortForm, messageLang: lang, opsRules, follow: { enabled: !!s.follow?.enabled }, sending: { targets, contacts, slackTeam } };
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
@@ -1295,11 +1295,13 @@ export function createPrWatch(d: PrWatchDeps) {
     if (cfg && !R.repoOk(cfg)) throw Object.assign(new Error("The config repository is owner/repo"), { tw: "設定 repo 要寫成 owner/repo" });
     if (refIn && (refIn.length > 200 || /[\u0000- ~^:?*\\[]|\.\./.test(refIn))) throw Object.assign(new Error("The ref is a branch, tag or commit"), { tw: "ref 要是 branch、tag 或 commit" });
     const total = d.limits?.discoverReads ?? DISCOVER_BUDGET, budget = { left: total };
-    const g = reader(apiBase(), token, undefined, null, null, { budget });
-    const notes: { en: string; tw: string }[] = []; let over = false;
+    // the whole search ends within DISCOVER_MS: past it nothing more is read, what was read is proposed
+    const g = reader(apiBase(), token, AbortSignal.timeout(DISCOVER_MS), null, null, { budget });
+    const notes: { en: string; tw: string }[] = []; let over = false, late = false;
     // one read: past the budget nothing more is read (what was read stays); a rate limit fails the search
-    const step = async <T>(f: () => Promise<T>, fallback: T, onError?: (e: any) => void): Promise<T> => { if (over) return fallback;
-      try { return await f(); } catch (e) { if (e instanceof RateLimited) throw e; if (e instanceof OverBudget) { over = true; return fallback; } onError?.(e); return fallback; } };
+    const step = async <T>(f: () => Promise<T>, fallback: T, onError?: (e: any) => void): Promise<T> => { if (over || late) return fallback;
+      try { return await f(); } catch (e: any) { if (e instanceof RateLimited) throw e; if (e instanceof OverBudget) { over = true; return fallback; }
+        if (e?.name === "TimeoutError" || e?.name === "AbortError") { late = true; return fallback; } onError?.(e); return fallback; } };
     // the config repository: its tree, then the manifest files most likely to name a watched repository's image
     let config: { repository: string; ref: string } | null = null; const files: Env.FileSeen[] = [];
     if (cfg) {
@@ -1334,6 +1336,7 @@ export function createPrWatch(d: PrWatchDeps) {
     // repositories that look like a GitOps/config repository, offered when none is named (one read)
     const suggestions: string[] = cfg ? [] : await step(async () => { const l = await g.get("/user/repos?per_page=100&sort=pushed");
       return (Array.isArray(l) ? l : []).map((r: any) => String(r?.full_name ?? "")).filter((n: string) => R.repoOk(n) && Env.CONFIG_NAME.test(n.split("/")[1]) && !repos.some((x) => eq(x, n))).slice(0, 8); }, [] as string[]);
+    if (late) notes.push({ en: `Studio stopped reading after ${DISCOVER_MS / 1000} s: the table holds what it read.`, tw: `Studio 讀了 ${DISCOVER_MS / 1000} 秒就停了：表格只有已讀到的部分。` });
     if (over) notes.push({ en: `Studio stopped after ${total} reads, the most one search makes: the table holds what it read. Name the config repository's branch, or watch fewer repositories, and search again.`, tw: `Studio 讀了 ${total} 次（一次搜尋的上限）就停了：表格只有已讀到的部分。可以指定設定 repo 的 branch，或少追蹤一些 repo，再搜尋一次。` });
     const p = Env.propose(repos, state.settings.environments, deployments, files);
     const saved = state.envConfig?.repository && !cfg ? [state.envConfig.repository] : [];

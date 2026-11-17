@@ -12,6 +12,7 @@ import * as R from "./pr-watch-rules";
 /** A known environment: its name in the settings, whether it is production, where it sits in the order. */
 type Known = { name: string; production: boolean; rank: number };
 const KNOWN: Record<string, Known> = {};
+const norm = (s: string) => s.toLowerCase().replace(/[-_.]/g, "");
 const known = (name: string, production: boolean, rank: number, ...aliases: string[]) => { for (const a of [name, ...aliases]) KNOWN[a] = { name, production, rank }; };
 known("dev", false, 10, "develop", "development");
 known("sandbox", false, 15);
@@ -32,23 +33,26 @@ export function envOfName(raw: string): Known {
 }
 export const rankOf = (name: string) => KNOWN[name.toLowerCase()]?.rank ?? UNKNOWN_RANK;
 
-/** The environment a path names: the deepest directory or file name that is (or holds, split at - _ .) a known
- *  environment, e.g. overlays/prod/deployment.yaml, values-staging.yaml, envs/pre-prod/app.yaml. Null when none does. */
-export function envOfPath(path: string): Known | null {
-  const segs = String(path ?? "").split("/").filter(Boolean);
+/** The environment a path names, e.g. overlays/prod/deployment.yaml, values-staging.yaml, envs/pre-prod/app.yaml.
+ *  First a directory or file name that is exactly a known environment (the deepest one), so a service named live-feed
+ *  or test-runner under staging/ stays staging; only then a part of a name (split at - _ .), skipping names that hold a
+ *  watched repository's name (`skip`, normalized). pre-prod is preprod, not prod; non-prod names nothing (only that
+ *  part). Null when none does. */
+export function envOfPath(path: string, skip: string[] = []): Known | null {
+  const segs = String(path ?? "").split("/").filter(Boolean).map((s) => s.toLowerCase());
   if (segs.length) segs[segs.length - 1] = segs[segs.length - 1].replace(/\.(ya?ml|json)$/i, "");
+  for (let i = segs.length - 1; i >= 0; i--) if (KNOWN[segs[i]]) return { ...KNOWN[segs[i]] };
   for (let i = segs.length - 1; i >= 0; i--) {
-    const seg = segs[i].toLowerCase();
-    if (KNOWN[seg]) return { ...KNOWN[seg] };
-    // a compound name first (pre-prod is not prod), then each part
-    const compound = /(?:^|[-_.])(pre-?prod(?:uction)?|non-?prod(?:uction)?)(?:$|[-_.])/.exec(seg);
-    if (compound) { const c = compound[1].replace("-", ""); if (c.startsWith("non")) continue; return { ...KNOWN.preprod }; }
+    const n = norm(segs[i]); if (skip.some((r) => r.length >= 3 && n.includes(r))) continue;
+    const seg = segs[i].replace(/(?:^|[-_.])non-?prod(?:uction)?(?=$|[-_.])/g, "-");
+    if (/(?:^|[-_.])pre-?prod(?:uction)?(?:$|[-_.])/.test(seg)) return { ...KNOWN.preprod };
     for (const part of seg.split(/[-_.]/).reverse()) if (KNOWN[part]) return { ...KNOWN[part] };
   }
   return null;
 }
+/** A repository's name as envOfPath's `skip` takes it. */
+export const repoKey = (repo: string) => norm(String(repo).split("/").pop() ?? "");
 
-const norm = (s: string) => s.toLowerCase().replace(/[-_.]/g, "");
 /** How well an image reference (registry/path/name, no tag) names a repository: "strong" when its name or a path part
  *  is the repository's name (ignoring - _ . and case), "weak" when one holds the other (4 characters at least). */
 export function imageMatch(image: string, repo: string): "strong" | "weak" | null {
@@ -80,7 +84,7 @@ export function scanManifest(text: string, repo: string): Finding[] {
   const add = (n: number, pre: string, tag: string, post: string, strength: "strong" | "weak") => {
     const template = `${pre}{tag}${post}`; if (R.templateProblem(template)) return;
     const at = R.tagAt(text, template);
-    if (out.some((f) => f.template === template && f.line === n)) return;
+    if (out.some((f) => f.template === template && f.line === n + 1)) return;
     out.push({ line: n + 1, text: lines[n].trim().slice(0, 300), template, tag, strength, problem: !at || at.line !== n || at.tag !== tag ? "not-first" : R.commitOfTag(tag) ? null : "no-commit" }); };
   for (let n = 0; n < lines.length; n++) {
     const line = lines[n]; if (line.length > 500) continue;
@@ -121,14 +125,15 @@ export function propose(repos: string[], existing: R.EnvSetting[], deployments: 
   for (const d of deployments) { const k = envOfName(d.environment), g = groupOf(d.repo, k);
     g.candidates.push({ id: `${g.id}c${g.candidates.length + 1}`, source: "deployment", detect: { kind: "deployment", environment: d.environment }, strength: "strong", problem: null,
       evidence: { path: null, line: null, text: `GitHub environment ${d.environment}: latest deployment ${d.sha ? d.sha.slice(0, 7) : "?"}${d.ref ? ` (${d.ref.slice(0, 60)})` : ""}`, url: `https://github.com/${d.repo}/deployments` } }); }
+  const skip = repos.map(repoKey);
   for (const f of files) {
-    let any = false;
+    let any = false; const k = envOfPath(f.path, skip);
     for (const repo of repos) for (const x of scanManifest(f.text, repo)) {
-      const k = envOfPath(f.path); if (!k) { any = true; continue; }
+      if (!k) { any = true; continue; }
       const g = groupOf(repo, k), detect: R.EnvDetect = { kind: "file", repository: f.repository, path: f.path, template: x.template };
       if (g.candidates.some((c) => same(c.detect, detect))) continue;
       g.candidates.push({ id: `${g.id}c${g.candidates.length + 1}`, source: "file", detect, strength: x.strength, problem: x.problem, evidence: { path: f.path, line: x.line, text: x.text, url: blobUrl(f.repository, f.ref, f.path, x.line) } }); }
-    if (any && !envOfPath(f.path)) skipped.push({ path: f.path, why: "no-environment" });
+    if (any) skipped.push({ path: f.path, why: "no-environment" });
   }
   for (const g of groups.values()) {
     const usable = g.candidates.filter((c) => !c.problem);
@@ -148,13 +153,15 @@ export type Pick = { repo: string; env: string; detect: R.EnvDetect };
  */
 export function applyPicks(envs: R.EnvSetting[], picks: Pick[], production: Record<string, boolean>): R.EnvSetting[] {
   const out = structuredClone(envs);
+  // only the first environment of a name changes (the one the proposal showed): another of the same name with a
+  // different production flag, kept apart when old settings were folded, is left as it is
   for (const p of picks) {
     let e = out.find((x) => x.name === p.env);
     if (!e) { const k = envOfName(p.env); e = { name: p.env, production: production[p.env] ?? k.production, repos: [], each: [] };
       const at = out.findIndex((x) => rankOf(x.name) > rankOf(p.env)); out.splice(at < 0 ? out.length : at, 0, e); }
     e.each = [...(e.each ?? []).filter((x) => !R.sameRepo(x.repo, p.repo)), { repo: p.repo, detect: p.detect }];
   }
-  for (const [name, v] of Object.entries(production)) for (const e of out) if (e.name === name) e.production = !!v;
+  for (const [name, v] of Object.entries(production)) { const e = out.find((x) => x.name === name); if (e) e.production = !!v; }
   return out;
 }
 
