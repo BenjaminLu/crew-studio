@@ -351,7 +351,7 @@ function setupProd(repo, ids, lang) {
     h("span", { class: "pw-setprod-ic", title: T("No production environment reads this repository's image tag from a file. Set one up and the brief writes the line old → new.", "沒有 production 環境從檔案讀這個 repo 的 image tag。設定好之後 brief 會寫出舊 → 新那一行。") }, icon("alert", "ic sm")),
     h("span", { class: "x-grow" }, T(`${repo}: image tag not tracked`, `${repo}：image tag 未追蹤`)),
     h("button", { class: "btn sm primary", "data-prs-setprod": repo, onclick: () => settingsModal({ addEnv: { name: "production", production: true, repos: [repo], detect: { kind: "file", repository: "", path: "", template: "" } }, onSaved: () => openBrief(ids, { lang }), onCancel: () => openBrief(ids, { lang }) }) }, T("Set up production", "設定 production")),
-    h("button", { class: "btn sm", "data-prs-setprod-find": repo, onclick: () => discoverModal({ onDone: () => openBrief(ids, { lang }) }) }, icon("wand"), T("Find automatically", "自動找"))));
+    h("button", { class: "btn sm", "data-prs-setprod-find": repo, onclick: () => discoverModal({ onAccepted: () => openBrief(ids, { lang }), onCancel: () => openBrief(ids, { lang }) }) }, icon("wand"), T("Find automatically", "自動找"))));
 }
 async function openBrief(ids, o = {}) {
   PW.briefBusy = true; render(); let got;
@@ -694,88 +694,166 @@ function slackChecks() {
 // ---------- environments (docs/units/pr-watch.md "Find environments automatically") ----------
 const MAX_ENVS = 20;
 const detectWord = (d) => !d ? "—" : d.kind === "deployment" ? T(`GitHub environment ${d.environment}`, `GitHub 環境 ${d.environment}`) : d.kind === "file" ? `${d.repository} · ${d.path}` : d.kind === "check" ? T(`check run ${d.name}`, `check run ${d.name}`) : d.kind === "branch" ? T(`branch ${d.branch}`, `branch ${d.branch}`) : d.kind;
-// the environments as set, one line each: what it covers
+const reposWord = (n) => T(`${n} repositor${n === 1 ? "y" : "ies"}`, `${n} 個 repo`);
+const prodBadge = () => h("span", { class: "badge ok" }, T("live", "上線"));
+// the repositories the page watches (a single pull request's repository too)
+const watchedRepos = () => [...new Map([...(PW.data?.watch?.repos || []).map((w) => w.repo), ...(PW.data?.watch?.prs || []).map((x) => String(x.id || x).split("#")[0])].filter(Boolean).map((r) => [r.toLowerCase(), r])).values()];
+// the environments as set: one card each, with every repository it covers and how
 function envSummary(envs) {
   const set = envs.filter((e) => e.name);
-  if (!set.length) return null;
-  return h("div", { class: "pw-envsum", "data-prs-envs-summary": "" }, ...set.map((e) => { const n = e.each?.length || 0, all = e.detect?.kind && e.detect.kind !== "none" && !(e.repos || []).length;
-    return h("div", { class: "pw-check", "data-prs-envsum": e.name }, h("b", {}, e.name), e.production ? h("span", { class: "badge ok" }, T("production", "正式")) : null,
-      h("span", { class: "faint pw-small" }, [n ? T(`${n} repositor${n === 1 ? "y" : "ies"} with their own detection`, `${n} 個 repo 各自偵測`) : "", all ? T(`every repository: ${detectWord(e.detect)}`, `所有 repo：${detectWord(e.detect)}`) : e.detect?.kind && e.detect.kind !== "none" ? T(`${(e.repos || []).join(", ")}: ${detectWord(e.detect)}`, `${(e.repos || []).join("、")}：${detectWord(e.detect)}`) : ""].filter(Boolean).join(" · "))); }));
+  if (!set.length) return [];
+  return set.map((e) => { const each = e.each || [], all = e.detect?.kind && e.detect.kind !== "none";
+    const items = [...each.map((x) => [x.repo, detectWord(x.detect)]), ...(all ? [[(e.repos || []).length ? (e.repos || []).join(", ") : T("every other repository", "其他所有 repo"), detectWord(e.detect)]] : [])];
+    return h("div", { class: "pw-envcard", "data-prs-envsum": e.name },
+      h("div", { class: "pw-envcard-h" }, h("b", {}, e.name), e.production ? prodBadge() : null, h("span", { class: "faint pw-small" }, each.length ? reposWord(each.length) : all && !(e.repos || []).length ? T("every repository", "所有 repo") : reposWord((e.repos || []).length))),
+      items.length ? h("ul", { class: "pw-envcard-l" }, ...items.slice(0, 8).map(([r, w]) => h("li", {}, h("span", { class: "mono" }, r), " ", h("span", { class: "faint" }, w))),
+        items.length > 8 ? h("li", { class: "faint" }, T(`…${items.length - 8} more (Advanced)`, `…還有 ${items.length - 8} 個（進階）`)) : null) : null); });
 }
-const PROBLEM = { "no-commit": () => T("its tag does not end in a commit, so Studio cannot tell which commit runs", "它的 tag 結尾不是 commit，Studio 看不出跑的是哪個 commit"), "not-first": () => T("another line of the file would be read first: set this one by hand in Advanced", "檔案裡另一行會先被讀到：請在進階設定手動設") };
-// Find environments automatically: one review table of repository × environment; nothing is saved before Accept
+const PROBLEM = { control: () => T("the line holds a tab or another control character: set it by hand in Advanced", "這一行有 tab 或其他控制字元：請在進階設定手動設"), "no-commit": () => T("its tag does not end in a commit, so Studio cannot tell which commit runs", "它的 tag 結尾不是 commit，Studio 看不出跑的是哪個 commit"), "not-first": () => T("another line of the file would be read first: set this one by hand in Advanced", "檔案裡另一行會先被讀到：請在進階設定手動設") };
+const PHASE = { config: () => T("the config repository's files", "設定 repo 的檔案"), files: () => T("the manifests", "manifest"), deployments: () => T("GitHub deployments", "GitHub deployment") };
+/**
+ * Find environments automatically: ① where to look (each repository's GitHub deployments, a GitOps/config repository,
+ * the one used last or the first that looks like one already filled in), ② the search with its progress, ③ one table, a
+ * row per repository and a column per environment: green sure, amber pick one, grey not found. Nothing is saved before
+ * Accept. o.onAccepted after a save, o.onCancel when it closes without one.
+ */
 function discoverModal(o = {}) {
   const base = structuredClone(PW.data?.settings || {});
-  let cfg = PW.data?.envConfig?.repository || "", ref = PW.data?.envConfig?.ref || "", res = null, busy = false, error = null, saving = false, done = false;
-  const choice = new Map(), prod = {}; // group id → candidate id, "skip" or null (not picked yet); environment name → production
-  const box = h("div", { class: "pw-dl", "data-prs-discover": "" }), err = h("p", { class: "pw-err", role: "alert", hidden: true });
-  const acceptBtn = h("button", { class: "btn primary", "data-prs-discover-accept": "", onclick: () => accept() }, T("Accept", "採用")), left = h("span", { class: "faint pw-small", "data-prs-discover-left": "" });
+  let phase = "sources", src = null, cfg = PW.data?.envConfig?.repository || "", ref = PW.data?.envConfig?.ref || "", cfgOn = true, depOn = true;
+  let res = null, error = null, saving = false, done = false, progress = null, asked = "", showSet = false;
+  const choice = new Map(), rowOn = new Map(), prod = {}, prod0 = {};
+  const box = h("div", { class: "pw-dl pw-disc-box", "data-prs-discover": "", "data-phase": "sources" }), err = h("p", { class: "pw-err", role: "alert", hidden: true });
   const usable = (c) => !c.problem;
-  const picks = () => (res?.groups || []).flatMap((g) => { const id = choice.get(g.id), c = g.candidates.find((x) => x.id === id); return c ? [{ repo: g.repo, env: g.env, detect: c.detect }] : []; });
-  const open = () => (res?.groups || []).filter((g) => g.state === "pick" && choice.get(g.id) == null);
-  const foot_ = () => { const n = picks().length, need = open().length; acceptBtn.disabled = saving || busy || !res || need > 0 || !n;
-    acceptBtn.textContent = n ? T(`Accept ${n}`, `採用 ${n} 個`) : T("Accept", "採用");
-    left.textContent = need ? T(`${need} need${need === 1 ? "s" : ""} a pick`, `還有 ${need} 個要選`) : res && !n ? T("Nothing ticked", "沒有勾任何一個") : ""; };
-  let asked = "";
-  const run = async () => { if (busy) return; busy = true; error = null; asked = ref.trim(); draw();
-    try { res = await postJ("/api/prs/envs/discover", { config: cfg.trim(), ref: asked }); choice.clear();
+  const groupsOf = (repo) => (res?.groups || []).filter((g) => g.repo === repo);
+  const included = (g) => rowOn.get(g.repo) !== false;
+  const picks = () => (res?.groups || []).filter(included).flatMap((g) => { const c = g.candidates.find((x) => x.id === choice.get(g.id)); return c ? [{ repo: g.repo, env: g.env, detect: c.detect }] : []; });
+  const open = () => (res?.groups || []).filter((g) => included(g) && g.state === "pick" && choice.get(g.id) == null);
+  const flags = () => (res?.envs || []).filter((e) => e.existing && !!prod[e.name] !== !!prod0[e.name]).length;
+  // the footer: Accept with what it saves, or what is still needed (a link to the first pick)
+  const acceptBtn = h("button", { class: "btn primary", "data-prs-discover-accept": "", onclick: () => accept() });
+  const runBtn = h("button", { class: "btn primary", "data-prs-discover-run": "", onclick: () => run() });
+  const left = h("button", { class: "pw-linkbtn pw-warn pw-small", "data-prs-discover-left": "", onclick: () => box.querySelector('[data-prs-discover-group][data-need] input[type="radio"]')?.focus() });
+  const note = h("span", { class: "faint pw-small x-grow", "data-prs-discover-footnote": "" });
+  const cancelBtn = h("button", { class: "btn", "data-prs-discover-cancel": "", onclick: () => close() }, T("Cancel", "取消"));
+  const foot_ = () => {
+    const review = phase === "review" && !!res, n = new Set(picks().map((p) => p.repo)).size, need = review ? open().length : 0;
+    acceptBtn.hidden = !review; runBtn.hidden = review || phase === "scan";
+    runBtn.disabled = !depOn && !(cfgOn && cfg.trim()); runBtn.textContent = T("Start scanning", "開始掃描");
+    const off = saving || !review || need > 0 || !(n || flags()); acceptBtn.disabled = off;
+    acceptBtn.textContent = off || !n ? T("Accept", "接受") : T(`Accept ${reposWord(n)}`, `接受 ${reposWord(n)}`);
+    left.hidden = !need; left.textContent = T(`${need} need${need === 1 ? "s" : ""} a pick`, `還有 ${need} 個要挑`);
+    note.textContent = review ? T("Saved only in Studio's settings, never written to any repository.", "只存在 Studio 自己的設定，不會寫進任何 repo。") : phase === "sources" ? T("Reads GitHub only.", "只讀 GitHub。") : "";
+  };
+  const go = (p) => { phase = p; box.dataset.phase = p; draw(); };
+  async function run() {
+    if (phase === "scan") return; error = null; asked = ref.trim(); go("scan");
+    const poll = setInterval(async () => { try { progress = await getJ("/api/prs/envs/progress"); if (phase === "scan") draw(); } catch {} }, 400);
+    try { res = await postJ("/api/prs/envs/discover", { config: cfgOn ? cfg.trim() : "", ref: cfgOn ? asked : "", deployments: depOn });
+      choice.clear(); rowOn.clear(); showSet = false;
       for (const g of res.groups) choice.set(g.id, g.state === "ok" ? g.candidates[0].id : g.state === "set" || !g.candidates.some(usable) ? "skip" : null);
-      for (const e of res.envs) prod[e.name] = e.production; }
-    catch (e) { error = e.message; } finally { busy = false; draw(); } };
-  const short_ = (repo) => String(repo).split("/")[1] || repo;
-  const evidence = (c) => h("div", { class: "pw-disc-ev" }, h("span", { class: `badge${c.source === "file" ? "" : " human"}` }, c.source === "file" ? T("manifest", "manifest") : T("GitHub deployment", "GitHub deployment")),
-    c.evidence.path ? extLink(c.evidence.url, `${c.evidence.path}:${c.evidence.line}`, { class: "mono pw-small" }) : extLink(c.evidence.url, c.evidence.text, { class: "pw-small" }),
+      for (const e of res.envs) prod[e.name] = prod0[e.name] = e.production;
+      go("review"); box.querySelector("[data-prs-discover-summary]")?.focus(); }
+    catch (e) { res = null; error = e.message; go("sources"); }
+    finally { clearInterval(poll); progress = null; }
+  }
+  const evidence = (c) => h("div", { class: "pw-disc-ev" },
+    c.evidence.path ? extLink(c.evidence.url, `${c.evidence.path}:${c.evidence.line}`, { class: "mono pw-small" }) : extLink(c.evidence.url, T(c.evidence.text, c.evidence.tw || c.evidence.text), { class: "pw-small" }),
     c.evidence.path ? h("code", { class: "pw-disc-line" }, c.evidence.text) : null,
     c.strength === "weak" ? h("span", { class: "pw-small pw-warn" }, T("the image's name only resembles the repository's", "image 名稱只是和 repo 名相近")) : null,
     c.problem ? h("span", { class: "pw-small pw-warn" }, PROBLEM[c.problem]()) : null);
-  const row = (g) => {
-    const cur = choice.get(g.id), need = g.state === "pick" && cur == null;
-    let pick;
-    if (g.state === "set") pick = h("div", { class: "pw-disc-pick" }, h("span", { class: "faint pw-small" }, T("Already set this way", "已經這樣設定")), evidence(g.candidates.find((c) => JSON.stringify(c.detect) === JSON.stringify(g.current)) || g.candidates[0]));
+  const srcWord = (c) => c.source === "file" ? T("config repo", "設定 repo") : T("GitHub deployment", "GitHub deployment");
+  const cell = (repo, env) => {
+    const g = groupsOf(repo).find((x) => x.env === env), lbl = h("span", { class: "pw-disc-envlbl" }, env);
+    if (!g) return h("div", { class: "pw-disc-cell", role: "cell", "data-prs-discover-cell": `${repo}|${env}` }, lbl, h("span", { class: "pw-chip none" }, T("not found", "沒找到")));
+    const cur = choice.get(g.id), on = included(g), need = on && g.state === "pick" && cur == null;
+    const kids = [];
+    if (g.state === "set") { const c = g.candidates.find((x) => JSON.stringify(x.detect) === JSON.stringify(g.current)) || g.candidates[0]; kids.push(h("span", { class: "pw-chip set" }, T("already set", "已設定")), evidence(c)); }
     else if (g.state === "ok") { const c = g.candidates[0];
-      pick = h("div", { class: "pw-disc-pick" }, h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-discover-tick": g.id, checked: cur === c.id, onchange: (e) => { choice.set(g.id, e.target.checked ? c.id : "skip"); foot_(); } }), T(" Use this", " 採用")), evidence(c)); }
-    else pick = h("div", { class: "pw-disc-pick", role: "radiogroup", "aria-label": T(`${g.repo} ${g.env}: pick one`, `${g.repo} ${g.env}：選一個`) },
-      ...g.candidates.map((c) => h("label", { class: "pw-disc-cand" }, h("input", { type: "radio", name: `pick-${g.id}`, value: c.id, "data-prs-discover-pick": c.id, disabled: !usable(c), checked: cur === c.id, onchange: () => { choice.set(g.id, c.id); draw(); } }), evidence(c))),
-      h("label", { class: "pw-disc-cand" }, h("input", { type: "radio", name: `pick-${g.id}`, value: "skip", "data-prs-discover-skip": g.id, checked: cur === "skip", onchange: () => { choice.set(g.id, "skip"); draw(); } }),
-        h("span", { class: "pw-small" }, g.current ? T(`Keep what is set (${detectWord(g.current)})`, `保留現在的設定（${detectWord(g.current)}）`) : T("Leave it out", "不設定"))));
-    return h("div", { class: `pw-disc-row${need ? " need" : ""}`, role: "row", "data-prs-discover-group": `${g.repo}|${g.env}`, "data-state": g.state },
-      h("span", { role: "cell", class: "pw-disc-repo" }, extLink(ghRepo(g.repo), short_(g.repo), { title: g.repo })),
-      h("span", { role: "cell" }, h("b", {}, g.env), prod[g.env] ? h("span", { class: "badge ok", style: "margin-left:6px" }, T("production", "正式")) : null),
-      h("div", { role: "cell" }, pick)); };
+      kids.push(h("label", { class: "pw-disc-cand" }, h("input", { type: "checkbox", "data-prs-discover-tick": g.id, checked: cur === c.id, disabled: !on, "aria-label": T(`${repo} ${env}: use this`, `${repo} ${env}：採用`), onchange: (e) => { choice.set(g.id, e.target.checked ? c.id : "skip"); foot_(); } }), h("span", { class: "pw-chip" }, srcWord(c))), evidence(c)); }
+    else { const n = g.candidates.filter(usable).length;
+      kids.push(h("span", { class: "pw-chip amb" }, n > 1 ? T(`${n} possible, pick one`, `${n} 個可能，挑一個`) : T("check and pick", "確認後挑選")),
+        h("div", { class: "pw-disc-pick", role: "radiogroup", "aria-label": T(`${repo} ${env}: pick one`, `${repo} ${env}：挑一個`) },
+          ...g.candidates.map((c) => h("label", { class: "pw-disc-cand" }, h("input", { type: "radio", name: `pick-${g.id}`, value: c.id, "data-prs-discover-pick": c.id, disabled: !on || !usable(c), checked: cur === c.id, onchange: () => { choice.set(g.id, c.id); draw(); } }), h("span", { class: "pw-disc-opt" }, h("span", { class: "pw-chip" }, srcWord(c)), evidence(c)))),
+          h("label", { class: "pw-disc-cand" }, h("input", { type: "radio", name: `pick-${g.id}`, value: "skip", "data-prs-discover-skip": g.id, disabled: !on, checked: cur === "skip", onchange: () => { choice.set(g.id, "skip"); draw(); } }),
+            h("span", { class: "pw-small" }, g.current ? T(`Keep what is set (${detectWord(g.current)})`, `保留現在的設定（${detectWord(g.current)}）`) : T("Leave it out", "不設定"))))); }
+    return h("div", { class: `pw-disc-cell${need ? " need" : ""}`, role: "cell", "data-prs-discover-group": `${repo}|${env}`, "data-state": g.state, "data-need": need ? "" : null }, lbl, ...kids);
+  };
   const draw = () => {
-    const sug = (res?.configSuggestions || []).filter((x) => x.toLowerCase() !== cfg.trim().toLowerCase());
-    box.replaceChildren(...[
-      h("p", { class: "faint pw-small", style: "margin:0" }, T("A GitOps/config repository holds each service's manifests per environment (overlays/prod/…, values-staging.yaml). Name it once: Studio reads its file tree and the manifests that name an image built from each watched repository. Read only.", "GitOps／設定 repo 依環境存放各服務的 manifest（overlays/prod/…、values-staging.yaml）。指定一次就好：Studio 讀它的檔案樹，和寫著各個追蹤 repo 所建 image 的 manifest。只讀不寫。")),
-      h("div", { class: "pw-disc-cfg" },
-        h("label", { class: "field" }, h("span", { class: "lbl" }, T("GitOps/config repository (optional)", "GitOps／設定 repo（可不填）")), h("input", { class: "input mono", "data-prs-discover-config": "", value: cfg, placeholder: "owner/deploy-config", oninput: (e) => { cfg = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") run(); } })),
-        h("label", { class: "field" }, h("span", { class: "lbl" }, T("Branch (optional)", "branch（可不填）")), h("input", { class: "input mono", "data-prs-discover-ref": "", value: ref, placeholder: T("default branch", "預設 branch"), oninput: (e) => { ref = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") run(); } })),
-        h("div", {}, h("button", { class: "btn", "data-prs-discover-run": "", disabled: busy, onclick: run }, icon("search"), busy ? T("Reading GitHub…", "讀取 GitHub 中…") : T("Look again", "重新找")))),
-      sug.length ? h("div", { class: "pw-sug", "data-prs-discover-suggest": "" }, h("span", { class: "faint pw-small" }, T("Repositories that look like one:", "看起來像設定 repo 的：")),
-        ...sug.map((r) => h("button", { class: "badge", "data-prs-discover-suggest-repo": r, onclick: () => { cfg = r; run(); } }, "+ ", r))) : null,
-      error ? h("p", { class: "pw-err", role: "alert", "data-prs-discover-error": "" }, error) : null,
-      busy && !res ? h("p", { class: "faint" }, T("Reading GitHub…", "讀取 GitHub 中…")) : null,
-      ...(res ? [
-        h("p", { class: "faint pw-small", style: "margin:0", "data-prs-discover-summary": "" }, T(`${res.repos.length} watched repositor${res.repos.length === 1 ? "y" : "ies"}${res.config ? ` · ${res.config.repository} at ${res.config.ref}` : ""} · ${res.reads} of ${res.budget} reads`, `${res.repos.length} 個追蹤中的 repo${res.config ? ` · ${res.config.repository}（${res.config.ref}）` : ""} · 讀了 ${res.reads}／${res.budget} 次`)),
-        res.envs.length ? h("div", { class: "pw-sug", "data-prs-discover-prods": "" }, h("span", { class: "faint pw-small" }, T("Production environments:", "正式環境：")),
+    const kids = [];
+    if (phase === "sources") {
+      const sug = (src?.configSuggestions || []).filter((x) => x.toLowerCase() !== cfg.trim().toLowerCase());
+      kids.push(h("p", { class: "faint pw-small", style: "margin:0" }, T("Step 1 of 2: where your deployed versions are recorded. Pick once; Studio remembers it.", "第 1 步（共 2 步）：你們的部署版本記在哪裡。選一次，Studio 會記住。")),
+        error ? h("p", { class: "pw-err", role: "alert", "data-prs-discover-error": "" }, error) : null,
+        h("div", { class: "pw-src" },
+          h("label", { class: "pw-src-opt" }, h("input", { type: "checkbox", "data-prs-discover-src-deployments": "", checked: depOn, onchange: (e) => { depOn = e.target.checked; foot_(); } }),
+            h("span", {}, h("b", {}, T("Each repository's GitHub Deployments / Environments", "各 repo 自己的 GitHub Deployments / Environments")), h("small", {}, T("Repositories deployed by GitHub Actions have them. production, staging, dev and the like are recognised.", "用 GitHub Actions 部署的 repo 會有。production、staging、dev 這類名稱會自動判斷。")))),
+          h("div", { class: "pw-src-opt" }, h("input", { type: "checkbox", id: "pwSrcCfg", "data-prs-discover-src-config": "", checked: cfgOn, onchange: (e) => { cfgOn = e.target.checked; draw(); } }),
+            h("span", {}, h("label", { for: "pwSrcCfg" }, h("b", {}, T("A GitOps/config repository", "GitOps 設定 repo"))),
+              h("small", {}, T("One repository holding the deploy manifests (Kubernetes, kustomize overlays, Helm values). Studio reads the line that names each repository's image and its tag.", "一個專門放部署設定（k8s manifest、kustomize overlay、helm values）的 repo。Studio 讀寫著各 repo image 和 tag 的那一行。")),
+              h("span", { class: "pw-disc-cfg" },
+                h("input", { class: "input mono", "data-prs-discover-config": "", value: cfg, disabled: !cfgOn, placeholder: "owner/deploy-config", "aria-label": T("Config repository (owner/repo)", "設定 repo（owner/repo）"), oninput: (e) => { cfg = e.target.value; foot_(); }, onkeydown: (e) => { if (e.key === "Enter") run(); } }),
+                h("input", { class: "input mono", "data-prs-discover-ref": "", value: ref, disabled: !cfgOn, placeholder: T("branch (default)", "branch（預設）"), "aria-label": T("Branch", "branch"), oninput: (e) => { ref = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") run(); } })),
+              cfgOn && sug.length ? h("span", { class: "pw-sug", "data-prs-discover-suggest": "" }, h("span", { class: "faint pw-small" }, T("Looks like one:", "看起來像：")),
+                ...sug.map((r) => h("button", { class: "badge", "data-prs-discover-suggest-repo": r, onclick: () => { cfg = r; draw(); } }, r))) : null))));
+    } else if (phase === "scan") {
+      kids.push(h("div", { class: "pw-disc-scan", role: "status", "aria-live": "polite", "data-prs-discover-progress": "" },
+        h("b", {}, T("Scanning…", "掃描中…")),
+        h("span", { class: "pw-small" }, progress?.running ? T(`Reading ${PHASE[progress.phase]()}${progress.phase === "deployments" ? ` of ${progress.what}` : progress.what ? ` in ${progress.what}` : ""} · ${progress.reads} of ${progress.budget} reads`, `正在讀 ${progress.what ? `${progress.what} 的` : ""}${PHASE[progress.phase]()} · 讀了 ${progress.reads}／${progress.budget} 次`) : T("Starting…", "開始中…"))));
+    } else if (res) {
+      const repos = [...res.repos].sort((a, b) => a.localeCompare(b)), envs = res.envs.map((e) => e.name);
+      const found = repos.filter((r) => groupsOf(r).some((g) => g.state !== "set")), allSet = repos.filter((r) => groupsOf(r).length && groupsOf(r).every((g) => g.state === "set")), none = repos.filter((r) => !groupsOf(r).length);
+      const m = res.groups.filter((g) => g.state !== "set").length, k = res.groups.filter((g) => g.state === "pick").length;
+      for (const r of repos) if (!rowOn.has(r)) rowOn.set(r, true);
+      const cols = `28px minmax(120px,1fr) repeat(${Math.max(1, envs.length)}, minmax(170px,1.5fr))`;
+      const row = (repo, kind) => h("div", { class: `pw-mx-row${kind === "none" ? " none" : ""}`, role: "row", style: `grid-template-columns:${cols}`, "data-prs-discover-repo": repo },
+        h("span", { role: "cell" }, kind === "found" ? h("input", { type: "checkbox", "data-prs-discover-row": repo, checked: rowOn.get(repo) !== false, "aria-label": T(`Include ${repo}`, `包含 ${repo}`), onchange: (e) => { rowOn.set(repo, e.target.checked); draw(); } }) : null),
+        h("span", { role: "cell", class: "pw-mx-repo" }, extLink(ghRepo(repo), repo.split("/")[1] || repo, { title: repo }), kind === "none" ? h("span", { class: "faint pw-small" }, T("nothing found: set it by hand in Advanced", "沒找到，可到進階手動設")) : null),
+        ...envs.map((env) => cell(repo, env)));
+      kids.push(
+        h("div", { class: "pw-disc-sum" },
+          h("p", { class: "pw-small", style: "margin:0", tabindex: "-1", "data-prs-discover-summary": "" }, T(`Found ${reposWord(found.length)}' ${m} environment${m === 1 ? "" : "s"} · ${k} need${k === 1 ? "s" : ""} a pick · ${none.length} not found`, `找到 ${found.length} 個 repo 的 ${m} 個環境 · ${k} 個要你挑 · ${none.length} 個 repo 沒找到`),
+            res.config ? h("span", { class: "faint" }, ` · ${res.config.repository} @ ${res.config.ref}`) : null, h("span", { class: "faint" }, T(` · ${res.reads} of ${res.budget} reads`, ` · 讀了 ${res.reads}／${res.budget} 次`)), " ",
+            h("button", { class: "pw-linkbtn pw-small", "data-prs-discover-sources": "", onclick: () => go("sources") }, T("Change sources", "改來源"))),
+          ...(res.notes || []).map((n) => h("p", { class: "pw-small pw-warn pw-disc-note", "data-prs-discover-note": "" }, LX(n)))),
+        res.envs.length ? h("div", { class: "pw-sug", "data-prs-discover-prods": "" }, h("span", { class: "faint pw-small" }, T("Which columns are live (production):", "哪幾欄算上線（production）：")),
           ...res.envs.map((e) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-discover-prod": e.name, checked: !!prod[e.name], onchange: (ev) => { prod[e.name] = ev.target.checked; draw(); } }), ` ${e.name}`))) : null,
-        res.groups.length ? h("div", { class: "pw-disc", role: "table", "data-prs-discover-table": "" },
-          h("div", { class: "pw-disc-row pw-disc-head", role: "row" }, h("span", { role: "columnheader" }, T("Repository", "Repo")), h("span", { role: "columnheader" }, T("Environment", "環境")), h("span", { role: "columnheader" }, T("Found in", "依據"))),
-          ...res.groups.map(row))
-          : h("p", { class: "muted", "data-prs-discover-none": "" }, T("Nothing found: no GitHub environment with a deployment, and no manifest naming a watched repository's image. Name the config repository above, or set environments by hand in Advanced.", "什麼都沒找到：沒有部署過的 GitHub 環境，也沒有寫著追蹤 repo image 的 manifest。請在上面指定設定 repo，或到進階設定手動設定。")),
-        ...(res.notes || []).map((n) => h("p", { class: "pw-small pw-warn", "data-prs-discover-note": "" }, LX(n))),
-        res.skipped?.length ? h("details", { class: "pw-adv", "data-prs-discover-skipped": "" }, h("summary", { class: "pw-small" }, T(`${res.skipped.length} file${res.skipped.length === 1 ? "" : "s"} name an image but no environment`, `${res.skipped.length} 個檔案寫了 image 但看不出環境`)),
-          h("ul", { class: "pw-small mono" }, ...res.skipped.map((x) => h("li", {}, x.path)))) : null] : [])].filter(Boolean));
-    foot_(); };
+        res.groups.length || none.length ? h("div", { class: "pw-mx", role: "table", "data-prs-discover-table": "" },
+          h("div", { class: "pw-mx-row pw-mx-head", role: "row", style: `grid-template-columns:${cols}` }, h("span", { role: "columnheader" }), h("span", { role: "columnheader" }, T("Repository", "Repo")),
+            ...envs.map((e) => h("span", { role: "columnheader" }, e, prod[e] ? h("span", { class: "faint" }, T(" · live", "（上線）")) : null))),
+          ...found.map((r) => row(r, "found")),
+          allSet.length ? h("button", { class: "pw-linkbtn pw-small pw-mx-more", "data-prs-discover-showset": "", "aria-expanded": String(showSet), onclick: () => { showSet = !showSet; draw(); } }, showSet ? T(`Hide ${reposWord(allSet.length)} already set`, `收起 ${reposWord(allSet.length)}（已設定）`) : T(`Show ${reposWord(allSet.length)} already set`, `顯示 ${reposWord(allSet.length)}（已設定）`)) : null,
+          ...(showSet ? allSet.map((r) => row(r, "set")) : []),
+          ...none.map((r) => row(r, "none"))) : null,
+        h("div", { class: "pw-legend" }, h("span", {}, h("span", { class: "pw-chip" }, T("green", "綠")), T(" sure", " 確定")), h("span", {}, h("span", { class: "pw-chip amb" }, T("amber", "黃")), T(" pick one", " 要你挑")), h("span", {}, h("span", { class: "pw-chip none" }, T("grey", "灰")), T(" not found", " 沒找到"))),
+        res.skipped?.length ? h("details", { class: "pw-adv", "data-prs-discover-skipped": "" }, h("summary", { class: "pw-small" }, res.skipped.length === 1 ? T("1 file names an image but no environment", "1 個檔案寫了 image 但看不出環境") : T(`${res.skipped.length} files name an image but no environment`, `${res.skipped.length} 個檔案寫了 image 但看不出環境`)),
+          h("ul", { class: "pw-small mono" }, ...res.skipped.map((x) => h("li", {}, x.path)))) : null);
+    }
+    box.replaceChildren(...kids.filter(Boolean)); foot_(); };
   async function accept() {
     if (!res || open().length) return; saving = true; foot_(); err.hidden = true;
     const ps = picks(), names = new Set([...ps.map((p) => p.env), ...res.envs.filter((e) => e.existing).map((e) => e.name)]);
     try { PW.data = await postJ("/api/prs/envs/accept", { picks: ps, production: Object.fromEntries([...names].map((n) => [n, !!prod[n]])), config: res.config ? { repository: res.config.repository, ref: asked } : null, base });
-      setCount(PW.data.count); done = true; close(); render(); flash(T(`Environments saved: ${ps.length} repository detection${ps.length === 1 ? "" : "s"} (nothing written to GitHub)`, `環境已儲存：${ps.length} 個 repo 偵測（沒有寫入 GitHub）`)); o.onDone?.(); }
+      setCount(PW.data.count); done = true; close(); render();
+      const n = new Set(ps.map((p) => p.repo)).size;
+      flash(T(`Environments saved for ${reposWord(n)}; nothing written to GitHub. See them in Settings.`, `已為 ${reposWord(n)} 存好環境，沒有寫入 GitHub。可到設定查看。`)); o.onAccepted?.(); }
     catch (e) { err.hidden = false; err.textContent = e.message; saving = false; foot_(); }
   }
-  const close = pwModal(T("Find environments automatically", "自動找環境"), [box, err, foot(left, h("span", { class: "x-grow" }), h("button", { class: "btn", "data-prs-discover-cancel": "", onclick: () => close() }, T("Cancel", "取消")), acceptBtn)],
-    { wide: true, id: "discover", onClose: () => { if (!done) o.onDone?.(); } });
-  draw(); run();
+  // the keyboard stays in the dialog: Escape closes it wherever the focus is, Tab cycles inside it
+  const keys = (e) => { const dlg = document.querySelector('[data-prs-dialog="discover"]'); if (!dlg) return document.removeEventListener("keydown", keys, true);
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+    if (e.key !== "Tab") return; const f = [...dlg.querySelectorAll('a[href],button:not([disabled]):not([hidden]),input:not([disabled]),[tabindex="0"]')].filter((x) => x.offsetParent !== null); if (!f.length) return;
+    if (!dlg.contains(document.activeElement)) { e.preventDefault(); f[0].focus(); }
+    else if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
+    else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); } };
+  document.addEventListener("keydown", keys, true);
+  const close = pwModal(T("Find environments automatically", "自動找環境"), [box, err, foot(left, note, cancelBtn, runBtn, acceptBtn)],
+    { wide: true, id: "discover", onClose: () => { document.removeEventListener("keydown", keys, true); if (!done) o.onCancel?.(); } });
+  document.querySelector('[data-prs-dialog="discover"] .pw-mf')?.classList.add("pw-sticky");
+  draw(); box.querySelector("[data-prs-discover-config]")?.focus();
+  // the sources: the config repository used last, else the first that looks like one, already filled in
+  postJ("/api/prs/envs/sources", {}).then((v) => { src = v; if (!cfg && v.configSuggestions?.length) cfg = v.configSuggestions[0]; if (!cfg) cfgOn = false;
+    if (phase === "sources") { draw(); (box.querySelector("[data-prs-discover-config]:not([disabled])") || runBtn).focus(); } })
+    .catch((e) => { error = e.message; if (phase === "sources") draw(); });
 }
 // o.addEnv: an environment begun elsewhere (the brief's Set up production), added at the end with the focus on its first
 // empty field; o.onSaved runs after a save, o.onCancel when it closes without one (Cancel, Escape, the backdrop)
@@ -787,7 +865,7 @@ function settingsModal(o = {}) {
   const repoSug = () => added?.detect?.kind === "file" && !added.detect.repository ? [...new Set(envs.filter((e) => e !== added && e.detect?.kind === "file" && e.detect.repository).map((e) => e.detect.repository))] : [];
   const cb = (k, en, tw) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-which": k, checked: !!s.which?.[k], onchange: (e) => { s.which[k] = e.target.checked; } }), " ", T(en, tw));
   const csv = (key, label, get, set) => h("label", { class: "field" }, h("span", { class: "lbl" }, label), h("input", { class: "input", "data-prs-set": key, value: get().join(", "), oninput: (e) => set(e.target.value.split(",").map((x) => x.trim()).filter(Boolean)) }));
-  const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" });
+  const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" }), sumBox = h("div", { class: "pw-envsum", "data-prs-envs-summary": "" });
   const KINDS = [["deployment", T("GitHub Deployment to an environment", "GitHub Deployment 到某個環境")], ["check", T("A check run by name on the head", "head 上某個名稱的 check run")], ["branch", T("The latest deployment of a branch containing the head", "某個 branch 最新的部署包含這個 head")], ["file", T("An image tag in a file in a repository", "某個 repo 的檔案裡的 image tag")]];
   const NONE = ["none", T("Only each repository's own (below)", "只用下面各 repo 自己的偵測")];
   const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", "image: registry/app:{tag}"], ["ref", T("ref (optional)", "ref（可省略）")]] };
@@ -800,7 +878,8 @@ function settingsModal(o = {}) {
     h("select", { class: "input", "aria-label": T("How it is detected in this repository", "這個 repo 怎麼偵測"), onchange: (ev) => { x.detect = { kind: ev.target.value }; drawEnvs(); } }, KINDS.map(([k, l]) => h("option", { value: k, selected: x.detect?.kind === k }, l))),
     ...fieldsOf(x.detect, "data-prs-each-field"),
     h("button", { class: "pw-x", "aria-label": T("Remove this repository", "移除這個 repo"), onclick: () => { e.each.splice(j, 1); drawEnvs(); } }, icon("x")), hint(x.detect));
-  const drawEnvs = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i), "data-prs-env-name": e.name || null, "data-prs-env-new": e === added ? "" : null },
+  const drawEnvs = () => { sumBox.replaceChildren(...envSummary(envs)); drawRows(); };
+  const drawRows = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i), "data-prs-env-name": e.name || null, "data-prs-env-new": e === added ? "" : null },
     h("input", { class: "input pw-envname", value: e.name || "", placeholder: T("name", "名稱"), "aria-label": T("Environment name", "環境名稱"), oninput: (ev) => { e.name = ev.target.value; } }),
     h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!e.production, onchange: (ev) => { e.production = ev.target.checked; } }), T(" production", " 正式")),
     h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, [...KINDS, ...(e.each?.length || !e.detect?.kind || e.detect.kind === "none" ? [NONE] : [])].map(([k, l]) => h("option", { value: k, selected: (e.detect?.kind || "none") === k }, l))),
@@ -827,13 +906,17 @@ function settingsModal(o = {}) {
       csv("checks", T("Check runs that count", "算數的 check run"), () => s.evidence.checks, (v) => { s.evidence.checks = v; }),
       csv("labels", T("Labels that count", "算數的 label"), () => s.evidence.labels, (v) => { s.evidence.labels = v; }),
       csv("required", T("Reviewers who must review every pull request (for example a review bot)", "每個 PR 都要 review 的人（例如 review bot）"), () => s.requiredReviewers, (v) => { s.requiredReviewers = v; }),
-      h("h3", {}, T("Environments, in order", "環境（依順序）")), envs.length ? null : h("p", { class: "faint pw-small", "data-prs-envs-auto": "" }, T("None set: each repository's own GitHub environments that have a successful deployment are shown, on when the newest one contains the head. They are shown only; set environments here to make “deploy for testing” a step.", "沒有設定：顯示每個 repo 自己有成功部署過的 GitHub 環境，最新一次成功的 deployment 包含 head 就算在上面。這些只供顯示；要讓「部署去測」成為下一步，請在這裡設定環境。")),
-      envSummary(envs),
-      h("div", { class: "pw-propbox", "data-prs-envs-findbox": "" },
-        h("p", { class: "pw-small", style: "margin:0" }, T("Studio reads every watched repository's GitHub deployments and, if you name one, a GitOps/config repository's manifests, and proposes each repository's environments in one table. Nothing is saved until you accept, and nothing is written to any repository.", "Studio 讀每個追蹤中 repo 的 GitHub deployment，和（若有指定）GitOps／設定 repo 裡的 manifest，把每個 repo 的環境列成一張表。按「採用」之前什麼都不存，也不會寫入任何 repo。")),
-        h("div", {}, h("button", { class: "btn sm primary", "data-prs-envs-find": "", onclick: () => {
-          if (JSON.stringify({ ...s, environments: envs }) !== JSON.stringify(base) && !confirm(T("Leave these settings without saving? Your changes here are dropped.", "不儲存就離開這些設定嗎？這裡的修改會被丟掉。"))) return;
-          saved = true; discoverModal({ onDone: () => settingsModal({ onSaved: o.onSaved, onCancel: o.onCancel }) }); } }, icon("wand"), T("Find environments automatically", "自動找環境")))),
+      h("h3", {}, T("Environments, in order", "環境（依順序）")),
+      (() => { const n = watchedRepos().length, covered = new Set(envs.flatMap((e) => (e.each || []).map((x) => x.repo.toLowerCase()))).size;
+        return h("div", { class: "pw-envfind", "data-prs-envs-findbox": "" },
+          h("b", {}, T("Let Studio find where each repository deploys", "讓 Studio 自己找出每個 repo 部署到哪裡")),
+          h("button", { class: "btn primary", "data-prs-envs-find": "", disabled: !n, onclick: () => {
+            if (JSON.stringify({ ...s, environments: envs }) !== JSON.stringify(base) && !confirm(T("Leave these settings without saving? Your changes here are dropped.", "不儲存就離開這些設定嗎？這裡的修改會被丟掉。"))) return;
+            saved = true; discoverModal({ onCancel: () => settingsModal({ onSaved: o.onSaved, onCancel: o.onCancel }), onAccepted: () => o.onSaved?.() }); } }, icon("wand"), T("Find environments automatically", "自動找環境")),
+          h("span", { class: `pw-small ${n ? "faint" : "pw-warn"}`, "data-prs-envs-find-why": "" }, n ? T(`${reposWord(n)} watched · ${envs.length} environment${envs.length === 1 ? "" : "s"} set${covered ? `, covering ${reposWord(covered)}` : ""} · reads GitHub only; nothing is saved until you accept`, `追蹤 ${n} 個 repo · 設定了 ${envs.length} 個環境${covered ? `，涵蓋 ${covered} 個 repo` : ""} · 只讀 GitHub，按「接受」才存`)
+            : T("Watch a repository first: paste its address above the list.", "請先追蹤 repo：在清單上方貼網址。"))); })(),
+      envs.length ? null : h("p", { class: "faint pw-small", "data-prs-envs-auto": "" }, T("None set yet: each repository's own GitHub environments are shown on the rows, for show only.", "還沒設定：各列只顯示每個 repo 自己的 GitHub 環境，僅供參考。")),
+      sumBox,
       h("details", { class: "pw-adv", "data-prs-envs-advanced": "", ...(added || envs.some((e) => !e.each?.length) ? { open: true } : {}) },
         h("summary", {}, T("Advanced: edit environments by hand", "進階：手動編輯環境")), envBox,
         h("button", { class: "btn", "data-prs-env-add": "", onclick: () => { envs.push({ name: "", production: false, repos: [], detect: { kind: "deployment", environment: "" } }); drawEnvs(); } }, icon("plus"), T("Add an environment", "加入環境"))),
