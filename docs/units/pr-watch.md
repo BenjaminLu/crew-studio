@@ -103,16 +103,35 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     for at most 8, `github-pages` left out), as a "GitHub Deployment" detect;
   - with a GitOps/config repository the captain names (or picks: when none is named, the repositories the token can
     read whose name looks like one — deploy, config, gitops, manifests, k8s, helm, argo, flux, cluster, ops, … — are
-    offered, the last one used first): its default branch (or the branch given), resolved to its commit first
-    (`commits?sha=<branch>&per_page=1`, so a branch named `release/v1` works), its file tree at that commit
-    (`git/trees/<sha>?recursive=1`; when GitHub truncates it or it is over the 1 MB Studio reads, walked one folder per
-    read, at most 80 folders, those naming a watched repository or an environment first, any other folder after them,
-    and said so with how many were left; a config repository that cannot be read at all fails the search with why),
-    then at most 60 YAML/JSON files of 200 KB or less, those whose path names a watched
-    repository and an environment first, then a repository, then an environment, shallow first. In each file, a line
-    naming an image built from a repository — `registry/path/name:tag` on one line, or the name on one line and
-    `tag:`/`newTag:` on one of the next four (Helm values, kustomize `images`) — where the image's name or a path part is
-    the repository's name (case and `- _ .` ignored: strong) or one holds the other (4 characters at least: weak). The
+    offered, the last one used first) and, optionally, one **folder** of it to narrow the scan (e.g. `deploy/`): its
+    default branch (or the branch given), resolved to its commit first (`commits?sha=<branch>&per_page=1`, so a branch
+    named `release/v1` works), the folder's tree at that commit (`git/trees/<sha>?recursive=1`; when GitHub truncates it
+    or it is over the 1 MB Studio reads, every folder is walked, 30 a GraphQL read, at most 600 folders, those naming an
+    environment or a deploy layout first, and said so with how many were left; a config repository that cannot be read
+    at all fails the search with why). Only files under an environment are read: at most 400 YAML/JSON files of 200 KB
+    or less, production first, then the files that usually hold an image (patches, deployments, kustomizations, values),
+    shallow first, 40 files (or 600 KB) a GraphQL read. In each file every image line: `registry/path/name:tag` on one
+    line, or the name on one line (repository, name, newName, image; a kustomize newName wins) and `tag:`/`newTag:` on one
+    of the next four.
+  - **Who builds an image**, by evidence read together, not by its name: (1) what each watched repository's build
+    config publishes — its Drone config (a docker plugin step's `repo:`), its GitHub Actions workflows
+    (docker/build-push-action `tags:`, docker/metadata-action `images:`, `docker build -t`, `docker push`, `docker tag`),
+    templated parts (`${DRONE_TAG}`, `${{ env.REGISTRY }}`) taken out, compared by path with the registry ignored, else by
+    its last segment; a Dockerfile's `org.opencontainers.image.title` label is supporting evidence only (the root and
+    `.github/workflows` of every repository, two or three GraphQL reads for all); (2) the commit in the image's tag
+    (version-sha `1.0.28-9a59f6b`, branch-sha `master-6b7d4068`, a bare sha `da8137f1`) found in the repository
+    (`commits?sha=<short>&per_page=1`, the repositories its CI or its name point at first, then the others, at most 8);
+    (3) a version-only tag (`6.0.84`, `v5.1.16`) among the repository's git tags, with or without `v` — proof only when
+    neither of the others proves anything and one repository alone has it. One repository proven: strong. Proofs that
+    point at two repositories: each a weak candidate (a pick). Only names alike (shared words, one name holding the
+    other): weak. An image nothing ties to a watched repository (a database, a sidecar) is not proposed. The table shows
+    which proofs matched under each cell (builds X (path:line) · commit abc in the repository · tag v6.0.84).
+  - A repository whose image runs as several services in one environment (one image, many service folders): every one
+    of those manifests is its detect for that environment (`files`), and the environment has a merge when **every**
+    manifest runs it (one lagging service keeps it not live). A line of the same image Studio cannot read a commit from
+    (a version no git tag has, a second line read first) is shown but does not make the cell a pick.
+  - Live with a version-only tag: a refresh resolves the tag through the repository's git tags (three pages, once a
+    refresh) to its commit before checking that it contains the merge commit.
     template is the line from its key to the tag, `{tag}` for the tag, the closing quote kept (a comment is not). The
     environment is the deepest directory or file-name part that names one: prod, production, prd, live → production;
     staging, stage, stg → staging; dev, develop, development → dev; qa; test; uat; sandbox; preprod, pre-prod,
@@ -134,7 +153,7 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     detect in the environment of that name (a name not set yet is added in the usual order dev … staging … preprod …
     production), and the config repository is remembered. Nothing is saved before it, and nothing is ever written to a
     repository: discovery reads with GET only.
-  - Budget: at most 300 reads a search (60 of them files, 80 folders when walking) and 120 s; past it the search stops reading, proposes what it read and
+  - Budget: at most 600 reads a search (manifests and folders come many to a GraphQL read) and 180 s; past it the search stops reading, proposes what it read and
     says so. A rate limit fails the search with a message. Only the board's captain runs it (no agent CLI tool).
 - **Release groups**: names; each row may be put in one.
 - The short same-repository form `Depends-on: #<n>` in the block (off by default), and the language of the drafted message.

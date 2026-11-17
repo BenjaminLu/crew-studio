@@ -448,7 +448,12 @@ export function nextStep(p: StepInput): Step {
 // ---------- environments ----------
 /** "deployed" is never a setting: Studio uses it for a repository's own GitHub environments when none are set (the
  *  environment's latest successful deployment contains the head). */
-export type EnvDetect = { kind: "deployed"; environment: string } | { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; template: string; ref?: string };
+export type EnvDetect = { kind: "deployed"; environment: string } | { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; template: string; ref?: string }
+  /** several manifests, one per service a repository is deployed as: the environment has a commit when every one runs it */
+  | { kind: "files"; files: EnvFile[] };
+export type EnvFile = { repository: string; path: string; template: string; ref?: string };
+/** The manifests a detect reads (none for the kinds that read no file). */
+export const filesOf = (d: EnvDetect): EnvFile[] => d.kind === "file" ? [{ repository: d.repository, path: d.path, template: d.template, ...(d.ref ? { ref: d.ref } : {}) }] : d.kind === "files" ? d.files : [];
 /** One repository's own way to detect an environment (a GitOps file per service, a GitHub environment named differently). */
 export type EnvEach = { repo: string; detect: EnvDetect };
 /** One named environment. `detect`, when set, applies to every repository (or to `repos` when it names some); `each`
