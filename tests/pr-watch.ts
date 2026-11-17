@@ -572,7 +572,7 @@ try {
 // ---------- generic: no organisation, repository, team or account name in the feature's source ----------
 {
   const root = join(import.meta.dir, "..");
-  const files = ["src/pr-watch.ts", "src/pr-watch-rules.ts", "public/prs.js", "public/prs.css", "workflows/v2/pr-watch-apply-depends.wf.yaml"];
+  const files = ["src/pr-watch.ts", "src/pr-watch-rules.ts", "src/pr-watch-envs.ts", "public/prs.js", "public/prs.css", "workflows/v2/pr-watch-apply-depends.wf.yaml"];
   const names = ["northwind", "checkout-api", "web-app", "platform-issues", "skipper", "qa-lin", "review-bot", "rel-ray", "payments", "ledger", "mobile", "infra", "dana"];
   const hits: string[] = [];
   for (const f of files) { const t = readFileSync(join(root, f), "utf8").toLowerCase();

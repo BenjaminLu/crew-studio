@@ -114,7 +114,9 @@ export function fixtureData() {
       ...(o.base ? { base: o.base } : {}), ...(o.headRef ? { headRef: o.headRef } : {}) });
   // each repository's default branch (GitHub's base.repo.default_branch and GET /repos/<repo>): "main" unless set here
   const defaultBranch: Record<string, string> = {};
-  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi, more, defaultBranch };
+  // the repositories the token can read (GET /user/repos, newest push first): offered as a config repository by name
+  const userRepos: string[] = [];
+  return { prs, issues, rules, teams, teamIds, deployments, contains, files, head, find, envs, merge, tags, redCi, more, defaultBranch, userRepos };
 }
 
 export function prWatchGitHub(data = fixtureData()) {
@@ -128,7 +130,7 @@ export function prWatchGitHub(data = fixtureData()) {
   // GET answers carry an ETag; a matching If-None-Match gets a 304 (counted in notModified)
   let notModified = 0;
   // knobs: a PATCH whose kept body differs from what was sent, a slow GET of one pull request, an unreadable CODEOWNERS
-  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false, noDefaultBranch: false };
+  const knobs = { tamper: false, slowPull: null as null | { path: string; ms: number }, codeownersFail: false, normalizeOnPatch: false, reviewsFail: null as null | number, hugeClosed: false, noDefaultBranch: false, treeTruncated: false };
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const res = await answer(req);
     if (req.method !== "GET" || res.status !== 200) return res;
@@ -147,6 +149,7 @@ export function prWatchGitHub(data = fixtureData()) {
       return json({ data: { repository: { pullRequest: pr ? { commits: { nodes: [{ commit: { oid: pr.github?.ciOnOlderHead ? pr.commits[0].sha : data.head(pr), statusCheckRollup: pr.github?.ci ? { state: pr.github.ci } : pr.checks?.length ? { state: pr.checks.some((c) => c.conclusion === "failure") ? "FAILURE" : "SUCCESS" } : null } }] }, reviewDecision: pr.github?.reviewDecision ?? null, mergeStateStatus: pr.github?.mergeState ?? "BLOCKED",
         reviewRequests: { nodes: (pr.github?.requested ?? []).map((x: string) => x.includes("/") ? { requestedReviewer: { __typename: "Team", slug: x.split("/")[1], organization: { login: x.split("/")[0] } } } : { requestedReviewer: { __typename: "User", login: x } }) },
         closingIssuesReferences: { nodes: (pr.closing ?? []).map((c) => ({ number: c.number, title: c.title, state: c.state, url: `https://github.com/${c.repo}/issues/${c.number}`, repository: { nameWithOwner: c.repo } })) } } : null } } }); }
+    if (method === "GET" && p === "/user/repos") return json(page(data.userRepos.map((full_name) => ({ full_name })), q));
     let m = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(p); if (!m) { if ((m = /^\/teams\/(\d+)$/.exec(p))) { const t = data.teamIds[m[1]]; return t ? json({ slug: t.split("/")[1], organization: { login: t.split("/")[0] } }) : nf(); }
       if ((m = /^\/orgs\/([^/]+)\/teams\/([^/]+)\/members$/.exec(p))) { const t = data.teams[`${m[1]}/${m[2]}`]; return t ? json(page(t.map((login) => ({ login })), q)) : nf(); } unknown.push(`${method} ${p}`); return nf(); }
     const repo = `${m[1]}/${m[2]}`, rest = m[3] ?? "";
@@ -178,6 +181,10 @@ export function prWatchGitHub(data = fixtureData()) {
       if (path.endsWith("CODEOWNERS") && knobs.codeownersFail) return json({ message: "Server Error" }, 500);
       const text = path.endsWith("CODEOWNERS") ? (path === ".github/CODEOWNERS" ? data.rules[repo]?.codeowners : undefined) : data.files[`${repo}/${path}`];
       return text == null ? nf() : json({ type: "file", encoding: "base64", size: text.length, content: Buffer.from(text).toString("base64") }); }
+    // a repository's file tree: every file of `files` under it (each a blob with its size)
+    if ((k = /^\/git\/trees\/(.+)$/.exec(rest)) && q.get("recursive") === "1") { const pre = `${repo}/`, paths = Object.keys(data.files).filter((f) => f.startsWith(pre));
+      if (!paths.length) return nf();
+      return json({ sha: sha(`${repo}-tree`), truncated: knobs.treeTruncated, tree: paths.map((f) => ({ path: f.slice(pre.length), type: "blob", size: data.files[f].length })) }); }
     if (rest === "/tags") return json((data.tags[repo] ?? []).map((t) => ({ name: t.name, commit: { sha: t.sha } })));
     if ((k = /^\/commits\/([0-9a-f]{40})\/status$/.exec(rest))) return json({ state: data.redCi.includes(k[1]) ? "failure" : "success", total_count: 1 });
     if (rest === "/environments") return json({ environments: (data.envs[repo] ?? []).map((name) => ({ name })) });
@@ -205,3 +212,24 @@ export const fixtureSettings = {
   ],
   groups: ["A", "B"], shortForm: false, messageLang: null,
 };
+
+/** A GitOps/config repository (northwind/deploy-config, invented) for Find environments automatically: per-service
+ *  overlays per environment, a kustomize newTag, two manifests naming web-app in staging (a pick), a Helm values tag that
+ *  ends in no commit and a look-alike image (ledger-tools) for ledger, a base manifest under no environment, a README.
+ *  Its production tag for checkout-api ends in #18's head, which contains #23's merge commit. */
+export function addDeployConfig(D: ReturnType<typeof fixtureData>, cfg = "northwind/deploy-config") {
+  const ca = "northwind/checkout-api", t18 = D.head(D.find(ca, 18)!).slice(0, 12), wa = D.head(D.find("northwind/web-app", 30)!);
+  Object.assign(D.files, {
+    [`${cfg}/apps/checkout-api/base/deployment.yaml`]: `spec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/checkout-api:latest\n`,
+    [`${cfg}/apps/checkout-api/overlays/prod/deployment.yaml`]: `spec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: registry.example/checkout-api:v1.4.0-${t18}\n`,
+    [`${cfg}/apps/checkout-api/overlays/staging/deployment.yaml`]: `containers:\n  - image: registry.example/checkout-api:main-${sha("stg").slice(0, 7)}\n`,
+    [`${cfg}/apps/web-app/overlays/production/kustomization.yaml`]: `resources:\n  - ../../base\nimages:\n  - name: registry.example/web-app\n    newTag: "${wa}"\n`,
+    [`${cfg}/apps/web-app/overlays/stg/deployment.yaml`]: `image: registry.example/web-app:${sha("w1").slice(0, 9)}\n`,
+    [`${cfg}/legacy/stg/web-app.yaml`]: `image: registry.example/web-app:${sha("w2").slice(0, 9)}\n`,
+    [`${cfg}/apps/ledger/overlays/prod/values.yaml`]: `image:\n  repository: registry.example/ledger\n  tag: 1.2.0\n`,
+    [`${cfg}/apps/ledger-tools/overlays/prod/deployment.yaml`]: `image: registry.example/ledger-tools:${sha("lt").slice(0, 10)}\n`,
+    [`${cfg}/README.md`]: "# deploy config\n",
+  });
+  D.userRepos.push(cfg, ca, "northwind/notes", "northwind/cluster-ops");
+  return cfg;
+}
