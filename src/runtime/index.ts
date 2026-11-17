@@ -389,6 +389,11 @@ export function createRuntime(d: RuntimeDeps) {
   const roomChecks = new Map<string, number>();
   async function handle(req: Request, url: URL, who: { kind: string }, writing: boolean): Promise<Response | null> {
     const p = url.pathname;
+    // a review room's explainer output (src/domain/review-explain.ts): a version's page for its sandboxed frame, whose opaque origin
+    // sends no cookie: the short-lived capability in the path is the only credential, and the page runs under the output policy
+    { const x = !writing && /^\/rrx\/([0-9]{10,16}\.[0-9a-f]{32})\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/(\d{1,6})\/(.{1,400})$/.exec(p);
+      if (x) { const rr = engine.reviewRoom; if (!rr) return new Response("not found", { status: 404 }); let rel = ""; try { rel = decodeURIComponent(x[4]); } catch { return new Response("bad path", { status: 400 }); } return rr.explain.page(x[1], x[2], x[3], rel); }
+      if (!writing && p.startsWith("/rrx/")) return new Response("invalid or expired capability", { status: 401 }); }
     if (!/^\/api\/(workflow-packages|workflow-names|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) {
       if(p.startsWith('/api/workflow-packages')){
@@ -802,6 +807,30 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing || roomVoice[2] || req.method !== "POST") return json({ error: "POST /api/review-room/<room>/voice {text, lang, mix}" }, 405);
         if (who.kind !== "desktop") return json({ error: "The local voice speaks on this Mac", code: "desktopOnly" }, 403);
         try { return json(await rr.localVoice(roomVoice[1], b?.text, b?.lang, b?.mix, req.signal)); } catch (e: any) { return fail(e); } }
+      // ---------- "Explain with" (src/domain/review-explain.ts): the room presented by one of the captain's own skills. Reads on any
+      // authenticated page; a run (a generation, a follow-up) is paid and confirmed, started only by the captain on this Mac ----------
+      if (p === "/api/review-room/explain/settings") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        if (!writing) return json(rr.explain.settings());
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac changes the explainer's settings", code: "desktopOnly" }, 403);
+        try { return json(rr.explain.setSettings(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
+      const xr = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/explain(?:\/(offer|cap|select|generate|ask|stop|media))?(?:\/(\d{1,6})\/(.{1,400}))?$/.exec(p);
+      if (xr) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); const X = rr.explain, id = xr[1], op = xr[2] ?? "";
+        const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
+        try {
+          if (!writing) {
+            if (op === "" && !xr[3]) return json(X.view(id));
+            if (op === "offer" && !xr[3]) return json(X.offer(id, url.searchParams.get("skill"), url.searchParams.get("kind"), url.searchParams.get("v")));
+            if (op === "cap" && !xr[3]) return json(X.cap(id, url.searchParams.get("v")));
+            if (op === "media" && xr[3]) return X.media(id, xr[3], decodeURIComponent(xr[4]), req.headers.get("range"));
+            return json({ error: "not found" }, 404);
+          }
+          if (req.method !== "POST" || xr[3] || !["select", "generate", "ask", "stop"].includes(op)) return json({ error: "POST /api/review-room/<room>/explain/(select|generate|ask|stop)" }, 405);
+          if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac runs the room's skill / 只有這台 Mac 上的船長能執行審查室的 skill", code: "desktopOnly" }, 403);
+          if (op === "select") return json(X.select(id, b?.skill ?? null));
+          if (op === "stop") return json(X.stop(id));
+          if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm }, by));
+          return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent }, by));
+        } catch (e: any) { return fail(e); } }
       const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
