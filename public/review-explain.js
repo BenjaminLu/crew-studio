@@ -38,7 +38,7 @@ const KIND = { html: ["HTML page", "HTML 頁"], markdown: ["Markdown", "Markdown
 /** why a run stopped or failed, in the captain's words (the server's code; its English detail only where it adds something) */
 const WHY = { captain: () => T("You stopped it.", "你按了停止。"), cancelled: () => T("It was cancelled.", "已取消。"), limit: (r) => T(`It ran past the safety limit of ${r.limitMin} min, so Studio stopped it.`, `超過 ${r.limitMin} 分鐘的安全時限，Studio 停下了它。`),
   interrupted: () => T("Studio stopped while it ran.", "執行到一半時 Studio 停止了。"), closed: () => T("The room stopped taking paid runs: its card was answered or its pull request closed.", "這間審查室不再接受付費執行：卡片已回覆，或 PR 已關閉。"),
-  admission: () => T("A round could not be admitted.", "有一輪無法開始。"), provider: () => T("The model's provider refused or failed.", "模型供應商拒絕或失敗。"), stalled: () => T("Two rounds in a row did nothing, so Studio stopped it.", "連續兩輪都沒有動作，Studio 停下了它。"),
+  admission: () => T("A round could not be admitted.", "有一輪無法開始。"), provider: () => T("The model's provider refused or failed.", "模型供應商拒絕或失敗。"), stalled: (r) => r.stalled ? T(`The output did not change for ${r.stalled} rounds in a row, so Studio stopped it.`, `產出連續 ${r.stalled} 輪都沒有變，Studio 停下了它。`) : T("The output stopped changing, so Studio stopped it.", "產出不再變化，Studio 停下了它。"),
   entry: () => T("The skill named an output file that is not there.", "skill 說的產出檔案不存在。"), error: () => T("It could not run.", "無法執行。"), start: () => T("It could not start.", "無法開始。") };
 const DETAIL = new Set(["admission", "provider", "error", "start", "entry"]);
 const whyOf = (r) => { const f = WHY[r.why]; return { text: f ? f(r) : r.status === "stopped" ? T("It was stopped.", "已停止。") : T("It did not finish.", "沒有完成。"), detail: !f || DETAIL.has(r.why) ? bi(r.error || r.stop || "") : "" }; };
@@ -46,7 +46,7 @@ const whyOf = (r) => { const f = WHY[r.why]; return { text: f ? f(r) : r.status 
 async function load(id) {
   if (X.loading.has(id)) return; X.loading.add(id); const was = state(id)?.running;
   try { X.st.set(id, await api(base(id))); X.err.delete(id); } catch (e) { X.err.set(id, bi(e.message)); }
-  finally { X.loading.delete(id); ended(id, was); refresh(id); schedule(id); }
+  finally { X.loading.delete(id); ended(id, was); flushQueue(id); refresh(id); schedule(id); }
 }
 function schedule(id) { clearTimeout(X.poll.get(id)); X.poll.delete(id); if (state(id)?.running != null && onRoom(id)) X.poll.set(id, setTimeout(() => load(id), 2500)); }
 /** a run ended: say so when the captain is not watching it; a question asked while the first output was being made goes now */
@@ -56,7 +56,13 @@ function ended(id, was) {
   if (!watching) { const msg = r.status === "done" ? (r.version ? T(`${r.skill.name}: v${r.version} is ready`, `${r.skill.name}：v${r.version} 好了`) : T(`${r.skill.name} answered your question`, `${r.skill.name} 回答了你的問題`)) : `${r.skill.name}: ${whyOf(r).text}`;
     try { toast(h("span", { "data-explain-toast": id }, msg, " ", h("a", { href: `#/room/${enc(id)}` }, T("Open the room", "打開審查室")))); } catch {} }
   const q = X.queue.get(id); if (q && r.kind === "generate" && r.status === "done" && onRoom(id)) { X.queue.delete(id); X.shown.delete(id); queueMicrotask(() => X.send?.(q)); }
+  // the generation stopped or failed: the waiting question goes back into the ask box (nothing is asked, nothing is lost)
+  else if (q && r.kind === "generate" && r.status !== "done") { X.queue.delete(id); if (!X.draft.get(id)) X.draft.set(id, q); const ta = document.querySelector("[data-explain-q]"); if (ta && !ta.value) ta.value = q; }
 }
+/** a question that waited for the first output, its run finished while the captain was away: asked on coming back to the room
+ *  (the paid confirmation still comes first, in the chat) */
+function flushQueue(id) { const q = X.queue.get(id), st = state(id); if (!q || !onRoom(id) || !st || st.running != null || !latest(st) || !X.send) return;
+  X.queue.delete(id); X.shown.delete(id); queueMicrotask(() => X.send?.(q)); }
 window.liveListen?.("review-explain", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (!d.card || !X.st.has(d.card)) return;
   // on the room, or a run it knew of still going elsewhere: read it (so its end is told even off the room)
   if (onRoom(d.card) || state(d.card)?.running != null) load(d.card); });
@@ -235,7 +241,7 @@ function progressCard(r, st, run) {
         readOnly() ? null : h("button", { type: "button", class: "btn sm", "data-explain-stop": "", disabled: X.posting.has(`${id}/stop`) ? true : null, onclick: () => stop(id) }, T("Stop", "停止"))),
       X.logOpen.has(id) ? h("pre", { class: "rx-log", "data-explain-logtext": "" }, (st.log || []).map((l) => `${hhmm(l.ts)} ${l.kind} ${l.text}`).join("\n") || T("(nothing yet)", "（還沒有）")) : null));
 }
-async function stop(id) { X.posting.add(`${id}/stop`); refresh(id); try { X.st.set(id, await postJ(`${base(id)}/stop`, {})); } catch (e) { X.err.set(id, bi(e.message)); } finally { X.posting.delete(`${id}/stop`); load(id); } }
+async function stop(id) { const was = state(id)?.running; X.posting.add(`${id}/stop`); refresh(id); try { X.st.set(id, await postJ(`${base(id)}/stop`, {})); ended(id, was); } catch (e) { X.err.set(id, bi(e.message)); } finally { X.posting.delete(`${id}/stop`); load(id); } }
 
 // ---------- the chat: follow-ups, about the whole output, a boxed region or a paused frame ----------
 /** what the ask box can do now: ask; wait for the first output (the question waits for it); wait for an answer; nothing */
@@ -347,7 +353,8 @@ function keptBox(id, s) {
 function boxOverlay(id, v) {
   const over = h("div", { class: "rx-over", "data-explain-overlay": "", tabindex: "0", role: "application", "aria-label": T("Drag to box a region, or press Enter to ask about what is in view", "拖出一塊來框選，或按 Enter 問目前看得到的部分") }),
     box = h("div", { class: "rx-selbox" }); over.append(box); let from = null;
-  const take = async (rect) => { const got = await readRegion(rect); X.sel.set(id, { rect, ...got }); X.boxing = null; refresh(id); focusLater("[data-explain-q]"); };
+  // the focus goes into the popover beside the box (its quick questions, then "type your own"), never left behind the frame
+  const take = async (rect) => { const got = await readRegion(rect); X.sel.set(id, { rect, ...got }); X.boxing = null; refresh(id); requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector("[data-explain-pop] [data-explain-quick]")?.focus())); };
   over.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); take({ x: 0, y: 0, w: over.clientWidth, h: over.clientHeight }); } });
   over.addEventListener("pointerdown", (e) => { const b = over.getBoundingClientRect(); from = [e.clientX - b.left, e.clientY - b.top]; Object.assign(box.style, { display: "block", left: `${from[0]}px`, top: `${from[1]}px`, width: "0px", height: "0px" }); over.setPointerCapture?.(e.pointerId); });
   over.addEventListener("pointermove", (e) => { if (!from) return; const b = over.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top; Object.assign(box.style, { left: `${Math.min(x, from[0])}px`, top: `${Math.min(y, from[1])}px`, width: `${Math.abs(x - from[0])}px`, height: `${Math.abs(y - from[1])}px` }); });

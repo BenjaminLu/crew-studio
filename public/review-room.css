@@ -673,9 +673,14 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 @media (max-width: 760px) { .rx-pick { display: none; } }
 @media (max-width: 900px) {
   .rr-room.rx-room { grid-template-rows: auto minmax(0, 1fr); }
-  .rx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(62vh, 1fr) auto; overflow: auto; }
+  /* the room scrolls as one column: the output, then the chat with room for its messages (never a zero-height list) */
+  .rx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(55vh, auto) auto; overflow: auto; }
   .rx-rail { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .rx-rail h6, .rx-note { display: none; }
   .rx-ver { flex: none; max-width: 200px; }
-  .rx-chat { border-left: 0; border-top: 1px solid var(--border); }
+  .rx-chat { border-left: 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; min-height: auto; }
+  .rx-msgs { overflow: visible; min-height: 160px; flex: none; }
+  .rx-ask { flex: none; }
 }
+/* a link in Studio's toast (dark on light, light on dark) reads as part of it */
+.toast a[href] { color: inherit; text-decoration: underline; font-weight: 600; }

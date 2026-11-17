@@ -5,7 +5,8 @@
 //   Generation is a background run of as many agent rounds as the skill needs: no round cap. Each round is one job of the room's
 //   tutor seat (the same model, admission, staffing receipt and round sandbox as a tutor turn); a round that ends before the skill
 //   calls explain_done is followed by another, carrying its notes, until the skill says it is done, the captain stops it, the
-//   wall-clock safety limit passes (configurable, generous by default) or two rounds in a row change nothing (stalled).
+//   wall-clock safety limit passes (configurable, generous by default) or several rounds in a row (3 by default) leave the
+//   output unchanged, its notes included, whatever tools they call (stalled).
 //   Materials (the diff, the commits, the head of every changed file, reviews and comments, check runs and statuses, linked issues)
 //   are read once, read-only (git objects and GitHub GET), and written into the run's workspace; the skill reads them and its own
 //   supporting files with read-only tools and writes only to the run's output folder. Its scripts never run here.
@@ -73,6 +74,8 @@ type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running"
   provider: string; model: string; effort: string | null; confirm: string; limitMin: number; rounds: Round[]; cost: any; error: string | null; stop?: string;
   progress: { at: string; text: string }[];
   /** why it stopped or failed, as a code the page words in the captain's language (stop / error keep Studio's English detail) */
+  /** a stalled run: how many rounds in a row left the output unchanged */
+  stalled?: number;
   why?: "captain" | "cancelled" | "limit" | "interrupted" | "closed" | "admission" | "provider" | "stalled" | "entry" | "error" | "start";
   from: number | null; version: number | null; question?: string; selection?: Selection | null; answer?: string; cites?: string[]; summary?: string; auto?: boolean };
 type XVersion = { n: number; run: number; skill: { id: string; v: number; name: string }; at: string; entry: string; kind: OutKind; files: { path: string; bytes: number; sha256: string }[]; summary: string; from: number | null };
@@ -315,7 +318,7 @@ export function installExplainer(d: ExplainerDeps) {
         // its own time or tool budget is followed by the next one
         if (job.status === "failed" && !/^no result within|tool limit/.test(String(job.error ?? ""))) { Object.assign(run, { status: "failed", error: clip(job.error, 500), why: "provider" }); break; }
         stalled = before === outSig(ws.out) ? stalled + 1 : 0;
-        if (stalled >= STALL_ROUNDS()) { Object.assign(run, { status: "failed", error: `${stalled} rounds in a row left the output unchanged: Studio stopped the run`, why: "stalled" }); break; }
+        if (stalled >= STALL_ROUNDS()) { Object.assign(run, { status: "failed", error: `${stalled} rounds in a row left the output unchanged: Studio stopped the run`, why: "stalled", stalled }); break; }
         save(); d.notify(k);
       }
       if (run.status === "done") {

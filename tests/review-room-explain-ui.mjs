@@ -186,6 +186,7 @@ try {
   await p.waitForSelector("[data-x-layer] [data-explain-kept]", { timeout: 3000 }).catch(() => {});
   const kept = await p.evaluate(() => ({ box: !!document.querySelector("[data-x-layer] [data-explain-kept]"), pop: document.querySelectorAll("[data-x-layer] [data-explain-pop] [data-explain-quick]").length, x: !!document.querySelector('[data-explain-scope="region"] [data-explain-clear]'), under: !!document.querySelector(".rx-ask [data-explain-quick]") }));
   ok(kept.box && kept.pop === 4 && kept.x && !kept.under, "the box stays drawn with quick questions beside it; ✕ sits on the About line", JSON.stringify(kept));
+  ok(await p.waitForFunction(() => !!document.activeElement?.closest("[data-explain-pop]"), null, { timeout: 2000 }).then(() => true, () => false), "the focus goes into the popover beside the box (not left behind the frame)");
   await p.screenshot({ path: join(shots, "5-boxed.png") });
   onAsk = (r) => { const b = JSON.parse(r.request().postData() || "{}"); if (!b.confirm) return answer(r, { error: "confirm", code: "confirm_required", offer: ASK_OFFER }, 409);
     X = { ...X, running: 3, runs: [...X.runs, run(3, "ask", "running", { question: b.question, selection: b.selection, from: 1, progress: [{ at: "t", text: "reading the figure" }] })] }; answer(r, X);
@@ -245,6 +246,7 @@ try {
   X = { ...X, running: null, runs: [...X.runs.slice(0, -1), run(9, "generate", "done", { version: 4 })] };
   await p.evaluate((id) => window.crewRoomExplain.load(id), ID); await p.waitForSelector("[data-explain-toast]", { timeout: 5000 });
   ok(/walkthrough: v4 is ready/.test(await p.$eval("[data-explain-toast]", (e) => e.textContent)) && (await p.$eval("[data-explain-toast] a", (e) => e.getAttribute("href"))) === `#/room/${ID}`, "a run that ends off the room is announced, with a link back");
+  ok(await p.$eval("[data-explain-toast] a", (a) => getComputedStyle(a).color === getComputedStyle(a.closest(".toast")).color), "the toast's link reads in the toast's own colour");
   await p.goto(`${base}/#/room/${ID}`); await p.waitForSelector("[data-explain-room]");
 
   // ---------- back to the tutor: the board as before ----------
@@ -272,6 +274,44 @@ try {
     ok(!(await q.$("[data-explain-q]")) && !(await q.$("[data-explain-again]")) && /在 Mac 上/.test(await q.$eval("[data-explain-readonly]", (e) => e.textContent)), "a paired phone reads only: no ask box, no Generate, a note says to use the Mac");
     await q.screenshot({ path: join(shots, "7-phone-zh.png") });
     await c2.close(); }
+
+  // ---------- narrow windows (a phone-sized browser, a split-screen Mac): the chat keeps room, its confirmation is clickable ----------
+  for (const width of [390, 900]) {
+    const c3 = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 800 } });
+    await c3.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await c3.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    let N = { ...X, selected: { id: "walkthrough", v: 1 }, versions: versions.slice(0, 1), running: null, consent: null, runs: [run(1, "generate", "done", { version: 1 })] };
+    await c3.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await c3.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await c3.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: N }));
+    await c3.route(new RegExp(`/api/review-room/${ID}/explain/ask$`), (r) => r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: ASK_OFFER } }));
+    await c3.route(new RegExp(`/api/review-room/${ID}/explain/stop$`), (r) => { N = { ...N, running: null, runs: [...N.runs.slice(0, -1), run(2, "generate", "stopped", { why: "captain" })] }; r.fulfill({ json: N }); });
+    const w = await c3.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-q]", { timeout: 15000 });
+    await w.fill("[data-explain-q]", "Why?"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-askok]");
+    const hit = async (sel) => w.$eval(sel, (e) => { e.scrollIntoView({ block: "center" }); const b = e.getBoundingClientRect(), at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return { h: Math.round(b.height), top: Math.round(b.top), at: at ? at.tagName + "." + at.className + (at.dataset ? JSON.stringify(Object.keys(at.dataset)) : "") : null, ok: !!at && (at === e || e.contains(at)) }; });
+    const ok1 = await hit("[data-explain-askok]"), ok2 = await hit("[data-explain-consent]"), list = await w.$eval("[data-x-msgs]", (e) => Math.round(e.getBoundingClientRect().height));
+    ok(ok1.ok && ok2.ok && list >= 120, `at ${width} wide the chat's messages have room (${list}px) and its Confirm and ask and consent are clickable`, JSON.stringify({ ok1, ok2, list }));
+    await w.click("[data-explain-consent]"); ok(await w.$eval("[data-explain-consent]", (e) => e.checked), `at ${width} wide the consent box takes the click`);
+    await w.screenshot({ path: join(shots, `8-narrow-${width}.png`), fullPage: true });
+    if (width === 900) {
+      // a question queued during a generation that then stops goes back into the ask box
+      N = { ...N, versions: [], running: 2, runs: [...N.runs, run(2, "generate", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-progress]");
+      await w.fill("[data-explain-q]", "What is the gist?"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-queued]");
+      await w.click("[data-explain-progress] [data-explain-stop]"); await w.waitForSelector("[data-explain-empty]"); await w.waitForTimeout(150);
+      ok(!(await w.$("[data-explain-queued]")) && (await w.$eval("[data-explain-q]", (e) => e.value)) === "What is the gist?", "a question waiting for a generation that stopped goes back into the ask box, not left waiting");
+      // a question waiting for a generation that finishes while the captain is away is asked when they come back
+      N = { ...N, running: 3, runs: [...N.runs, run(3, "generate", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-progress]");
+      await w.fill("[data-explain-q]", "And the risk?"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-queued]");
+      const asked = []; await w.route(new RegExp(`/api/review-room/${ID}/explain/ask$`), (r) => { asked.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: ASK_OFFER } }); });
+      await w.evaluate(() => { location.hash = "#/board"; }); await w.waitForFunction(() => S.route?.name === "board");
+      N = { ...N, running: null, versions: versions.slice(0, 1), runs: [...N.runs.slice(0, -1), run(3, "generate", "done", { version: 1 })] };
+      await w.evaluate((id) => { location.hash = `#/room/${id}`; }, ID); await w.waitForSelector("[data-explain-askconfirm]", { timeout: 8000 });
+      ok(asked.length === 1 && asked[0].question === "And the risk?" && !asked[0].confirm, "a question waiting for a run that finished while away is asked on coming back, behind its confirmation", JSON.stringify(asked));
+    }
+    await c3.close();
+  }
   ok(!errors.length, "no page error", errors.join(" | "));
 } catch (e) { fail++; console.log("  FAIL  the run stopped:", e?.stack || e); console.log(appLog.slice(-3000)); }
 finally { await browser.close(); app.kill(); probe.close(); }
