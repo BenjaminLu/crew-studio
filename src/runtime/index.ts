@@ -393,7 +393,11 @@ export function createRuntime(d: RuntimeDeps) {
     // sends no cookie: the short-lived capability in the path is the only credential, and the page runs under the output policy
     { const x = !writing && /^\/rrx\/([0-9]{10,16}\.[0-9a-f]{32})\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/(\d{1,6})\/(.{1,400})$/.exec(p);
       if (x) { const rr = engine.reviewRoom; if (!rr) return new Response("not found", { status: 404 }); let rel = ""; try { rel = decodeURIComponent(x[4]); } catch { return new Response("bad path", { status: 400 }); } return rr.explain.page(x[1], x[2], x[3], rel); }
-      if (!writing && p.startsWith("/rrx/")) return new Response("invalid or expired capability", { status: 401 }); }
+      if (!writing && p.startsWith("/rrx/")) return new Response("invalid or expired capability", { status: 401 });
+      // "Open in new tab": Studio's page framing that version's /rrx/ page (same capability, same sandbox and output CSP)
+      const t = !writing && /^\/rrxt\/([0-9]{10,16}\.[0-9a-f]{32})\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/(\d{1,6})\/?$/.exec(p);
+      if (t) { const rr = engine.reviewRoom; if (!rr) return new Response("not found", { status: 404 }); return rr.explain.tab(t[1], t[2], t[3]); }
+      if (!writing && p.startsWith("/rrxt/")) return new Response("invalid or expired capability", { status: 401 }); }
     if (!/^\/api\/(workflow-packages|workflow-names|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
     let b: any = {}; if (writing) {
       if(p.startsWith('/api/workflow-packages')){
@@ -813,22 +817,29 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing) return json(rr.explain.settings());
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac changes the explainer's settings", code: "desktopOnly" }, 403);
         try { return json(rr.explain.setSettings(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
+      // each skill's default instructions ("What should it produce?"), set by the captain; free, nothing runs
+      if (p === "/api/review-room/explain/prompts") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        if (!writing) return json(rr.explain.prompts());
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac sets a skill's default instructions", code: "desktopOnly" }, 403);
+        try { return json(rr.explain.setDefaultPrompt(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
       const xr = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/explain(?:\/(offer|cap|select|generate|ask|stop|media))?(?:\/(\d{1,6})\/(.{1,400}))?$/.exec(p);
       if (xr) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); const X = rr.explain, id = xr[1], op = xr[2] ?? "";
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         try {
           if (!writing) {
             if (op === "" && !xr[3]) return json(X.view(id));
-            if (op === "offer" && !xr[3]) return json(X.offer(id, url.searchParams.get("skill"), url.searchParams.get("kind"), url.searchParams.get("v")));
+            if (op === "offer" && !xr[3]) return json(X.offer(id, url.searchParams.get("skill"), url.searchParams.get("kind"), url.searchParams.get("v"), url.searchParams.has("prompt") ? url.searchParams.get("prompt") : null));
             if (op === "cap" && !xr[3]) return json(X.cap(id, url.searchParams.get("v")));
             if (op === "media" && xr[3]) return X.media(id, xr[3], decodeURIComponent(xr[4]), req.headers.get("range"));
             return json({ error: "not found" }, 404);
           }
-          if (req.method !== "POST" || xr[3] || !["select", "generate", "ask", "stop"].includes(op)) return json({ error: "POST /api/review-room/<room>/explain/(select|generate|ask|stop)" }, 405);
+          if (req.method !== "POST" || xr[3] || !["select", "generate", "ask", "stop", "offer"].includes(op)) return json({ error: "POST /api/review-room/<room>/explain/(select|generate|ask|stop|offer)" }, 405);
           if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac runs the room's skill / 只有這台 Mac 上的船長能執行審查室的 skill", code: "desktopOnly" }, 403);
+          // a generation's offer for a text too long for a URL (the captain's instructions): the same offer as the GET
+          if (op === "offer") return json(X.offer(id, b?.skill ?? null, b?.kind ?? null, b?.v ?? null, typeof b?.prompt === "string" ? b.prompt : null));
           if (op === "select") return json(X.select(id, b?.skill ?? null));
           if (op === "stop") return json(X.stop(id));
-          if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm }, by));
+          if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm, prompt: b?.prompt }, by));
           return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent }, by));
         } catch (e: any) { return fail(e); } }
       const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);

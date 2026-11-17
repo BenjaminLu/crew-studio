@@ -2,13 +2,16 @@
 // import form (a local folder, a skills home, a public https git URL). Routes:
 // #/skills (primary page), #/library/skills (compatible alias), and
 // #/skills/<id>[@v] (the read-only skill viewer over Skills). A row shows a skill's name,
-// description, source, version and hash; Read opens the viewer with its exact text.
+// description, source, version and hash; Read opens the viewer with its exact text. Each row also keeps the skill's default
+// instructions for the review room ("What should it produce?", docs/units/review-room.md): set here once, the prefill of every
+// generation with that skill; free, nothing runs.
 (() => {
-const SK = { data: null, homes: null, kind: "folder", msg: null, busy: false, path: "", url: "", sub: "" };
+const SK = { data: null, homes: null, kind: "folder", msg: null, busy: false, path: "", url: "", sub: "", prompts: null, open: new Set(), draft: new Map(), note: new Map() };
 window.crewSkills = SK; // the workflow editor reads the same library
 const getJ = (u) => fetch(u).then((r) => r.json());
 async function load() {
   try { const [d, hm] = await Promise.all([getJ("/api/skills"), getJ("/api/skills/homes")]); SK.data = d; SK.homes = hm.homes || []; } catch { SK.data = { skills: [], roles: [] }; SK.homes = []; }
+  try { const pr = await fetch("/api/review-room/explain/prompts"); SK.prompts = pr.ok ? await pr.json() : null; } catch { SK.prompts = null; }
   if (S.route?.name === "skills" || (S.route?.name === "library" && S.route.arg === "skills")) soft();
 }
 const KIND = { builtin: ["Built in", "內建"], folder: ["Folder", "資料夾"], home: ["Skills home", "技能目錄"], git: ["Git", "Git"], role: ["Role skill", "角色技能"] };
@@ -108,7 +111,36 @@ function skillRow(s, mark = (t) => t) {
       h("dt", {}, "sha256"), h("dd", { class: "mono", title: s.sha256, "data-skill-sha": "1" }, short(s.sha256)),
       h("dt", {}, T("Size", "大小")), h("dd", { "data-skill-size": "1" }, `${sizeWords(s.bytes)}${s.files?.length ? T(` · ${count(s.files.length, "supporting file")}`, ` · ${s.files.length} 個附加檔`) : ""}`),
       h("dt", {}, T("Used by", "使用中")), h("dd", {}, used.length ? used.map((u) => h("a", { class: "vbadge sk-use", href: `#/workflows/${u.workflow}` }, `${wfName(u.workflow)} · ${u.node} · v${u.v}`)) : h("span", { class: "faint" }, T("no node yet", "還沒有節點")))),
-    s.ignored?.length ? h("p", { class: "sk-ignored", "data-skill-ignored": "1" }, icon("shield", "ic sm"), h("span", {}, ignoredText(s.ignored))) : null);
+    s.ignored?.length ? h("p", { class: "sk-ignored", "data-skill-ignored": "1" }, icon("shield", "ic sm"), h("span", {}, ignoredText(s.ignored))) : null,
+    defaultPrompt(s));
+}
+/** the skill's default instructions in the review room: what every generation with it starts from (the captain edits it there too) */
+function defaultPrompt(s) {
+  const P = SK.prompts; if (!P || window.crewRemote?.token?.()) return null;
+  const saved = P.skills?.[s.id]?.default ?? null, max = P.max || 2000, ex = P.example, id = s.id;
+  const value = () => SK.draft.has(id) ? SK.draft.get(id) : saved ?? "";
+  const sync = (box) => { const v = value(), ta = box.querySelector("textarea"); box.querySelector("[data-skill-defcount]").textContent = `${v.length} / ${max}`;
+    box.querySelector("[data-skill-defsave]").disabled = (v.trim() || null) === saved || v.length > max; if (ta && ta.value !== v) ta.value = v; };
+  const save = async (box, text) => {
+    try { const r = await fetch("/api/review-room/explain/prompts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ skill: id, text }) }); const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      P.skills = { ...(P.skills || {}), [id]: { ...(P.skills?.[id] || {}), default: j.default ?? null } }; SK.draft.delete(id); SK.note.set(id, j.default ? T("Saved: every generation with this skill starts from it.", "已存：這個 skill 每次產生都從這段開始。") : T("Cleared: generations start from what you last asked it for.", "已清除：之後從上次的指示開始。")); }
+    catch (e) { SK.note.set(id, String(e.message || e).split(" / ")[/^zh/.test(document.documentElement.lang || "") ? 1 : 0] || String(e.message || e)); }
+    // the list may have been drawn again meanwhile: replace the editor that is on the page now
+    const cur = document.querySelector(`[data-skill-defprompt="${CSS.escape(id)}"]`) || box, fresh = defaultPrompt(s); if (cur.isConnected) { cur.replaceWith(fresh); fresh.querySelector("textarea")?.focus({ preventScroll: true }); } };
+  const box = h("details", { class: "sk-defprompt", "data-skill-defprompt": id, open: SK.open.has(id) ? true : null, ontoggle: (e) => { if (e.target.open) SK.open.add(id); else SK.open.delete(id); } },
+    h("summary", {}, h("b", {}, T("Review room: default instructions", "審查室：預設指示")), " ",
+      h("span", { class: saved ? "badge run" : "faint", "data-skill-defstate": saved ? "set" : "none" }, saved ? T("set", "已設定") : T("none", "未設定"))),
+    h("p", { class: "faint" }, T("What a generation with this skill should produce, unless you change it in the confirmation. Your own text, sent apart from the pull request's.", "用這個 skill 產生時要產出什麼；確認時還能改。這是你自己的指示，和 PR 的內容分開送。")),
+    h("textarea", { rows: "5", maxlength: String(max), "data-skill-deftext": id, "aria-label": T(`Default instructions for ${s.name}`, `${s.name} 的預設指示`),
+      placeholder: T("Empty: the skill's own default.", "留空：照 skill 自己的預設。"), oninput: (e) => { SK.draft.set(id, e.target.value); SK.note.delete(id); sync(box); } }, value()),
+    h("div", { class: "sk-defrow" },
+      h("button", { type: "button", class: "btn sm primary", "data-skill-defsave": id, onclick: () => save(box, value().trim()) }, T("Save default", "存成預設")),
+      saved ? h("button", { type: "button", class: "btn sm", "data-skill-defclear": id, onclick: () => save(box, "") }, T("Clear", "清除")) : null,
+      ex ? h("button", { type: "button", class: "btn sm", "data-skill-defexample": id, onclick: () => { const t = T(ex.en, ex.zh), cur = value().trimEnd(); SK.draft.set(id, cur ? `${cur}\n\n${t}` : t); sync(box); } }, T("Insert a review checklist", "插入審查清單範例")) : null,
+      h("small", { class: "faint", "data-skill-defcount": id }, `${value().length} / ${max}`)),
+    SK.note.get(id) ? h("small", { "data-skill-defnote": id, role: "status" }, SK.note.get(id)) : null);
+  queueMicrotask(() => sync(box)); return box;
 }
 /** the skill library under the list toolbar (public/list-tools.js): source, whether a node uses it, which workflow */
 function libraryList(lib) {
@@ -319,4 +351,7 @@ routes.library = (arg) => {
   return page;
 };
 addEventListener("hashchange", () => { if ((S.route?.name === "skills" || (S.route?.name === "library" && S.route.arg === "skills")) && SK.data && Date.now() - (SK.t || 0) > 30_000) { SK.t = Date.now(); load(); } });
+// a default saved from the review room's confirmation meanwhile: read the defaults again on coming back to the Skills page
+addEventListener("hashchange", async () => { if (!(S.route?.name === "skills" || (S.route?.name === "library" && S.route.arg === "skills")) || !SK.data) return;
+  try { const r = await fetch("/api/review-room/explain/prompts"); if (r.ok) { SK.prompts = await r.json(); for (const [id, d] of SK.draft) if ((SK.prompts.skills?.[id]?.default ?? "") === d) SK.draft.delete(id); soft(); } } catch {} });
 })();
