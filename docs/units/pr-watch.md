@@ -75,6 +75,67 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   a longer run is no tag). The commit is the tag's trailing 7 to 40 hex characters, never all digits (a date or build
   number is no commit). One line at a time, lines over 500 characters skipped. Saved settings pass the same checks when
   Studio starts: an environment that fails is dropped and the page says which.
+  One named environment covers many repositories: besides (or instead of) its own detect, it holds a detect per
+  repository (`each`: `{repo, detect}`, which wins over the environment's detect for that repository). At most 20
+  named environments, 60 repositories with their own detect in one, 400 in all. Settings from before `each` (the same
+  name once per repository, each limited by `repos`) are folded on load into one environment with a detect per
+  repository, only where no repository sees a difference: same name and production flag, no catch-all entry, no
+  repository named twice, and no environment between the two applies to those repositories (each repository keeps its
+  environments, their order and detects); anything else stays as it was. The file is rewritten only on the next save.
+- **Find environments automatically** (自動找環境): the settings' first action for environments (disabled, with the
+  reason, while nothing is watched), above a card per environment listing each repository and where it is read; the
+  hand editor is under **Advanced** (folded when every environment came from it, open when one was set by hand or one
+  is begun). The dialog keeps the keyboard (Escape closes it from anywhere, Tab cycles inside) and has three steps:
+  ① **sources** (`POST /api/prs/envs/sources`, one read): each repository's GitHub deployments, and a GitOps/config
+  repository with its branch, filled in with the one used last or else the first repository that looks like one;
+  ② **scan**, its progress read from `GET /api/prs/envs/progress` (what it reads, reads used of the budget); ③ **the
+  table**: a row per watched repository and a column per environment, each cell green (sure, ticked), amber (pick one)
+  or grey (not found), the evidence under it; repositories with nothing found listed greyed last; repositories where
+  everything is already set folded behind "Show N already set"; a summary (found N repositories' M environments · K
+  need a pick · J not found), the reads used and any note (budget, walk, unreadable) above the table; a legend; a sticky
+  footer whose Accept names the repositories it saves, or links "K need a pick" to the first. A failed search returns
+  to the sources with the message and no table. Closing it mid-scan cancels the search (`POST /api/prs/envs/cancel`),
+  so the next one starts at once. After Accept the dialog closes with a toast. A manifest found on a branch the captain
+  named keeps that branch as its detect's `ref` (a refresh and the release brief read the same branch); on the default
+  branch the detect has no `ref` and follows it.
+  It proposes, for every watched repository at once (the repositories and the single pull requests' repositories):
+  - its GitHub environments that have a deployment (`GET …/environments`, then `…/deployments?environment=…&per_page=1`
+    for at most 8, `github-pages` left out), as a "GitHub Deployment" detect;
+  - with a GitOps/config repository the captain names (or picks: when none is named, the repositories the token can
+    read whose name looks like one — deploy, config, gitops, manifests, k8s, helm, argo, flux, cluster, ops, … — are
+    offered, the last one used first): its default branch (or the branch given), resolved to its commit first
+    (`commits?sha=<branch>&per_page=1`, so a branch named `release/v1` works), its file tree at that commit
+    (`git/trees/<sha>?recursive=1`; when GitHub truncates it or it is over the 1 MB Studio reads, walked one folder per
+    read, at most 80 folders, those naming a watched repository or an environment first, any other folder after them,
+    and said so with how many were left; a config repository that cannot be read at all fails the search with why),
+    then at most 60 YAML/JSON files of 200 KB or less, those whose path names a watched
+    repository and an environment first, then a repository, then an environment, shallow first. In each file, a line
+    naming an image built from a repository — `registry/path/name:tag` on one line, or the name on one line and
+    `tag:`/`newTag:` on one of the next four (Helm values, kustomize `images`) — where the image's name or a path part is
+    the repository's name (case and `- _ .` ignored: strong) or one holds the other (4 characters at least: weak). The
+    template is the line from its key to the tag, `{tag}` for the tag, the closing quote kept (a comment is not). The
+    environment is the deepest directory or file-name part that names one: prod, production, prd, live → production;
+    staging, stage, stg → staging; dev, develop, development → dev; qa; test; uat; sandbox; preprod, pre-prod,
+    preproduction → preprod (pre-prod is not prod; nonprod names none). A GitHub environment's name maps the same way
+    (any other name stays as it is, production when a part of it is: eu-prod, production-eu; not eu-preprod, nonprod-eu).
+    A watched repository's name is taken out of a path segment before it is read for an environment
+    (values-shop-api-prod is production; a service named live-feed is no environment). An environment already set
+    under another name of the same kind (prod for production) keeps that name: the table, what is set and Accept agree,
+    and no second production is added. A template holding a tab or another control character cannot be picked. A file naming an image
+    under no environment (a kustomize base) is listed as skipped.
+  - One review table, a row per repository × environment, each candidate with where it was found (the manifest path
+    and line, linked to that line on GitHub, and the line itself; or the GitHub environment and its latest deployment).
+    One strong candidate and nothing set for it yet: ticked. More than one, a weak match, or a different detect already
+    set (never replaced unasked): a pick, Accept held until each is picked or left out. A tag that ends in no commit
+    (Studio cannot tell which commit runs), or a template Studio's own reader would match on an earlier line, is shown
+    with its reason and cannot be picked. Already detected that way: "already set". Production is inferred per
+    environment name and editable (one tick for the name, as the setting is per environment).
+  - One **Accept** saves (as the settings do: a change made meanwhile refuses it): each pick becomes that repository's
+    detect in the environment of that name (a name not set yet is added in the usual order dev … staging … preprod …
+    production), and the config repository is remembered. Nothing is saved before it, and nothing is ever written to a
+    repository: discovery reads with GET only.
+  - Budget: at most 300 reads a search (60 of them files, 80 folders when walking) and 120 s; past it the search stops reading, proposes what it read and
+    says so. A rate limit fails the search with a message. Only the board's captain runs it (no agent CLI tool).
 - **Release groups**: names; each row may be put in one.
 - The short same-repository form `Depends-on: #<n>` in the block (off by default), and the language of the drafted message.
 
@@ -226,7 +287,8 @@ times, writes nothing). The dialog shows one card per batch, each with its own C
   file, only this repository, its file repository, path and template empty with the focus on the first. Repositories
   other file environments read are offered as suggestions and fill the field only when picked. Saving opens the brief
   again, in the language it was in, with the line old → new; closing without saving goes back to the brief too. With
-  12 environments already (the most kept) the save is refused with a message, never dropped silently.
+  20 environments already (the most kept) the save is refused with a message, never dropped silently. Beside it,
+  **Find automatically** opens Find environments automatically; closing it goes back to the brief.
 - **Before going live** (上線前要處理), each item with the address of its file and line at the merge commit (the body's:
   the pull request) — no address, no item: files matching the captain's path rules (settings: migrations, configuration,
   secrets; CODEOWNERS-style patterns, by default `migrations/`, `migrate/`, `*.sql`); configuration and secrets the added
@@ -515,6 +577,14 @@ sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slac
     step shows whose id it is and calls neither `conversations.open` nor `chat.postMessage`, editing the id resets it, a
     second step with another name is refused, and the second step goes to the DM Slack opened with the name it reports;
     a deactivated, other-workspace, bot or unknown member is refused.
+22. Find environments automatically (`bun tests/pr-watch-envs.ts`, `bun tests/pr-watch-envs-ui.mjs`, against the
+    fictional GitHub with an invented config repository): environment names from GitHub and from paths, image names
+    strong and weak, manifest templates (inline, kustomize, Helm values) kept only when Studio's reader finds that line,
+    one environment with a detect per repository, old settings folded with every repository seeing the same
+    environments (and an interleaved one left apart), the review table (ticked, pick, set, skipped), Accept saving one
+    production for two repositories, a refresh then reading production from the accepted manifest, nothing written to
+    GitHub, the budget and its message, a truncated tree, a rate limit; in the page Cancel saving nothing, the picks
+    holding Accept, Advanced's per-repository rows, and screenshots at 1440 and 390, light and dark.
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the
