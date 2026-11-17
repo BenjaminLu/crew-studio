@@ -736,8 +736,46 @@ The room can be presented by one of the captain's own skills instead of the tuto
   description links (GitHub GET only, when the room's repository is a connected project; the adapter's new `issue` read is
   one issue by number). A README lists them and says which text is untrusted; untrusted text is fenced. The skill reads them
   with `mat_list/mat_read/mat_search`, its own supporting files with `skill_*` (a copy), and writes only `out/` (`out_*`,
-  `out_write_base64` for a picture or a video, 60 MB in all). No shell, no network, no web tools, no board tools; a skill's
-  scripts never run here.
+  `out_write_base64` for a picture or a video, 60 MB in all). No shell of its own, no web tools, no board tools; a skill
+  with scripts runs them through `skill_run` (below).
+- **The skill's own scripts.** A library skill whose package has scripts (`render.py`, `verify.py`, a `.sh`: what
+  `src/skillpkg/analyze.ts` finds) runs them with `skill_run {script, args, timeout_s}`, the same tool a workflow round's
+  script skill uses (`src/skillpkg/run.ts`), in the round sandbox (`roundExec`: `sandbox-exec`, default deny):
+  - *What runs*: one of the package's detected scripts, on a read-only copy of the whole package (`SKILL.md` and every
+    file, hashed again against the version's `sha256` and `filesSha256`, or refused): python with the host's `python3`,
+    node with the host's `node` (else Studio's bun), shell with `/bin/bash`; a version approved and prepared for a workflow
+    brings its prepared env. Package managers are shims that refuse; nothing is installed or fetched to make a run.
+  - *Where*: its working folder is `out/`; it writes only `out/` and its own temp folder (`$TMPDIR`, its `$HOME` in there);
+    it reads the materials (`$MATERIALS_DIR`), the package (`$SKILL_DIR`), the system and the interpreters' installs.
+    Studio's data folder (keys, tokens, policies, other rooms) and the captain's secret folders are denied.
+  - *Network*: allowed, through Studio's egress proxy only (`HTTPS_PROXY`/`HTTP_PROXY`, a credential of its own per call,
+    `anyHost`: any public name; `src/egress.ts`). The proxy's address guard still refuses loopback, this Mac's addresses,
+    private, link-local and metadata addresses, so a script never reaches Studio or the local network. A client that
+    ignores the proxy variables, or opens a raw socket, gets nothing. Every host a call reached (and any refused) is kept
+    on the call.
+  - *Env*: `PATH` (the shims, the interpreter, `/usr/bin:/bin:/usr/sbin:/sbin`), `HOME`, `TMPDIR`, `LANG`, `CI`,
+    `GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL=/dev/null`, the proxy variables, `SKILL_DIR`, `MATERIALS_DIR`, `OUT_DIR`,
+    `PYTHONDONTWRITEBYTECODE`, `PYTHONNOUSERSITE`, `PIP_NO_INDEX`, `npm_config_offline`, `CHROME_BIN`/`CHROME_PATH`/
+    `PUPPETEER_EXECUTABLE_PATH` when a browser is there, `CREW_RUN_KILL` (the cleanup marker), and of the credentials only
+    `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` when the captain
+    exported them in the environment Studio started from (`SCRIPT_CREDENTIALS`), so a skill can call a model itself. Never
+    a key Studio keeps, the GitHub token, the session or ledger keys or a device's token: nothing of Studio's environment
+    is inherited. A value in a script's env is readable by another process of the same user (the same is true of Studio's).
+  - *Caps per call*: 300 s of CPU for each process it starts (`ulimit -t`, `CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S`), files up to
+    60 MB (`ulimit -f`, `…_FILE_MB`), 600 s of wall clock (`…_WALL_S`; `timeout_s` lowers it), 60 calls per round
+    (`…_CALLS`), output cut to its last 64 KiB; what a script writes counts toward `out/`'s 60 MB.
+  - *A headless browser*: a branded Chrome app does not start inside the round sandbox. Playwright's headless shell does
+    (the newest under `~/Library/Caches/ms-playwright`, or `CREW_REVIEW_EXPLAIN_BROWSER`), with one more rule (it registers
+    and looks up its own `org.chromium.*` mach services) and its inner sandbox off (it cannot nest; the round's holds).
+    Studio puts a `chrome` shim for it first on `PATH` and in `CHROME_BIN`. Without one, the first message says so and the
+    skill's own instructions decide how it degrades.
+  - *Recorded*: every call on its round in `state.json` (the script and its hash, the arguments, exit or signal, timed out,
+    milliseconds, the last 2000 characters of stdout and stderr, the hosts reached and refused), a progress line the captain
+    sees live, and in the run's ledger entry.
+  - *Confirmed*: the offer's `scripts` says the scripts run, sandboxed, with network, the interpreters, the credentials by
+    name, the caps, the browser and what is missing; its hash covers the package's `filesSha256` and that plan, so a
+    changed script (a new library version) or a new interpreter asks again. A version the captain set to text only on the
+    Skills page keeps its scripts from running here too (no `skill_run`, and the first message says so).
 - **Live progress**: the stage shows the skill's own `explain_progress` lines, the round, the time so far, the cost and the
   safety limit, and its live log (the round's tool calls and what it said); it runs in the background, the captain may
   leave. The explainer's live event is its own (`review-explain`): a progress line redraws the explainer's parts, never the
@@ -773,7 +811,7 @@ The room can be presented by one of the captain's own skills instead of the tuto
 
   data/…/<room>-explain/state.json      the selected skill, runs (rounds, cost, progress, answers), versions, consent
   data/…/<room>-explain/v<n>/            a version's files
-  data/…/<room>-explain/work/run-<n>/    a run's workspace (materials/, skill/, out/), removed when the run ends
+  data/…/<room>-explain/work/run-<n>/    a run's workspace (materials/, pkg/<skill>/ read-only, out/, .tmp/, .bin/), removed when the run ends
   data/review-room-explain.json         the safety limit
 
 Proved by `tests/review-room-explain.ts` (the runner on a real merge card with a scripted provider: picker, confirmation,
@@ -781,10 +819,15 @@ two rounds to a version, materials and their read-only tools, the ledger, the se
 capability, a follow-up with a selection making v2, consent, Stop, the stall guard, the safety limit, busy rooms) and
 `tests/review-room-explain-ui.mjs` (a real isolated Studio and Chromium: the picker and confirmation, progress and Stop,
 the frame's sandbox and CSP — the page in it cannot fetch, cannot read Studio's page or cookies, has working storage —
-boxing a region and the follow-up that carries it, the answer and v2 in the rail, an older version, a paused video).
+boxing a region and the follow-up that carries it, the answer and v2 in the rail, an older version, a paused video, the
+scripts row of the confirmation) and `tests/review-room-explain-scripts.ts` (a made-up skill package's real scripts in the
+real sandbox: a page built and checked by its scripts becomes v1; a public host reached through the proxy, a metadata
+address refused, both on the call; the captain's exported model key in the script's env and none of Studio's tokens, its
+token files unreadable; writes outside `out/` refused; the CPU, file-size, wall-clock and output caps; every call on the
+round and the ledger; a changed script is v2 with a new confirmation; text only).
 
-Not yet: a skill's scripts (a package's `skill_run`) and its own web access are not offered to an explainer run; a
-generation stopped half-way keeps nothing; a Library snapshot of a room does not include the skill's versions.
+Not yet: the explainer's own web tools (beyond what a script fetches); a script's Python packages come only from the
+runtime or a prepared env (the captain's user site-packages are not read); a generation stopped half-way keeps nothing; a Library snapshot of a room does not include the skill's versions.
 
 ## The per pull request record
 

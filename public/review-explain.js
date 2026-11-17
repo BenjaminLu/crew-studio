@@ -101,7 +101,8 @@ function confirmDialog(r) {
           row(T("Rounds", "輪數"), T(o.rounds.en, o.rounds.zh)),
           row(T("Expected time", "預計時間"), o.expected ? T(`about ${o.expected.minutes} min (from ${o.expected.from} earlier run${o.expected.from === 1 ? "" : "s"})`, `約 ${o.expected.minutes} 分鐘（依之前 ${o.expected.from} 次）`) : T("not known yet: the first run of this skill here (often 10–30 min)", "還不知道：這是這個 skill 在這裡第一次跑（常見 10–30 分鐘）")),
           row(T("Safety limit", "安全時限"), h("span", { class: "rx-limit" }, h("input", { type: "number", min: "1", max: "1440", value: String(o.limitMin), "data-explain-limit": "", "aria-label": T("Safety limit in minutes", "安全時限（分鐘）"), onchange: (e) => setLimit(e.target.value) }), T(" min of wall clock, then Studio stops it", " 分鐘，到了 Studio 會停下"))),
-          row(T("Isolation", "安全"), T(o.isolation.en, o.isolation.zh))),
+          row(T("Isolation", "安全"), T(o.isolation.en, o.isolation.zh)),
+          ...(o.scripts ? row(T("The skill's scripts", "skill 的腳本"), h("span", { "data-explain-scripts": o.scripts.run ? "run" : "off" }, o.scripts.run ? h("b", {}, T(`Run, sandboxed, ${o.scripts.network ? "with network" : "no network here"} · ${(o.scripts.interpreters || []).join(", ")}`, `會執行，在沙盒裡、${o.scripts.network ? "可以連網" : "這裡不能連網"} · ${(o.scripts.interpreters || []).join("、")}`)) : h("b", {}, T("Do not run", "不會執行")), h("br"), h("small", { class: "faint" }, T(o.scripts.en, o.scripts.zh)))) : [])),
         c.note ? h("p", { class: "rr-err", role: "alert" }, c.note) : null],
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn", onclick: close }, T("Cancel", "取消")),
         h("button", { type: "button", class: "btn primary", "data-explain-start": "", disabled: c.loading || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
