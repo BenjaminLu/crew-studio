@@ -6,7 +6,7 @@
 // instructions for the review room ("What should it produce?", docs/units/review-room.md): set here once, the prefill of every
 // generation with that skill; free, nothing runs.
 (() => {
-const SK = { data: null, homes: null, kind: "folder", msg: null, busy: false, path: "", url: "", sub: "", prompts: null, open: new Set(), draft: new Map(), note: new Map() };
+const SK = { data: null, homes: null, kind: "folder", msg: null, busy: false, path: "", url: "", sub: "", prompts: null, open: new Set(), draft: new Map(), note: new Map(), allPrompts: false };
 window.crewSkills = SK; // the workflow editor reads the same library
 const getJ = (u) => fetch(u).then((r) => r.json());
 async function load() {
@@ -114,12 +114,16 @@ function skillRow(s, mark = (t) => t) {
     s.ignored?.length ? h("p", { class: "sk-ignored", "data-skill-ignored": "1" }, icon("shield", "ic sm"), h("span", {}, ignoredText(s.ignored))) : null,
     defaultPrompt(s));
 }
+const promptShown = (s) => SK.allPrompts || s.sourceKind !== "builtin" || !!SK.prompts?.skills?.[s.id];
 /** the skill's default instructions in the review room: what every generation with it starts from (the captain edits it there too) */
 function defaultPrompt(s) {
   const P = SK.prompts; if (!P || window.crewRemote?.token?.()) return null;
+  // the captain's own skills and any skill already used in a review room; Studio's built-in ones behind "for all skills"
+  if (!promptShown(s)) return null;
   const saved = P.skills?.[s.id]?.default ?? null, max = P.max || 2000, ex = P.example, id = s.id;
   const value = () => SK.draft.has(id) ? SK.draft.get(id) : saved ?? "";
   const sync = (box) => { const v = value(), ta = box.querySelector("textarea"); box.querySelector("[data-skill-defcount]").textContent = `${v.length} / ${max}`;
+    const exb = box.querySelector("[data-skill-defexample]"); if (exb) exb.disabled = !!ex && [ex.en, ex.zh].some((t) => t && v.includes(t)); // the checklist only once
     box.querySelector("[data-skill-defsave]").disabled = (v.trim() || null) === saved || v.length > max; if (ta && ta.value !== v) ta.value = v; };
   const save = async (box, text) => {
     try { const r = await fetch("/api/review-room/explain/prompts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ skill: id, text }) }); const j = await r.json().catch(() => ({}));
@@ -171,7 +175,9 @@ function viewSkills() {
   if (!SK.data) return h("div", { class: "page sk-page" }, head, h("div", { class: "skel", style: "height:240px" }));
   const lib = SK.data.skills || [], roles = SK.data.roles || [];
   return h("div", { class: "page sk-page", "data-skills-page": "1" }, head, importCard(),
-    h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Skill library", "技能庫")), h("span", { class: "faint" }, String(lib.length))),
+    h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Skill library", "技能庫")), h("span", { class: "faint" }, String(lib.length)),
+        SK.prompts && !window.crewRemote?.token?.() && lib.some((s) => s.sourceKind === "builtin" && !SK.prompts?.skills?.[s.id]) ? h("button", { type: "button", class: "btn sm ghost sk-defall", "data-skill-defall": "", "aria-pressed": String(SK.allPrompts),
+          onclick: () => { SK.allPrompts = !SK.allPrompts; soft(); } }, SK.allPrompts ? T("Review-room instructions: your skills only", "審查室指示：只顯示你的 skill") : T("Review-room instructions: show for all skills", "審查室指示：顯示所有 skill")) : null),
       libraryList(lib)),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Role skills", "角色技能")), h("span", { class: "faint" }, String(roles.length))),
       h("p", { class: "faint sk-note" }, T("Each workflow role's own skill. It always comes first in the agent's instructions, before the skills a node turns on.", "每個流程角色自己的技能。它在 agent 指示裡永遠排在節點開啟的技能之前。")),

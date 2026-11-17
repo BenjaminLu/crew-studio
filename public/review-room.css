@@ -655,8 +655,11 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-layer.full { inset: 0 !important; left: 0 !important; top: 0 !important; width: 100vw !important; height: 100vh !important; height: 100dvh !important; clip-path: none !important; z-index: 80; }
 :root.rx-fullon, :root.rx-fullon body { overflow: hidden; }
 .rx-layer:fullscreen { clip-path: none !important; }
-.rx-fullbar { position: absolute; top: 10px; right: 10px; z-index: 4; display: flex; gap: 8px; align-items: center; padding: 4px 4px 4px 12px; border-radius: 10px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent); color: var(--text); border: 1px solid var(--border-strong); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); font-size: 12.5px; max-width: calc(100% - 20px); box-sizing: border-box; }
+/* the bar has a strip of its own at the top: the output starts below it, so nothing of the page's own (a language switch in
+   its corner) is ever covered */
+.rx-fullbar { position: absolute; top: 0; left: 0; right: 0; height: 44px; z-index: 4; display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 0 8px 0 14px;
+  background: var(--surface); color: var(--text); border-bottom: 1px solid var(--border); font-size: 12.5px; box-sizing: border-box; }
+.rx-layer.full > .rx-frame, .rx-layer:fullscreen > .rx-frame, .rx-layer.full > .rx-media { top: 44px; height: calc(100% - 44px); }
 .rx-layer:not(.full):not(:fullscreen) .rx-fullbar { display: none; }
 .rx-fulltitle { font: 600 11.5px var(--f-mono, ui-monospace, monospace); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rx-fullx { display: inline-flex; gap: 6px; align-items: center; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
@@ -722,6 +725,7 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-cost > span:nth-child(odd) { color: var(--text-3); }
 .rx-limit input { width: 70px; font: inherit; }
 .rx-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
+.rx-modal > .rx-foot { position: sticky; bottom: -18px; margin: 8px -18px -18px; padding: 10px 18px; background: var(--surface); border-top: 1px solid var(--border); z-index: 1; }
 @media (max-width: 760px) { .rx-pick { display: none; } }
 @media (max-width: 900px) {
   .rr-room.rx-room { grid-template-rows: auto minmax(0, 1fr); }

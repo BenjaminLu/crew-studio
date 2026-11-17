@@ -410,7 +410,7 @@ try {
     const withMade = versions.map((v) => (v.n === 1 ? { ...v, prompt: P1 } : v.n === 2 ? { ...v, question: "Why round here?" } : v.n === 4 ? { ...v, prompt: "" } : v));
     const hashOf = (t) => (t ? `c0ffee${sha(t).slice(0, 10)}` : OFFER.hash);
     // the offer is for the text it was asked with (none: the skill's last instructions, the prefill), as the server's is
-    const offerReqs = [], gens = [], defs = []; let DEF = null;
+    const offerReqs = [], gens = [], defs = []; let DEF = null, failSelect = false;
     const EX = { en: "For this pull request, include:\n- an architecture diagram", zh: "這個 PR 請包含：\n- 架構圖" };
     const prefill = () => (DEF != null ? { text: DEF, source: "default" } : LAST ? { text: LAST, source: "last" } : { text: "", source: "none" });
     const routes = async (c, Y) => {
@@ -426,7 +426,7 @@ try {
       await c.route(/\/api\/review-room\/explain\/prompts$/, (r) => { if (r.request().method() !== "POST") return r.continue(); const b = JSON.parse(r.request().postData() || "{}"); defs.push(b); DEF = b.text || null; r.fulfill({ json: { skill: b.skill, default: DEF } }); });
       await c.route(new RegExp(`/api/review-room/${ID}/explain/generate$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); gens.push(b);
         r.fulfill(b.confirm === hashOf(b.prompt ?? "") ? { json: { ...Y(), running: 7, runs: [run(7, "generate", "running", { prompt: b.prompt })] } } : { status: 409, json: { error: "confirm / 確認", code: "confirm_required", offer: { ...OFFER, hash: hashOf(b.prompt), prompt: { text: b.prompt, max: 2000, last: LAST } } } }); });
-      await c.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => r.fulfill({ json: Y() })); };
+      await c.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => failSelect ? r.fulfill({ status: 400, json: { error: "That skill is not in the library / 技能庫裡沒有這個 skill", code: "bad_skill" } }) : r.fulfill({ json: Y() })); };
     let Y = { ...X, selected: { id: "walkthrough", v: 1 }, versions: withMade, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })] };
     const c5 = await browser.newContext({ viewport: { width: 1440, height: 900 } }); await routes(c5, () => Y);
     const w = await c5.newPage(); w.on("pageerror", (e) => errors.push(e.message));
@@ -443,6 +443,12 @@ try {
     await w.click('[data-explain-reuse="1"]'); await w.waitForSelector("[data-explain-start]:not([disabled])");
     const field = await w.$eval("[data-explain-prompt]", (e) => ({ value: e.value, max: e.maxLength, label: document.querySelector("[data-explain-promptfield] label").textContent, count: document.querySelector("[data-explain-promptcount]").textContent }));
     ok(field.value === P1 && offerReqs.at(-1) === P1 && field.max === 2000 && /What should it produce\?/.test(field.label) && field.count === `${P1.length} / 2000`, "Generate again starts from the version's instructions: in the field, with a visible counter, and in the offer", JSON.stringify({ field, req: offerReqs.at(-1) }));
+    const link = await w.$eval("[data-explain-skillslink]", (a) => ({ target: a.target, rel: a.rel }));
+    ok(link.target === "_blank" && /noopener/.test(link.rel), "the confirmation's Skills page link opens a tab of its own (the typed text stays)", JSON.stringify(link));
+    await w.keyboard.press("Escape"); await w.waitForFunction(() => !document.querySelector(".rx-modal"), null, { timeout: 3000 }); await w.waitForTimeout(150);
+    const esc = await w.evaluate(() => ({ reuse: document.activeElement?.matches?.('[data-explain-reuse="1"]'), summary: document.activeElement?.matches?.("[data-explain-made] > summary"), tag: document.activeElement?.tagName }));
+    ok((esc.reuse || esc.summary) && esc.tag !== "BODY", "Esc gives the focus back to Generate again (its line stays open), never to the page", JSON.stringify(esc));
+    await w.click('[data-explain-reuse="1"]'); await w.waitForSelector("[data-explain-start]:not([disabled])");
     const P2 = "Only an ops runbook, as a checklist.";
     await w.fill("[data-explain-prompt]", P2);
     const waiting = await w.$eval("[data-explain-start]", (e) => e.disabled);
@@ -461,7 +467,9 @@ try {
     await w.click("[data-explain-promptexample]"); await w.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
     const exv = await w.$eval("[data-explain-prompt]", (e) => e.value);
     ok(exv === `${P2}\n\n${EX.en}` && offerReqs.at(-1) === exv, "Insert a review checklist adds the built-in example below the text (never applied by itself), and the offer follows", JSON.stringify(exv));
+    ok(await w.$eval("[data-explain-promptexample]", (e) => e.disabled), "with the checklist in the field, Insert is off (no second copy)");
     await w.click("[data-explain-promptreset]"); await w.waitForFunction((t) => document.querySelector("[data-explain-prompt]").value === t && !document.querySelector("[data-explain-start]").disabled, P2, { timeout: 5000 });
+    ok(!(await w.$eval("[data-explain-promptexample]", (e) => e.disabled)), "without it, Insert is on again");
     await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
     ok(gens.at(-1)?.prompt === P2 && gens.at(-1).confirm === hashOf(P2) && gens.at(-1).skill === "walkthrough", "Confirm sends the instructions with the confirmation of exactly that text", JSON.stringify(gens.at(-1)));
     // a room with nothing made yet: the field is prefilled with what this skill was last asked for (the server's prefill)
@@ -486,7 +494,9 @@ try {
     const before = await w.evaluate(() => { const f = document.querySelector('[data-explain-frame="1"]'); f.__kept = 1; return { body: document.querySelector(".rx-body").scrollTop, y: scrollY }; });
     await w.click("[data-explain-full]"); await w.waitForFunction(() => !!window.crewRoomExplain.full(), null, { timeout: 5000 }); await w.waitForTimeout(200);
     const fs = await w.evaluate(() => { const L = document.querySelector("[data-x-layer]"), b = L.getBoundingClientRect(), f = L.querySelector('[data-explain-frame="1"]').getBoundingClientRect();
-      return { mode: window.crewRoomExplain.full(), el: document.fullscreenElement === L, w: Math.round(b.width), h: Math.round(b.height), sw: innerWidth, sh: innerHeight, fw: Math.round(f.width), fh: Math.round(f.height), kept: L.querySelector('[data-explain-frame="1"]').__kept === 1, clip: L.style.clipPath, bar: !!L.querySelector("[data-explain-fullclose]"), focus: document.activeElement?.hasAttribute("data-explain-fullclose") }; });
+      const bar = L.querySelector("[data-explain-fullbar]").getBoundingClientRect();
+      return { mode: window.crewRoomExplain.full(), el: document.fullscreenElement === L, w: Math.round(b.width), h: Math.round(b.height), sw: innerWidth, sh: innerHeight, fw: Math.round(f.width), fh: Math.round(f.height), ftop: Math.round(f.top), barTop: Math.round(bar.top), barBottom: Math.round(bar.bottom), barW: Math.round(bar.width), kept: L.querySelector('[data-explain-frame="1"]').__kept === 1, clip: L.style.clipPath, bar: !!L.querySelector("[data-explain-fullclose]"), focus: document.activeElement?.hasAttribute("data-explain-fullclose") }; });
+    ok(fs.barTop === 0 && fs.barW === fs.w && fs.ftop >= fs.barBottom && fs.fh === fs.h - fs.barBottom, "the bar has a strip of its own at the top: the output starts below it, so it never covers the page's own controls", JSON.stringify(fs));
     ok(fs.mode === "native" && fs.el && fs.w === fs.sw && fs.h === fs.sh && fs.fw === fs.w && fs.kept && !fs.clip && fs.bar && fs.focus, "Full screen: the output's layer is the screen (the Fullscreen API), its frame fills it and is not reloaded; ✕ has the focus", JSON.stringify(fs));
     await w.screenshot({ path: join(shots, "11-fullscreen.png") });
     await w.click("[data-explain-fullclose]"); await w.waitForFunction(() => !window.crewRoomExplain.full() && !document.fullscreenElement, null, { timeout: 5000 }); await w.waitForTimeout(200);
@@ -502,8 +512,9 @@ try {
     const before2 = await w.evaluate(() => ({ body: document.querySelector(".rx-body").scrollTop, y: scrollY }));
     await w.focus("[data-explain-box]"); await w.keyboard.press("f"); await w.waitForFunction(() => window.crewRoomExplain.full() === "fallback", null, { timeout: 5000 }); await w.waitForTimeout(150);
     const fb = await w.evaluate(() => { const L = document.querySelector("[data-x-layer]"), b = L.getBoundingClientRect(), head = document.querySelector(".rr-head").getBoundingClientRect(), at = document.elementFromPoint(head.left + 20, head.top + head.height / 2);
-      return { cls: L.classList.contains("full"), x: b.left, y: b.top, w: Math.round(b.width), h: Math.round(b.height), sw: innerWidth, sh: innerHeight, covers: L.contains(at), fs: !!document.fullscreenElement, bar: getComputedStyle(L.querySelector(".rx-fullbar")).display !== "none" }; });
-    ok(fb.cls && !fb.fs && fb.x === 0 && fb.y === 0 && fb.w === fb.sw && fb.h === fb.sh && fb.covers && fb.bar, "F on the stage; refused, the output fills the window instead (a fixed layer over the room), with its ✕", JSON.stringify(fb));
+      return { cls: L.classList.contains("full"), x: b.left, y: b.top, w: Math.round(b.width), h: Math.round(b.height), sw: innerWidth, sh: innerHeight, covers: L.contains(at), fs: !!document.fullscreenElement, bar: getComputedStyle(L.querySelector(".rx-fullbar")).display !== "none",
+        below: L.querySelector("iframe").getBoundingClientRect().top >= L.querySelector(".rx-fullbar").getBoundingClientRect().bottom }; });
+    ok(fb.cls && !fb.fs && fb.x === 0 && fb.y === 0 && fb.w === fb.sw && fb.h === fb.sh && fb.covers && fb.bar && fb.below, "F on the stage; refused, the output fills the window instead (a fixed layer over the room), with its ✕", JSON.stringify(fb));
     await w.screenshot({ path: join(shots, "12-fullscreen-fallback.png") });
     await w.keyboard.press("Escape"); await w.waitForFunction(() => !window.crewRoomExplain.full(), null, { timeout: 3000 }); await w.waitForTimeout(200);
     const back2 = await w.evaluate(() => { const L = document.querySelector("[data-x-layer]"), r = L.getBoundingClientRect(), s = document.querySelector("[data-x-slot]").getBoundingClientRect(), head = document.querySelector(".rr-head").getBoundingClientRect(), at = document.elementFromPoint(head.left + 20, head.top + head.height / 2);
@@ -518,6 +529,9 @@ try {
     ok(/Step 1 · rounding/.test(await w.$eval("[data-x-scope]", (e) => e.textContent)), "after full screen, boxing a region still reads what lies there");
     // a video: its own player's native full screen
     await w.click("[data-explain-clear]");
+    failSelect = true; await w.click('[data-explain-version="3"]'); await w.waitForSelector("[data-explain-error]", { timeout: 5000 }); failSelect = false;
+    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(150);
+    ok(!(await w.$("[data-explain-error]")), "an error from showing one version is gone once another version is shown");
     await w.click('[data-explain-version="3"]'); await w.waitForSelector("[data-explain-video]");
     await w.click("[data-explain-full]"); await w.waitForFunction(() => !!window.crewRoomExplain.full() && !!document.fullscreenElement, null, { timeout: 5000 });
     ok(await w.evaluate(() => document.fullscreenElement?.tagName === "VIDEO" && document.fullscreenElement.hasAttribute("data-explain-video")), "a video goes full screen in its own player", await w.evaluate(() => document.fullscreenElement?.tagName));
@@ -549,8 +563,12 @@ try {
       await c7.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
       const k = await c7.newPage(); k.on("pageerror", (e) => errors.push(e.message));
       await k.goto(`${base}/#/skills`); await k.waitForSelector('[data-skill-defprompt="walkthrough"]', { timeout: 15000 });
+      const shown0 = await k.$$eval("[data-skill-defprompt]", (es) => es.map((e) => e.dataset.skillDefprompt));
+      ok(shown0.length === 1 && shown0[0] === "walkthrough" && (await k.$eval('[data-skill-defprompt="walkthrough"] [data-skill-defstate]', (e) => e.dataset.skillDefstate)) === "none" && (await k.$eval("[data-skill-defall]", (e) => e.getAttribute("aria-pressed"))) === "false",
+        "the Skills page shows the default-instructions editor on the captain's own skill only (none set yet); Studio's built-in ones wait behind a toggle", JSON.stringify(shown0));
+      await k.click("[data-skill-defall]"); await k.waitForFunction(() => document.querySelectorAll("[data-skill-defprompt]").length > 2);
       const other = await k.$$eval("[data-skill-defprompt]", (es) => es.map((e) => e.dataset.skillDefprompt).find((x) => x !== "walkthrough"));
-      ok((await k.$eval('[data-skill-defprompt="walkthrough"] [data-skill-defstate]', (e) => e.dataset.skillDefstate)) === "none" && !!other, "the Skills page has a default-instructions editor on each skill, none set yet", other);
+      ok(!!other && (await k.$eval("[data-skill-defall]", (e) => e.getAttribute("aria-pressed"))) === "true", "“show for all skills” shows the editor on every library skill", other);
       await k.click('[data-skill-defprompt="walkthrough"] > summary'); await k.click('[data-skill-defexample="walkthrough"]');
       const ex = await k.$eval('[data-skill-deftext="walkthrough"]', (e) => e.value);
       ok(/architecture diagram/.test(ex) && /sequence diagram/.test(ex) && /database lifecycle/.test(ex) && /state machine/.test(ex) && /error codes/.test(ex) && /API request and response/.test(ex) && /technology choices/.test(ex) && /before and after/.test(ex),
@@ -580,18 +598,21 @@ try {
       const m1 = await q.evaluate(() => ({ over: document.documentElement.scrollWidth > innerWidth + 1, full: (() => { const b = document.querySelector("[data-explain-full]"); b?.scrollIntoView({ block: "center" }); const r = b?.getBoundingClientRect(); return !!r && r.width > 0 && r.right <= innerWidth + 1; })(), head: document.querySelector("[data-explain-made] summary")?.textContent || "" }));
       await q.screenshot({ path: join(shots, `14-look-${tag}-version.png`) });
       await q.click('[data-explain-reuse="1"]'); await q.waitForSelector("[data-explain-start]:not([disabled])");
-      const m2 = await q.evaluate(() => { const ta = document.querySelector("[data-explain-prompt]").getBoundingClientRect(), m = document.querySelector(".rx-modal").getBoundingClientRect();
-        return { label: document.querySelector("[data-explain-promptfield] label").textContent, inModal: ta.left >= m.left && ta.right <= m.right + 0.5, over: document.documentElement.scrollWidth > innerWidth + 1 }; });
+      await q.fill("[data-explain-prompt]", Array.from({ length: 30 }, (_, i) => `- section ${i + 1}: what it shows and why`).join("\n")); await q.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
+      const m2 = await q.evaluate(() => { const ta = document.querySelector("[data-explain-prompt]").getBoundingClientRect(), md = document.querySelector(".rx-modal"), m = md.getBoundingClientRect(); md.scrollTop = 0;
+        const b = document.querySelector("[data-explain-start]").getBoundingClientRect(), at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return { label: document.querySelector("[data-explain-promptfield] label").textContent, inModal: ta.left >= m.left && ta.right <= m.right + 0.5, over: document.documentElement.scrollWidth > innerWidth + 1,
+          startInView: b.bottom <= Math.min(innerHeight, m.bottom) + 0.5 && b.top >= m.top && !!at?.closest?.("[data-explain-start]") }; });
       await q.screenshot({ path: join(shots, `14-look-${tag}-confirm.png`) });
       await q.click(".rx-modal .rx-foot .btn:not(.primary)");
       await q.evaluate(() => { Element.prototype.requestFullscreen = function () { return Promise.reject(new TypeError("no")); }; }); await q.click("[data-explain-full]"); await q.waitForFunction(() => window.crewRoomExplain.full() === "fallback", null, { timeout: 5000 }); await q.waitForTimeout(150);
       const m3 = await q.evaluate(() => { const b = document.querySelector("[data-explain-fullclose]").getBoundingClientRect(); return { x: b.right <= innerWidth && b.left >= 0, text: document.querySelector("[data-explain-fullclose]").textContent }; });
       await q.screenshot({ path: join(shots, `14-look-${tag}-full.png`) });
       const zhOk = lang === "en" ? /What should it produce\?/.test(m2.label) && /Exit full screen/.test(m3.text) && /Made with your instructions/.test(m1.head) : /要產出什麼？/.test(m2.label) && /離開全螢幕/.test(m3.text) && /依你的指示產生/.test(m1.head);
-      looks.push({ tag, ok: !m1.over && m1.full && m2.inModal && !m2.over && m3.x && zhOk, m1, m2, m3 });
+      looks.push({ tag, ok: !m1.over && m1.full && m2.inModal && !m2.over && m2.startInView && m3.x && zhOk, m1, m2, m3 });
       await c6.close();
     }
-    ok(looks.every((l) => l.ok), "at 1440, 900 and 390, light and dark, English and 繁體中文: no sideways scroll, Full screen in reach, the field inside its dialog, the words in the captain's language", JSON.stringify(looks.filter((l) => !l.ok)));
+    ok(looks.every((l) => l.ok), "at 1440, 900 and 390, light and dark, English and 繁體中文: no sideways scroll, Full screen in reach, the field inside its dialog, Confirm in view with long instructions (the dialog's footer stays), the words in the captain's language", JSON.stringify(looks.filter((l) => !l.ok)));
   }
   ok(!errors.length, "no page error", errors.join(" | "));
 } catch (e) { fail++; console.log("  FAIL  the run stopped:", e?.stack || e); console.log(appLog.slice(-3000)); }

@@ -732,10 +732,13 @@ The room can be presented by one of the captain's own skills instead of the tuto
   default" brings it back after an edit, and "Insert a review checklist" adds Studio's built-in example below the text, never
   by itself (`PROMPT_EXAMPLE`, en and zh-TW: an architecture diagram, a sequence diagram, the database lifecycle, the state
   machine of an order or entity, error codes, each API request and response, the technology choices, before and after of what
-  it fixed). Defaults are the captain's, Studio-wide (not per room), kept with the explainer's settings in
-  `data/review-room-explain.json` (`defaultPrompts`), and editable outside any run on the Skills page: each skill's row has
+  it fixed); it is off while the checklist is already in the field (no second copy). The dialog's buttons stay in view
+  however long the text (a footer that sticks to its bottom), and its "Skills page" link opens a tab of its own, so the text
+  typed here stays. Defaults are the captain's, Studio-wide (not per room), kept with the explainer's settings in
+  `data/review-room-explain.json` (`defaultPrompts`), and editable outside any run on the Skills page:
   "Review room: default instructions" (`[data-skill-defprompt]`: set or none, the text, Save default, Clear, Insert a review
-  checklist), through `GET /api/review-room/explain/prompts` (every skill's default and last text, the cap, the example) and
+  checklist) on the captain's own skills and on any skill already used in a review room; Studio's built-in skills get it
+  behind "Review-room instructions: show for all skills" (`[data-skill-defall]`). Through `GET /api/review-room/explain/prompts` (every skill's default and last text, the cap, the example) and
   `POST … {skill, text}` (the captain on this Mac; an empty text clears it). A default is only a prefill: the offer is for
   exactly the text the confirmation sends (`POST …/explain/offer {skill, kind, prompt}`, a POST because 2000 characters of CJK
   do not fit a URL; `GET …/explain/offer` without `prompt` is the prefill), its sha256 is part of the offer's hash, and an edit
@@ -874,8 +877,9 @@ The room can be presented by one of the captain's own skills instead of the tuto
   room or a version exists. The tutor's own rule (model text only in text nodes) is unchanged.
 - **Full screen and a tab of its own.** "Full screen" / 全螢幕 (`[data-explain-full]`, or F while the focus is on the stage)
   puts the output's layer in full screen with the Fullscreen API (a picture or a video: that element, natively). The frame is
-  not reloaded (the layer is the same element; it only leaves the stage's geometry and clipping while full). A bar in the
-  corner names the version and has "✕ Exit full screen" (Esc). When full screen is refused (a browser or a policy that does
+  not reloaded (the layer is the same element; it only leaves the stage's geometry and clipping while full). A bar names
+  the version and has "✕ Exit full screen" (Esc) in a strip of its own at the top (44 px): the output starts below it, so
+  the bar never covers the page's own controls (a language switch in its corner). When full screen is refused (a browser or a policy that does
   not allow it), the layer covers the whole window instead (`.rx-layer.full`, fixed, over the room) and Esc or ✕ closes it.
   Leaving (✕, Esc, the browser's own way out, another version, leaving the room) puts the layer back on its stage and every
   scroll position the stage sits in back as it was, and gives the focus back to Full screen. A quick question asked from a box

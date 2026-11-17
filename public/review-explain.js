@@ -13,7 +13,7 @@
 // and opens in a tab of its own (a fresh capability, framed exactly as here).
 (() => {
 const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), sel: new Map(), draft: new Map(), caps: new Map(),
-  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), returnTo: null, more: new Set() };
+  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), returnTo: null, more: new Set(), madeOpen: new Set() };
 const enc = encodeURIComponent;
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -89,7 +89,9 @@ let want = null;
 const focusLater = (sel) => { if (sel) want = sel; requestAnimationFrame(() => {
   const m = document.querySelector(".rx-modal");
   if (m) { if (!m.contains(document.activeElement)) (m.querySelector("[data-explain-autofocus]") || m.querySelector("button,input,a[href]"))?.focus(); return; }
-  if (want) { const e = document.querySelector(want); want = null; e?.focus({ preventScroll: true }); } }); };
+  // the control that opened it, else (gone or folded away) the stage's own: the version's line, Generate, the picker
+  if (want) { const e = document.querySelector(want); want = null; e?.focus({ preventScroll: true });
+    if (!e || document.activeElement !== e) for (const f of ["[data-explain-made] > summary", "[data-explain-again]", "[data-explain-open]"]) { const x = document.querySelector(f); if (x && x.getClientRects().length) { x.focus({ preventScroll: true }); if (document.activeElement === x) break; } } } }); };
 const closeDialog = () => { X.pick = null; X.confirm = null; const back = X.returnTo || "[data-explain-open]"; X.returnTo = null; render(); focusLater(back); };
 addEventListener("keydown", (e) => {
   const m = document.querySelector(".rx-modal"); if (!m || e.key !== "Tab") return;
@@ -162,11 +164,14 @@ function promptUi(c) {
   const v = c.prompt ?? "", q = (s) => document.querySelector(s);
   const n = q("[data-explain-promptcount]"); if (n) { n.textContent = `${v.length} / ${PROMPT_MAX}`; n.classList.toggle("over", v.length > PROMPT_MAX * 0.9); }
   const src = q("[data-explain-promptsource]"); if (src) { const w = promptSource(c); src.textContent = w.text; src.dataset.explainPromptsource = w.key; }
+  const exb = q("[data-explain-promptexample]"); if (exb) exb.disabled = hasExample(v, c.offer?.prompt?.example);
   const sv = q("[data-explain-promptsave]"); if (sv) sv.disabled = (v.trim() || null) === (c.def ?? null) || v.length > PROMPT_MAX;
   const rs = q("[data-explain-promptreset]"); if (rs) rs.hidden = c.def == null || v === c.def;
   const nt = q("[data-explain-promptnote]"); if (nt) nt.textContent = c.note || "";
   const go = q("[data-explain-start]"); if (go) go.disabled = !!(c.pending || c.stale || c.loading || c.offer?.error || X.posting.has(`${c.id}/gen`));
 }
+/** the built-in checklist is already in the text (either language): inserting it again would only repeat it */
+const hasExample = (v, ex) => !!ex && [ex.en, ex.zh].some((t) => t && String(v || "").includes(t));
 /** where the field's text comes from, said under it */
 function promptSource(c) {
   const v = (c.prompt ?? "").trim(), o = c.offer?.prompt || {}, def = c.def ?? null;
@@ -289,11 +294,11 @@ function promptField(c, o) {
       h("button", { type: "button", class: "btn sm", "data-explain-promptsave": "", disabled: (v.trim() || null) === (c.def ?? null) ? true : null, onclick: () => saveDefault(c) },
         c.def != null && !v.trim() ? T("Clear the default for this skill", "清除這個 skill 的預設") : T("Save as default for this skill", "存成這個 skill 的預設")),
       h("button", { type: "button", class: "btn sm", "data-explain-promptreset": "", hidden: c.def == null || v === c.def ? true : null, onclick: () => setPrompt(c, c.def) }, T("Reset to default", "還原成預設")),
-      ex ? h("button", { type: "button", class: "btn sm", "data-explain-promptexample": "", title: T(ex.en, ex.zh), onclick: () => { const t = T(ex.en, ex.zh), cur = (c.prompt ?? "").trimEnd(); setPrompt(c, cur ? `${cur}\n\n${t}` : t); } },
+      ex ? h("button", { type: "button", class: "btn sm", "data-explain-promptexample": "", title: T(ex.en, ex.zh), disabled: hasExample(v, ex) ? true : null, onclick: () => { const t = T(ex.en, ex.zh), cur = (c.prompt ?? "").trimEnd(); setPrompt(c, cur ? `${cur}\n\n${t}` : t); } },
         T("Insert a review checklist", "插入審查清單範例")) : null,
       c.saved ? h("small", { class: "rx-saved", "data-explain-promptsaved": "", role: "status" }, T("Saved: the next run of this skill starts from it.", "已存：這個 skill 下次就從這段開始。")) : null),
     h("small", { class: "faint" }, T("Your instructions go to the skill as yours, apart from the pull request's text. A changed text is a new confirmation.", "你的指示會以你的名義交給 skill，和 PR 的內容分開。改了內容就要重新確認。"),
-      " ", h("a", { href: "#/skills" }, T("Defaults of every skill: Skills page", "所有 skill 的預設：技能頁"))),
+      " ", h("a", { href: "/#/skills", target: "_blank", rel: "noopener", "data-explain-skillslink": "" }, T("Defaults of every skill: Skills page ↗", "所有 skill 的預設：技能頁 ↗"))),
     h("small", { class: "rx-promptnote", "data-explain-promptnote": "", role: "status" }, c.note && c.stale ? c.note : ""));
 }
 /** the picker's menu and the paid run's confirmation, over whichever way the room is shown */
@@ -308,7 +313,7 @@ function view(r) {
 }
 /** show a version; one made by another skill switches the room to that skill (so the header, the chat and Generate agree) */
 async function showVersion(r, v) {
-  const id = r.card.id, st = state(id); X.shown.set(id, v.n); X.sel.delete(id); X.boxing = null;
+  const id = r.card.id, st = state(id); X.shown.set(id, v.n); X.sel.delete(id); X.boxing = null; X.err.delete(id);
   if (st.selected?.id !== v.skill.id) { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: v.skill.id })); } catch (e) { X.err.set(id, bi(e.message)); } }
   render();
 }
@@ -336,7 +341,8 @@ function madeFrom(v) {
 /** the version view's own line: which instructions (or question) produced it, opened to the whole text, and Generate again */
 function versionHead(r, st, v) {
   const m = madeFrom(v), sid = st.selected?.id, can = r.open && !readOnly() && !liveRun(st) && sid === v.skill.id;
-  return h("details", { class: "rx-vhead", "data-explain-made": m?.kind || "none" },
+  const key = `${r.card.id}/${v.n}`;
+  return h("details", { class: "rx-vhead", "data-explain-made": m?.kind || "none", open: X.madeOpen.has(key) ? true : null, ontoggle: (e) => { if (e.target.open) X.madeOpen.add(key); else X.madeOpen.delete(key); } },
     h("summary", {}, h("b", {}, `${v.skill.name} v${v.n}`), " · ",
       !m ? T("made before instructions were kept", "這版沒有留下指示")
       : m.kind === "prompt" ? [T("Made with your instructions: ", "依你的指示產生："), h("span", { class: "rx-vprompt" }, m.short.replace(/^✎ /, ""))]
