@@ -233,9 +233,11 @@ details.wf-adv>summary small{font-weight:400;color:var(--text-3);margin-left:aut
 .r-link::before{content:"";position:absolute;left:63px;top:0;bottom:0;width:2px;background:var(--border-strong)}
 .r-arrowhead{position:absolute;left:64px;bottom:-1px;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--border-strong);z-index:2}
 .r-link.short .r-arrowhead{display:none}
-.r-gate{position:absolute;left:52px;top:9px;z-index:2;display:inline-flex;gap:5px;align-items:center;font-size:12px;color:var(--ok);background:var(--ok-soft);border-radius:99px;padding:1px 9px 1px 6px;white-space:nowrap;max-width:calc(100% - 60px);overflow:hidden;text-overflow:ellipsis}
-.r-gate+.r-gate{left:auto;right:8px}
-.r-gate .ic{width:12px;height:12px}
+.r-gates{position:absolute;left:52px;right:40px;top:8px;z-index:2;display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}
+.r-gate{display:inline-flex;gap:5px;align-items:center;font-size:12px;color:var(--ok);background:var(--ok-soft);border-radius:99px;padding:1px 9px 1px 6px;white-space:nowrap;max-width:100%;min-width:0;overflow:hidden;height:22px;box-sizing:border-box}
+.r-gate .t{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.r-gate .more{flex:none;opacity:.8}
+.r-gate .ic{width:12px;height:12px;flex:none}
 .r-gate.lock{color:var(--text-2);background:var(--surface-3)}
 .r-plus{position:absolute;left:64px;top:50%;transform:translate(-50%,-50%);z-index:3;width:22px;height:22px;min-height:0;padding:0;border-radius:50%;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-3);display:grid;place-items:center;opacity:0;transition:opacity .12s}
 .r-link.gated .r-plus{left:auto;right:0}
@@ -276,8 +278,7 @@ details.wf-adv>summary small{font-weight:400;color:var(--text-3);margin-left:aut
   .r-node{left:36px}
   .r-arrowhead{left:36px}
   .r-plus{left:36px}
-  .r-gate{left:24px;max-width:calc(100% - 30px)}
-  .r-gate+.r-gate{display:none}
+  .r-gates{left:24px;right:44px}
   .r-step.drop-before::before,.r-step.drop-after::after{left:56px}
   .r-wrap:not(.editing) .r-plus{display:none}
   .r-wrap.editing .r-plus{opacity:1;width:28px;height:28px}
@@ -350,3 +351,11 @@ button.wf-chip:hover{border-color:var(--border-strong);color:var(--text)}
 /* the graph editor's link back to Steps: desktop only, so the editor's phone layout stays as it was */
 [data-editor-steps]{display:inline-block;font-size:13px;margin-bottom:2px}
 @media (max-width: 640px){[data-editor-steps]{display:none}}
+/* the quiet graph-editor link, the strip's start dot, the title's capital, the note for connectors with no free lane */
+.wf-tabs .wf-advlink{font-size:13px;color:var(--text-3);text-decoration:none}
+.wf-tabs .wf-advlink:hover{color:var(--text-2);text-decoration:underline;text-underline-offset:2px}
+.r-sdot{display:block;width:7px;height:7px;border-radius:50%;background:var(--text-3)}
+.wf-page .wf-title h1::first-letter{text-transform:uppercase}
+.r-dropped{font-size:12px;margin:6px 0 0 88px}
+@media (max-width: 760px){.r-dropped{margin-left:56px}}
+.wf-drawer .wf-seg button{white-space:nowrap;padding:4px 6px}

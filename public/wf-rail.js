@@ -21,14 +21,24 @@ P.book ??= '<path d="M4 4h10a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4z"/><path d="M4 16a
 // kit.js's h, flattening nested child lists (h_ is app.js's alias of it)
 const h = (tag, attrs = {}, ...kids) => h_(tag, attrs, ...kids.flat(Infinity));
 const clone = (o) => JSON.parse(JSON.stringify(o));
+const attr = (v) => String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// replaceChildren for built lists: nested lists flattened, null / false parts dropped (never rendered as "null")
+const put = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k != null && k !== false));
 const fit = (t, n) => { t = String(t ?? ""); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
 const KIC = { agent: "agent", check: "gate", card: "human", loop: "loop", hook: "tool", group: "fork" };
 const kindName = (k) => ({ agent: T("AI step", "AI 步驟"), check: T("Automatic check", "自動檢查"), card: T("You decide", "由你決定"), loop: T("Loop", "迴圈"), hook: T("Automatic action", "自動動作"), group: T("Run together", "同時進行") }[k] || k);
 const WORDS = { pass: ["passes", "通過"], fail: ["fails", "失敗"], error: ["fails", "出錯"], timeout: ["times out", "逾時"], cap: ["runs out of rounds", "輪數用完"], stalled: ["stops improving", "沒有進展"],
   "step-back": ["steps back", "退一步"], blocked: ["is blocked", "卡住"], retry: ["retries", "重試"], report: ["reports", "回報"], changes: ["requests changes", "要求修改"], ok: ["finishes", "完成"],
   approve: ["approves", "核准"], approved: ["approves", "核准"], reject: ["rejects", "不採用"], rejected: ["rejects", "不採用"], close: ["closes", "關閉"], unavailable: ["is unavailable", "無法使用"] };
+Object.assign(WORDS, { adopt: ["starts from an existing branch", "從現有分支開始"], recapture: ["needs new captures", "需要重新截圖"], escalate: ["escalates", "需要升級處理"],
+  "door-change": ["finds the change type was wrong", "發現修改類型判斷錯了"], "env-permission": ["needs an environment permission", "需要環境權限"], "other-model": ["needs another model", "需要換模型"],
+  rebase: ["needs a rebase", "需要 rebase"], "rebase-more": ["needs another rebase", "還要再 rebase"], revise: ["needs revising", "需要修改"], notes: ["has notes", "有備註"], gap: ["finds a capture gap", "發現截圖缺口"],
+  ui: ["finds a UI change", "發現 UI 修改"], none: ["finds nothing to do", "發現沒事要做"], "two-way": ["says two-way", "判定為雙向門"], "one-way": ["says one-way", "判定為單向門"], undecided: ["cannot decide", "無法決定"],
+  merge: ["is ready to merge", "可以合併"], fallback: ["falls back", "改走備案"], continue: ["continues", "繼續"], rescope: ["needs a new scope", "需要重新界定範圍"], park: ["is parked", "被擱置"],
+  drop: ["is dropped", "被放棄"], discard: ["is discarded", "被丟棄"], extend: ["needs more rounds", "需要更多輪"], apply: ["is applied", "已套用"], accept: ["is accepted", "被接受"], dispatch: ["is dispatched", "已派出"] });
 const word = (w) => (WORDS[w] ? T(WORDS[w][0], WORDS[w][1]) : String(w).replace(/[-_]/g, " "));
-const whenText = (when) => String(when || "").split("|").filter(Boolean).map(word).join(T(" or ", " 或 "));
+// "If it fails", "If it is blocked"; a word Studio does not know reads as the outcome itself
+const whenText = (when) => String(when || "").split("|").filter(Boolean).map((w) => (WORDS[w] ? word(w) : T(`ends with “${w}”`, `結果是「${w}」`))).join(T(" or ", " 或 "));
 // the outcomes a step can end with, by kind: the rail's branch picker offers these, plus the words already on this step
 const OUTCOMES = { agent: ["fail", "changes", "blocked", "timeout"], check: ["fail", "pass"], loop: ["cap", "stalled", "pass", "retry"], hook: ["error", "ok"], card: [] };
 const TEMPLATES = [["agent", "agent", "An AI does work", "AI 做事", "Plan, build, write, review …", "規劃、建置、撰寫、審查…"],
@@ -40,7 +50,15 @@ const ACTIONS = { "pr.open": ["Open a pull request", "開 PR"], "pr.shepherd": [
   "library.publish": ["Publish to the Library", "發布到成品庫"], "doc.export": ["Export the document", "匯出文件"], "repo.prepare": ["Prepare the repository", "準備 repo"],
   "intent.capture": ["Capture the request", "記下需求"], "deliver.intake": ["Capture the brief", "記下 brief"], "deliver.round": ["Begin a round", "開始一輪"], "deliver.render": ["Render the result", "算繪成品"],
   "remote.ready": ["Check the branch is ready to merge", "確認分支可合併"], "image.generate": ["Generate an image", "產生圖片"], note: ["Write a note", "寫一則備註"] };
-const actionName = (id) => (ACTIONS[id] ? T(ACTIONS[id][0], ACTIONS[id][1]) : id || T("does something", "做一件事"));
+Object.assign(ACTIONS, { "git.merge": ["Merge the branch", "合併分支"], "repo.cleanup": ["Remove the worktree", "移除 worktree"], "hello.web": ["Build the sample website", "做出範例網站"],
+  "branch.adopt": ["Copy an existing branch", "複製現有分支"], "fileorg.plan": ["Plan the file moves", "規劃檔案搬移"], "fileorg.apply": ["Move the files (with an undo log)", "搬移檔案（附還原紀錄）"], "fileorg.discard": ["Drop the plan", "放棄計畫"],
+  "firstmate.dispatch": ["Hand the spec to the crew", "把 spec 交給船員"], "firstmate.launch": ["Start Firstmate", "啟動 Firstmate"], "lane.merge": ["Merge the lane", "合併這條線"], "lane.close": ["Close the lane", "關閉這條線"],
+  "coffee.assemble": ["Put the site together", "組合網站"], "coffee.library": ["Save the site to the Library", "把網站存到成品庫"], "crew.apply": ["Apply the crew change", "套用船員變更"], "crew.confirm": ["Ask you to confirm the crew", "請你確認船員"],
+  "staffing.confirm": ["Ask you to confirm staffing", "請你確認派工"], "staffing.activate": ["Turn the staffing on", "啟用派工"], "issues.snapshot": ["Read the open issues", "讀取未結 issue"] });
+// a plain name for an action id; one Studio does not name reads as its words ("coffee.video-needed" → "Coffee video needed")
+const actionName = (id) => (ACTIONS[id] ? T(ACTIONS[id][0], ACTIONS[id][1]) : id ? String(id).replace(/[._-]+/g, " ").replace(/^./, (c) => c.toUpperCase()) : T("does something", "做一件事"));
+const EFFORTS = ["minimal", "low", "medium", "high", "xhigh"]; // the efforts a saved step may name (src/workflow-drafts.ts DRAFT_EFFORTS)
+const MODELS = { value: null, pending: null }; // Studio's model catalog, loaded once per page
 const okEnd = (n) => !n.args?.result && !/clos|drop|park|discard|cancel|empty|none|reject|fail|abandon/i.test(`${n.id} ${n.label}`);
 
 // ---------- the reading: main line, detours, ends, fork groups ----------
@@ -70,8 +88,13 @@ function model(def) {
   const dfs = (u) => { state.set(u, 1); fwd.set(u, []); for (const v of adj.get(u) || []) { if (state.get(v) === 1) continue; fwd.get(u).push(v); if (!state.get(v)) dfs(v); } state.set(u, 2); };
   if (entry) dfs(rep(entry));
   const endish = (id) => !groups.has(id) && isEnd(id);
+  // the line follows a step's ordinary way on (no outcome word, or pass / ok / approve …, or into its own refine loop) when it
+  // has one; an outcome like "blocked" leads onto the line only when the step has no ordinary way on
+  const GOOD = /^(|pass|ok|approve|approved|continue|done|accept|accepted|sent|yes|adopted)$/;
+  const good = (a, b) => edges.some((e) => rep(e.from) === a && rep(e.to) === b && (String(e.when || "").split("|").some((w) => GOOD.test(w)) || (byId.get(e.to)?.kind === "loop" && byId.get(e.to).args?.producer === e.from)));
   const memo = new Map();
-  const lp = (u) => { if (memo.has(u)) return memo.get(u); let best = []; for (const v of fwd.get(u) || []) { if (endish(v)) continue; const p = lp(v); if (p.length > best.length) best = p; } const r = [u, ...best]; memo.set(u, r); return r; };
+  const lp = (u) => { if (memo.has(u)) return memo.get(u); const cands = (fwd.get(u) || []).filter((v) => !endish(v)), ok = cands.filter((v) => good(u, v));
+    let best = []; for (const v of ok.length ? ok : cands) { const p = lp(v); if (p.length > best.length) best = p; } const r = [u, ...best]; memo.set(u, r); return r; };
   const main = entry && !endish(rep(entry)) ? lp(rep(entry)) : [];
   const onMain = new Set(main);
   const detours = []; for (const n of nodes) { const r = rep(n.id); if (!onMain.has(r) && !endish(r) && !detours.includes(r)) detours.push(r); }
@@ -113,11 +136,19 @@ function build(ed, X) {
   // ---------- draft history: every edit is one change; Save makes a version ----------
   const snap = () => clone({ nodes: ed.def.nodes, edges: ed.def.edges, roles: ed.def.roles });
   const restore = (s) => { ed.def.nodes = s.nodes; ed.def.edges = s.edges; ed.def.roles = s.roles; };
-  const commit = (fn, sel) => { if (readOnly()) return; R.hist.push(snap()); R.fut = []; fn(); R.changes++; ed.dirty = true; if (sel !== undefined) R.sel = sel; refresh(); };
-  const undo = () => { if (!R.hist.length) return; R.fut.push(snap()); restore(R.hist.pop()); R.changes = Math.max(0, R.changes - 1); ed.dirty = R.changes > 0; refresh(); };
-  const redo = () => { if (!R.fut.length) return; R.hist.push(snap()); restore(R.fut.pop()); R.changes++; ed.dirty = true; refresh(); };
-  const discard = () => { restore(clone({ nodes: ed.saved.nodes, edges: ed.saved.edges, roles: ed.saved.roles })); R.hist = []; R.fut = []; R.changes = 0; ed.dirty = false; R.sel = null; refresh(); say(T("Changes discarded.", "已捨棄修改。")); };
+  // while a save is on its way the draft is held still: an edit then would be lost when the saved version reloads
+  const busy = () => { if (!saving) return false; say(T("Saving… edit again once it is saved.", "儲存中…存好後再修改。")); return true; };
+  const contentKey = (d) => JSON.stringify({ nodes: (d.nodes || []).map(({ x, y, ...n }) => n), edges: d.edges, roles: d.roles });
+  const mark = () => { R.key = contentKey(ed.def); };
+  const commit = (fn, sel) => { if (readOnly() || busy()) return; R.hist.push(snap()); R.fut = []; fn(); R.changes++; ed.dirty = true; if (sel !== undefined) R.sel = sel; mark(); refresh(); };
+  const undo = () => { if (!R.hist.length || busy()) return; R.fut.push(snap()); restore(R.hist.pop()); R.changes = Math.max(0, R.changes - 1); ed.dirty = R.changes > 0; mark(); refresh(); };
+  const redo = () => { if (!R.fut.length || busy()) return; R.hist.push(snap()); restore(R.fut.pop()); R.changes++; ed.dirty = true; mark(); refresh(); };
+  const discard = () => { if (busy()) return; restore(clone({ nodes: ed.saved.nodes, edges: ed.saved.edges, roles: ed.saved.roles })); R.hist = []; R.fut = []; R.changes = 0; ed.dirty = false; R.sel = null; mark(); refresh(); say(T("Changes discarded.", "已捨棄修改。")); };
   const refresh = () => { M = model(ed.def); if (R.sel && !node(R.sel) && !M.groups.has(R.sel)) R.sel = null; paint(); validate(); };
+  // back from the graph editor: its edits are not in this history, so Undo must not step over them
+  const sync = () => { const k = contentKey(ed.def); if (R.key !== undefined && R.key !== k) { R.hist = []; R.fut = []; R.changes = k === contentKey(ed.saved) ? 0 : Math.max(1, R.changes); ed.dirty = R.changes > 0; }
+    else if (R.key === undefined && k !== contentKey(ed.saved)) R.changes = Math.max(1, R.changes); R.key = k; };
+  sync();
   const validate = () => { clearTimeout(vtimer); const gen = ++vgen; vtimer = setTimeout(async () => { try { const r = await X.api("/api/wf/validate", { def: clone(ed.def) }); if (gen !== vgen || disposed) return; ed.problems = r.problems || []; paint(true); } catch {} }, 250); };
 
   // ---------- graph edits ----------
@@ -165,23 +196,32 @@ function build(ed, X) {
       insertNode(after, n, n.kind === "card" ? n.card?.options?.[0]?.id : null); added.push(n.id); M = model(ed.def); after = n.id; } });
     say(T(`Added ${added.length} follow-through steps, wired in order.`, `已加入 ${added.length} 個跟進步驟，依序接好。`));
   };
-  // take a row off the line (its branches stay with it): the segment into it now leads where it led
-  const detach = (id) => { const i = M.main.indexOf(id), prev = i > 0 ? M.main[i - 1] : null, to = M.next(id);
-    const Lin = prev ? M.link(prev, id) : [], Lout = M.link(id, to); const outs = [...new Set(Lout.map((e) => e.to))];
-    dropEdges([...Lin, ...Lout]); for (const e of Lin) for (const t of outs) addEdge({ from: e.from, to: t, when: e.when, checks: e.checks });
-    return Lout[0] || null; };
-  const moveStep = (id, dir) => { const i = M.main.indexOf(id), j = i + dir; if (i < 0 || j < 0 || j >= M.main.length || M.groups.has(id) || M.groups.has(M.main[j])) return;
-    const target = M.main[j]; commit(() => { const out = detach(id); M = model(ed.def); attach(id, dir > 0 ? target : M.main[M.main.indexOf(target) - 1] ?? null, target, out); }, id);
-    flash(id); };
-  // put a detached row back after `afterId` (null: first on the line, before `before`)
-  const attach = (id, afterId, before, out) => {
-    if (afterId) { const to = M.next(afterId), L = M.link(afterId, to); dropEdges(L);
-      for (const e of L) addEdge({ from: e.from, to: id, when: e.when, checks: e.checks });
-      for (const t of [...new Set(L.map((e) => e.to))]) addEdge({ from: id, to: t, when: out?.when, checks: out?.checks }); }
-    else if (before) for (const t of M.groups.has(before) ? M.groups.get(before).members : [before]) addEdge({ from: id, to: t, when: out?.when, checks: out?.checks });
-  };
-  const dropOn = (id, targetId, beforeIt) => { if (id === targetId || !M.onMain.has(id) || !M.onMain.has(targetId) || M.groups.has(id)) { if (!M.onMain.has(id) || !M.onMain.has(targetId)) say(T("Detours stay in the detour list; main steps stay on the line.", "支線留在支線清單；主線步驟留在線上。")); return; }
-    commit(() => { const out = detach(id); M = model(ed.def); const k = M.main.indexOf(targetId); attach(id, beforeIt ? (k > 0 ? M.main[k - 1] : null) : targetId, targetId, out); }, id); flash(id); };
+  // the line as units: a step and the refine loops right after it that repeat it move as one
+  const units = () => { const out = []; for (const id of M.main) { const n = node(id), last = out.at(-1); if (n?.kind === "loop" && last && last[0] === n.args?.producer) last.push(id); else out.push([id]); } return out; };
+  // a loop away from its producer, or that producer, cannot move without changing what repeats what
+  const pinned = (id) => { if (!M.onMain.has(id) || M.groups.has(id) || node(id)?.kind === "loop") return true; const u = units().find((x) => x.includes(id));
+    return M.main.some((x) => node(x)?.kind === "loop" && node(x).args?.producer === id && !u.includes(x)); };
+  const targetsOf = (id) => (M.groups.has(id) ? M.groups.get(id).members : [id]);
+  // lay the units out in a new order: each unit keeps its own way out (its edges into the unit after it, with their
+  // outcome words and checks) and now takes it into its new successor; the last unit takes it to the end the line had
+  const relink = (U, NU) => { const endT = M.next(M.main.at(-1)); const sig = new Map(), drop = [];
+    U.forEach((u, i) => { const nx = i + 1 < U.length ? U[i + 1][0] : endT; if (!nx) { sig.set(u, []); return; } const T_ = targetsOf(nx), own = new Set(u.flatMap(M.froms));
+      const es = M.edges.filter((e) => own.has(e.from) && T_.includes(e.to)); drop.push(...es); sig.set(u, es); });
+    dropEdges(drop);
+    NU.forEach((u, i) => { const nx = i + 1 < NU.length ? NU[i + 1][0] : endT; if (!nx) return; for (const e of sig.get(u)) for (const t of targetsOf(nx)) addEdge({ from: e.from, to: t, when: e.when, checks: e.checks }); }); };
+  const entryOk = (U, NU) => { if (NU[0] === U[0]) return true; const first = NU[0][0], own = new Set(U[0].flatMap(M.froms)); return M.edges.filter((e) => targetsOf(first).includes(e.to)).every((e) => own.has(e.from)); };
+  const moveUnit = (id, place) => { const U = units(), i = U.findIndex((u) => u[0] === id); if (i < 0) return false; const NU = place(U.slice(), i); if (!NU || NU.every((u, k) => u === U[k]) || !entryOk(U, NU)) return false; relink(U, NU); return true; };
+  const canMove = (id, dir) => { if (readOnly() || pinned(id)) return false; const U = units(), i = U.findIndex((u) => u[0] === id), j = i + dir; if (i < 0 || j < 0 || j >= U.length) return false;
+    const NU = U.slice(); [NU[i], NU[j]] = [NU[j], NU[i]]; return entryOk(U, NU); };
+  const moveStep = (id, dir) => { if (!canMove(id, dir)) return;
+    commit(() => { moveUnit(id, (U, i) => { const j = i + dir; [U[i], U[j]] = [U[j], U[i]]; return U; }); }, id); flash(id); };
+  const dropOn = (id, targetId, beforeIt) => {
+    if (id === targetId) return;
+    if (!M.onMain.has(id) || !M.onMain.has(targetId)) { say(T("Detours stay in the detour list; main steps stay on the line.", "支線留在支線清單；主線步驟留在線上。")); return; }
+    if (pinned(id)) { say(T("A refine loop moves with the step it repeats.", "精修迴圈跟著它重做的那一步移動。")); return; }
+    const place = (U, i) => { const u = U.splice(i, 1)[0]; let k = U.findIndex((x) => x.includes(targetId)); if (k < 0) return null; if (!beforeIt) k++; U.splice(k, 0, u); return U; };
+    const U = units(), NU = place(U.slice(), U.findIndex((u) => u[0] === id)); if (NU && !entryOk(U, NU)) { say(T("The first step stays first here: the step that would replace it is also reached by a branch.", "這裡第一步不能換：要接替它的那一步也有分支連進來。")); return; }
+    commit(() => { moveUnit(id, place); }, id); flash(id); };
   const removeStep = (id) => { const n = node(id); if (!n) return;
     commit(() => { const to = M.onMain.has(id) ? M.next(id) : M.outE(id)[0]?.to; const targets = to ? (M.groups.has(to) ? M.groups.get(to).members : [to]) : [];
       const into = ed.def.edges.filter((e) => e.to === id && e.from !== id);
@@ -190,7 +230,8 @@ function build(ed, X) {
       ed.def.nodes = ed.def.nodes.filter((x) => x.id !== id); }, null);
     closeDrawer(); say(T(`Removed “${n.label}”. Branches into it now go where it went. Undo with ⌘Z.`, `已移除「${n.label}」。原本連進來的分支改接到它的下一步。按 ⌘Z 可還原。`)); };
   const duplicate = (id) => { const n = node(id); if (!n) return; const c = clone(n); c.id = uid(`${n.id}-copy`); c.label = `${n.label} ${T("(copy)", "（副本）")}`; c.x += 30; c.y += 30;
-    commit(() => insertNode(id, c, M.link(id, M.next(id))[0]?.when ?? null), c.id); flash(c.id); };
+    commit(() => { const L = new Set(M.link(id, M.next(id)).map((e) => e.i)), branches = M.outE(id).filter((e) => !L.has(e.i));
+      insertNode(id, c, M.link(id, M.next(id))[0]?.when ?? null); for (const e of branches) addEdge({ from: c.id, to: e.to === id ? c.id : e.to, when: e.when, checks: e.checks }); }, c.id); flash(c.id); };
   const askCardFor = (id) => { const nx = M.next(id), n = nx && node(nx); return n?.kind === "card" && M.edges.some((e) => e.from === n.id && e.when === "changes" && M.froms(id).includes(e.to)) ? n : null; };
   const toggleAsk = (id) => { const c = askCardFor(id); if (c) { removeStep(c.id); openDrawer(id); return; }
     const n = freshNode("card", id); n.label = T(`You approve: ${node(id)?.label || id}`, `由你核准：${node(id)?.label || id}`);
@@ -200,7 +241,7 @@ function build(ed, X) {
   const save = async (note, btn) => {
     if (saving || !R.changes) return; saving = true; if (btn) { btn.disabled = true; btn.textContent = T("Saving…", "儲存中…"); }
     try { const r = await X.api(`/api/wf/${ed.id}`, clone({ base: ed.saved.version, nodes: ed.def.nodes, edges: ed.def.edges, roles: ed.def.roles, note: note || null }));
-      if (disposed) return; const n = R.changes; R.hist = []; R.fut = []; R.changes = 0; ed.dirty = false; closeDrawer();
+      if (disposed) return; const n = R.changes; R.hist = []; R.fut = []; R.changes = 0; R.note = ""; ed.dirty = false; closeDrawer();
       toast(T(`Saved as v${r.def.version} (${n} change${n > 1 ? "s" : ""}). New tasks use it; running tasks keep the version they started on.`, `已存成 v${r.def.version}（${n} 項修改）。新任務會用它；進行中的任務維持原版本。`));
       X.saved(ed, r);
     } catch (e) { if (disposed) return; if (e.problems) ed.problems = e.problems; say(e.message); paint(); }
@@ -208,13 +249,21 @@ function build(ed, X) {
   };
 
   // ---------- popovers ----------
-  const closePop = () => { pop.replaceChildren(); document.querySelectorAll('[data-rail-pop-open="true"]').forEach((b) => b.removeAttribute("data-rail-pop-open")); };
+  const closePop = (refocus = false) => { const o = pop.opener; pop.opener = null; if (refocus && o?.isConnected && pop.contains(document.activeElement)) o.focus(); pop.replaceChildren(); document.querySelectorAll('[data-rail-pop-open="true"]').forEach((b) => b.removeAttribute("data-rail-pop-open")); };
   const popAt = (el, kids, cls = "wf-menu") => {
     closePop(); const p = h("div", { class: cls, role: cls === "wf-menu" ? "menu" : "dialog" }, kids); pop.append(p); if (!pop.isConnected) document.body.append(pop);
     const r = el.getBoundingClientRect(); p.place = () => { const pw = p.offsetWidth, ph = p.offsetHeight; let x = r.left, y = r.bottom + 6;
       if (x + pw > innerWidth - 12) x = Math.max(12, innerWidth - pw - 12); if (y + ph > innerHeight - 8) y = r.top - ph - 6 > 8 ? r.top - ph - 6 : Math.max(8, innerHeight - ph - 8);
       Object.assign(p.style, { position: "fixed", left: `${x}px`, top: `${y}px` }); }; p.place();
-    el.setAttribute("data-rail-pop-open", "true"); p.addEventListener("click", (e) => e.stopPropagation()); return p; };
+    el.setAttribute("data-rail-pop-open", "true"); pop.opener = el; p.addEventListener("click", (e) => e.stopPropagation());
+    // a menu takes the focus on its first item; arrows, Home and End move through it, Escape returns to the button that opened it
+    if (cls === "wf-menu") { const items = () => [...p.querySelectorAll("button[role=menuitem]:not(:disabled)")];
+      setTimeout(() => items()[0]?.focus(), 0);
+      p.addEventListener("keydown", (e) => { const l = items(), i = l.indexOf(document.activeElement);
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); l[(i + (e.key === "ArrowDown" ? 1 : l.length - 1)) % l.length]?.focus(); }
+        else if (e.key === "Home" || e.key === "End") { e.preventDefault(); (e.key === "Home" ? l[0] : l.at(-1))?.focus(); }
+        else if (e.key === "Tab") closePop(); }); }
+    return p; };
   const menu = (el, items) => popAt(el, items.map((it) => it === "-" ? h("hr") : it.grp ? h("div", { class: "grp" }, it.grp)
     : h("button", { type: "button", role: "menuitem", class: it.danger ? "danger" : null, "data-mi": it.id, disabled: it.disabled || null, onclick: () => { closePop(); it.fn?.(); } }, icon(it.ic || "chev"), h("span", { class: "t" }, it.n, it.d ? h("small", {}, it.d) : null))));
   const templateMenu = (btn, afterId) => menu(btn, [...TEMPLATES.map(([k, ic, en, zh, den, dzh]) => ({ id: k, ic, n: T(en, zh), d: T(den, dzh), fn: () => insertStep(afterId, k) })),
@@ -232,7 +281,7 @@ function build(ed, X) {
       closePop(); return true; };
     const draw = () => {
       const back = draft.to && M.mi(draft.to) >= 0 && M.mi(draft.to) <= M.mi(id) && !M.isEnd(draft.to);
-      p.replaceChildren(
+      put(p, 
         h("h4", {}, n.kind === "card" ? T("When you choose …", "當你選擇…") : T(`If step ${M.num(id)} …`, `如果第 ${M.num(id)} 步…`)),
         h("div", { class: "wf-opts" }, outs.map((o) => h("button", { type: "button", class: "chip", "data-out": o, "aria-pressed": String(draft.out === o), onclick: () => { draft.out = o; draw(); } }, n.kind === "card" ? optLabel(n, o) : word(o)))),
         h("h4", {}, T("… go to", "…就到")),
@@ -256,24 +305,43 @@ function build(ed, X) {
     const list = () => { const has = new Set((n.checks || []).map((c) => c.use)); const pool = (ed.checks || []).filter((c) => !has.has(c.ref) && c.kind !== "hook" && (!q || `${checkTitle(c.ref)} ${c.ref}`.toLowerCase().includes(q)));
       const mine = pool.filter((c) => usedPacks.has(c.pack) || usedPacks.has(String(c.ref).split("/")[0])), other = pool.filter((c) => !mine.includes(c));
       const row = (c) => h("button", { type: "button", "data-ck": c.ref, onclick: () => { commit(() => { n.checks = [...(n.checks || []), { use: c.ref }]; }); closePop(); } }, h("span", { class: "n" }, "✓"), h("span", { style: "display:grid" }, h("span", {}, checkTitle(c.ref)), h("small", { class: "wf-dim", style: "font-size:12px" }, `${c.ref} · ${c.kind === "judged" ? T("judged", "評審") : T("deterministic", "確定性")}`)));
-      box.replaceChildren(h("div", { class: "grp" }, T("For this workflow", "這個流程用的")), ...(mine.length ? mine.map(row) : [h("div", { class: "grp" }, T("No match", "沒有符合的"))]),
+      put(box, h("div", { class: "grp" }, T("For this workflow", "這個流程用的")), ...(mine.length ? mine.map(row) : [h("div", { class: "grp" }, T("No match", "沒有符合的"))]),
         other.length ? (all || q ? [h("div", { class: "grp" }, T("From other packs", "其他套組")), ...other.map(row)] : [h("button", { type: "button", class: "wf-dim", "data-all": "1", onclick: () => { all = true; list(); } }, T(`Show ${other.length} from other packs`, `顯示其他套組的 ${other.length} 個`))]) : null); };
     p.append(input, box); list(); p.place(); setTimeout(() => input.focus(), 10);
   };
 
   // ---------- drawer ----------
   const openDrawer = (id, focusName) => { const r = M.rep(id); if (M.onMain.has(r) && M.sec.get(r) && collapsed().has(M.sec.get(r).id)) collapsed().delete(M.sec.get(r).id);
+    // the model catalog (as the graph editor's node panel reads it) is fetched the first time a drawer opens
+    if (!MODELS.value && !MODELS.pending) MODELS.pending = X.api("/api/models").then((v) => { MODELS.value = v; if (!disposed && R.sel) paint(true); }).catch(() => {});
     R.sel = id; paint(); drawer.classList.add("open"); document.body.classList.add("drawer-open");
-    if (focusName) setTimeout(() => { const i = drawer.querySelector("[data-rail-name]"); if (i) { i.focus(); i.select(); } }, 30); };
-  const closeDrawer = () => { R.sel = null; drawer.classList.remove("open"); document.body.classList.remove("drawer-open"); drawer.replaceChildren(); if (!disposed) paint(); };
-  const optLabel = (n, id) => { const o = (n.card?.options || []).find((x) => x.id === id); return o ? T(o.label, o.labelZh || o.label) : word(id).replace(/^./, (c) => c.toUpperCase()); };
+    // the drawer takes the focus on its title (the step name), selected when the step is new
+    setTimeout(() => { const i = drawer.querySelector("[data-rail-name]"); if (i && R.sel === id) { i.focus({ preventScroll: true }); if (focusName) i.select(); } }, 30); };
+  const closeDrawer = () => { const was = R.sel, a = document.activeElement, back = !!was && (drawer.contains(a) || a === document.body || !a);
+    R.sel = null; drawer.classList.remove("open"); document.body.classList.remove("drawer-open"); drawer.replaceChildren(); if (disposed) return; paint();
+    // and gives it back to the step it was opened from
+    if (back) root.querySelector(`.r-row[data-step="${CSS.escape(M.rep(was))}"]`)?.focus({ preventScroll: true }); };
+  const optLabel = (n, id) => { const o = (n.card?.options || []).find((x) => x.id === id); return o ? T(o.label, o.labelZh || o.label) : String(id).replace(/[-_]+/g, " ").replace(/^./, (c) => c.toUpperCase()); }; // a choice without a label reads as its own word ("Rescope")
+  // Studio has no model ranking: Strongest and Fast keep the staffed provider and model and set the reasoning effort to the
+  // highest / lowest one that model takes in Studio's model catalog (/api/models); a step without its own provider uses the
+  // efforts every listed provider takes, else high / low
+  const presetOf = (n) => { const role = roleOf(n), prov = n.provider || role?.provider, model = n.model || role?.model, cat = MODELS.value?.providers || [];
+    const ok = (l) => EFFORTS.filter((e) => (l || []).includes(e));
+    let list = [], from = "";
+    const p = prov && cat.find((x) => x.id === prov);
+    if (p) { const m = model && p.models.find((x) => x.id === model); list = ok(m ? m.efforts : [...new Set(p.models.flatMap((x) => x.efforts || []))]); if (list.length) from = T(` · from ${prov}${m ? ` ${m.id}` : ""}`, ` · 依 ${prov}${m ? ` ${m.id}` : ""}`); }
+    if (!list.length && !prov) { const sets = cat.map((x) => ok([...new Set(x.models.flatMap((m) => m.efforts || []))])).filter((l) => l.length); if (sets.length) list = sets.reduce((a, b) => a.filter((e) => b.includes(e))); }
+    if (list.length < 2) list = ["low", "high"];
+    const usable = list.filter((e) => e !== "minimal"), strong = list.at(-1), fast = usable[0] || list[0];
+    const kind = !n.provider && !n.model && !n.effort ? "default" : !n.provider && !n.model && n.effort === strong ? "strongest" : !n.provider && !n.model && n.effort === fast ? "fast" : "custom";
+    return { kind, strong, fast, from }; };
   const roleOf = (n) => ed.def.roles.find((r) => r.id === (n.role ?? (n.kind === "loop" ? n.args?.coordinator ?? "coordinator" : undefined)));
   const section = (ic, title, small, ...kids) => h("section", { class: "wf-ds" }, h("h3", {}, icon(ic), title, small ? h("small", {}, small) : null), ...kids);
   const setField = (n, k, v) => commit(() => { if (v === "" || v == null) delete n[k]; else n[k] = v; });
   const drawDrawer = () => {
     const id = R.sel; if (!id) { drawer.replaceChildren(); return; }
     if (M.groups.has(id)) { const g = M.groups.get(id);
-      drawer.replaceChildren(h("div", { class: "wf-dh" }, h("div", { class: "wf-num" }, String(M.num(id)), h("span", { class: "k k-group" }, icon("fork"))), h("input", { value: kindName("group"), readonly: true, "aria-label": T("Step name", "步驟名稱") }), closeBtn()),
+      put(drawer, h("div", { class: "wf-dh" }, h("div", { class: "wf-num" }, String(M.num(id)), h("span", { class: "k k-group" }, icon("fork"))), h("input", { value: kindName("group"), readonly: true, "aria-label": T("Step name", "步驟名稱") }), closeBtn()),
         h("div", { class: "wf-db" }, section("fork", kindName("group"), null, h("p", {}, T(`${g.members.map((m) => node(m).label).join(" and ")} start at the same time. The next step waits for ${g.members.length > 2 ? "all of them" : "both"}.`, `${g.members.map((m) => node(m).label).join("、")} 同時開始，下一步等它們都完成。`)),
           h("p", { class: "wf-dim" }, T("Parallel steps are read-only here for now. Change them in the graph editor.", "同時進行的步驟目前在這裡唯讀，請到流程圖編輯器修改。")), h("a", { class: "btn", href: `${base()}/advanced`, "data-rail-graph": "" }, icon("workflow"), T("Open the graph editor", "開啟流程圖編輯器")))),
         h("div", { class: "wf-df" }, h("span"), h("button", { type: "button", class: "btn", onclick: closeDrawer }, T("Done", "完成"))));
@@ -284,12 +352,17 @@ function build(ed, X) {
     if (n.kind === "agent" || n.kind === "loop") {
       const role = h("select", { class: "select", "data-rail-role": "", "aria-label": T("Role", "角色"), disabled: ro || null, onchange: (e) => { const v = e.target.value; if (v === "+") { newRole(n, e.target); return; } if (n.kind === "agent") setField(n, "role", v); else commit(() => { n.args = { ...(n.args || {}), coordinator: v }; }); } },
         ed.def.roles.map((r) => h("option", { value: r.id, selected: r.id === roleOf(n)?.id || null }, r.label || r.id)), n.kind === "agent" ? h("option", { value: "+" }, T("New role…", "新角色…")) : null);
-      const exact = [n.provider, n.model, n.effort].filter(Boolean).join(" · ");
+      const exact = [n.provider, n.model, n.effort].filter(Boolean).join(" · "), pr = presetOf(n);
+      const pick = (k, fn) => h("button", { type: "button", "data-preset": k, "aria-pressed": String(pr.kind === k), disabled: ro || null, onclick: fn }, { default: T("Team default", "團隊預設"), strongest: T("Strongest", "最強"), fast: T("Fast", "快速") }[k]);
       const preset = h("div", { class: "seg wf-seg", role: "group", "aria-label": T("Model", "模型") },
-        h("button", { type: "button", "data-preset": "default", "aria-pressed": String(!exact), disabled: ro || null, onclick: () => { if (exact) commit(() => { delete n.provider; delete n.model; delete n.effort; }); } }, T("Team default", "團隊預設")),
-        h("button", { type: "button", "data-preset": "custom", "aria-pressed": String(!!exact), disabled: ro || null, onclick: () => { R.advOpenStep = true; drawDrawer(); drawer.querySelector("[data-rail-step-adv]")?.scrollIntoView({ block: "nearest" }); } }, T("Exact model…", "指定模型…")));
+        pick("default", () => { if (pr.kind !== "default") commit(() => { delete n.provider; delete n.model; delete n.effort; }); }),
+        pick("strongest", () => { if (pr.kind !== "strongest") commit(() => { n.effort = pr.strong; }); }),
+        pick("fast", () => { if (pr.kind !== "fast") commit(() => { n.effort = pr.fast; }); }),
+        h("button", { type: "button", "data-preset": "custom", "aria-pressed": String(pr.kind === "custom"), disabled: ro || null, title: T("Exact provider, model and effort", "指定供應商、模型與推理強度"), onclick: () => { R.advOpenStep = true; drawDrawer(); drawer.querySelector("[data-rail-step-adv]")?.scrollIntoView({ block: "nearest" }); } }, T("Exact…", "指定…")));
       secs.push(section("human", T("Who", "誰來做"), null, h("div", { class: "field" }, h("label", {}, T("Role", "角色")), role),
-        h("div", { class: "field" }, h("span", { class: "lbl" }, T("Model", "模型")), preset, h("span", { class: "wf-dim", style: "font-size:12px" }, exact || T("The Crew page decides (approved staffing for this role).", "由 Crew 頁決定（這個角色核准的配置）。")))));
+        h("div", { class: "field" }, h("span", { class: "lbl" }, T("Model", "模型")), preset, h("span", { class: "wf-dim", style: "font-size:12px", "data-rail-preset-note": "" }, pr.kind === "default" ? T("The Crew page decides (approved staffing for this role).", "由 Crew 頁決定（這個角色核准的配置）。")
+          : pr.kind === "strongest" ? T(`The model the Crew page picks, at its highest reasoning effort (${pr.strong})${pr.from}.`, `Crew 頁選的模型，用最高推理強度（${pr.strong}）${pr.from}。`)
+          : pr.kind === "fast" ? T(`The model the Crew page picks, at its lowest reasoning effort (${pr.fast})${pr.from}.`, `Crew 頁選的模型，用最低推理強度（${pr.fast}）${pr.from}。`) : exact))));
     }
     if (n.kind === "agent" || n.kind === "loop" || (n.kind === "hook" && X.pinsSkills?.(n))) secs.push(skillsSection(n, ro));
     if (n.kind === "hook") { const known = [...new Set([...Object.keys(ACTIONS), ...ed.def.nodes.filter((x) => x.kind === "hook" && x.do).map((x) => x.do)])];
@@ -297,7 +370,7 @@ function build(ed, X) {
         M.isEnd(n.id) && !n.do ? h("option", { value: "" }, T("Ends the task", "結束任務")) : null, known.map((a) => h("option", { value: a, selected: a === n.do || null }, actionName(a)))))); }
     if (n.kind === "loop") secs.push(section("loop", T("Repeats", "重做"), null, h("div", { class: "wf-row2" }, h("span", { class: "grow wf-2" }, T(`Step ${M.num(n.args?.producer)} · ${node(n.args?.producer)?.label || "?"}, up to`, `第 ${M.num(n.args?.producer)} 步 · ${node(n.args?.producer)?.label || "?"}，最多`)),
       ro ? h("b", {}, String(n.args?.round_cap ?? 3)) : stepper(Number(n.args?.round_cap ?? 3), (v) => commit(() => { n.args = { ...(n.args || {}), round_cap: v }; })), h("span", { class: "wf-2" }, T("rounds", "輪")))));
-    if (!["card", "check"].includes(n.kind) && !M.isEnd(n.id)) secs.push(h("section", { class: "wf-ds" }, h("div", { class: "field" }, h("label", { for: "railGives" }, T("Hands on to the next step", "交給下一步的")), h("input", { id: "railGives", "data-rail-gives": "", value: n.detail || "", readonly: ro || null, placeholder: T("e.g. a tested change", "例如：測過的修改"), onchange: (e) => setField(n, "detail", e.target.value.trim()) }))));
+    if (!["card", "check"].includes(n.kind) && !M.isEnd(n.id)) secs.unshift(h("section", { class: "wf-ds", "data-rail-gives-section": "" }, h("div", { class: "field" }, h("label", { for: "railGives" }, T("Hands on to the next step", "交給下一步的")), h("input", { id: "railGives", "data-rail-gives": "", value: n.detail || "", readonly: ro || null, placeholder: T("e.g. a tested change", "例如：測過的修改"), onchange: (e) => setField(n, "detail", e.target.value.trim()) }))));
     if (n.kind === "card") secs.push(choicesSection(n, ro));
     if (n.kind !== "card" && !M.isEnd(n.id)) {
       secs.push(section("gate", T("Must pass", "必須通過"), (n.checks || []).length ? T(`${n.checks.length} check${n.checks.length > 1 ? "s" : ""}`, `${n.checks.length} 個檢查`) : T("nothing yet", "還沒有"),
@@ -309,7 +382,7 @@ function build(ed, X) {
           h("button", { type: "button", class: "wf-sw", role: "switch", id: "dAsk", "data-rail-ask": n.id, "aria-checked": String(!!ask), "aria-label": T("Ask me before continuing", "繼續前先問我"), onclick: () => toggleAsk(n.id) })))); }
     }
     secs.push(stepAdvanced(n, ro));
-    drawer.replaceChildren(
+    put(drawer, 
       h("div", { class: "wf-dh" }, h("div", { class: "wf-num" }, String(M.num(n.id)), h("span", { class: `k k-${n.kind}` }, icon(KIC[n.kind] || "agent"))), name, closeBtn()),
       h("div", { class: "wf-db" }, h("div", { class: "wf-dim", style: "font-size:12px;padding-top:10px" }, kindName(n.kind), M.onMain.has(n.id) ? "" : M.isEnd(n.id) ? T(" · an end", " · 結束點") : T(" · only reached by a branch", " · 只有分支會到")),
         ...problemsFor(n.id).map((p) => h("div", { class: "wf-warn" }, icon("alert"), p.text)), ...secs),
@@ -326,12 +399,13 @@ function build(ed, X) {
     const set = (next) => commit(() => { if (next.length) n.skills = next; else delete n.skills; });
     const ctx = { kind: n.kind, id: n.id, role: role ? { id: role.id, label: role.label, skill: role.skill } : null, format: n.args?.format ?? null };
     const sugg = [...lib.values()].filter((x) => !list.some((p) => p.id === x.id)).map((x) => ({ x, f: window.crewSkillFit ? window.crewSkillFit(x.fits, ctx) : 0 })).filter((a) => a.f >= 2).slice(0, 6).map((a) => a.x);
+    const nameOf = (x, id) => { const nm = x?.name && x.name !== id ? x.name : null; return nm || String(id).split(/[-_]/).map((w) => (/^(ui|pr|ci|qa|api|cjk|ux)$/.test(w) ? w.toUpperCase() : w)).join(" ").replace(/^./, (c) => c.toUpperCase()); };
     const sw = (on, id, label, fn) => h("div", { class: "wf-skill" }, h("span", { class: on ? "nm" : "nm wf-2" }, label), h("button", { type: "button", class: "wf-sw", role: "switch", "aria-checked": String(on), "data-skill": id, "aria-label": label, disabled: ro || null, onclick: fn }));
     return section("book", T("Instructions", "指示"), T(`${list.length} skill${list.length === 1 ? "" : "s"} on`, `開了 ${list.length} 個技能`),
       role ? h("div", { class: "wf-skill" }, h("span", { class: "nm" }, T(`${role.label}'s own instructions`, `${role.label} 自己的指示`), " ", h("small", {}, T("· always on", "· 一直開著"))), h("a", { class: "wf-linkbtn", href: "#/skills" }, T("Read", "閱讀"))) : null,
-      ...list.map((p, i) => sw(true, p.id, lib.get(p.id)?.name || p.id, () => set(list.filter((_, k) => k !== i)))),
+      ...list.map((p, i) => sw(true, p.id, nameOf(lib.get(p.id), p.id), () => set(list.filter((_, k) => k !== i)))),
       sugg.length ? h("div", { class: "wf-lbl", style: "margin-top:4px" }, role ? T(`Suggested for ${role.label}`, `建議給 ${role.label}`) : T("Suggested", "建議")) : null,
-      ...sugg.map((x) => sw(false, x.id, x.name || x.id, () => { const cur = x.versions?.find((v) => v.n === x.current); if (cur) set([...list, { id: x.id, v: cur.n, sha256: cur.sha256 }]); })),
+      ...sugg.map((x) => sw(false, x.id, nameOf(x, x.id), () => { const cur = x.versions?.find((v) => v.n === x.current); if (cur) set([...list, { id: x.id, v: cur.n, sha256: cur.sha256 }]); })),
       h("a", { class: "wf-linkbtn", href: "#/skills", "data-act": "moreskills" }, icon("plus"), T("Find more skills", "找更多技能")));
   };
   const choicesSection = (n, ro) => {
@@ -355,7 +429,7 @@ function build(ed, X) {
     const kv = [];
     const text = (k, ph, num) => h("input", { class: `input${num ? "" : " mono"}`, value: n[k] ?? "", placeholder: ph || "", type: num ? "number" : "text", min: num ? 0 : null, readonly: ro || null, "data-rail-field": k, onchange: (e) => setField(n, k, num ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value.trim()) });
     const json = (k) => h("textarea", { class: "wf-raw", readonly: ro || null, "data-rail-field": k, onchange: (e) => { try { const v = e.target.value.trim() ? JSON.parse(e.target.value) : ""; setField(n, k, v); } catch { e.target.setCustomValidity(T("Not valid JSON", "不是有效的 JSON")); e.target.reportValidity(); } } }, n[k] ? JSON.stringify(n[k], null, 2) : "");
-    kv.push([T("Step id", "步驟代號"), h("span", { class: "mono" }, n.id)], [T("Kind", "種類"), h("span", { class: "mono" }, n.kind)], [T("Description", "說明"), text("detail")]);
+    kv.push([T("Step id", "步驟代號"), h("span", { class: "mono" }, n.id)], [T("Kind", "種類"), h("span", { class: "mono" }, n.kind)], );
     if (n.kind === "agent") kv.push([T("Mode", "模式"), text("mode")]);
     kv.push([T("Time limit (s)", "時間上限（秒）"), text("timeout_s", "", true)], [T("Retries", "重試次數"), text("retries", "", true)], [T("Runs at most", "最多執行"), text("max_visits", T("no limit", "不限"), true)],
       [T("Waits for", "等待"), h("select", { class: "select", disabled: ro || null, "data-rail-field": "join", onchange: (e) => setField(n, "join", e.target.value) }, h("option", { value: "" }, T("Any input (default)", "任一輸入（預設）")), h("option", { value: "all", selected: n.join === "all" || null }, T("All inputs (join)", "所有輸入（匯合）")))],
@@ -388,7 +462,7 @@ function build(ed, X) {
       if (M.groups.has(id)) continue;
       if (loopRetry(e) && main) continue;
       const t = M.rep(e.to), end = M.isEnd(e.to), det = !end && !M.onMain.has(t), back = !end && !det && main && M.mi(t) <= M.mi(id), fwdNext = !end && !det && main && M.mi(t) === M.mi(id) + 1;
-      const lbl = n?.kind === "card" && e.when ? h("b", {}, (e.when || "").split("|").map((w) => optLabel(n, w)).join(" / ")) : e.when ? T(`If ${whenText(e.when)}`, `如果${whenText(e.when)}`) : T("Otherwise", "否則");
+      const lbl = n?.kind === "card" && e.when ? h("b", {}, (e.when || "").split("|").map((w) => optLabel(n, w)).join(" / ")) : e.when ? T(`If it ${whenText(e.when)}`, `如果${whenText(e.when)}`) : T("Otherwise", "否則");
       const tgt = end ? T(`ends: ${M.label(e.to)}`, `結束：${M.label(e.to)}`) : det ? T(`detour: ${M.label(t)}`, `支線：${M.label(t)}`)
         : !main ? T(`returns to ${M.num(t)} · ${M.label(t)}`, `回到 ${M.num(t)} · ${M.label(t)}`) : back ? T(`back to ${M.num(t)} · ${M.label(t)}`, `回到 ${M.num(t)} · ${M.label(t)}`) : fwdNext ? T(`continues to ${M.num(t)} · ${M.label(t)}`, `接到 ${M.num(t)} · ${M.label(t)}`) : T(`skips to ${M.num(t)} · ${M.label(t)}`, `跳到 ${M.num(t)} · ${M.label(t)}`);
       const max = back && node(t)?.max_visits ? T(` · max ${node(t).max_visits} rounds`, ` · 最多 ${node(t).max_visits} 輪`) : "";
@@ -396,13 +470,12 @@ function build(ed, X) {
       // the producer's own way past its refine loop is the line, not a skip
       const pastLoops = main && !end && !det && !back && M.main.slice(M.mi(id) + 1, M.mi(t)).every((x) => node(x)?.kind === "loop" && node(x).args?.producer === id);
       if (pastLoops && !fwdNext) continue;
-      const drawn = main && !end && !det && !fwdNext;
-      const chip = h("button", { type: "button", class: `wf-chip${back ? " back" : ""}${end ? " end" : ""}${det ? " det" : ""}${drawn && !back ? " fwd" : ""}`, "data-act": "editbranch", "data-cid": `${id}>${e.i}`, "data-cto": drawn ? t : null, "data-edge-i": e.i,
+      const drawn = main && !end && !det && !fwdNext, returns = back || (!main && !end && !det);
+      const chip = h("button", { type: "button", class: `wf-chip${returns ? " back" : ""}${end ? " end" : ""}${det ? " det" : ""}${drawn && !back ? " fwd" : ""}`, "data-act": "editbranch", "data-cid": `${id}>${e.i}`, "data-cto": drawn ? t : null, "data-edge-i": e.i,
         onclick: (ev) => { ev.stopPropagation(); if (readOnly()) return; if (det) { openDrawer(t); return; } if (M.groups.has(id) || !node(e.from)) return; branchPicker(ev.currentTarget, e.from, e.i); } },
-        icon(end ? "end" : back ? "back" : det ? "branch" : "skip"), h("span", { class: "wf-ell" }, lbl, " ", back || !main ? "↩ " : "→ ", tgt, max, lock));
+        icon(end ? "end" : returns ? "back" : det ? "branch" : "skip"), h("span", { class: "wf-ell" }, lbl, " ", returns ? "↩ " : "→ ", tgt, max, lock));
       (drawn ? draws : out).push(chip);
     }
-    if (!main && n) { const nx = M.outE(id); if (!nx.length) {} }
     if (!readOnly() && n && !M.groups.has(id) && !M.isEnd(id)) out.push(h("button", { type: "button", class: "wf-chip add", "data-act": "addbranch", "data-id": id, onclick: (ev) => { ev.stopPropagation(); branchPicker(ev.currentTarget, id); } }, icon("branch"), n.kind === "card" ? T("Add choice", "加選項") : T("Add branch", "加分支")));
     return { out, draws };
   };
@@ -411,12 +484,13 @@ function build(ed, X) {
     for (const p of problemsFor(id)) w.push({ t: p.text, level: p.level });
     return w; };
   const gateTag = (id) => { const bits = [], n = node(id);
-    if (n && n.kind !== "check" && n.checks?.length) bits.push(h("span", { class: "r-gate", title: n.checks.map((c) => checkTitle(c.use)).join(", "), "data-rail-gate": id }, icon("gate", "ic sm"), T("must pass: ", "必須通過："), n.checks.slice(0, 2).map((c) => checkTitle(c.use)).join(", "), n.checks.length > 2 ? ` +${n.checks.length - 2}` : ""));
+    if (n && n.kind !== "check" && n.checks?.length) bits.push(h("span", { class: "r-gate", title: n.checks.map((c) => checkTitle(c.use)).join(", "), "data-rail-gate": id }, icon("gate", "ic sm"), h("span", { class: "t" }, T("must pass: ", "必須通過："), n.checks.slice(0, 2).map((c) => checkTitle(c.use)).join(", ")), n.checks.length > 2 ? h("span", { class: "more" }, `+${n.checks.length - 2}`) : null));
     const locked = M.link(id, M.next(id)).flatMap((e) => e.checks || []);
-    if (locked.length) bits.push(h("span", { class: "r-gate lock", title: T("Edge checks: edit them in the graph editor", "連線檢查：到流程圖編輯器修改"), "data-rail-lock": id }, icon("lock", "ic sm"), T(`before going on: ${locked.length} gate${locked.length > 1 ? "s" : ""}`, `繼續前：${locked.length} 道關卡`), " · ", fit(locked.map((c) => checkTitle(c.use)).join(", "), 60)));
+    if (locked.length) bits.push(h("span", { class: "r-gate lock", title: T("Edge checks: edit them in the graph editor", "連線檢查：到流程圖編輯器修改"), "data-rail-lock": id }, icon("lock", "ic sm"), h("span", { class: "t" }, T(`before going on: ${locked.length} gate${locked.length > 1 ? "s" : ""}`, `繼續前：${locked.length} 道關卡`), " · ", locked.map((c) => checkTitle(c.use)).join(", "))));
     return bits; };
   const linkAfter = (id, cls = "") => { const g = gateTag(id), ro = readOnly();
-    return h("div", { class: `r-link ${cls}${g.length ? " gated" : ""}`, "data-link": id }, ...g,
+    // the tags stack (one line each, cut with an ellipsis) and the segment grows to hold them; + keeps its own room on the right
+    return h("div", { class: `r-link ${cls}${g.length ? " gated" : ""}`, "data-link": id, style: g.length ? `height:${18 + g.length * 26}px` : null }, g.length ? h("div", { class: "r-gates" }, g) : null,
       ro ? null : h("button", { type: "button", class: "r-plus", "data-act": "plus", "data-after": id, "aria-label": T(`Add a step after ${M.label(id)}`, `在 ${M.label(id)} 之後加一步`), title: T("Add a step here", "在這裡加一步"), onclick: (e) => { e.stopPropagation(); templateMenu(e.currentTarget, id); } }, icon("plus")),
       h("span", { class: "r-arrowhead" })); };
   const giverBefore = (id) => { for (let i = M.main.indexOf(id) - 1; i >= 0; i--) { const n = node(M.main[i]); if (n?.detail) return n.detail; } return null; };
@@ -427,7 +501,8 @@ function build(ed, X) {
     if (!main && !n.detail) return null;
     return h("div", { class: "r-io" }, gets ? [T(`gets ${fit(gets, 60)}`, `拿到 ${fit(gets, 60)}`), h("span", { class: "r-arrow" }, " · ")] : null, T("hands ", "交出 "), n.detail ? h("b", {}, fit(n.detail, 70)) : T("its result", "它的結果"), to); };
   const whoLine = (n) => { const role = roleOf(n);
-    if (n.kind === "agent") return [T("AI", "AI"), role?.label || n.role, [n.model, n.effort].filter(Boolean).join(" ") || null, n.skills?.length ? T(`${n.skills.length} skill${n.skills.length > 1 ? "s" : ""}`, `${n.skills.length} 個技能`) : null].filter(Boolean).join(" · ");
+    const pk = presetOf(n).kind, pw = pk === "strongest" ? T("strongest model", "最強模型") : pk === "fast" ? T("fast model", "快速模型") : pk === "custom" ? [n.model, n.effort].filter(Boolean).join(" ") : null;
+    if (n.kind === "agent") return [T("AI", "AI"), role?.label || n.role, pw, n.skills?.length ? T(`${n.skills.length} skill${n.skills.length > 1 ? "s" : ""}`, `${n.skills.length} 個技能`) : null].filter(Boolean).join(" · ");
     if (n.kind === "hook") return M.isEnd(n.id) ? T("End", "結束") : `${T("Automatic", "自動")} · ${actionName(n.do)}`;
     return ""; };
   const row = (id) => {
@@ -449,7 +524,7 @@ function build(ed, X) {
     if (g) nodeEl.append();
     const { out, draws } = branchChips(id);
     const warn = n ? warnings(id).map((w) => h("div", { class: "wf-warn" }, icon("alert"), w.t, w.fix && !ro ? [" ", h("button", { type: "button", "data-act": "fixwarn", "data-id": id, onclick: (e) => { e.stopPropagation(); branchPicker(e.currentTarget, id); } }, T("Add a branch", "加一個分支"))] : null)) : [];
-    const el = h("div", { class: `r-row r-step${g ? " is-group" : ""}${cp ? " is-cp" : ""}${loop ? " is-loop" : ""}${main ? "" : " is-side"}${R.sel === id ? " sel" : ""}`, "data-step": id, draggable: !ro && main && !g ? "true" : "false", tabindex: "0",
+    const el = h("div", { class: `r-row r-step${g ? " is-group" : ""}${cp ? " is-cp" : ""}${loop ? " is-loop" : ""}${main ? "" : " is-side"}${R.sel === id ? " sel" : ""}`, "data-step": id, draggable: !ro && main && !pinned(id) ? "true" : "false", tabindex: "0",
       "aria-label": T(`Step ${num}: ${M.label(id)}`, `第 ${num} 步：${M.label(id)}`),
       onclick: (e) => { if (e.target.closest("button,a,input,select")) return; openDrawer(id); }, onkeydown: (e) => { if (e.key === "Enter" && e.target === el) openDrawer(id); } },
       h("div", { class: "r-rail" }, nodeEl, g ? forkSvg() : null),
@@ -469,16 +544,23 @@ function build(ed, X) {
   };
   const stepMenu = (btn, id) => { const i = M.main.indexOf(id);
     menu(btn, [{ id: "o", ic: "sliders", n: T("Open settings", "開啟設定"), fn: () => openDrawer(id) },
-      { id: "u", ic: "up", n: T("Move up", "上移"), disabled: i <= 0 || M.groups.has(M.main[i - 1]), fn: () => moveStep(id, -1) },
-      { id: "dn", ic: "down", n: T("Move down", "下移"), disabled: i < 0 || i >= M.main.length - 1 || M.groups.has(M.main[i + 1]), fn: () => moveStep(id, 1) },
+      { id: "u", ic: "up", n: T("Move up", "上移"), disabled: !canMove(id, -1), fn: () => moveStep(id, -1) },
+      { id: "dn", ic: "down", n: T("Move down", "下移"), disabled: !canMove(id, 1), fn: () => moveStep(id, 1) },
       { id: "dup", ic: "dup", n: T("Duplicate", "複製"), disabled: i < 0, fn: () => duplicate(id) }, "-",
       { id: "rm", ic: "trash", n: T("Remove step", "移除步驟"), danger: true, fn: () => removeStep(id) }]); };
   const flash = (id) => setTimeout(() => { const e = root.querySelector(`.r-row[data-step="${CSS.escape(id)}"]`); if (e) { e.classList.add("flash"); e.scrollIntoView?.({ block: "nearest", behavior: "smooth" }); } }, 20);
+  // what an end means: its own detail, else read from its id and label (parked, dropped …), the result field only as a last resort
+  const END_WORDS = [[/park/, "kept for later", "先擱置，之後再做"], [/drop/, "you dropped it", "你放棄了"], [/discard/, "nothing was changed", "什麼都沒改"], [/cancel/, "cancelled", "已取消"],
+    [/reject/, "you rejected it", "你不採用"], [/empty|none/, "there was nothing to do", "沒有要做的事"], [/fail/, "it could not finish", "沒能完成"], [/clos/, "closed without finishing", "沒完成就關閉"],
+    [/review-room/, "the review room opens", "開啟審查室"], [/filed/, "filed", "已歸檔"], [/install/, "installed", "已安裝"], [/export/, "exported", "已匯出"]];
+  const endMeaning = (e, ok) => { if (e.detail) return e.detail; if (ok) return T("the task is done", "任務完成");
+    const k = `${e.id} ${e.label}`.toLowerCase(), w = END_WORDS.find(([re]) => re.test(k)) || END_WORDS.find(([re]) => re.test(String(e.args?.result || "")));
+    return w ? T(w[1], w[2]) : T("the task stops here", "任務停在這裡"); };
   const endsBlock = () => { const from = (id) => { const s = new Set(); for (const e of M.edges) if (e.to === id) s.add(M.num(e.from)); return [...s].filter(Boolean).sort((a, b) => a - b); };
     return h("div", { class: "r-row r-ends", "data-rail-ends": "" }, h("div", { class: "r-rail" }, h("span", { class: "r-node r-endnode" }, icon("flag", "ic sm"))),
-      h("div", { class: "r-body" }, h("div", { class: "r-io" }, h("b", {}, T("Ends", "結束")), T(` in one of ${M.ends.length}:`, `：共 ${M.ends.length} 種`)),
+      h("div", { class: "r-body" }, h("div", { class: "r-io" }, h("b", {}, T("Ends", "結束")), M.ends.length === 1 ? T(" here:", "於：") : T(` in one of ${M.ends.length}:`, `：共 ${M.ends.length} 種`)),
         h("div", { class: "r-endlist" }, M.ends.map((e) => { const f = from(e.id), ok = okEnd(e); return h("div", { class: `r-end${ok ? " ok" : ""}`, "data-rail-end": e.id }, icon(ok ? "check" : "end", "ic sm"), h("b", {}, e.label),
-          h("span", { class: "wf-2" }, e.detail || (ok ? T("the task is done", "任務完成") : T(e.args?.result ? `the task ends as ${e.args.result}` : "the task stops here", e.args?.result ? `任務以 ${e.args.result} 結束` : "任務停在這裡"))),
+          h("span", { class: "wf-2" }, endMeaning(e, ok)),
           h("span", { class: "wf-dim" }, f.length ? T(`from step ${f.join(", ")}`, `來自第 ${f.join("、")} 步`) : "")); }))), h("div")); };
   const strip = () => { const col = collapsed(), segs = [], secs = [];
     for (const id of M.main) { const s = M.sec.get(id); const k = s?.id ?? ""; if (!secs.length || secs.at(-1).k !== k) secs.push({ k, s, ids: [] }); secs.at(-1).ids.push(id); }
@@ -487,7 +569,7 @@ function build(ed, X) {
       segs.push(h("div", { class: `r-ph${col.has(x.k) ? " col" : ""}${on ? " on" : ""}` }, x.s ? h("button", { type: "button", class: "r-phl", "data-phase": x.k, onclick: () => togglePhase(x.k) }, T(x.s.label, x.s.label_tw || x.s.label)) : null,
         h("div", { class: "r-dots" }, x.ids.flatMap((id, j) => { const n = node(id), k = M.groups.has(id) ? "group" : n.kind, cp = k === "card" || k === "check";
           return [j ? h("i") : null, h("button", { type: "button", class: `r-dot k-${k}${cp ? " cp" : ""}${M.rep(R.sel || "") === id ? " on" : ""}`, "data-jump": id, title: `${M.num(id)} · ${M.label(id)}`, "aria-label": T(`Step ${M.num(id)}: ${M.label(id)}`, `第 ${M.num(id)} 步：${M.label(id)}`), onclick: () => { openDrawer(id); flash(id); } }, cp ? "" : String(M.num(id)))]; })))); });
-    return h("div", { class: "r-strip", role: "navigation", "aria-label": T("Steps overview", "步驟總覽"), "data-rail-strip": "" }, h("span", { class: "r-sstart", title: T("Start", "開始") }, icon("play")), ...segs, h("span", { class: "r-phsep" }, "›"),
+    return h("div", { class: "r-strip", role: "navigation", "aria-label": T("Steps overview", "步驟總覽"), "data-rail-strip": "" }, h("span", { class: "r-sstart", title: T("Start", "開始") }, h("i", { class: "r-sdot" })), ...segs, h("span", { class: "r-phsep" }, "›"),
       h("span", { class: "r-sends" }, M.ends.map((e) => h("span", { class: `r-send${okEnd(e) ? " ok" : ""}` }, e.label)))); };
   const togglePhase = (k) => { const c = collapsed(); c.has(k) ? c.delete(k) : c.add(k); paint(); };
   const rail = () => { const col = collapsed(), out = [];
@@ -510,7 +592,7 @@ function build(ed, X) {
     out.push(last && !col.has(M.sec.get(last)?.id ?? "") ? linkAfter(last, "end") : h("div", { class: "r-link end" }, h("span", { class: "r-arrowhead" })), endsBlock());
     if (M.detours.length) out.push(h("div", { class: "r-detours", "data-rail-detours": "" }, h("div", { class: "wf-sec" }, T("Detours", "支線"), " ", h("span", { class: "wf-dim" }, T("· only reached by a branch; each one returns to the line or ends the task", "· 只有分支會到；每條都會回到主線或結束任務"))), M.detours.map(row)));
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("class", "r-conn"); svg.setAttribute("aria-hidden", "true");
-    return h("div", { class: `r-wrap${R.editing ? " editing" : ""}`, "data-rail-wrap": "" }, svg, ...out); };
+    return h("div", { class: `r-wrap${R.editing ? " editing" : ""}`, "data-rail-wrap": "" }, svg, ...out, h("p", { class: "wf-dim r-dropped", "data-rail-dropped": "", hidden: true })); };
   const drawConnectors = () => {
     const wrap = root.querySelector("[data-rail-wrap]"), svg = wrap?.querySelector(".r-conn"); if (!wrap || !svg || !wrap.isConnected) return;
     const wr = wrap.getBoundingClientRect(), phone = innerWidth <= 760, lanesX = phone ? [16, 6] : [46, 34, 22, 10], items = [];
@@ -522,19 +604,24 @@ function build(ed, X) {
     const lanes = lanesX.map(() => []), paths = []; let dropped = 0;
     for (const it of items) { const lo = Math.min(it.y1, it.y2), hi = Math.max(it.y1, it.y2), li = lanes.findIndex((L) => !L.some(([a, b]) => lo < b + 6 && hi > a - 6));
       if (li < 0) { dropped++; continue; } lanes[li].push([lo, hi]); const x = lanesX[li], r = 8, up = it.y2 < it.y1 ? -1 : 1;
-      paths.push(`<path class="${it.back ? "back" : "fwd"}" data-cid="${CSS.escape(it.cid)}" d="M${it.x1 - 2},${it.y1} H${x + r} Q${x},${it.y1} ${x},${it.y1 + up * r} V${it.y2 - up * r} Q${x},${it.y2} ${x + r},${it.y2} H${it.xt - 3}" marker-end="url(#rah${it.back ? "b" : "f"}-${ed.id})"/>`); }
+      paths.push(`<path class="${it.back ? "back" : "fwd"}" data-cid="${attr(it.cid)}" d="M${it.x1 - 2},${it.y1} H${x + r} Q${x},${it.y1} ${x},${it.y1 + up * r} V${it.y2 - up * r} Q${x},${it.y2} ${x + r},${it.y2} H${it.xt - 3}" marker-end="url(#rah${it.back ? "b" : "f"}-${ed.id})"/>`); }
     svg.setAttribute("width", wr.width); svg.setAttribute("height", wrap.scrollHeight);
     svg.innerHTML = `<defs><marker id="rahb-${ed.id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="r-ah back"/></marker><marker id="rahf-${ed.id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="r-ah fwd"/></marker></defs>${paths.join("")}`;
-    wrap.dataset.connectors = String(paths.length); wrap.dataset.dropped = String(dropped); };
+    wrap.dataset.connectors = String(paths.length); wrap.dataset.dropped = String(dropped);
+    const note = root.querySelector("[data-rail-dropped]"); if (note) { note.hidden = !dropped; note.textContent = dropped ? T(`${dropped} more branch${dropped > 1 ? "es" : ""} not drawn as a line (no free lane); their chips still say where they go.`, `還有 ${dropped} 條分支沒畫成線（沒有空的線道）；它們的標籤仍寫著去哪裡。`) : ""; } };
   const hoverConn = (e) => { root.querySelectorAll(".r-conn path.hl").forEach((p) => p.classList.remove("hl")); const c = e.target.closest?.("[data-cid]"); if (c) root.querySelector(`.r-conn path[data-cid="${CSS.escape(c.dataset.cid)}"]`)?.classList.add("hl"); };
   root.addEventListener("mouseover", hoverConn);
 
   // ---------- header, tabs, other views ----------
   const okEndNode = () => M.ends.find(okEnd) || M.ends[0] || null;
   const storyStart = () => (ed.def.params && Object.keys(ed.def.params).length && Object.values(ed.def.params).every((p) => String(p.label).length <= 24) ? T(`your request and ${Object.values(ed.def.params).map((p) => T(p.label, p.labelZh || p.label).toLowerCase()).slice(0, 2).join(", ")}`, `你的需求與${Object.values(ed.def.params).map((p) => T(p.label, p.labelZh || p.label)).slice(0, 2).join("、")}`) : T("your request", "你的需求"));
-  const story = () => { const e = okEndNode(), d = String(ed.def.description || "").trim();
-    return h("p", { class: "r-story", "data-rail-story": "" }, T("Takes ", "拿到 "), h("b", {}, storyStart()), h("span", { class: "r-arrow" }, " → "), T("ends with ", "結束於 "), h("b", {}, e ? e.label : T("its last step", "最後一步")), ".",
-      d ? h("span", { class: "wf-2" }, " ", fit(d, 160)) : null); };
+  // the description's first sentence (or its heading before a colon), capitalised: the "how" after the one sentence on top
+  const howLine = () => { let d = String(ed.def.description || "").trim(); if (!d) return "";
+    d = d.split(/(?<=[.!?。])\s+/)[0]; if (d.length > 120 && /:\s/.test(d.slice(0, 100))) d = d.slice(0, d.search(/:\s/));
+    d = fit(d, 140).replace(/^./, (c) => c.toUpperCase()); return /[.!?。…]$/.test(d) ? d : d + T(".", "。"); };
+  const story = () => { const e = okEndNode(), d = howLine();
+    return h("p", { class: "r-story", "data-rail-story": "" }, T("Takes ", "拿到 "), h("b", {}, storyStart()), h("span", { class: "r-arrow" }, " → "), T("ends with ", "結束於 "), h("b", {}, e ? e.label : T("its last step", "最後一步")), T(".", "。"),
+      d ? h("span", { class: "wf-2" }, " ", d) : null); };
   const titleEl = () => { if (R.renaming) { const input = h("input", { id: "wfName", "data-rail-rename": "", value: ed.displayName || ed.def.name, maxlength: 80, "aria-label": T("Workflow name", "流程名稱") });
       const done = async (keep) => { if (!R.renaming) return; R.renaming = false; const v = input.value.trim(); if (!keep || !v || v === (ed.displayName || ed.def.name)) { paint(); return; }
         try { const r = await X.api("/api/workflow-names", { workflow: ed.id, name: v }); window.setWorkflowNames?.(r.names); ed.displayName = r.displayName || v; ed.renamed = r.renamed ?? true; X.renamed?.(); say(T(`Renamed to “${ed.displayName}”.`, `已改名為「${ed.displayName}」。`)); } catch (err) { say(err.message); } paint(); };
@@ -562,7 +649,7 @@ function build(ed, X) {
   const tabs = () => h("div", { class: "wf-tabs" }, h("div", { class: "seg", role: "tablist", "aria-label": T("View", "檢視") },
     [["steps", T("Steps", "步驟"), ""], ["map", T("Map", "地圖"), "/map"], ["versions", T("Versions", "版本"), "/versions"]].map(([k, l, s]) => h("button", { type: "button", role: "tab", "aria-pressed": String(tab() === k), "aria-selected": String(tab() === k), "data-rail-tab": k, onclick: () => { location.hash = base() + s; } }, l))),
     tab() === "steps" ? h("span", { class: "wf-help wf-tip", tabindex: "0", "data-tip": T("Read top to bottom: each step hands its result to the next. Click a step to change it; + on the line adds one; drag a step to reorder. Changes apply only when you save.", "由上往下讀：每一步把結果交給下一步。點一步可修改；線上的 + 可加一步；拖曳可調順序。修改要儲存後才生效。") }, "?") : null,
-    h("a", { class: "btn ghost wf-advlink", href: `${base()}/advanced`, "data-rail-advanced": "" }, icon("workflow", "ic sm"), T("Advanced", "進階")));
+    h("a", { class: "wf-advlink", href: `${base()}/advanced`, "data-rail-advanced": "" }, T("Graph editor", "流程圖編輯器")));
   const advancedBlock = () => { const items = [["workflow", T("Graph editor", "流程圖編輯器"), T("Every node, port and connection; drag, auto layout, show all connections, minimap, zoom.", "每個節點、連接埠與連線；拖曳、自動排版、全部連線、小地圖、縮放。")],
       ["lock", T("Raw connections and edge checks", "原始連線與連線檢查"), T("All edges with free-text outcomes, edge checks and join rules.", "所有連線的自由文字結果、連線檢查與匯合規則。")],
       ["eye", T("Show a task on the map", "在圖上顯示任務"), T("Overlay where a task is on the graph.", "疊上一個任務走到哪裡。")],
@@ -570,7 +657,7 @@ function build(ed, X) {
       ["download", T("Export / transfer package", "匯出／傳輸套件"), T("JSON or a package for another Studio.", "JSON 或給另一個 Studio 的套件。")]];
     return h("details", { class: "wf-adv", "data-rail-adv": "", open: R.advOpen || null, ontoggle: (e) => { R.advOpen = e.target.open; } }, h("summary", {}, icon("chev", "ic chev"), T("Advanced", "進階"), h("small", {}, T("graph editor, raw connections, compare, export", "流程圖編輯器、原始連線、比較、匯出"))),
       h("div", { class: "wf-advbody" }, h("div", { class: "wf-advgrid" }, items.map(([ic, n, d]) => h("a", { class: "wf-advitem", href: `${base()}/advanced` }, h("b", {}, icon(ic), n), h("small", {}, d)))))); };
-  const saveBar = () => { if (readOnly()) return null; const note = h("input", { class: "input", id: "note", "data-rail-note": "", placeholder: T("What changed? (optional)", "改了什麼？（選填）"), "aria-label": T("Version note", "版本說明") });
+  const saveBar = () => { if (readOnly()) return null; const note = h("input", { class: "input", id: "note", "data-rail-note": "", value: R.note || "", oninput: (e) => { R.note = e.target.value; }, placeholder: T("What changed? (optional)", "改了什麼？（選填）"), "aria-label": T("Version note", "版本說明") });
     const errs = (ed.problems || []).filter((p) => p.level === "error");
     const saveBtn = h("button", { type: "button", class: "btn primary", "data-rail-save": "", "data-act": "save", onclick: (e) => save(note.value.trim(), e.currentTarget) }, T(`Save as v${(ed.versions.at(-1)?.version ?? ed.saved.version) + 1}`, `存成 v${(ed.versions.at(-1)?.version ?? ed.saved.version) + 1}`));
     return h("div", { class: "wf-save", "data-rail-savebar": "", hidden: R.changes ? null : true, role: "region", "aria-label": T("Unsaved changes", "未儲存的修改") }, h("span", { class: "dot" }),
@@ -589,12 +676,10 @@ function build(ed, X) {
       h("a", { class: "btn", href: `${base()}/advanced` }, icon("pencil"), T("Edit as a graph (Advanced)", "以流程圖編輯（進階）"))), panel); };
   const versionsView = () => h("div", { class: "card wf-vers", "data-rail-versions": "" }, ed.versions.slice().reverse().map((v) => h("div", { class: "wf-vrow", "data-rail-version-row": v.version },
     h("b", {}, `v${v.version}`), h("div", { style: "min-width:0" }, h("div", { class: "wf-ell" }, v.note ? (/^Saved from Firstmate draft /.test(v.note) ? T("Saved from a Firstmate draft", "由 Firstmate 草稿儲存") : v.note) : T("No note", "沒有說明")), h("div", { class: "wf-dim", style: "font-size:12px" }, [v.by, v.createdAt ? new Date(v.createdAt).toLocaleString() : null].filter(Boolean).join(" · "))),
-    h("div", {}, v.version === ed.def.version ? h("span", { class: "badge run" }, T("shown", "顯示中")) : h("a", { class: "btn ghost", href: `#/workflows/${ed.id}/v${v.version}` }, T("Open", "開啟")), h("a", { class: "btn ghost", href: `#/workflows/${ed.id}/v${v.version}/advanced` }, T("Compare", "比較"))))));
+    h("div", {}, v.version === ed.def.version ? h("span", { class: "badge run" }, T("shown", "顯示中")) : h("a", { class: "btn ghost", href: `#/workflows/${ed.id}/v${v.version}` }, T("Open", "開啟")), h("a", { class: "btn ghost", href: `#/workflows/${ed.id}/v${v.version}/advanced`, title: T("Compare versions and export live there", "比較版本與匯出在那裡") }, T("Open in graph editor", "在流程圖編輯器開啟"))))));
 
-  const contentKey = (d) => JSON.stringify({ nodes: (d.nodes || []).map(({ x, y, ...n }) => n), edges: d.edges, roles: d.roles });
   const paint = (soft = false) => {
     if (disposed) return; if (!soft) closePop();
-    if (!R.changes && contentKey(ed.def) !== contentKey(ed.saved)) R.changes = 1; // edits made in the graph editor count too
     const t = tab(), scroller = document.getElementById("main"), y = scroller?.scrollTop;
     root.classList.toggle("wf-ro", !!readOnly());
     root.replaceChildren(...[h("div", { class: "wf-crumb" }, h("a", { href: "#/workflows" }, T("Workflows", "流程")), " /"), header(), tabs(), banner(),
@@ -607,7 +692,7 @@ function build(ed, X) {
   };
   const onKey = (e) => { if (!root.isConnected) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.target.closest?.("input,textarea,select,[contenteditable]")) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-    if (e.key === "Escape") { if (pop.childElementCount) closePop(); else if (R.sel) closeDrawer(); } };
+    if (e.key === "Escape") { if (pop.childElementCount) closePop(true); else if (R.sel) closeDrawer(); } };
   const onDocClick = (e) => { if (!e.target.closest?.(".wf-pop-host") && !e.target.closest?.('[data-rail-pop-open="true"]')) closePop(); };
   const onResize = () => requestAnimationFrame(drawConnectors);
   document.addEventListener("keydown", onKey); document.addEventListener("click", onDocClick); window.addEventListener("resize", onResize);

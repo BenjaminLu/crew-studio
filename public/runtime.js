@@ -828,7 +828,7 @@ function buildEditor(ed) {
       const known=Number.isSafeInteger(r.version)&&r.version>0&&r.workflow===ed.id&&r.id===rid&&r.def?.id===ed.id&&r.def.version===r.version;
       if(!known||r.version!==ed.saved.version||overlayDefinitionBody(r.def)!==overlayDefinitionBody(ed.saved)){
         overlayStatus.replaceChildren(T("Execution colors are hidden: this Task does not match the displayed saved definition.","執行狀態已隱藏：此任務與目前顯示的已儲存流程不同。"));
-        if(known)overlayStatus.append(" ",h("a",{href:`#/workflows/${ed.id}/v${r.version}`,"data-overlay-version-link":""},T(`Open the Task's saved v${r.version}`,`開啟此任務的已儲存 v${r.version}`)));
+        if(known)overlayStatus.append(" ",h("a",{href:`#/workflows/${ed.id}/v${r.version}/advanced`,"data-overlay-version-link":""},T(`Open the Task's saved v${r.version}`,`開啟此任務的已儲存 v${r.version}`)));
         return;
       }
       overlayPin={rid,generation,version:r.version};ed.states=Object.fromEntries(Object.entries(r.nodes).map(([k,n])=>[k,n.state]));ed.walked=new Set(r.walked||[]);
@@ -852,7 +852,7 @@ function buildEditor(ed) {
     cancelAnimationFrame(inspectorFrame);window.removeEventListener("resize",sizeInspector);inspectorScroller?.removeEventListener("scroll",sizeInspector);
     exportDialog?.remove(); exportDialog=null;
   };
-  const verSel = h("select", { class: "select", "aria-label": T("Version", "版本"), onchange: (e) => { location.hash = `#/workflows/${ed.id}/v${e.target.value}`; } }, ed.versions.map((x) => h("option", { value: x.version, selected: x.version === ed.def.version || null }, `v${x.version}${x.note ? ` · ${/^Saved from Firstmate draft /.test(x.note) ? T("Saved from a Firstmate draft", "由 Firstmate 草稿儲存") : x.note}` : ""}`)));
+  const verSel = h("select", { class: "select", "aria-label": T("Version", "版本"), onchange: (e) => { location.hash = `#/workflows/${ed.id}/v${e.target.value}/advanced`; } }, ed.versions.map((x) => h("option", { value: x.version, selected: x.version === ed.def.version || null }, `v${x.version}${x.note ? ` · ${/^Saved from Firstmate draft /.test(x.note) ? T("Saved from a Firstmate draft", "由 Firstmate 草稿儲存") : x.note}` : ""}`)));
   let exportDialog = null;
   const exportButton = h("button", {class:"btn sm","data-workflow-export":"",onclick:async()=>{
     if(ed.dirty){say(T("Save your edits, or reload to discard them, before exporting a saved version.","匯出已儲存版本前，請先儲存修改，或重新載入以捨棄修改。"));return;}
