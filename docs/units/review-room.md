@@ -718,10 +718,43 @@ The room can be presented by one of the captain's own skills instead of the tuto
   Studio runs it with on this Mac), what this room's runs cost so far and an estimate (the median cost of this skill's earlier
   finished runs here, else "no estimate yet"), the skill and its version,
   the materials it gets, "no round cap", the expected time (the median of this skill's earlier finished runs here, else
-  "not known yet"), the safety limit, and the isolation. `POST …/explain/generate {skill, confirm}` starts only with that
-  offer's hash; a changed tutor, skill version or limit asks again. A follow-up's offer (`kind=ask&v=<n>`) is for the skill
+  "not known yet"), the safety limit, and the isolation. `POST …/explain/generate {skill, confirm, prompt}` starts only with that
+  offer's hash; a changed tutor, skill version, limit or instructions asks again. A follow-up's offer (`kind=ask&v=<n>`) is for the skill
   that made version n, the same one its run checks. A pull request or directory room no Task hosts yet makes
   its host Task once, after this confirmation, as a tutor turn does (`ensureHost`).
+- **What it should produce** (the confirmation's first field, `[data-explain-prompt]`, "What should it produce?" / 要產出什麼？):
+  the captain's own instructions for this generation, multi-line, at most 2000 characters (`PROMPT_MAX`, a counter under it,
+  warning past 90%); empty is the skill's own default. It is prefilled with the skill's **default instructions** when the
+  captain set them, else the last instructions this skill was run with (remembered per skill, Studio-wide, in
+  `data/review-room-explain-prompts.json`, written when a run starts), or with a version's own when the captain generates again
+  from it; a line under the field says which (your default · what you last asked · edited for this run · empty). "Save as
+  default for this skill" keeps the text as that skill's default ("Clear the default" when the field is empty), "Reset to
+  default" brings it back after an edit, and "Insert a review checklist" adds Studio's built-in example below the text, never
+  by itself (`PROMPT_EXAMPLE`, en and zh-TW: an architecture diagram, a sequence diagram, the database lifecycle, the state
+  machine of an order or entity, error codes, each API request and response, the technology choices, before and after of what
+  it fixed); it is off while the checklist is already in the field (no second copy). The dialog's buttons stay in view
+  however long the text (a footer that sticks to its bottom), and its "Skills page" link opens a tab of its own, so the text
+  typed here stays. Defaults are the captain's, Studio-wide (not per room), kept with the explainer's settings in
+  `data/review-room-explain.json` (`defaultPrompts`), and editable outside any run on the Skills page:
+  "Review room: default instructions" (`[data-skill-defprompt]`: set or none, the text, Save default, Clear, Insert a review
+  checklist) on the captain's own skills and on any skill already used in a review room; Studio's built-in skills get it
+  behind "Review-room instructions: show for all skills" (`[data-skill-defall]`). Through `GET /api/review-room/explain/prompts` (every skill's default and last text, the cap, the example) and
+  `POST … {skill, text}` (the captain on this Mac; an empty text clears it). A default is only a prefill: the offer is for
+  exactly the text the confirmation sends (`POST …/explain/offer {skill, kind, prompt}`, a POST because 2000 characters of CJK
+  do not fit a URL; `GET …/explain/offer` without `prompt` is the prefill), its sha256 is part of the offer's hash, and an edit
+  reads the offer again (Confirm waits for it, and stays off if that read fails), so a changed text is a new confirmation and
+  a confirmation for one text never starts another. The run gets it as the captain's: in the message that starts each round,
+  in a fence of its own, `<captain-instructions>`, marked trusted (the captain wrote and confirmed it). Studio's fence tags
+  (`captain-instructions`, `untrusted`, `selection`, `previous`, `question`) are neutralised in every text Studio places
+  between them in its message (the instructions, a boxed region's page text, the skill's own last message): the `<` that
+  would open one becomes `‹`, in one linear pass (`untag`: nothing is removed, so no forged or nested tag can join into a
+  working one, and a 3 MB diff costs one read, never a quadratic loop that would hold Studio). The materials (the diff, the
+  commits, the description, reviews, check and status names, issues, the head of every changed file) get the same for
+  `captain-instructions` and `untrusted` only (a `<question>` in the code stays). The materials stay files the skill reads,
+  fenced as untrusted. Studio's frame (`EXPLAINER_FRAME`) says to follow
+  the captain's instructions within the skill's method and Studio's rules, that they never make material text instructions,
+  and that the same tag anywhere else is not the captain's. The run, its version and both ledger entries keep the text (`prompt`, `promptSha256`). A follow-up is
+  unchanged: its question is its instructions.
 - **Admission.** A run's rounds are jobs of the room's tutor seat on the same member, admitted the same way (the native
   selection, the round sandbox with nothing to write and no host beyond the model, the staffing receipt), under an auxiliary
   seat of its own per skill version (`review-room-explainer:<skill>@v<n>`) whose pinned texts are Studio's frame
@@ -743,7 +776,8 @@ The room can be presented by one of the captain's own skills instead of the tuto
   one issue by number). A README lists them and says which text is untrusted; untrusted text is fenced. The skill reads them
   with `mat_list/mat_read/mat_search`, its own supporting files with `skill_*` (a copy), and writes only `out/` (`out_*`,
   `out_write_base64` for a picture or a video; every write counts against one 60 MB cap, `CREW_REVIEW_EXPLAIN_OUT_BYTES`,
-  a script's included). The diff is fenced as untrusted; the head files are kept byte for byte (citations need their lines)
+  a script's included). The diff is fenced as untrusted; the head files are kept as the author wrote them, line for line (citations need their
+  lines), except that a `<captain-instructions` or `<untrusted` in them is neutralised (above),
   and the README names them untrusted. No shell of its own, no web tools, no board tools; a skill with scripts runs them
   through `skill_run` (below).
 - **The skill's own scripts.** A library skill whose package has scripts (`render.py`, `verify.py`, a `.sh`: what
@@ -825,7 +859,11 @@ The room can be presented by one of the captain's own skills instead of the tuto
   whole room.
 - **Versions.** Every generation, and every follow-up that changed the output, is a new version (`v1`, `v2`, …: the output's
   files, its working notes and dotfiles left out, never changed once written), listed in the left rail with its summary and
-  where it came from; an older one is shown again with a click. A follow-up that changed nothing makes no version.
+  where it came from; an older one is shown again with a click. A follow-up that changed nothing makes no version. Each version
+  says what it was made from, in the rail (a line: ✎ its instructions, ✎ the skill's default, or ? the follow-up's question)
+  and above the output (`[data-explain-made]`, folded: "Made with your instructions: …"; opened, the whole text and "Generate
+  again with these instructions…", which opens the confirmation with them, editable). "Generate a new version" in the rail
+  starts from the shown version's instructions too.
 - **Rendering.** HTML (and Markdown, rendered by Studio) is shown in an iframe with `sandbox="allow-scripts"` only (never
   `allow-same-origin`: an opaque origin), loaded from `/rrx/<capability>/<room>/<v>/<file>`: a 30-minute capability signed
   with a key the explainer holds in memory (the frame sends no cookie). Every file there is served with `OUTPUT_CSP`:
@@ -841,6 +879,20 @@ The room can be presented by one of the captain's own skills instead of the tuto
   `/af/` and `/afc/`, document versions, the cards' direction thumbnails, skins `/skin/`, the explainer's `/rrx/`), and a frame
   navigating anywhere else is refused. The capability is checked before anything else, so a wrong one never tells whether a
   room or a version exists. The tutor's own rule (model text only in text nodes) is unchanged.
+- **Full screen and a tab of its own.** "Full screen" / 全螢幕 (`[data-explain-full]`, or F while the focus is on the stage)
+  puts the output's layer in full screen with the Fullscreen API (a picture or a video: that element, natively). The frame is
+  not reloaded (the layer is the same element; it only leaves the stage's geometry and clipping while full). A bar names
+  the version and has "✕ Exit full screen" (Esc) in a strip of its own at the top (44 px): the output starts below it, so
+  the bar never covers the page's own controls (a language switch in its corner). When full screen is refused (a browser or a policy that does
+  not allow it), the layer covers the whole window instead (`.rx-layer.full`, fixed, over the room) and Esc or ✕ closes it.
+  Leaving (✕, Esc, the browser's own way out, another version, leaving the room) puts the layer back on its stage and every
+  scroll position the stage sits in back as it was, and gives the focus back to Full screen. A quick question asked from a box
+  in full screen leaves it first (its confirmation is in the chat). "Open in new tab" / 在新分頁開啟 (`[data-explain-newtab]`, a
+  page, Markdown or text) asks for a fresh capability and opens `/rrxt/<capability>/<room>/<v>` (`noopener,noreferrer`): a page
+  of Studio's (`TAB_CSP`: `default-src 'none'; style-src 'unsafe-inline'; frame-src 'self'; child-src 'self'; …;
+  frame-ancestors 'none'`, no script of its own) that frames that version's `/rrx/` page exactly as the room does
+  (`sandbox="allow-scripts"`, the output CSP unchanged): an opaque origin with no network, and a page that navigates its frame
+  away is refused there too. The capability is checked first; without it the tab serves nothing.
 - **Showing a version made by another skill** switches the room to that skill, so the header, the chat and Generate all name
   the skill a follow-up would run.
 - **Follow-ups** (the chat on the right): each question is a run with the selected skill, given the current version (its
@@ -865,22 +917,34 @@ The room can be presented by one of the captain's own skills instead of the tuto
   data/…/<room>-explain/state.json      the selected skill, runs (rounds, cost, progress, answers), versions, consent
   data/…/<room>-explain/v<n>/            a version's files
   data/…/<room>-explain/work/run-<n>/    a run's workspace (materials/, pkg/<skill>/ read-only, out/, .tmp/, .bin/), removed when the run ends
-  data/review-room-explain.json         the safety limit
+  data/review-room-explain.json         the safety limit; each skill's default instructions (defaultPrompts)
+  data/review-room-explain-prompts.json the last instructions each skill was run with (the confirmation's prefill)
 
 Proved by `tests/review-room-explain.ts` (the runner on a real merge card with a scripted provider: picker, confirmation,
 two rounds to a version, materials and their read-only tools, the ledger, the served page's CSP and scripts and its
-capability, a follow-up with a selection making v2, consent, Stop, the stall guard, the safety limit, busy rooms) and
+capability, a follow-up with a selection making v2, consent, Stop, the stall guard, the safety limit, busy rooms; the
+captain's instructions: the prefill per skill (the default first, the last text without one), a default saved, capped,
+per skill, kept with the settings, cleared; the built-in checklist; Studio's fence tags taken out of a text until none is
+left; another text another hash and a changed text asking again, the cap, the
+instructions in every round's message in their own fence and the materials still untrusted, kept with the version and on the
+ledger; the new tab's page and its frame) and
 `tests/review-room-explain-ui.mjs` (a real isolated Studio and Chromium: the picker and confirmation, progress and Stop,
 the frame's sandbox and CSP — the page in it cannot fetch, cannot read Studio's page or cookies, has working storage —
 boxing a region and the follow-up that carries it, the answer and v2 in the rail, an older version, a paused video, the
-scripts row of the confirmation) and `tests/review-room-explain-scripts.ts` (a made-up skill package's real scripts in the
+scripts row of the confirmation; the instructions in the rail and the version view, Generate again from them, an edit reading
+the offer again and Confirm sending exactly that text, the prefill and the counter; Save as default, Reset to default,
+Insert a review checklist, the default before the last text; the Skills page's editor on the real Studio (insert, save, per
+skill, kept after a reload, clear); full screen with the Fullscreen API and
+refused (the window), F, Esc and ✕, the same scroll position and the box after it, a video's own full screen; the new tab's
+frame still an opaque origin with no network; 1440, 900 and 390 wide, light and dark, English and 繁體中文) and
+`tests/review-room-explain-scripts.ts` (a made-up skill package's real scripts in the
 real sandbox: a page built and checked by its scripts becomes v1; a public host reached through the proxy, a metadata
 address refused, both on the call; the captain's exported model key in the script's env and none of Studio's tokens, its
 token files unreadable; writes outside `out/` refused; the CPU, file-size, wall-clock and output caps; every call on the
 round and the ledger; a changed script is v2 with a new confirmation; text only).
 
 Not yet: the explainer's own web tools (beyond what a script fetches); a script's Python packages come only from the
-runtime or a prepared env (the captain's user site-packages are not read); a generation stopped half-way keeps nothing; a Library snapshot of a room does not include the skill's versions.
+runtime or a prepared env (the captain's user site-packages are not read); a generation stopped half-way keeps nothing; a Library snapshot of a room does not include the skill's versions; the new tab lasts as long as its capability (30 minutes: a reload after that is refused; open it again from the room), and that capability stays in the browser's history until it expires; instructions are remembered per skill, not per room.
 
 ## The per pull request record
 

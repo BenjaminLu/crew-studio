@@ -7,10 +7,13 @@
 // An output page lives in a sandboxed iframe (allow-scripts only: an opaque origin) on a page Studio serves with a CSP that allows
 // no network. The frame sits in a layer of its own over the stage, so a redraw of the room never reloads it; its helper answers
 // "what lies in this rectangle" through postMessage, and only the frame Studio made is listened to. Model text only ever goes
-// into text nodes here.
+// into text nodes here. A generation carries the captain's own instructions ("What should it produce?", prefilled with what this
+// skill was last asked for, part of the confirmed offer); every version shows what it was made from. The output fills the
+// screen (the Fullscreen API on its layer, a picture or a video natively; a fixed full-window layer when fullscreen is refused)
+// and opens in a tab of its own (a fresh capability, framed exactly as here).
 (() => {
 const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), sel: new Map(), draft: new Map(), caps: new Map(),
-  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), returnTo: null, more: new Set() };
+  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), returnTo: null, more: new Set(), madeOpen: new Set() };
 const enc = encodeURIComponent;
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -86,11 +89,13 @@ let want = null;
 const focusLater = (sel) => { if (sel) want = sel; requestAnimationFrame(() => {
   const m = document.querySelector(".rx-modal");
   if (m) { if (!m.contains(document.activeElement)) (m.querySelector("[data-explain-autofocus]") || m.querySelector("button,input,a[href]"))?.focus(); return; }
-  if (want) { const e = document.querySelector(want); want = null; e?.focus({ preventScroll: true }); } }); };
+  // the control that opened it, else (gone or folded away) the stage's own: the version's line, Generate, the picker
+  if (want) { const e = document.querySelector(want); want = null; e?.focus({ preventScroll: true });
+    if (!e || document.activeElement !== e) for (const f of ["[data-explain-made] > summary", "[data-explain-again]", "[data-explain-open]"]) { const x = document.querySelector(f); if (x && x.getClientRects().length) { x.focus({ preventScroll: true }); if (document.activeElement === x) break; } } } }); };
 const closeDialog = () => { X.pick = null; X.confirm = null; const back = X.returnTo || "[data-explain-open]"; X.returnTo = null; render(); focusLater(back); };
 addEventListener("keydown", (e) => {
   const m = document.querySelector(".rx-modal"); if (!m || e.key !== "Tab") return;
-  const f = [...m.querySelectorAll("button:not([disabled]),input:not([disabled]),a[href],summary,[tabindex='0']")].filter((x) => x.getClientRects().length); if (!f.length) return;
+  const f = [...m.querySelectorAll("button:not([disabled]),input:not([disabled]),textarea:not([disabled]),a[href],summary,[tabindex='0']")].filter((x) => x.getClientRects().length); if (!f.length) return;
   const i = f.indexOf(document.activeElement);
   if (e.shiftKey && i <= 0) { e.preventDefault(); f.at(-1).focus(); } else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
 }, true);
@@ -133,11 +138,59 @@ function pickerDialog(r) {
         lib.map((s) => opt(s.id, s.name, s.description || s.id, outKind(st, s.id), false))) : null,
       h("div", { class: "rx-foot" }, h("a", { href: "#/skills", class: "btn" }, T("Skills page", "技能頁")), h("button", { type: "button", class: "btn", "data-explain-autofocus": cur === null && !first ? "" : null, onclick: closeDialog }, T("Cancel", "取消")))));
 }
-async function openConfirm(r, sid, kind, back) {
-  const id = r.card.id; X.pick = null; X.returnTo = back || X.returnTo; X.confirm = { id, sid, kind, offer: null, loading: true }; render(); focusLater();
-  try { const o = await api(`${base(id)}/offer?skill=${enc(sid)}&kind=${kind}`); X.confirm = { ...X.confirm, offer: o, loading: false }; } catch (e) { X.confirm = { ...X.confirm, offer: { error: e.message }, loading: false }; }
+/** the paid run's confirmation; prompt: the instructions to start from (a version's, to generate again), else the server's
+ *  prefill (the skill's default instructions, else what it was last run with) */
+async function openConfirm(r, sid, kind, back, prompt) {
+  const id = r.card.id; X.pick = null; X.returnTo = back || X.returnTo; X.confirm = { id, sid, kind, offer: null, loading: true, prompt: typeof prompt === "string" ? prompt : null }; render(); focusLater();
+  try { const o = await readOffer(id, sid, kind, X.confirm.prompt); X.confirm = { ...X.confirm, offer: o, loading: false, prompt: o.prompt ? o.prompt.text : X.confirm.prompt ?? "", def: o.prompt?.default ?? null }; } catch (e) { X.confirm = { ...X.confirm, offer: { error: e.message }, loading: false }; }
   render(); focusLater();
 }
+const PROMPT_MAX = 2000;
+/** a generation's offer for exactly this text (a POST: 2000 characters of CJK do not fit a URL); none: the server's prefill */
+const readOffer = (id, sid, kind, prompt) => postJ(`${base(id)}/offer`, { skill: sid, kind, ...(typeof prompt === "string" ? { prompt } : {}) });
+/** the instructions changed in the confirmation: the offer (and its hash) is read again for exactly that text; Confirm waits,
+ *  and stays off when that read fails (the earlier offer is for another text) */
+let promptTimer = null;
+function promptEdited(id, value) {
+  const c = X.confirm; if (!c || c.id !== id) return; c.prompt = value; c.pending = true; promptUi(c);
+  clearTimeout(promptTimer); promptTimer = setTimeout(async () => {
+    const want = c.prompt; let o = null, note = null; try { o = await readOffer(id, c.sid, c.kind, want); } catch (e) { note = bi(e.message); }
+    if (X.confirm !== c || c.prompt !== want) return;
+    if (o && !o.error) { c.offer = o; c.note = null; c.stale = false; } else { c.note = note || bi(o?.error || ""); c.stale = true; }
+    c.pending = false; promptUi(c); }, 250);
+}
+/** the field's own parts, kept in step without redrawing it (the caret stays): counter, where the text came from, the buttons, Confirm */
+function promptUi(c) {
+  const v = c.prompt ?? "", q = (s) => document.querySelector(s);
+  const n = q("[data-explain-promptcount]"); if (n) { n.textContent = `${v.length} / ${PROMPT_MAX}`; n.classList.toggle("over", v.length > PROMPT_MAX * 0.9); }
+  const src = q("[data-explain-promptsource]"); if (src) { const w = promptSource(c); src.textContent = w.text; src.dataset.explainPromptsource = w.key; }
+  const exb = q("[data-explain-promptexample]"); if (exb) exb.disabled = hasExample(v, c.offer?.prompt?.example);
+  const sv = q("[data-explain-promptsave]"); if (sv) sv.disabled = (v.trim() || null) === (c.def ?? null) || v.length > PROMPT_MAX;
+  const rs = q("[data-explain-promptreset]"); if (rs) rs.hidden = c.def == null || v === c.def;
+  const nt = q("[data-explain-promptnote]"); if (nt) nt.textContent = c.note || "";
+  const go = q("[data-explain-start]"); if (go) go.disabled = !!(c.pending || c.stale || c.loading || c.offer?.error || X.posting.has(`${c.id}/gen`));
+}
+/** the built-in checklist is already in the text (either language): inserting it again would only repeat it */
+const hasExample = (v, ex) => !!ex && [ex.en, ex.zh].some((t) => t && String(v || "").includes(t));
+/** where the field's text comes from, said under it */
+function promptSource(c) {
+  const v = (c.prompt ?? "").trim(), o = c.offer?.prompt || {}, def = c.def ?? null;
+  if (def != null && v === def) return { key: "default", text: T("Your default for this skill.", "這個 skill 的預設指示。") };
+  if (!v) return { key: "none", text: def != null ? T("Empty: the skill's own default this time (your saved default is not used).", "留空：這次照 skill 自己的預設（不用你存的預設指示）。") : T("Empty: the skill's own default.", "留空：照 skill 自己的預設。") };
+  if (def == null && o.last && v === o.last && o.source === "last") return { key: "last", text: T("What you last asked this skill for (no default saved yet).", "上次給這個 skill 的指示（還沒存預設）。") };
+  return { key: "edited", text: def != null ? T("Edited for this run (your default is unchanged).", "這次改過（預設指示不變）。") : T("For this run.", "只用在這一次。") };
+}
+async function saveDefault(c) {
+  const text = (c.prompt ?? "").trim();
+  let def = c.def, note = null; try { const j = await postJ("/api/review-room/explain/prompts", { skill: c.sid, text }); def = j.default ?? null; } catch (e) { note = bi(e.message); }
+  // the dialog it was saved from is gone (closed, another skill or room): the open one keeps its own text, and learns the default
+  const now = X.confirm; if (now !== c) { if (now && now.sid === c.sid && !note) { now.def = def; redrawPrompt(now); } return; }
+  c.def = def; c.note = note; c.saved = !note; redrawPrompt(c);
+}
+/** rebuild the field (after Save, Reset, Insert) and put the caret back at the end of the text */
+function redrawPrompt(c) { const old = document.querySelector("[data-explain-promptfield]"); if (!old) return; old.replaceWith(promptField(c, c.offer)); promptUi(c);
+  const ta = document.querySelector("[data-explain-prompt]"); if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); } }
+const setPrompt = (c, text) => { c.saved = false; const ta = document.querySelector("[data-explain-prompt]"); if (ta) ta.value = text; promptEdited(c.id, text); redrawPrompt(c); };
 /** the skill's scripts in a confirmation: a head line, then one row each (credentials and endpoints as chips by name), and a
  *  version the Skills page never approved as its own warning line */
 const chips = (names) => h("span", { class: "rx-chips" }, names.map((n) => h("code", { class: "rx-chipname" }, n)));
@@ -190,11 +243,11 @@ function scriptLine(c) {
 function confirmDialog(r) {
   const c = X.confirm; if (!c || c.id !== r.card.id) return null; const o = c.offer, id = c.id;
   const row = (k, ...v) => [h("span", {}, k), h("span", {}, ...v)];
-  const start = async () => { X.posting.add(`${id}/gen`); render();
-    try { X.st.set(id, await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: o.hash })); X.confirm = null; X.shown.delete(id); X.returnTo = null; schedule(id); render(); focusLater("[data-explain-stop]"); }
+  const start = async () => { if (c.pending || c.stale) return; X.posting.add(`${id}/gen`); render();
+    try { X.st.set(id, await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: c.offer.hash, ...(c.kind === "generate" ? { prompt: c.prompt ?? "" } : {}) })); X.confirm = null; X.shown.delete(id); X.returnTo = null; schedule(id); render(); focusLater("[data-explain-stop]"); }
     catch (e) { if (e.offer) X.confirm = { ...c, offer: e.offer, note: bi(e.message) }; else X.confirm = { ...c, note: bi(e.message) }; render(); }
     finally { X.posting.delete(`${id}/gen`); } };
-  const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); await openConfirm(r, c.sid, c.kind); } catch (e) { X.confirm = { ...c, note: bi(e.message) }; render(); } };
+  const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); await openConfirm(r, c.sid, c.kind, undefined, c.kind === "generate" ? c.prompt ?? "" : undefined); } catch (e) { X.confirm = { ...c, note: bi(e.message) }; render(); } };
   const cost = o?.cost || {};
   return h("div", { class: "rx-modalbg", onclick: (e) => { if (e.target === e.currentTarget) closeDialog(); } },
     h("div", { class: "rx-modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "rx-conf-h", "data-explain-confirm": c.sid },
@@ -202,6 +255,7 @@ function confirmDialog(r) {
       c.loading ? h("p", { class: "faint" }, T("Reading the offer…", "讀取中…"))
       : o?.error ? h("p", { class: "rx-state err", role: "alert" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), bi(o.error))
       : [h("p", { class: "rx-sub" }, T("A paid run on the room's tutor model. Nothing starts until you confirm.", "用審查室導師的模型付費執行。按確認之前什麼都不會開始。")),
+        c.kind === "generate" ? promptField(c, o) : null,
         h("div", { class: "rx-cost" },
           row(T("Model", "模型"), h("b", { "data-explain-model": `${o.provider}/${o.model}` }, `${o.provider} · ${o.model ?? T("default model", "預設模型")}${o.effort ? ` · ${o.effort}` : ""}`), o.independence?.en ? h("small", { class: "faint" }, ` — ${T(o.independence.en, o.independence.zh)}`) : null),
           row(T("Who pays", "誰付費"), h("span", { "data-explain-billing": "" }, o.billing ? T(o.billing.en, o.billing.zh) : "")),
@@ -218,9 +272,35 @@ function confirmDialog(r) {
           ...scriptRows(o.scripts, row)),
         c.note ? h("p", { class: "rx-state err", role: "alert" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), c.note) : null],
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn", onclick: closeDialog }, T("Cancel", "取消")),
-        h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", disabled: c.loading || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
+        h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", disabled: c.loading || c.pending || c.stale || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
 }
 
+/** "What should it produce?": the captain's own instructions for this generation (trusted, sent apart from the pull request's
+ *  material); prefilled, editable, empty for the skill's default; the confirmed offer is for exactly this text */
+function promptField(c, o) {
+  const v = c.prompt ?? "", w = promptSource(c), ex = o?.prompt?.example;
+  // a redraw of the whole room while the captain types keeps the caret where it was
+  const was = document.activeElement?.matches?.("[data-explain-prompt]") ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+  if (was) requestAnimationFrame(() => { const ta = document.querySelector("[data-explain-prompt]"); if (ta && document.activeElement !== ta) { ta.focus({ preventScroll: true }); try { ta.setSelectionRange(was[0], was[1]); } catch {} } });
+  return h("div", { class: "rx-prompt", "data-explain-promptfield": "" },
+    h("label", { for: "rx-prompt" }, h("b", {}, T("What should it produce?", "要產出什麼？")), " ", h("span", { class: "faint" }, T("(optional)", "（選填）"))),
+    h("textarea", { id: "rx-prompt", rows: "5", maxlength: String(PROMPT_MAX), "data-explain-prompt": "", spellcheck: "false",
+      placeholder: T("Empty: the skill's own default. For example: include an error-code table and an ops runbook; write it in Traditional Chinese.", "留空就照 skill 預設。例如：加上錯誤碼表和維運手冊；用繁體中文寫。"),
+      oninput: (e) => { c.saved = false; promptEdited(c.id, e.target.value); } }, v),
+    h("div", { class: "rx-promptfoot" },
+      h("small", { class: "faint", "data-explain-promptsource": w.key, "aria-live": "polite" }, w.text),
+      h("small", { class: `rx-count${v.length > PROMPT_MAX * 0.9 ? " over" : ""}`, "data-explain-promptcount": "", "aria-live": "polite" }, `${v.length} / ${PROMPT_MAX}`)),
+    h("div", { class: "rx-promptacts" },
+      h("button", { type: "button", class: "btn sm", "data-explain-promptsave": "", disabled: (v.trim() || null) === (c.def ?? null) ? true : null, onclick: () => saveDefault(c) },
+        c.def != null && !v.trim() ? T("Clear the default for this skill", "清除這個 skill 的預設") : T("Save as default for this skill", "存成這個 skill 的預設")),
+      h("button", { type: "button", class: "btn sm", "data-explain-promptreset": "", hidden: c.def == null || v === c.def ? true : null, onclick: () => setPrompt(c, c.def) }, T("Reset to default", "還原成預設")),
+      ex ? h("button", { type: "button", class: "btn sm", "data-explain-promptexample": "", title: T(ex.en, ex.zh), disabled: hasExample(v, ex) ? true : null, onclick: () => { const t = T(ex.en, ex.zh), cur = (c.prompt ?? "").trimEnd(); setPrompt(c, cur ? `${cur}\n\n${t}` : t); } },
+        T("Insert a review checklist", "插入審查清單範例")) : null,
+      c.saved ? h("small", { class: "rx-saved", "data-explain-promptsaved": "", role: "status" }, T("Saved: the next run of this skill starts from it.", "已存：這個 skill 下次就從這段開始。")) : null),
+    h("small", { class: "faint" }, T("Your instructions go to the skill as yours, apart from the pull request's text. A changed text is a new confirmation.", "你的指示會以你的名義交給 skill，和 PR 的內容分開。改了內容就要重新確認。"),
+      " ", h("a", { href: "/#/skills", target: "_blank", rel: "noopener", "data-explain-skillslink": "" }, T("Defaults of every skill: Skills page ↗", "所有 skill 的預設：技能頁 ↗"))),
+    h("small", { class: "rx-promptnote", "data-explain-promptnote": "", role: "status" }, c.note && c.stale ? c.note : ""));
+}
 /** the picker's menu and the paid run's confirmation, over whichever way the room is shown */
 const dialogs = (r) => { if (X.pick || X.confirm) focusLater(); return [pickerDialog(r), confirmDialog(r)]; };
 // ---------- the room: versions on the left, the output in the middle, the chat on the right ----------
@@ -233,7 +313,7 @@ function view(r) {
 }
 /** show a version; one made by another skill switches the room to that skill (so the header, the chat and Generate agree) */
 async function showVersion(r, v) {
-  const id = r.card.id, st = state(id); X.shown.set(id, v.n); X.sel.delete(id); X.boxing = null;
+  const id = r.card.id, st = state(id); X.shown.set(id, v.n); X.sel.delete(id); X.boxing = null; X.err.delete(id);
   if (st.selected?.id !== v.skill.id) { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: v.skill.id })); } catch (e) { X.err.set(id, bi(e.message)); } }
   render();
 }
@@ -244,11 +324,34 @@ function rail(r, st) {
     h("button", { type: "button", class: "rx-ver", "data-explain-tutor": "", onclick: async () => { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: null })); } catch (e) { X.err.set(id, bi(e.message)); } render(); } },
       h("span", { class: "k" }, T("Tutor", "導師")), T("The board", "原本的白板"), h("small", {}, T("Studio's own", "Studio 內建"))),
     st.versions.map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null, onclick: () => showVersion(r, v) },
-      h("span", { class: "k" }, `${v.skill.name} v${v.n}`), v.summary || v.entry, h("small", {}, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`))),
+      h("span", { class: "k" }, `${v.skill.name} v${v.n}`), v.summary || v.entry, h("small", {}, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
+      madeFrom(v) ? h("small", { class: "rx-verprompt", "data-explain-verprompt": v.n, title: madeFrom(v).full }, madeFrom(v).short) : null)),
     run && run.kind === "generate" ? h("div", { class: "rx-ver on", "data-explain-generating": "" }, h("span", { class: "k" }, run.skill.name), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
     // one Generate: here once an output exists; before that the stage has it
-    sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => openConfirm(r, sid, "generate", "[data-explain-again]") }, T("Generate a new version", "重新產生一版")) : null,
+    sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => openConfirm(r, sid, "generate", "[data-explain-again]", cur.skill.id === sid && typeof cur.prompt === "string" ? cur.prompt : undefined) }, T("Generate a new version", "重新產生一版")) : null,
     h("p", { class: "faint rx-note" }, T("Every generation, and every follow-up that changes the output, is kept as a version: pick an older one to compare.", "每次產生、每次追問改了產出，都留一版；點舊版可以對照。")));
+}
+/** what a version was made from, in a line: a generation's instructions (or the skill's default), a follow-up's question */
+function madeFrom(v) {
+  if (typeof v.prompt === "string") return v.prompt ? { kind: "prompt", short: T(`✎ ${v.prompt.slice(0, 60)}${v.prompt.length > 60 ? "…" : ""}`, `✎ ${v.prompt.slice(0, 40)}${v.prompt.length > 40 ? "…" : ""}`), full: v.prompt }
+    : { kind: "default", short: T("✎ the skill's default", "✎ skill 預設"), full: "" };
+  if (v.question) return { kind: "question", short: `? ${v.question.slice(0, 60)}${v.question.length > 60 ? "…" : ""}`, full: v.question };
+  return null;
+}
+/** the version view's own line: which instructions (or question) produced it, opened to the whole text, and Generate again */
+function versionHead(r, st, v) {
+  const m = madeFrom(v), sid = st.selected?.id, can = r.open && !readOnly() && !liveRun(st) && sid === v.skill.id;
+  const key = `${r.card.id}/${v.n}`;
+  return h("details", { class: "rx-vhead", "data-explain-made": m?.kind || "none", open: X.madeOpen.has(key) ? true : null, ontoggle: (e) => { if (e.target.open) X.madeOpen.add(key); else X.madeOpen.delete(key); } },
+    h("summary", {}, h("b", {}, `${v.skill.name} v${v.n}`), " · ",
+      !m ? T("made before instructions were kept", "這版沒有留下指示")
+      : m.kind === "prompt" ? [T("Made with your instructions: ", "依你的指示產生："), h("span", { class: "rx-vprompt" }, m.short.replace(/^✎ /, ""))]
+      : m.kind === "default" ? T("Made with the skill's default (no instructions)", "照 skill 預設產生（沒有額外指示）")
+      : [T(`From a follow-up on v${v.from}: `, `由 v${v.from} 的追問產生：`), h("span", { class: "rx-vprompt" }, m.full.slice(0, 80))]),
+    h("div", { class: "rx-vbody" },
+      m?.full ? h("pre", { class: "rx-vfull", "data-explain-promptfull": v.n }, m.full) : null,
+      can ? h("button", { type: "button", class: "btn sm", "data-explain-reuse": v.n, onclick: () => openConfirm(r, sid, "generate", `[data-explain-reuse="${v.n}"]`, m?.kind === "prompt" ? v.prompt : m?.kind === "default" ? "" : undefined) },
+        m?.kind === "prompt" ? T("Generate again with these instructions…", "用這些指示再產生一版…") : T("Generate again…", "再產生一版…")) : null));
 }
 function stage(r, st) {
   const id = r.card.id, run = liveRun(st), v = shownVersion(id), sid = st.selected?.id, lastGen = [...st.runs].reverse().find((x) => x.kind === "generate" && x.skill.id === sid);
@@ -261,10 +364,14 @@ function stage(r, st) {
         : h("p", {}, T(`Nothing made with ${skillName(st, sid)} yet in this room.`, `這間審查室還沒有用 ${skillName(st, sid)} 產生過。`)),
       r.open && !readOnly() ? h("button", { type: "button", class: "btn primary", "data-explain-again": "", onclick: () => openConfirm(r, sid, "generate", "[data-explain-again]") }, bad ? T("Try again", "再試一次") : T("Generate", "產生")) : null); }
   const media = v.kind === "video" || v.kind === "image", asking = run && run.kind === "ask";
+  const page = v.kind === "html" || v.kind === "markdown" || v.kind === "text";
   return h("div", { class: "rx-stagein", "data-x-stage": "" },
+    versionHead(r, st, v),
     // the layer with the output is placed over this slot (it is not part of the page's redraws)
     h("div", { class: "rx-slot", "data-x-slot": `${id}/${v.n}` }),
     h("div", { class: "rx-tools" },
+      h("button", { type: "button", class: "rr-chip", "data-explain-full": "", title: T("Full screen (F)", "全螢幕（F）"), "aria-keyshortcuts": "F", onclick: () => enterFull(id, v) }, "⛶ ", T("Full screen", "全螢幕")),
+      page ? h("button", { type: "button", class: "rr-chip", "data-explain-newtab": "", title: T("Opens this version alone in a new tab, isolated as here", "在新分頁單獨開這一版，一樣隔離"), onclick: () => openTab(id, v) }, "↗ ", T("Open in new tab", "在新分頁開啟")) : null,
       readOnly() ? null : v.kind === "video" ? h("button", { type: "button", class: "rr-chip", "data-explain-pause": "", disabled: asking ? true : null, onclick: () => pauseAsk(id, v) }, "⏸ ", T("Pause here and ask", "停在這一格問"))
         : h("button", { type: "button", class: `rr-chip${X.boxing === id ? " on" : ""}`, "data-explain-box": "", "aria-pressed": String(X.boxing === id), disabled: asking ? true : null, title: asking ? T("Wait for the answer", "等回答完成") : "",
             onclick: () => { X.boxing = X.boxing === id ? null : id; refresh(id); if (X.boxing) requestAnimationFrame(() => document.querySelector("[data-explain-overlay]")?.focus()); } },
@@ -309,6 +416,7 @@ function syncAsk(r, st) {
 async function send(id, q, confirm, consent) {
   const r = window.crewReviewRoomData?.(id); if (!r || !onRoom(id) || !active(id)) return;
   const text = String(q ?? X.draft.get(id) ?? "").trim(); if (!text) return; const m = askMode(r, state(id));
+  if (L.full) exitFull(); // the follow-up's confirmation and its answer are in the chat
   // the first output is still being made: the question waits for it (sent when the run ends with a version)
   if (m === "queue") { X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
   if (m !== "ask") return;
@@ -377,8 +485,51 @@ function msgs(r, st) {
 }
 
 // ---------- the output's layer: placed over the stage's slot, rebuilt only when the version shown changes ----------
-const L = { el: null, key: null, frame: null, video: null, on: false };
+const L = { el: null, key: null, frame: null, video: null, on: false, full: null, saved: null };
 function layerEl() { if (!L.el) { L.el = h("div", { class: "rx-layer", "data-x-layer": "", hidden: true }); document.body.append(L.el); } return L.el; }
+// ---------- full screen: the output fills the screen, and Esc (or ✕) brings the room back where it was ----------
+/** the scroll positions of everything the stage sits in, put back once the room is back */
+const scrollers = (el) => { const out = []; for (let e = el; e; e = e.parentElement) if (e.scrollTop || e.scrollLeft) out.push([e, e.scrollTop, e.scrollLeft]); return { out, x: scrollX, y: scrollY }; };
+function fullBar(id, v) {
+  return h("div", { class: "rx-fullbar", "data-explain-fullbar": "" }, h("span", { class: "rx-fulltitle" }, `${v.skill.name} v${v.n}`),
+    h("button", { type: "button", class: "rx-fullx", "data-explain-fullclose": "", "aria-label": T("Exit full screen (Esc)", "離開全螢幕（Esc）"), onclick: () => exitFull() }, "✕ ", T("Exit full screen", "離開全螢幕"), h("kbd", {}, "Esc")));
+}
+/** native fullscreen of the output's layer (a picture or a video: of that element, natively); refused, a fixed full-window layer */
+async function enterFull(id, v) {
+  if (L.full || !L.el) return; const slot = document.querySelector("[data-x-slot]"); L.saved = scrollers(slot);
+  if (X.boxing === id) { X.boxing = null; refresh(id); }
+  const el = layerEl(); el.querySelectorAll(".rx-over,.rx-kept,.rx-pop").forEach((x) => x.remove()); // a kept box is drawn again once back
+  const media = v.kind === "video" ? L.video : v.kind === "image" ? el.querySelector("[data-explain-image]") : null, target = media || el;
+  el.querySelector("[data-explain-fullbar]")?.remove(); el.append(fullBar(id, v));
+  Object.assign(el.style, { clipPath: "" }); el.hidden = false; L.full = "native";
+  try { if (!target.requestFullscreen) throw new Error("no Fullscreen API"); await target.requestFullscreen({ navigationUI: "hide" }); if (document.fullscreenElement !== target) throw new Error("not full screen"); }
+  catch { L.full = "fallback"; el.classList.add("full"); document.documentElement.classList.add("rx-fullon"); }
+  el.dataset.full = L.full; requestAnimationFrame(() => (el.querySelector("[data-explain-fullclose]"))?.focus({ preventScroll: true }));
+}
+function exitFull() {
+  if (!L.full) return; const was = L.full; L.full = null;
+  if (was === "native" && document.fullscreenElement) { document.exitFullscreen?.().catch(() => {}); }
+  const el = L.el; if (el) { el.classList.remove("full"); delete el.dataset.full; el.querySelector("[data-explain-fullbar]")?.remove(); }
+  // the same output, its overlays drawn again on the stage (a kept box at its place there)
+  if (L.key) L.key = `${L.key.split("/").slice(0, 2).join("/")}/~`;
+  document.documentElement.classList.remove("rx-fullon");
+  const s = L.saved; L.saved = null;
+  const back = () => { if (s) { for (const [e, t, l] of s.out) { e.scrollTop = t; e.scrollLeft = l; } scrollTo(s.x, s.y); } document.querySelector("[data-explain-full]")?.focus({ preventScroll: true }); };
+  back(); requestAnimationFrame(() => requestAnimationFrame(back));
+}
+addEventListener("fullscreenchange", () => { if (L.full === "native" && !document.fullscreenElement) exitFull(); });
+/** F on the stage (or on the output's layer): full screen; never while typing, boxing or with a modifier */
+addEventListener("keydown", (e) => {
+  if (e.key !== "f" && e.key !== "F" || e.metaKey || e.ctrlKey || e.altKey || L.full || X.boxing || document.querySelector(".rx-modal")) return;
+  const t = e.target; if (!t?.closest || t.closest("textarea,input,select,[contenteditable=''],[contenteditable='true']")) return;
+  if (!t.closest("[data-x-stage]") && !(L.el && L.el.contains(t))) return;
+  const slot = document.querySelector("[data-x-slot]"); if (!slot) return; const [id, n] = [slot.dataset.xSlot.split("/").slice(0, -1).join("/"), Number(slot.dataset.xSlot.split("/").at(-1))];
+  const v = state(id)?.versions.find((x) => x.n === n); if (!v) return; e.preventDefault(); enterFull(id, v); });
+/** "Open in new tab": a fresh capability, Studio's page that frames the version exactly as here (sandbox allow-scripts, the output CSP) */
+async function openTab(id, v) {
+  try { const j = await api(`${base(id)}/cap?v=${v.n}`); window.open(`/rrxt/${enc(j.cap)}/${enc(id)}/${v.n}`, "_blank", "noopener,noreferrer"); }
+  catch (e) { X.err.set(id, bi(e.message)); refresh(id); }
+}
 async function capFor(id, v) { const k = `${id}/${v.n}`, had = X.caps.get(k); if (had && had.exp > Date.now()) return had.src;
   const j = await api(`${base(id)}/cap?v=${v.n}`); const src = `${j.base}${v.entry.split("/").map(enc).join("/")}`; X.caps.set(k, { src, exp: Date.now() + 20 * 60_000 }); return src; }
 function mount(id, v) {
@@ -438,9 +589,13 @@ function pauseAsk(id, v) { const vid = L.video; if (!vid) return; try { vid.paus
 function tick() {
   const slot = document.querySelector("[data-x-slot]"), modal = document.querySelector(".rx-modalbg");
   // off the room (or on the tutor's board): the output is unloaded, so its scripts stop
-  if (!slot) { if (L.el) { L.el.hidden = true; L.el.replaceChildren(); L.key = null; L.frame = null; L.video = null; } L.on = false; return; }
+  if (!slot) { if (L.full) exitFull(); if (L.el) { L.el.hidden = true; L.el.replaceChildren(); L.key = null; L.frame = null; L.video = null; } L.on = false; return; }
   const [id, n] = [slot.dataset.xSlot.split("/").slice(0, -1).join("/"), Number(slot.dataset.xSlot.split("/").at(-1))], v = state(id)?.versions.find((x) => x.n === n);
-  if (v) mount(id, v);
+  // another version on the stage (or none): full screen ends first
+  if (L.full && (!v || (L.key && !L.key.startsWith(`${id}/${n}/`)))) exitFull();
+  if (v && !L.full) mount(id, v);
+  // full screen: the layer is the screen (or the window); the stage's geometry and clipping wait until the room is back
+  if (L.full) { const el = layerEl(); el.hidden = false; el.style.clipPath = ""; requestAnimationFrame(tick); return; }
   // the layer only ever draws (and takes clicks) where its slot is visible inside the room's scrolling body: clipped to the
   // body's rect, below the room's header and inside the window; hidden once nothing of it is in view
   const b = slot.getBoundingClientRect(), el = layerEl(), body = slot.closest(".rx-body")?.getBoundingClientRect(), head = document.querySelector(".rr-head")?.getBoundingClientRect();
@@ -454,8 +609,9 @@ function tickStart() { if (!L.on) { L.on = true; requestAnimationFrame(tick); } 
 addEventListener("keydown", (e) => { if (e.key !== "Escape") return; const id = S.route?.name === "room" ? S.route.arg : null; if (!id) return;
   if (X.confirm || X.pick) { e.preventDefault(); e.stopPropagation(); closeDialog(); }
   else if (X.boxing === id) { X.boxing = null; refresh(id); focusLater("[data-explain-box]"); e.preventDefault(); }
+  else if (L.full) { exitFull(); e.preventDefault(); }
   else if (X.sel.has(id) && !e.target?.closest?.("textarea")) { clearSel(id); e.preventDefault(); } }, true);
-addEventListener("hashchange", () => { X.boxing = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
+addEventListener("hashchange", () => { if (L.full) exitFull(); X.boxing = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
 
-window.crewRoomExplain = { ensure, state, active, picker, view, load, dialogs };
+window.crewRoomExplain = { ensure, state, active, picker, view, load, dialogs, full: () => L.full };
 })();

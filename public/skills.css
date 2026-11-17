@@ -111,3 +111,10 @@ body.chat-closed .rt-editor .rt-panel{padding-bottom:120px}
 .skv-file-why{font-size:12px}
 .sk-read{margin-left:auto}
 @media (max-width:480px){.skv-file,.skv-x,.skv .btn.sm,.skv-ver{min-height:44px}}
+/* a skill's default instructions for the review room ("What should it produce?") */
+.sk-defprompt{border:1px solid var(--border);border-radius:10px;padding:6px 10px;font-size:13px;min-width:0}
+.sk-defprompt>summary{cursor:pointer;padding:2px 0}
+.sk-defprompt p{margin:6px 0}
+.sk-defprompt textarea{width:100%;box-sizing:border-box;font:inherit;font-size:13px;line-height:1.5;border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px;resize:vertical;min-height:90px;background:var(--surface);color:var(--text)}
+.sk-defrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 2px}
+.sk-defrow [data-skill-defcount]{margin-left:auto;font-family:var(--f-mono,ui-monospace,monospace)}

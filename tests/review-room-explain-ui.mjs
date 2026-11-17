@@ -96,7 +96,7 @@ try {
   await ctx.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
   await ctx.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
   await ctx.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: X }));
-  await ctx.route(new RegExp(`/api/review-room/${ID}/explain/offer\\?`), (r) => { const kind = new URL(r.request().url()).searchParams.get("kind"); r.fulfill({ json: kind === "ask" ? ASK_OFFER : OFFER }); });
+  await ctx.route(new RegExp(`/api/review-room/${ID}/explain/offer(\\?|$)`), (r) => { const kind = r.request().method() === "POST" ? JSON.parse(r.request().postData() || "{}").kind : new URL(r.request().url()).searchParams.get("kind"); r.fulfill({ json: kind === "ask" ? ASK_OFFER : OFFER }); });
   const answer = (r, body, status = 200) => { posts.push([new URL(r.request().url()).pathname.split("/").pop(), JSON.parse(r.request().postData() || "{}")]); r.fulfill({ status, json: body }); };
   let onGenerate = null, onAsk = null, onStop = null, onSelect = null;
   await ctx.route(new RegExp(`/api/review-room/${ID}/explain/(generate|ask|stop|select)$`), (r) => { const op = new URL(r.request().url()).pathname.split("/").pop(); const f = { generate: onGenerate, ask: onAsk, stop: onStop, select: onSelect }[op]; return f ? f(r) : answer(r, X); });
@@ -403,6 +403,216 @@ try {
       ok(asked.length === 1 && asked[0].question === "And the risk?" && !asked[0].confirm, "a question waiting for a run that finished while away is asked on coming back, behind its confirmation", JSON.stringify(asked));
     }
     await c3.close();
+  }
+
+  // ---------- "What should it produce?" and full screen: the captain's instructions with a version, and the output filling the screen ----------
+  { const P1 = "Include an error-code table and an ops runbook; Traditional Chinese.", LAST = "Draw the data flow first, then a risk table.";
+    const withMade = versions.map((v) => (v.n === 1 ? { ...v, prompt: P1 } : v.n === 2 ? { ...v, question: "Why round here?" } : v.n === 4 ? { ...v, prompt: "" } : v));
+    const hashOf = (t) => (t ? `c0ffee${sha(t).slice(0, 10)}` : OFFER.hash);
+    // the offer is for the text it was asked with (none: the skill's last instructions, the prefill), as the server's is
+    const offerReqs = [], gens = [], defs = []; let DEF = null, failSelect = false;
+    const EX = { en: "For this pull request, include:\n- an architecture diagram", zh: "這個 PR 請包含：\n- 架構圖" };
+    const prefill = () => (DEF != null ? { text: DEF, source: "default" } : LAST ? { text: LAST, source: "last" } : { text: "", source: "none" });
+    const routes = async (c, Y) => {
+      await c.addInitScript(() => { try { if (!sessionStorage.getItem("keep-lang")) localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
+        Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+      await c.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+      await c.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+      await c.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+      await c.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: Y() }));
+      // a generation's offer is a POST (the instructions do not fit a URL): for the text sent, else the prefill (default, else last)
+      await c.route(new RegExp(`/api/review-room/${ID}/explain/offer$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"), has = typeof b.prompt === "string", pf = prefill(), text = has ? b.prompt : pf.text; offerReqs.push(has ? text : null);
+        r.fulfill({ json: b.kind === "ask" ? ASK_OFFER : { ...OFFER, hash: hashOf(text), prompt: { text, max: 2000, last: LAST, default: DEF, source: has ? "given" : pf.source, example: EX } } }); });
+      await c.route(/\/api\/review-room\/explain\/prompts$/, (r) => { if (r.request().method() !== "POST") return r.continue(); const b = JSON.parse(r.request().postData() || "{}"); defs.push(b); DEF = b.text || null; r.fulfill({ json: { skill: b.skill, default: DEF } }); });
+      await c.route(new RegExp(`/api/review-room/${ID}/explain/generate$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); gens.push(b);
+        r.fulfill(b.confirm === hashOf(b.prompt ?? "") ? { json: { ...Y(), running: 7, runs: [run(7, "generate", "running", { prompt: b.prompt })] } } : { status: 409, json: { error: "confirm / 確認", code: "confirm_required", offer: { ...OFFER, hash: hashOf(b.prompt), prompt: { text: b.prompt, max: 2000, last: LAST } } } }); });
+      await c.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => failSelect ? r.fulfill({ status: 400, json: { error: "That skill is not in the library / 技能庫裡沒有這個 skill", code: "bad_skill" } }) : r.fulfill({ json: Y() })); };
+    let Y = { ...X, selected: { id: "walkthrough", v: 1 }, versions: withMade, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })] };
+    const c5 = await browser.newContext({ viewport: { width: 1440, height: 900 } }); await routes(c5, () => Y);
+    const w = await c5.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector('[data-explain-version="4"]', { timeout: 15000 });
+    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]');
+    const railMade = await w.$$eval("[data-explain-verprompt]", (es) => Object.fromEntries(es.map((e) => [e.dataset.explainVerprompt, e.textContent])));
+    ok(/^✎ Include an error-code table/.test(railMade[1]) && /^\? Why round here\?/.test(railMade[2]) && /the skill's default/.test(railMade[4]) && !railMade[3], "the rail says what each version was made from: the instructions, a follow-up's question, the skill's default", JSON.stringify(railMade));
+    const head = await w.$eval("[data-explain-made]", (e) => ({ kind: e.dataset.explainMade, open: e.open, text: e.querySelector("summary").textContent }));
+    ok(head.kind === "prompt" && !head.open && /Made with your instructions: Include an error-code table/.test(head.text), "the version view names the instructions it was made with, folded", JSON.stringify(head));
+    await w.click("[data-explain-made] > summary");
+    ok((await w.$eval('[data-explain-promptfull="1"]', (e) => e.textContent)) === P1 && !!(await w.$('[data-explain-reuse="1"]')), "opened, it shows the whole text and Generate again with these instructions");
+    await w.screenshot({ path: join(shots, "9-version-instructions.png") });
+    // generate again: the confirmation starts from this version's instructions, editable; the offer is for exactly that text
+    await w.click('[data-explain-reuse="1"]'); await w.waitForSelector("[data-explain-start]:not([disabled])");
+    const field = await w.$eval("[data-explain-prompt]", (e) => ({ value: e.value, max: e.maxLength, label: document.querySelector("[data-explain-promptfield] label").textContent, count: document.querySelector("[data-explain-promptcount]").textContent }));
+    ok(field.value === P1 && offerReqs.at(-1) === P1 && field.max === 2000 && /What should it produce\?/.test(field.label) && field.count === `${P1.length} / 2000`, "Generate again starts from the version's instructions: in the field, with a visible counter, and in the offer", JSON.stringify({ field, req: offerReqs.at(-1) }));
+    const link = await w.$eval("[data-explain-skillslink]", (a) => ({ target: a.target, rel: a.rel }));
+    ok(link.target === "_blank" && /noopener/.test(link.rel), "the confirmation's Skills page link opens a tab of its own (the typed text stays)", JSON.stringify(link));
+    await w.keyboard.press("Escape"); await w.waitForFunction(() => !document.querySelector(".rx-modal"), null, { timeout: 3000 }); await w.waitForTimeout(150);
+    const esc = await w.evaluate(() => ({ reuse: document.activeElement?.matches?.('[data-explain-reuse="1"]'), summary: document.activeElement?.matches?.("[data-explain-made] > summary"), tag: document.activeElement?.tagName }));
+    ok((esc.reuse || esc.summary) && esc.tag !== "BODY", "Esc gives the focus back to Generate again (its line stays open), never to the page", JSON.stringify(esc));
+    await w.click('[data-explain-reuse="1"]'); await w.waitForSelector("[data-explain-start]:not([disabled])");
+    const P2 = "Only an ops runbook, as a checklist.";
+    await w.fill("[data-explain-prompt]", P2);
+    const waiting = await w.$eval("[data-explain-start]", (e) => e.disabled);
+    await w.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
+    ok(waiting && offerReqs.at(-1) === P2 && (await w.$eval("[data-explain-promptcount]", (e) => e.textContent)) === `${P2.length} / 2000` && (await w.$eval("[data-explain-prompt]", (e) => document.activeElement === e)), "an edit waits for the offer of the new text (Confirm waits; the focus and the text stay)", JSON.stringify(offerReqs.slice(-2)));
+    await w.screenshot({ path: join(shots, "10-confirm-instructions.png") });
+    // a default for this skill, set from the confirmation: saved as typed, then the field says it is the default
+    ok((await w.$eval("[data-explain-promptsource]", (e) => e.dataset.explainPromptsource)) === "edited" && (await w.$eval("[data-explain-promptreset]", (e) => e.hidden)), "an edited text says so; with no default there is nothing to reset to");
+    await w.click("[data-explain-promptsave]"); await w.waitForSelector("[data-explain-promptsaved]");
+    ok(defs.at(-1)?.skill === "walkthrough" && defs.at(-1).text === P2 && (await w.$eval("[data-explain-promptsource]", (e) => e.dataset.explainPromptsource)) === "default" && (await w.$eval("[data-explain-promptsave]", (e) => e.disabled)),
+      "Save as default for this skill: the text is the skill's default, and the field says so", JSON.stringify(defs.at(-1)));
+    await w.fill("[data-explain-prompt]", "Something else for once."); await w.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
+    ok(!(await w.$eval("[data-explain-promptreset]", (e) => e.hidden)) && (await w.$eval("[data-explain-promptsource]", (e) => e.dataset.explainPromptsource)) === "edited", "edited away from the default, Reset to default shows");
+    await w.click("[data-explain-promptreset]"); await w.waitForFunction((t) => document.querySelector("[data-explain-prompt]").value === t && !document.querySelector("[data-explain-start]").disabled, P2, { timeout: 5000 });
+    ok(offerReqs.at(-1) === P2 && (await w.$eval("[data-explain-promptreset]", (e) => e.hidden)), "Reset to default puts the default back, and the offer is read again for it");
+    await w.click("[data-explain-promptexample]"); await w.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
+    const exv = await w.$eval("[data-explain-prompt]", (e) => e.value);
+    ok(exv === `${P2}\n\n${EX.en}` && offerReqs.at(-1) === exv, "Insert a review checklist adds the built-in example below the text (never applied by itself), and the offer follows", JSON.stringify(exv));
+    ok(await w.$eval("[data-explain-promptexample]", (e) => e.disabled), "with the checklist in the field, Insert is off (no second copy)");
+    await w.click("[data-explain-promptreset]"); await w.waitForFunction((t) => document.querySelector("[data-explain-prompt]").value === t && !document.querySelector("[data-explain-start]").disabled, P2, { timeout: 5000 });
+    ok(!(await w.$eval("[data-explain-promptexample]", (e) => e.disabled)), "without it, Insert is on again");
+    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
+    ok(gens.at(-1)?.prompt === P2 && gens.at(-1).confirm === hashOf(P2) && gens.at(-1).skill === "walkthrough", "Confirm sends the instructions with the confirmation of exactly that text", JSON.stringify(gens.at(-1)));
+    // a room with nothing made yet: the field is prefilled with what this skill was last asked for (the server's prefill)
+    Y = { ...Y, versions: [], runs: [], running: null }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-empty] [data-explain-again]");
+    await w.click("[data-explain-empty] [data-explain-again]"); await w.waitForSelector("[data-explain-start]:not([disabled])");
+    ok(offerReqs.at(-1) === null && (await w.$eval("[data-explain-prompt]", (e) => e.value)) === P2 && (await w.$eval("[data-explain-promptsource]", (e) => e.dataset.explainPromptsource)) === "default", "the first Generate is prefilled with the skill's default, and says so");
+    await w.click(".rx-modal .rx-foot .btn:not(.primary)"); DEF = null;
+    await w.click("[data-explain-empty] [data-explain-again]"); await w.waitForSelector("[data-explain-start]:not([disabled])");
+    ok((await w.$eval("[data-explain-prompt]", (e) => e.value)) === LAST && (await w.$eval("[data-explain-promptsource]", (e) => e.dataset.explainPromptsource)) === "last" && /What you last asked this skill for/.test(await w.$eval("[data-explain-promptfield]", (e) => e.textContent)), "with no default, it falls back to the last instructions, and says so");
+    await w.fill("[data-explain-prompt]", "y".repeat(1900)); await w.waitForTimeout(50);
+    ok(await w.$eval("[data-explain-promptcount]", (e) => e.classList.contains("over") && e.textContent === "1900 / 2000"), "near the cap the counter warns");
+    await w.fill("[data-explain-prompt]", ""); await w.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
+    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
+    ok(gens.at(-1)?.prompt === "" && gens.at(-1).confirm === OFFER.hash, "cleared, the run is the skill's default (an empty prompt, its own confirmation)", JSON.stringify(gens.at(-1)));
+    // a confirmation for one text does not start another: Studio asks again with the new offer
+    Y = { ...Y, versions: withMade, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })], running: null }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector('[data-explain-frame="4"],[data-explain-frame="1"]');
+    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]');
+
+    // ---------- full screen: native on the layer (the frame is not reloaded); Esc / ✕ brings the room back where it was ----------
+    await w.setViewportSize({ width: 900, height: 700 }); await w.waitForTimeout(150);
+    await w.$eval("[data-explain-full]", (e) => e.scrollIntoView({ block: "center" })); await w.waitForTimeout(100);
+    const before = await w.evaluate(() => { const f = document.querySelector('[data-explain-frame="1"]'); f.__kept = 1; return { body: document.querySelector(".rx-body").scrollTop, y: scrollY }; });
+    await w.click("[data-explain-full]"); await w.waitForFunction(() => !!window.crewRoomExplain.full(), null, { timeout: 5000 }); await w.waitForTimeout(200);
+    const fs = await w.evaluate(() => { const L = document.querySelector("[data-x-layer]"), b = L.getBoundingClientRect(), f = L.querySelector('[data-explain-frame="1"]').getBoundingClientRect();
+      const bar = L.querySelector("[data-explain-fullbar]").getBoundingClientRect();
+      return { mode: window.crewRoomExplain.full(), el: document.fullscreenElement === L, w: Math.round(b.width), h: Math.round(b.height), sw: innerWidth, sh: innerHeight, fw: Math.round(f.width), fh: Math.round(f.height), ftop: Math.round(f.top), barTop: Math.round(bar.top), barBottom: Math.round(bar.bottom), barW: Math.round(bar.width), kept: L.querySelector('[data-explain-frame="1"]').__kept === 1, clip: L.style.clipPath, bar: !!L.querySelector("[data-explain-fullclose]"), focus: document.activeElement?.hasAttribute("data-explain-fullclose") }; });
+    ok(fs.barTop === 0 && fs.barW === fs.w && fs.ftop >= fs.barBottom && fs.fh === fs.h - fs.barBottom, "the bar has a strip of its own at the top: the output starts below it, so it never covers the page's own controls", JSON.stringify(fs));
+    ok(fs.mode === "native" && fs.el && fs.w === fs.sw && fs.h === fs.sh && fs.fw === fs.w && fs.kept && !fs.clip && fs.bar && fs.focus, "Full screen: the output's layer is the screen (the Fullscreen API), its frame fills it and is not reloaded; ✕ has the focus", JSON.stringify(fs));
+    await w.screenshot({ path: join(shots, "11-fullscreen.png") });
+    await w.click("[data-explain-fullclose]"); await w.waitForFunction(() => !window.crewRoomExplain.full() && !document.fullscreenElement, null, { timeout: 5000 }); await w.waitForTimeout(200);
+    const back = await w.evaluate(() => { const L = document.querySelector("[data-x-layer]").getBoundingClientRect(), s = document.querySelector("[data-x-slot]").getBoundingClientRect();
+      return { body: document.querySelector(".rx-body").scrollTop, y: scrollY, onSlot: Math.abs(L.top - s.top) < 2 && Math.abs(L.width - s.width) < 2, focus: document.activeElement?.hasAttribute("data-explain-full"), kept: document.querySelector('[data-explain-frame="1"]').__kept === 1 }; });
+    ok(back.body === before.body && back.y === before.y && back.onSlot && back.focus && back.kept, "✕ brings the room back at the same scroll position, the output on its stage again, the focus on Full screen", JSON.stringify({ before, back }));
+    // the browser's own way out (Esc in real full screen ends it) is followed too
+    await w.click("[data-explain-full]"); await w.waitForFunction(() => window.crewRoomExplain.full() === "native" && !!document.fullscreenElement, null, { timeout: 5000 });
+    await w.evaluate(() => document.exitFullscreen()); await w.waitForFunction(() => !window.crewRoomExplain.full(), null, { timeout: 5000 });
+    ok(!(await w.$("[data-x-layer] [data-explain-fullbar]")), "leaving full screen the browser's way (Esc) ends Studio's full screen too");
+    // refused (a browser or a frame policy that does not allow it): a fixed layer over the whole window; Esc closes it
+    await w.evaluate(() => { window.__realFs = Element.prototype.requestFullscreen; Element.prototype.requestFullscreen = function () { return Promise.reject(new TypeError("Permissions check failed")); }; });
+    const before2 = await w.evaluate(() => ({ body: document.querySelector(".rx-body").scrollTop, y: scrollY }));
+    await w.focus("[data-explain-box]"); await w.keyboard.press("f"); await w.waitForFunction(() => window.crewRoomExplain.full() === "fallback", null, { timeout: 5000 }); await w.waitForTimeout(150);
+    const fb = await w.evaluate(() => { const L = document.querySelector("[data-x-layer]"), b = L.getBoundingClientRect(), head = document.querySelector(".rr-head").getBoundingClientRect(), at = document.elementFromPoint(head.left + 20, head.top + head.height / 2);
+      return { cls: L.classList.contains("full"), x: b.left, y: b.top, w: Math.round(b.width), h: Math.round(b.height), sw: innerWidth, sh: innerHeight, covers: L.contains(at), fs: !!document.fullscreenElement, bar: getComputedStyle(L.querySelector(".rx-fullbar")).display !== "none",
+        below: L.querySelector("iframe").getBoundingClientRect().top >= L.querySelector(".rx-fullbar").getBoundingClientRect().bottom }; });
+    ok(fb.cls && !fb.fs && fb.x === 0 && fb.y === 0 && fb.w === fb.sw && fb.h === fb.sh && fb.covers && fb.bar && fb.below, "F on the stage; refused, the output fills the window instead (a fixed layer over the room), with its ✕", JSON.stringify(fb));
+    await w.screenshot({ path: join(shots, "12-fullscreen-fallback.png") });
+    await w.keyboard.press("Escape"); await w.waitForFunction(() => !window.crewRoomExplain.full(), null, { timeout: 3000 }); await w.waitForTimeout(200);
+    const back2 = await w.evaluate(() => { const L = document.querySelector("[data-x-layer]"), r = L.getBoundingClientRect(), s = document.querySelector("[data-x-slot]").getBoundingClientRect(), head = document.querySelector(".rr-head").getBoundingClientRect(), at = document.elementFromPoint(head.left + 20, head.top + head.height / 2);
+      return { body: document.querySelector(".rx-body").scrollTop, y: scrollY, cls: L.classList.contains("full"), onSlot: Math.abs(r.top - s.top) < 2, headOk: !L.contains(at) }; });
+    ok(back2.body === before2.body && back2.y === before2.y && !back2.cls && back2.onSlot && back2.headOk, "Esc closes it: the same scroll position, the output on its stage, the header clickable again", JSON.stringify({ before2, back2 }));
+    await w.evaluate(() => { Element.prototype.requestFullscreen = window.__realFs; });
+    // the box-to-ask overlay still works after full screen, inside the stage
+    await w.click("[data-explain-box]"); await w.waitForSelector("[data-explain-overlay]");
+    const lb = await w.$eval("[data-x-layer]", (e) => { const b = e.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; });
+    await w.mouse.move(lb.x + 4, lb.y + 30); await w.mouse.down(); await w.mouse.move(lb.x + 200, lb.y + 120, { steps: 4 }); await w.mouse.move(lb.x + Math.min(420, lb.w - 10), lb.y + Math.min(250, lb.h - 10), { steps: 4 }); await w.mouse.up();
+    await w.waitForSelector('[data-explain-scope="region"]', { timeout: 5000 });
+    ok(/Step 1 · rounding/.test(await w.$eval("[data-x-scope]", (e) => e.textContent)), "after full screen, boxing a region still reads what lies there");
+    // a video: its own player's native full screen
+    await w.click("[data-explain-clear]");
+    failSelect = true; await w.click('[data-explain-version="3"]'); await w.waitForSelector("[data-explain-error]", { timeout: 5000 }); failSelect = false;
+    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(150);
+    ok(!(await w.$("[data-explain-error]")), "an error from showing one version is gone once another version is shown");
+    await w.click('[data-explain-version="3"]'); await w.waitForSelector("[data-explain-video]");
+    await w.click("[data-explain-full]"); await w.waitForFunction(() => !!window.crewRoomExplain.full() && !!document.fullscreenElement, null, { timeout: 5000 });
+    ok(await w.evaluate(() => document.fullscreenElement?.tagName === "VIDEO" && document.fullscreenElement.hasAttribute("data-explain-video")), "a video goes full screen in its own player", await w.evaluate(() => document.fullscreenElement?.tagName));
+    ok(!(await w.$("[data-explain-newtab]")), "a video has no Open in new tab (Studio's own player shows it)");
+    await w.evaluate(() => document.exitFullscreen()); await w.waitForFunction(() => !window.crewRoomExplain.full(), null, { timeout: 5000 });
+
+    // ---------- Open in new tab: a fresh capability, Studio's page framing the version exactly as here ----------
+    await w.setViewportSize({ width: 1440, height: 900 });
+    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]');
+    const roomSrc = await w.$eval('[data-explain-frame="1"]', (e) => e.getAttribute("src"));
+    const [tab] = await Promise.all([c5.waitForEvent("page"), w.click("[data-explain-newtab]")]);
+    await tab.waitForLoadState("load");
+    const tabUrl = new URL(tab.url()), tabResp = await w.evaluate(async (u) => { const r = await fetch(u); return { csp: r.headers.get("content-security-policy"), body: await r.text() }; }, tabUrl.pathname);
+    ok(new RegExp(`^/rrxt/\\d+\\.[0-9a-f]{32}/${ID}/1$`).test(decodeURIComponent(tabUrl.pathname)) && /frame-src 'self'/.test(tabResp.csp) && /default-src 'none'/.test(tabResp.csp) && !/<script/i.test(tabResp.body), "the new tab is Studio's page by a capability, running nothing, framing only Studio", JSON.stringify({ u: tabUrl.pathname, csp: tabResp.csp }));
+    const tf = await tab.$eval("iframe", (e) => ({ sandbox: e.getAttribute("sandbox"), src: e.getAttribute("src") }));
+    ok(tf.sandbox === "allow-scripts" && /^\/rrx\/\d+\.[0-9a-f]{32}\//.test(tf.src) && tf.src !== roomSrc, "its frame is sandbox=allow-scripts on a fresh /rrx/ capability (not the room's)", JSON.stringify({ tf, roomSrc }));
+    const inner = tab.frames().find((f) => /\/rrx\//.test(f.url())); await inner.waitForFunction(() => document.getElementById("probe")?.textContent !== "probing", null, { timeout: 10000 });
+    const tprobe = await inner.$eval("#probe", (e) => e.textContent), innerCsp = await w.evaluate(async (u) => (await fetch(u)).headers.get("content-security-policy"), tf.src);
+    ok(/origin:null/.test(tprobe) && /parent:blocked/.test(tprobe) && /fetch:blocked/.test(tprobe) && /abs:blocked/.test(tprobe) && /storage:zh/.test(tprobe) && /^sandbox allow-scripts; default-src 'none'/.test(innerCsp) && /connect-src 'none'/.test(innerCsp),
+      "in the new tab the page is still an opaque origin with no network, under the same output CSP", JSON.stringify({ tprobe, innerCsp }));
+    await tab.setViewportSize({ width: 1440, height: 900 }); await tab.screenshot({ path: join(shots, "13-new-tab.png") }); await tab.close();
+    await w.click('[data-explain-version="4"]'); await w.waitForSelector('[data-explain-frame="4"]');
+    const hits0 = probeHits.length, [tab4] = await Promise.all([c5.waitForEvent("page"), w.click("[data-explain-newtab]")]); await tab4.waitForLoadState("load"); await tab4.waitForTimeout(2000);
+    ok(probeHits.length === hits0, "a page that navigates its frame away carries nothing out of the new tab either", probeHits.join(",")); await tab4.close();
+    await c5.close();
+
+    // ---------- the Skills page: a skill's default instructions, kept outside any run (the real Studio's route), one per skill ----------
+    { const c7 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await c7.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} });
+      const k = await c7.newPage(); k.on("pageerror", (e) => errors.push(e.message));
+      await k.goto(`${base}/#/skills`); await k.waitForSelector('[data-skill-defprompt="walkthrough"]', { timeout: 15000 });
+      const shown0 = await k.$$eval("[data-skill-defprompt]", (es) => es.map((e) => e.dataset.skillDefprompt));
+      ok(shown0.length === 1 && shown0[0] === "walkthrough" && (await k.$eval('[data-skill-defprompt="walkthrough"] [data-skill-defstate]', (e) => e.dataset.skillDefstate)) === "none" && (await k.$eval("[data-skill-defall]", (e) => e.getAttribute("aria-pressed"))) === "false",
+        "the Skills page shows the default-instructions editor on the captain's own skill only (none set yet); Studio's built-in ones wait behind a toggle", JSON.stringify(shown0));
+      await k.click("[data-skill-defall]"); await k.waitForFunction(() => document.querySelectorAll("[data-skill-defprompt]").length > 2);
+      const other = await k.$$eval("[data-skill-defprompt]", (es) => es.map((e) => e.dataset.skillDefprompt).find((x) => x !== "walkthrough"));
+      ok(!!other && (await k.$eval("[data-skill-defall]", (e) => e.getAttribute("aria-pressed"))) === "true", "“show for all skills” shows the editor on every library skill", other);
+      await k.click('[data-skill-defprompt="walkthrough"] > summary'); await k.click('[data-skill-defexample="walkthrough"]');
+      const ex = await k.$eval('[data-skill-deftext="walkthrough"]', (e) => e.value);
+      ok(/architecture diagram/.test(ex) && /sequence diagram/.test(ex) && /database lifecycle/.test(ex) && /state machine/.test(ex) && /error codes/.test(ex) && /API request and response/.test(ex) && /technology choices/.test(ex) && /before and after/.test(ex),
+        "Insert a review checklist fills in the built-in example (architecture, sequence, database lifecycle, state machine, error codes, API, technology choices, before/after)", ex);
+      await k.fill('[data-skill-deftext="walkthrough"]', `${ex}\n- written in Traditional Chinese`); await k.click('[data-skill-defsave="walkthrough"]'); await k.waitForSelector('[data-skill-defnote="walkthrough"]');
+      const saved = await k.evaluate(async () => (await (await fetch("/api/review-room/explain/prompts")).json()).skills);
+      ok(saved.walkthrough?.default === `${ex}\n- written in Traditional Chinese` && !saved[other]?.default && (await k.$eval('[data-skill-defprompt="walkthrough"] [data-skill-defstate]', (e) => e.dataset.skillDefstate)) === "set" && (await k.$eval(`[data-skill-defprompt="${other}"] [data-skill-defstate]`, (e) => e.dataset.skillDefstate)) === "none",
+        "Save default keeps it in Studio's settings for that skill only", JSON.stringify(saved));
+      await k.screenshot({ path: join(shots, "15-skills-default.png") });
+      await k.reload(); await k.waitForSelector('[data-skill-defprompt="walkthrough"] [data-skill-defstate="set"]', { timeout: 15000 });
+      ok(true, "the default is still there after a reload");
+      await k.click('[data-skill-defprompt="walkthrough"] > summary'); await k.click('[data-skill-defclear="walkthrough"]'); await k.waitForSelector('[data-skill-defprompt="walkthrough"] [data-skill-defstate="none"]');
+      ok(!(await k.evaluate(async () => (await (await fetch("/api/review-room/explain/prompts")).json()).skills.walkthrough?.default)), "Clear takes the default away");
+      await c7.close(); }
+
+    // ---------- the look: 1440 / 900 / 390, light and dark, English and 繁體中文 ----------
+    const looks = [];
+    for (const width of [1440, 900, 390]) for (const scheme of ["light", "dark"]) for (const lang of ["en", "zh-TW"]) {
+      const c6 = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 860 }, colorScheme: scheme });
+      await c6.addInitScript((l) => { try { sessionStorage.setItem("keep-lang", "1"); localStorage.setItem("crew.lang", l); } catch {} }, lang);
+      const Z = { ...X, selected: { id: "walkthrough", v: 1 }, versions: withMade, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })] };
+      await routes(c6, () => Z);
+      const q = await c6.newPage(); q.on("pageerror", (e) => errors.push(e.message));
+      await q.goto(`${base}/#/room/${ID}`); await q.waitForSelector('[data-explain-version="1"]', { timeout: 15000 }); await q.click('[data-explain-version="1"]'); await q.waitForSelector('[data-explain-frame="1"]');
+      await q.click("[data-explain-made] > summary"); await q.waitForTimeout(150);
+      const tag = `${width}-${scheme}-${lang}`;
+      const m1 = await q.evaluate(() => ({ over: document.documentElement.scrollWidth > innerWidth + 1, full: (() => { const b = document.querySelector("[data-explain-full]"); b?.scrollIntoView({ block: "center" }); const r = b?.getBoundingClientRect(); return !!r && r.width > 0 && r.right <= innerWidth + 1; })(), head: document.querySelector("[data-explain-made] summary")?.textContent || "" }));
+      await q.screenshot({ path: join(shots, `14-look-${tag}-version.png`) });
+      await q.click('[data-explain-reuse="1"]'); await q.waitForSelector("[data-explain-start]:not([disabled])");
+      await q.fill("[data-explain-prompt]", Array.from({ length: 30 }, (_, i) => `- section ${i + 1}: what it shows and why`).join("\n")); await q.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
+      const m2 = await q.evaluate(() => { const ta = document.querySelector("[data-explain-prompt]").getBoundingClientRect(), md = document.querySelector(".rx-modal"), m = md.getBoundingClientRect(); md.scrollTop = 0;
+        const b = document.querySelector("[data-explain-start]").getBoundingClientRect(), at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return { label: document.querySelector("[data-explain-promptfield] label").textContent, inModal: ta.left >= m.left && ta.right <= m.right + 0.5, over: document.documentElement.scrollWidth > innerWidth + 1,
+          startInView: b.bottom <= Math.min(innerHeight, m.bottom) + 0.5 && b.top >= m.top && !!at?.closest?.("[data-explain-start]") }; });
+      await q.screenshot({ path: join(shots, `14-look-${tag}-confirm.png`) });
+      await q.click(".rx-modal .rx-foot .btn:not(.primary)");
+      await q.evaluate(() => { Element.prototype.requestFullscreen = function () { return Promise.reject(new TypeError("no")); }; }); await q.click("[data-explain-full]"); await q.waitForFunction(() => window.crewRoomExplain.full() === "fallback", null, { timeout: 5000 }); await q.waitForTimeout(150);
+      const m3 = await q.evaluate(() => { const b = document.querySelector("[data-explain-fullclose]").getBoundingClientRect(); return { x: b.right <= innerWidth && b.left >= 0, text: document.querySelector("[data-explain-fullclose]").textContent }; });
+      await q.screenshot({ path: join(shots, `14-look-${tag}-full.png`) });
+      const zhOk = lang === "en" ? /What should it produce\?/.test(m2.label) && /Exit full screen/.test(m3.text) && /Made with your instructions/.test(m1.head) : /要產出什麼？/.test(m2.label) && /離開全螢幕/.test(m3.text) && /依你的指示產生/.test(m1.head);
+      looks.push({ tag, ok: !m1.over && m1.full && m2.inModal && !m2.over && m2.startInView && m3.x && zhOk, m1, m2, m3 });
+      await c6.close();
+    }
+    ok(looks.every((l) => l.ok), "at 1440, 900 and 390, light and dark, English and 繁體中文: no sideways scroll, Full screen in reach, the field inside its dialog, Confirm in view with long instructions (the dialog's footer stays), the words in the captain's language", JSON.stringify(looks.filter((l) => !l.ok)));
   }
   ok(!errors.length, "no page error", errors.join(" | "));
 } catch (e) { fail++; console.log("  FAIL  the run stopped:", e?.stack || e); console.log(appLog.slice(-3000)); }
