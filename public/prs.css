@@ -149,8 +149,8 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-envrow:not(.pw-sendrow):not(.pw-contactrow){display:flex;flex-wrap:wrap;position:relative;padding-right:36px}
 .pw-envrow:not(.pw-sendrow):not(.pw-contactrow)>*{flex:1 1 180px;min-width:0}
 .pw-envrow>.pw-envname{flex:0 1 160px}.pw-envrow>.pw-check{flex:0 0 auto}.pw-envrow>select{flex:1 1 240px}
-.pw-envrow>[data-prs-env-field="repository"],.pw-envrow>[data-prs-each-field="repository"],.pw-envrow>[data-prs-each-repo]{flex:1 1 220px}
-.pw-envrow>[data-prs-env-field="path"],.pw-envrow>[data-prs-each-field="path"],.pw-envrow>[data-prs-env-field="template"],.pw-envrow>[data-prs-each-field="template"]{flex:2 1 300px}
+.pw-envrow>[data-prs-env-field="repository"],.pw-envrow>[data-prs-each-field="repository"],.pw-envrow>[data-prs-each-repo]{flex:1 1 260px}
+.pw-envrow>[data-prs-env-field="path"],.pw-envrow>[data-prs-each-field="path"],.pw-envrow>[data-prs-env-field="template"],.pw-envrow>[data-prs-each-field="template"]{flex:3 1 100%}
 .pw-envrow:not(.pw-sendrow):not(.pw-contactrow)>.pw-x{position:absolute;top:10px;right:6px;flex:none}
 .pw-envrow:not(.pw-sendrow):not(.pw-contactrow)>.pw-envhint{flex-basis:100%}
 .pw-warn{color:var(--warn)}

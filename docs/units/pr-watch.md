@@ -110,28 +110,36 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     environment or a deploy layout first, and said so with how many were left; a config repository that cannot be read
     at all fails the search with why). Only files under an environment are read: at most 400 YAML/JSON files of 200 KB
     or less, production first, then the files that usually hold an image (patches, deployments, kustomizations, values),
-    shallow first, 40 files (or 600 KB) a GraphQL read. In each file every image line: `registry/path/name:tag` on one
+    shallow first, 40 files (or 350 KB) a GraphQL read; an answer over the 1 MB Studio reads is asked again in halves
+    (a single file or folder that large is left out and counted in a note). In each file every image line: `registry/path/name:tag` on one
     line, or the name on one line (repository, name, newName, image; a kustomize newName wins) and `tag:`/`newTag:` on one
     of the next four.
   - **Who builds an image**, by evidence read together, not by its name: (1) what each watched repository's build
     config publishes — its Drone config (a docker plugin step's `repo:`), its GitHub Actions workflows
     (docker/build-push-action `tags:`, docker/metadata-action `images:`, `docker build -t`, `docker push`, `docker tag`),
-    templated parts (`${DRONE_TAG}`, `${{ env.REGISTRY }}`) taken out, compared by path with the registry ignored, else by
+    `${{ github.repository }}`, `${{ github.event.repository.name }}`, `${DRONE_REPO}`, `$DRONE_REPO_NAME` read as the
+    repository's own name, other templated parts (`${DRONE_TAG}`, `${{ env.REGISTRY }}`) taken out, compared by path with the registry ignored, else by
     its last segment; a Dockerfile's `org.opencontainers.image.title` label is supporting evidence only (the root and
     `.github/workflows` of every repository, two or three GraphQL reads for all); (2) the commit in the image's tag
-    (version-sha `1.0.28-9a59f6b`, branch-sha `master-6b7d4068`, a bare sha `da8137f1`) found in the repository
-    (`commits?sha=<short>&per_page=1`, the repositories its CI or its name point at first, then the others, at most 8);
-    (3) a version-only tag (`6.0.84`, `v5.1.16`) among the repository's git tags, with or without `v` — proof only when
+    (version-sha `1.2.3-abcdef0`, branch-sha `main-0123abcd`, a bare sha `fedcba98`) found in the repository
+    (GraphQL `object(expression: "<short sha>")`, 60 checks a read, round by round: the repositories its CI or its name
+    point at first, then the others, at most 8; each environment's tag checked, at most 8 an image);
+    (3) a version-only tag (`9.9.9`, `v1.0.0`) among the repository's git tags, with or without `v` — proof only when
     neither of the others proves anything and one repository alone has it. One repository proven: strong. Proofs that
     point at two repositories: each a weak candidate (a pick). Only names alike (shared words, one name holding the
     other): weak. An image nothing ties to a watched repository (a database, a sidecar) is not proposed. The table shows
-    which proofs matched under each cell (builds X (path:line) · commit abc in the repository · tag v6.0.84).
+    which proofs matched under each line, that line's own (its tag's commit or version; the CI config is the
+    repository's): builds X (path:line) · commit abc in the repository · tag v1.0.0. A line proposed for two
+    repositories says "also proposed for"; a manifest already set for another repository is not proposed again and is
+    listed as left out, with that repository. GitHub deployments are read before the image matching, so matching can
+    never spend the budget they need.
   - A repository whose image runs as several services in one environment (one image, many service folders): every one
     of those manifests is its detect for that environment (`files`), and the environment has a merge when **every**
     manifest runs it (one lagging service keeps it not live). A line of the same image Studio cannot read a commit from
     (a version no git tag has, a second line read first) is shown but does not make the cell a pick.
   - Live with a version-only tag: a refresh resolves the tag through the repository's git tags (three pages, once a
-    refresh) to its commit before checking that it contains the merge commit.
+    refresh) to its commit before checking that it contains the merge commit. A tag that is neither (latest, a
+    version no git tag has) makes the environment "not read" (unknown), never off.
     template is the line from its key to the tag, `{tag}` for the tag, the closing quote kept (a comment is not). The
     environment is the deepest directory or file-name part that names one: prod, production, prd, live → production;
     staging, stage, stg → staging; dev, develop, development → dev; qa; test; uat; sandbox; preprod, pre-prod,

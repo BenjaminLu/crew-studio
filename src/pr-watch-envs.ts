@@ -127,7 +127,7 @@ export function nameScore(image: string, repo: string): number {
   const shared = rw.filter((w) => iw.has(w)).length, last = norm(path.at(-1) ?? ""), name = norm(String(repo).split("/").pop() ?? "");
   return (last === name ? 10 : 0) + shared * 3 + (Math.min(last.length, name.length) >= 4 && (last.includes(name) || name.includes(last)) ? 2 : 0);
 }
-/** A version-only tag (6.0.84, v5.1.16): looked up among a repository's git tags, with or without the v. */
+/** A version-only tag (9.9.9, v1.0.0): looked up among a repository's git tags, with or without the v. */
 export const versionTag = (tag: string) => /^v?\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.]+)?$/.test(tag) && !R.commitOfTag(tag);
 export const tagNames = (tag: string) => [tag, tag.startsWith("v") ? tag.slice(1) : `v${tag}`];
 
@@ -149,8 +149,12 @@ export const imageKey = (image: string) => { const parts = String(image).toLower
 /** The same image: the same path (registry ignored), or failing that the same last segment. */
 export const sameImage = (a: string, b: string) => { const x = imageKey(a), y = imageKey(b); return !!x && (x === y || x.split("/").at(-1) === y.split("/").at(-1)); };
 /** A CI value with its templated parts (${VAR}, ${{ expr }}, $VAR) taken out and its tag dropped: the image-name part. */
-export function imageName(v: string): string | null {
-  let t = String(v ?? "").trim().replace(/^["']|["']$/g, "").replace(/\$\{\{[^}]*\}\}/g, "").replace(/\$\{[^}]*\}/g, "").replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, "");
+export function imageName(v: string, repo?: string): string | null {
+  // the repository's own name where a CI variable stands for it, so ${{ github.repository }} stays an image name
+  const full = String(repo ?? ""), name = full.split("/").pop() ?? "";
+  let t = String(v ?? "").trim().replace(/^["']|["']$/g, "");
+  if (full) t = t.replace(/\$\{\{\s*github\.repository\s*\}\}|\$\{DRONE_REPO\}|\$DRONE_REPO(?![A-Z_])/g, full.toLowerCase()).replace(/\$\{\{\s*github\.event\.repository\.name\s*\}\}|\$\{DRONE_REPO_NAME\}|\$DRONE_REPO_NAME(?![A-Z_])/g, name.toLowerCase());
+  t = t.replace(/\$\{\{[^}]*\}\}/g, "").replace(/\$\{[^}]*\}/g, "").replace(/\$[A-Za-z_][A-Za-z0-9_]*/g, "");
   const segs = t.split("/"), last = segs.at(-1) ?? ""; if (last.includes(":")) segs[segs.length - 1] = last.slice(0, last.indexOf(":")); else if (last.includes("@")) segs[segs.length - 1] = last.slice(0, last.indexOf("@"));
   t = segs.filter(Boolean).join("/").replace(/^[-./]+|[-./]+$/g, "");
   return /^[a-z0-9][a-z0-9._/-]*$/i.test(t) && (t.split("/").at(-1) ?? "").length >= 2 && !/^(plugins|docker|alpine|ubuntu|golang|node|python)$/i.test(t) ? t : null;
@@ -161,11 +165,11 @@ export function imageName(v: string): string | null {
  * docker/metadata-action; inline, comma separated or a list). A Dockerfile's `org.opencontainers.image.title` label is
  * kept as supporting evidence only (kind label).
  */
-export function publishedImages(path: string, text: string): { image: string; line: number; kind: "build" | "label" }[] {
+export function publishedImages(path: string, text: string, repo?: string): { image: string; line: number; kind: "build" | "label" }[] {
   const out: { image: string; line: number; kind: "build" | "label" }[] = [], lines = String(text ?? "").slice(0, 200000).split(/\r?\n/, 5000);
-  const add = (v: string, n: number, kind: "build" | "label" = "build") => { const i = imageName(v); if (i && !out.some((x) => x.image === i)) out.push({ image: i, line: n + 1, kind }); };
+  const add = (v: string, n: number, kind: "build" | "label" = "build") => { const i = imageName(v, repo); if (i && !out.some((x) => x.image === i)) out.push({ image: i, line: n + 1, kind }); };
   const dockerfile = /(^|\/)Dockerfile[^/]*$|\.dockerfile$/i.test(path);
-  for (let n = 0; n < lines.length; n++) { const line = lines[n]; if (line.length > 1000) continue;
+  for (let n = 0; n < lines.length; n++) { if (lines[n].length > 1000) continue; const line = lines[n].replace(/\$\{\{([^}]*)\}\}/g, (_m, x: string) => "${{" + x.replace(/\s+/g, "") + "}}"); // ${{ a.b }} without its spaces, so it stays one word
     if (dockerfile) { for (const m of line.matchAll(/org\.opencontainers\.image\.title\s*=\s*("[^"]*"|\S+)/g)) add(m[1], n, "label"); continue; }
     let m = /^\s*-?\s*repo\s*:\s*(\S+)/.exec(line); if (m) add(m[1], n);
     for (const b of line.matchAll(/docker\s+(?:buildx\s+)?build\b[^\n]*/g)) for (const t of b[0].matchAll(/(?:^|\s)(?:-t|--tag)(?:=|\s+)(["']?[^\s"']+["']?)/g)) add(t[1], n);
@@ -183,12 +187,14 @@ export function publishedImages(path: string, text: string): { image: string; li
 }
 
 // ---------- the proposal ----------
-type Ev = { path: string | null; line: number | null; text: string; tw?: string; url: string | null };
+/** One piece of evidence: a manifest line (with what tied that very line's image and tag to the repository, and the
+ *  other repositories the same line is proposed or already set for) or a deployment. */
+type Ev = { path: string | null; line: number | null; text: string; tw?: string; url: string | null; signals?: Signal[]; alsoFor?: string[]; setFor?: string[] };
 export type Candidate = { id: string; source: "deployment" | "file"; detect: R.EnvDetect; strength: "strong" | "weak"; problem: Finding["problem"];
   /** what Studio saw: a deployment's ref and commit (text, and tw in Traditional Chinese), or the manifest line; and
    *  where to see it on GitHub. `more`: the other manifests of a repository deployed as several services. `signals`:
    *  what tied the image to the repository */
-  evidence: Ev & { more?: Ev[]; signals?: Signal[] } };
+  evidence: Ev & { more?: Ev[] } };
 export type Group = { id: string; repo: string; env: string; candidates: Candidate[];
   /** ok: one strong usable candidate and nothing set yet (ticked); pick: the captain chooses; set: the settings already detect it this way */
   state: "ok" | "pick" | "set"; current: R.EnvDetect | null };
@@ -196,7 +202,7 @@ export type DeploymentSeen = { repo: string; environment: string; sha: string | 
 /** A manifest read from the config repository at `ref`; `pinned` when the captain named that branch (the detect then
  *  keeps it, so a refresh reads the same branch), otherwise the default branch (the detect follows it). */
 export type FileSeen = { repository: string; ref: string; path: string; text: string; pinned?: boolean };
-export type Proposal = { groups: Group[]; envs: { name: string; production: boolean; rank: number; existing: boolean }[]; skipped: { path: string; why: "no-environment" }[] };
+export type Proposal = { groups: Group[]; envs: { name: string; production: boolean; rank: number; existing: boolean }[]; skipped: { path: string; why: "no-environment" | "set-for"; repos?: string[] }[] };
 
 const same = (a: R.EnvDetect | null, b: R.EnvDetect | null) => JSON.stringify(a) === JSON.stringify(b);
 const blobUrl = (repository: string, ref: string, path: string, line: number) => `https://github.com/${repository}/blob/${encodeURIComponent(ref)}/${path.split("/").map(encodeURIComponent).join("/")}#L${line}`;
@@ -224,23 +230,35 @@ export function propose(repos: string[], existing: R.EnvSetting[], deployments: 
       tw: `GitHub 環境 ${d.environment}：最近一次部署 ${d.sha ? d.sha.slice(0, 7) : "?"}${d.ref ? `（${d.ref.slice(0, 60)}）` : ""}`, url: `https://github.com/${d.repo}/deployments` } });
   // the manifests: each image line with its owner, gathered per repository and environment
   type Hit = { f: FileSeen; x: ImageLine; owner: Owner; problem: Finding["problem"] };
-  const sigOf = (o: Owner) => o.signals;
+  // a line's own evidence: what ties the repository (its CI, a label, its name) and the proof of this line's tag only
+  // (its commit, its version tag), never another environment's
+  const sigOf = (o: Owner, tag: string) => { const c = R.commitOfTag(tag)?.toLowerCase(), names = tagNames(tag);
+    return o.signals.filter((x) => x.kind === "commit" ? !!c && (c.startsWith(x.sha.toLowerCase()) || x.sha.toLowerCase().startsWith(c)) : x.kind === "tag" ? names.includes(x.tag) || x.tag === tag : true); };
+  // the manifests the settings already read for a repository: a line set for another one is not proposed again
+  const setFor = new Map<string, string[]>();
+  for (const e of existing) for (const x of e.each ?? []) for (const f of R.filesOf(x.detect)) { const k = `${f.repository}|${f.path}`.toLowerCase(); setFor.set(k, [...(setFor.get(k) ?? []), x.repo]); }
   const hits = new Map<string, { g: Group; list: Hit[] }>();
   for (const f of files) {
     const k = envOfPath(f.path, repos); let any = false;
     for (const x of imagesIn(f.text)) for (const owner of match.owner(x.image)) {
       if (!k) { any = true; continue; }
+      const other = (setFor.get(`${f.repository}|${f.path}`.toLowerCase()) ?? []).filter((r) => !R.sameRepo(r, owner.repo));
+      if (other.length) { if (!skipped.some((x) => x.path === f.path && x.why === "set-for")) skipped.push({ path: f.path, why: "set-for", repos: other }); continue; } // already set for another repository: not proposed again
       const g = groupOf(owner.repo, k), h = hits.get(g.id) ?? { g, list: [] }; hits.set(g.id, h);
       h.list.push({ f, x, owner, problem: x.problem ?? (match.tagOk(owner.repo, x.tag) ? null : "no-commit") }); }
     if (any) skipped.push({ path: f.path, why: "no-environment" });
   }
   const fileOf = (h: Hit) => ({ repository: h.f.repository, path: h.f.path, template: h.x.template, ...(h.f.pinned ? { ref: h.f.ref } : {}) });
-  const evOf = (h: Hit): Ev => ({ path: h.f.path, line: h.x.line, text: h.x.text, url: blobUrl(h.f.repository, h.f.ref, h.f.path, h.x.line) });
+  // the same line proposed for more than one repository (proofs that disagree): each says which others
+  const lineOwners = new Map<string, string[]>();
+  for (const { list } of hits.values()) for (const h of list) { const k = `${h.f.path}#${h.x.line}`; lineOwners.set(k, [...new Set([...(lineOwners.get(k) ?? []), h.owner.repo])]); }
+  const evOf = (h: Hit): Ev => { const also = (lineOwners.get(`${h.f.path}#${h.x.line}`) ?? []).filter((r) => !R.sameRepo(r, h.owner.repo));
+    return { path: h.f.path, line: h.x.line, text: h.x.text, url: blobUrl(h.f.repository, h.f.ref, h.f.path, h.x.line), signals: sigOf(h.owner, h.x.tag), ...(also.length ? { alsoFor: also } : {}) }; };
   for (const { g, list } of hits.values()) {
     const sure = list.filter((h) => h.owner.strength === "strong" && !h.problem).slice(0, MAX_FILES);
     if (sure.length) { const fs = sure.map(fileOf), [first, ...rest] = sure.map(evOf);
-      add(g, { source: "file", detect: fs.length === 1 ? { kind: "file", ...fs[0] } : { kind: "files", files: fs }, strength: "strong", problem: null, evidence: { ...first, ...(rest.length ? { more: rest } : {}), signals: sigOf(sure[0].owner) } }); }
-    for (const h of list.filter((x) => !sure.includes(x)).slice(0, 10)) add(g, { source: "file", detect: { kind: "file", ...fileOf(h) }, strength: h.owner.strength, problem: h.problem, evidence: { ...evOf(h), signals: sigOf(h.owner) } });
+      add(g, { source: "file", detect: fs.length === 1 ? { kind: "file", ...fs[0] } : { kind: "files", files: fs }, strength: "strong", problem: null, evidence: { ...first, ...(rest.length ? { more: rest } : {}) } }); }
+    for (const h of list.filter((x) => !sure.includes(x)).slice(0, 10)) add(g, { source: "file", detect: { kind: "file", ...fileOf(h) }, strength: h.owner.strength, problem: h.problem, evidence: evOf(h) });
   }
   for (const g of groups.values()) {
     // lines Studio cannot read a commit from (a version tag no git tag has, another line read first) are shown, but do

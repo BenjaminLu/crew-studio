@@ -49,7 +49,7 @@ try {
   await p.click('[data-prs-envs-find]'); await p.waitForSelector('[data-prs-dialog="discover"][aria-modal]');
   await p.waitForFunction((c) => document.querySelector('[data-prs-discover-config]')?.value === c, cfg);
   ok(await p.locator('[data-prs-discover-src-deployments]').isChecked() && await p.locator('[data-prs-discover-src-config]').isChecked() && await p.locator('[data-prs-discover-suggest-repo="northwind/cluster-ops"]').count() === 1, 'step 1: both sources ticked, the first repository that looks like a config repository filled in, another offered');
-  ok(await p.locator('[data-prs-discover-path]').isVisible() && (await p.locator('[data-prs-discover-path]').getAttribute('placeholder')).includes('only this folder'), 'a folder of the config repository can narrow the scan');
+  ok(await p.locator('[data-prs-discover-path]').isVisible() && /Only this folder \(optional\)/.test(await p.locator('.pw-disc-cfg').innerText()) && /Branch \(optional\)/.test(await p.locator('.pw-disc-cfg').innerText()), 'the branch and folder fields have visible labels; a folder can narrow the scan');
   ok(await p.evaluate(() => !!document.activeElement?.closest('[data-prs-dialog="discover"]')), 'the focus starts inside the dialog', await p.evaluate(() => document.activeElement?.tagName));
   ok(/^Start scanning$/.test(await p.locator('[data-prs-discover-run]').innerText()) && await p.locator('[data-prs-discover-accept]').isHidden(), 'the first button says Start scanning; no Accept before a result');
   for (let i = 0; i < 25; i++) await p.keyboard.press('Tab');
@@ -103,6 +103,7 @@ try {
   const prow = p.locator('[data-prs-env-name="production"]');
   ok(await prow.locator('[data-prs-env-each="northwind/web-app"] [data-prs-each-field="template"]').inputValue() === 'newTag: "{tag}"', 'Advanced: each repository\'s own row, editable by hand');
   ok(await p.evaluate(() => { const r = document.querySelector('[data-prs-env-name="production"] input.pw-envname').getBoundingClientRect(), c = document.querySelector('[data-prs-env-name="production"] select').getBoundingClientRect(); return Math.abs(r.top - c.top) < 4; }), 'an Advanced row lays its fields side by side (the grid template is valid)');
+  ok(await p.evaluate(() => [...document.querySelectorAll('[data-prs-env] select')].every((sel) => ![...sel.options].some((o) => o.value === 'files') || sel.value === 'files')), 'Advanced offers "several files" only where a detect already is one');
   ok(await p.evaluate(() => { const row = document.querySelector('[data-prs-env-name="production"] [data-prs-env-each="northwind/web-app"]'), x = row.querySelector(':scope > .pw-x').getBoundingClientRect(), b = row.getBoundingClientRect(), t = row.querySelector('[data-prs-each-field="template"]').getBoundingClientRect(), rp = row.querySelector('[data-prs-each-repo]').getBoundingClientRect();
     return x.top - b.top < 20 && b.right - x.right < 16 && t.width >= 280 && rp.width >= 200; }), 'Advanced: the repository and template fields are wide, × at the top right');
   await p.screenshot({ path: join(shots, 'envs-settings-after-1440-light.png'), fullPage: true });

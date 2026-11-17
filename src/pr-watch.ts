@@ -490,7 +490,7 @@ export function createPrWatch(d: PrWatchDeps) {
           const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (!["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return false;
           return await contains(repo, head, String(dep.sha)); }
         // one manifest, or several (a repository deployed as several services): it has the commit when every one does;
-        // a tag that ends in no commit (6.0.84) is looked up among the repository's git tags
+        // a tag that ends in no commit (9.9.9) is looked up among the repository's git tags
         let all: boolean | null = true;
         for (const f of R.filesOf(dt)) { const text = await contents(f.repository, f.path, f.ref ?? null); if (text == null) { all = null; continue; }
           const tag = R.tagOf(text, f.template); if (!tag) return false;
@@ -509,7 +509,7 @@ export function createPrWatch(d: PrWatchDeps) {
         const used = (await Promise.all(names.filter((n: string) => n.toLowerCase() !== "github-pages").slice(0, 10).map(async (n: string) => { try { return (await deployedOn(repo, n)) ? n : null; } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return null; } }))).filter((n): n is string => !!n);
         return [...used.filter((n) => !prod(n)), ...used.filter(prod)].slice(0, 6).map((n) => ({ name: n, production: prod(n), repos: [repo], detect: { kind: "deployed" as const, environment: n } })); }
       catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return []; } });
-    // a version-only image tag (6.0.84, v6.0.84) as a commit: the repository's git tags, read once a refresh (three pages)
+    // a version-only image tag (9.9.9, v9.9.9) as a commit: the repository's git tags, read once a refresh (three pages)
     const tagListCache = new Map<string, Promise<{ name: string; sha: string }[]>>();
     const tagSha = async (repo: string, tag: string) => { const l = await once(tagListCache, repo.toLowerCase(), async () => { try { return (await g.pages(`${repoPath(repo)}/tags`, 3)).map((t: any) => ({ name: String(t?.name ?? ""), sha: String(t?.commit?.sha ?? "") })).filter((t) => SHA.test(t.sha)); } catch (e) { if (e instanceof RateLimited || e instanceof OverBudget) throw e; return []; } });
       const names = Env.tagNames(tag); return l.find((t) => names.includes(t.name))?.sha ?? null; };
@@ -1343,29 +1343,34 @@ export function createPrWatch(d: PrWatchDeps) {
       try { return await f(); } catch (e: any) { if (e instanceof RateLimited) throw rateLimited(); if (e instanceof OverBudget) { over = true; return fallback; }
         if (e?.name === "TimeoutError" || e?.name === "AbortError") { late = true; return fallback; } onError?.(e); return fallback; } };
     const lit = (x: string) => JSON.stringify(x); // a GraphQL string literal (the same escapes as JSON)
-    /** many files' text in one GraphQL read: each of reqs as `<ref>:<path>` of its repository, at most 40 files or
-     *  600 KB (by the sizes the tree gave) a read. Text Studio could not get is left out. */
+    /** GitHub objects by expression, many to a GraphQL read: one alias per item, grouped by repository. An answer over
+     *  the 1 MB Studio reads is split in half and asked again (one object alone that large is left out and counted). */
+    let tooLarge = 0;
+    const objects = async (items: { repo: string; expr: string; sel: string }[]): Promise<Map<number, any>> => {
+      const out = new Map<number, any>();
+      const ask = async (idx: number[]): Promise<void> => {
+        if (!idx.length || over || late) return;
+        const byRepo = new Map<string, number[]>(); for (const i of idx) byRepo.set(items[i].repo, [...(byRepo.get(items[i].repo) ?? []), i]);
+        const q = `query{${[...byRepo].map(([repo, list], r) => { const [o, n] = repo.split("/"); return `r${r}:repository(owner:${lit(o)},name:${lit(n)}){${list.map((i) => `o${i}:object(expression:${lit(items[i].expr)}){${items[i].sel}}`).join(" ")}}`; }).join(" ")}}`;
+        let big = false; const data = await step(() => g.graphql(q, {}), null, (e) => { if (e instanceof GitHubTooLarge) big = true; });
+        if (big) { if (idx.length === 1) { tooLarge++; return; } const h = Math.ceil(idx.length / 2); await ask(idx.slice(0, h)); await ask(idx.slice(h)); return; }
+        [...byRepo].forEach(([, list], r) => { for (const i of list) { const v = data?.[`r${r}`]?.[`o${i}`]; if (v != null) out.set(i, v); } }); };
+      return ask(items.map((_, i) => i)).then(() => out); };
+    /** many files' text: each of reqs as `<ref>:<path>` of its repository, at most 40 files or 350 KB (by the sizes the
+     *  tree gave) a read. Text Studio could not get is left out. */
     const texts = async (reqs: { repo: string; ref: string; path: string; size?: number }[]) => {
-      const out = new Map<string, string>(), batches: (typeof reqs)[] = [];
-      let cur: typeof reqs = [], bytes = 0;
-      for (const r of reqs) { const n = Math.max(1, Number(r.size) || 20_000); if (cur.length && (cur.length >= 40 || bytes + n > 600_000)) { batches.push(cur); cur = []; bytes = 0; } cur.push(r); bytes += n; }
-      if (cur.length) batches.push(cur);
-      for (const batch of batches) { if (over || late) break;
-        const byRepo = new Map<string, typeof reqs>(); for (const r of batch) byRepo.set(r.repo, [...(byRepo.get(r.repo) ?? []), r]);
-        let k = 0; const keys: [string, string, typeof reqs[number]][] = [];
-        const q = `query{${[...byRepo].map(([repo, list], i) => { const [o, n] = repo.split("/"); return `r${i}:repository(owner:${lit(o)},name:${lit(n)}){${list.map((r) => { const a = `f${k++}`; keys.push([`r${i}`, a, r]); return `${a}:object(expression:${lit(`${r.ref}:${r.path}`)}){...on Blob{text}}`; }).join(" ")}}`; }).join(" ")}}`;
-        const data = await step(() => g.graphql(q, {}), null);
-        for (const [ra, fa, r] of keys) { const t = data?.[ra]?.[fa]?.text; if (typeof t === "string" && t.length <= 200_000) out.set(`${r.repo}|${r.path}`, t); } }
+      const out = new Map<string, string>(); let cur: typeof reqs = [], bytes = 0;
+      const flush = async () => { const got = await objects(cur.map((r) => ({ repo: r.repo, expr: `${r.ref}:${r.path}`, sel: "...on Blob{text}" })));
+        cur.forEach((r, i) => { const t = got.get(i)?.text; if (typeof t === "string" && t.length <= 200_000) out.set(`${r.repo}|${r.path}`, t); }); cur = []; bytes = 0; };
+      for (const r of reqs) { if (over || late) break; const n = Math.max(1, Number(r.size) || 20_000); if (cur.length && (cur.length >= 40 || bytes + n > 350_000)) await flush(); cur.push(r); bytes += n; }
+      if (cur.length && !over && !late) await flush();
       return out; };
-    /** the entries of folders, many in one GraphQL read: name, whether a folder, and a file's size */
+    /** the entries of folders, 30 to a read: name, whether a folder, and a file's size */
     const trees = async (reqs: { repo: string; ref: string; path: string }[]) => {
       const out = new Map<string, { name: string; dir: boolean; size: number }[]>();
       for (let i = 0; i < reqs.length && !over && !late; i += 30) { const chunk = reqs.slice(i, i + 30);
-        const byRepo = new Map<string, typeof chunk>(); for (const r of chunk) byRepo.set(r.repo, [...(byRepo.get(r.repo) ?? []), r]);
-        let k = 0; const keys: [string, string, typeof chunk[number]][] = [];
-        const q = `query{${[...byRepo].map(([repo, list], j) => { const [o, n] = repo.split("/"); return `r${j}:repository(owner:${lit(o)},name:${lit(n)}){${list.map((r) => { const a = `t${k++}`; keys.push([`r${j}`, a, r]); return `${a}:object(expression:${lit(`${r.ref}:${r.path}`)}){...on Tree{entries{name type object{...on Blob{byteSize}}}}}`; }).join(" ")}}`; }).join(" ")}}`;
-        const data = await step(() => g.graphql(q, {}), null);
-        for (const [ra, ta, r] of keys) { const e = data?.[ra]?.[ta]?.entries; if (Array.isArray(e)) out.set(`${r.repo}|${r.path}`, e.slice(0, 5000).map((x: any) => ({ name: String(x?.name ?? ""), dir: x?.type === "tree", size: Number(x?.object?.byteSize) || 0 })).filter((x: any) => x.name && !x.name.includes("/"))); } }
+        const got = await objects(chunk.map((r) => ({ repo: r.repo, expr: `${r.ref}:${r.path}`, sel: "...on Tree{entries{name type object{...on Blob{byteSize}}}}" })));
+        chunk.forEach((r, k) => { const e = got.get(k)?.entries; if (Array.isArray(e)) out.set(`${r.repo}|${r.path}`, e.slice(0, 5000).map((x: any) => ({ name: String(x?.name ?? ""), dir: x?.type === "tree", size: Number(x?.object?.byteSize) || 0 })).filter((x: any) => x.name && !x.name.includes("/"))); }); }
       return out; };
 
     // ① the config repository: the commit its branch points at, its tree (under the folder named, if any; walked folder
@@ -1396,12 +1401,14 @@ export function createPrWatch(d: PrWatchDeps) {
         while (queue.length && walked < cap && !over && !late) {
           queue.sort((a, z) => z.score - a.score || a.depth - z.depth || a.path.localeCompare(z.path));
           const take = queue.splice(0, Math.min(30, cap - walked)), got = await trees(take.map((x) => ({ repo: cfg, ref: commit!, path: x.path })));
-          if (over || late) { queue.unshift(...take); break; } walked += take.length;
+          // a folder not answered because the search stopped goes back on the queue; one GitHub would not answer is left
+          const missed = take.filter((x) => !got.has(`${cfg}|${x.path}`)); walked += take.length - missed.length;
+          if (over || late) { queue.unshift(...missed); if (!got.size) break; }
           for (const dir of take) for (const t of got.get(`${cfg}|${dir.path}`) ?? []) { const path = dir.path ? `${dir.path}/${t.name}` : t.name;
             if (!t.dir && okBlob(path, t.size)) blobs.push({ path, size: t.size });
             else if (t.dir && dir.depth < 10) queue.push({ path, depth: dir.depth + 1, score: score(t.name) + (dir.score === 99 ? 0 : dir.score) }); } }
-        notes.push({ en: `${cfg}: its file tree${folder ? ` under ${folder}` : ""} is too large for GitHub to list at once, so Studio walked it folder by folder (${walked} folder${walked === 1 ? "" : "s"})${queue.length ? `; ${queue.length} more were not looked at: name a folder to narrow it` : ""}`,
-          tw: `${cfg}：${folder ? `${folder} 底下的` : ""}檔案樹太大，GitHub 無法一次列出，Studio 改成一層一層看（看了 ${walked} 個資料夾）${queue.length ? `；還有 ${queue.length} 個沒看，可以指定資料夾縮小範圍` : ""}` }); }
+        notes.push({ en: `${cfg}: its file tree${folder ? ` under ${folder}` : ""} is too large for GitHub to list at once, so Studio walked it folder by folder (${walked} folder${walked === 1 ? "" : "s"})${queue.length ? `; ${queue.length} more were not looked at` : ""}: name a folder to make it faster`,
+          tw: `${cfg}：${folder ? `${folder} 底下的` : ""}檔案樹太大，GitHub 無法一次列出，Studio 改成一層一層看（看了 ${walked} 個資料夾）${queue.length ? `；還有 ${queue.length} 個沒看` : ""}：指定資料夾會快很多` }); }
       if (base && (tree || big)) { config = { repository: cfg, ref, ...(folder ? { path: folder } : {}) };
         // only a file under an environment can say where something runs; production first, then the files that usually
         // hold the image (patches, deployments, kustomizations, values), shallow first
@@ -1431,42 +1438,10 @@ export function createPrWatch(d: PrWatchDeps) {
           .map((t) => ({ repo: r, ref: "HEAD", path: `.github/workflows/${t.name}`, size: t.size }))]).filter((x) => !(x.size > 200_000));
       const got = await texts(want);
       for (const w of want) { const t = got.get(`${w.repo}|${w.path}`); if (t == null) continue;
-        for (const p of Env.publishedImages(w.path, t)) published.set(w.repo.toLowerCase(), [...(published.get(w.repo.toLowerCase()) ?? []), { ...p, path: w.path }]); } }
+        for (const p of Env.publishedImages(w.path, t, w.repo)) published.set(w.repo.toLowerCase(), [...(published.get(w.repo.toLowerCase()) ?? []), { ...p, path: w.path }]); } }
 
-    // ③ who builds each image the manifests name: what its CI publishes, the commit in its tag found in that repository,
-    // its version tag among that repository's git tags; a name alike only orders the repositories checked
-    at("match", "");
-    const commitIn = new Map<string, Promise<boolean>>(), tagsIn = new Map<string, Promise<string[]>>();
-    const hasCommit = (repo: string, sha: string) => { const k = `${repo}|${sha}`.toLowerCase(); if (!commitIn.has(k)) commitIn.set(k, step(async () => { const l = await g.get(`${repoPath(repo)}/commits?sha=${sha}&per_page=1`); return Array.isArray(l) && String(l[0]?.sha ?? "").toLowerCase().startsWith(sha.toLowerCase()); }, false)); return commitIn.get(k)!; };
-    const tagsOf = (repo: string) => { const k = repo.toLowerCase(); if (!tagsIn.has(k)) tagsIn.set(k, step(async () => (await g.get(`${repoPath(repo)}/tags?per_page=100`) ?? []).map((t: any) => String(t?.name ?? "")).filter(Boolean), [] as string[])); return tagsIn.get(k)!; };
-    const imageTags = new Map<string, Set<string>>();
-    for (const f of files) if (Env.envOfPath(f.path, repos)) for (const x of Env.imagesIn(f.text)) { const k = Env.imageKey(x.image); if (k) imageTags.set(k, (imageTags.get(k) ?? new Set()).add(x.tag)); }
-    const owners = new Map<string, Env.Owner[]>(), tagOkSet = new Set<string>();
-    for (const [key, tagSet] of [...imageTags].slice(0, 200)) {
-      const builds = repos.flatMap((r) => (published.get(r.toLowerCase()) ?? []).filter((p) => Env.sameImage(p.image, key)).map((p) => ({ r, p })));
-      const fullBuild = builds.filter((x) => Env.imageKey(x.p.image) === key), use = (fullBuild.length ? fullBuild : builds).filter((x) => x.p.kind === "build");
-      const named = repos.map((r) => ({ r, s: Env.nameScore(key, r) })).filter((x) => x.s > 0).sort((a, z) => z.s - a.s || a.r.localeCompare(z.r)).map((x) => x.r);
-      // the repositories its CI or its name point at first, then the others (a commit can prove a CI config wrong)
-      const order = [...new Set([...use.map((x) => x.r), ...named, ...repos])].slice(0, 8);
-      const sigs = new Map<string, Env.Signal[]>(); const sig = (r: string, s: Env.Signal) => sigs.set(r, [...(sigs.get(r) ?? []), s]);
-      for (const x of builds) sig(x.r, { kind: x.p.kind, path: x.p.path, line: x.p.line, image: x.p.image });
-      if (!use.length && !named.length) continue; // an image no watched repository publishes or resembles (a database, a sidecar): not read further
-      const tags = [...tagSet], shas = [...new Set(tags.map((t) => R.commitOfTag(t)).filter((x): x is string => !!x))].slice(0, 2), versions = tags.filter(Env.versionTag);
-      for (const sha of shas) for (const r of order) if (await hasCommit(r, sha)) { sig(r, { kind: "commit", sha: sha.slice(0, 12) }); break; }
-      if (versions.length) for (const r of order.slice(0, 4)) { const have = await tagsOf(r), hit = versions.find((v) => Env.tagNames(v).some((n) => have.includes(n)));
-        if (hit) sig(r, { kind: "tag", tag: hit }); for (const v of versions) if (Env.tagNames(v).some((n) => have.includes(n))) tagOkSet.add(`${r}|${v}`.toLowerCase()); }
-      // a CI config or a commit is proof; a version tag (1.0.0 is in many repositories) only when nothing else proves
-      // anything and one repository alone has it
-      const byBuild = [...sigs].filter(([, s]) => s.some((x) => x.kind === "build" || x.kind === "commit"));
-      const proven = byBuild.length ? byBuild : [...sigs].filter(([, s]) => s.some((x) => x.kind === "tag"));
-      const list: Env.Owner[] = proven.length === 1 ? [{ repo: proven[0][0], strength: "strong", signals: proven[0][1] }]
-        : proven.length > 1 ? proven.map(([r, s]) => ({ repo: r, strength: "weak" as const, signals: s })) // proofs disagree: the captain picks
-        : named.slice(0, 1).filter((r) => Env.imageMatch(key, r)).map((r) => ({ repo: r, strength: "weak" as const, signals: [...(sigs.get(r) ?? []), { kind: "name" as const }] }));
-      if (list.length) owners.set(key, list);
-    }
-    const match: Env.Match = { owner: (image) => owners.get(Env.imageKey(image)) ?? [], tagOk: (repo, tag) => !!R.commitOfTag(tag) || tagOkSet.has(`${repo}|${tag}`.toLowerCase()) };
-
-    // ④ each repository's GitHub environments that have a deployment (at most 8 a repository)
+    // ③ each repository's GitHub environments that have a deployment (at most 8 a repository), read before
+    // the image matching below, which could otherwise spend the whole budget
     const deployments: Env.DeploymentSeen[] = [];
     if (b?.deployments !== false) await pool(repos, 4, async (repo) => { at("deployments", repo);
       const j = await step(() => g.get(`${repoPath(repo)}/environments?per_page=30`), null, (e) => notes.push({ en: `${repo}: its GitHub environments could not be read (${why(e).en})`, tw: `${repo}：讀不到它的 GitHub 環境（${why(e).tw}）` }));
@@ -1475,9 +1450,51 @@ export function createPrWatch(d: PrWatchDeps) {
         const dep = Array.isArray(l) ? l[0] : null;
         if (dep) deployments.push({ repo, environment: n, sha: SHA.test(String(dep.sha ?? "")) ? String(dep.sha) : null, ref: typeof dep.ref === "string" ? dep.ref : null }); } });
     deployments.sort((a, z) => a.repo.localeCompare(z.repo) || a.environment.localeCompare(z.environment));
+
+    // ④ who builds each image the manifests name: what its CI publishes, the commit in its tag found in that repository,
+    // its version tag among that repository's git tags; a name alike only orders the repositories checked
+    at("match", "");
+    const tagsIn = new Map<string, Promise<string[]>>();
+    const tagsOf = (repo: string) => { const k = repo.toLowerCase(); if (!tagsIn.has(k)) tagsIn.set(k, step(async () => (await g.get(`${repoPath(repo)}/tags?per_page=100`) ?? []).map((t: any) => String(t?.name ?? "")).filter(Boolean), [] as string[])); return tagsIn.get(k)!; };
+    const imageTags = new Map<string, Set<string>>();
+    for (const f of files) if (Env.envOfPath(f.path, repos)) for (const x of Env.imagesIn(f.text)) { const k = Env.imageKey(x.image); if (k) imageTags.set(k, (imageTags.get(k) ?? new Set()).add(x.tag)); }
+    const owners = new Map<string, Env.Owner[]>(), tagOkSet = new Set<string>();
+    type Plan = { key: string; use: string[]; named: string[]; order: string[]; shas: string[]; found: Set<string>; versions: string[]; sigs: Map<string, Env.Signal[]> };
+    const sig = (p: Plan, r: string, x: Env.Signal) => p.sigs.set(r, [...(p.sigs.get(r) ?? []), x]);
+    const plans: Plan[] = [];
+    for (const [key, tagSet] of [...imageTags].slice(0, 200)) {
+      const builds = repos.flatMap((r) => (published.get(r.toLowerCase()) ?? []).filter((p) => Env.sameImage(p.image, key)).map((p) => ({ r, p })));
+      const fullBuild = builds.filter((x) => Env.imageKey(x.p.image) === key), use = [...new Set((fullBuild.length ? fullBuild : builds).filter((x) => x.p.kind === "build").map((x) => x.r))];
+      const named = repos.map((r) => ({ r, s: Env.nameScore(key, r) })).filter((x) => x.s > 0).sort((a, z) => z.s - a.s || a.r.localeCompare(z.r)).map((x) => x.r);
+      if (!use.length && !named.length) continue; // an image no watched repository publishes or resembles (a database, a sidecar): not read further
+      const tags = [...tagSet], p: Plan = { key, use, named, order: [...new Set([...use, ...named, ...repos])].slice(0, 8), // its CI or its name first, then the others (a commit can prove a CI config wrong)
+        shas: [...new Set(tags.map((t) => R.commitOfTag(t)).filter((x): x is string => !!x))] /* each environment's own, so every cell shows its proof */.slice(0, 8), found: new Set(), versions: tags.filter(Env.versionTag), sigs: new Map() };
+      for (const x of builds) sig(p, x.r, { kind: x.p.kind, path: x.p.path, line: x.p.line, image: x.p.image });
+      plans.push(p); }
+    // the commits: round by round, each image's next repository, every check of a round in one GraphQL read
+    for (let round = 0; round < 8 && !over && !late; round++) {
+      const asks = plans.flatMap((p) => p.order[round] ? p.shas.filter((x) => !p.found.has(x)).map((sha) => ({ p, sha, repo: p.order[round] })) : []);
+      if (!asks.length) break;
+      for (let i = 0; i < asks.length; i += 60) { const chunk = asks.slice(i, i + 60), got = await objects(chunk.map((a) => ({ repo: a.repo, expr: a.sha, sel: "...on Commit{oid}" })));
+        chunk.forEach((a, k) => { const oid = String(got.get(k)?.oid ?? "").toLowerCase(); if (oid.startsWith(a.sha.toLowerCase())) { a.p.found.add(a.sha); sig(a.p, a.repo, { kind: "commit", sha: a.sha.slice(0, 12) }); } }); } }
+    for (const p of plans) {
+      if (p.versions.length) for (const r of p.order.slice(0, 4)) { const have = await tagsOf(r), hit = p.versions.find((v) => Env.tagNames(v).some((n) => have.includes(n)));
+        if (hit) sig(p, r, { kind: "tag", tag: hit }); for (const v of p.versions) if (Env.tagNames(v).some((n) => have.includes(n))) tagOkSet.add(`${r}|${v}`.toLowerCase()); }
+      // a CI config or a commit is proof; a version tag (1.0.0 is in many repositories) only when nothing else proves
+      // anything and one repository alone has it
+      const byBuild = [...p.sigs].filter(([, x]) => x.some((y) => y.kind === "build" || y.kind === "commit"));
+      const proven = byBuild.length ? byBuild : [...p.sigs].filter(([, x]) => x.some((y) => y.kind === "tag"));
+      const list: Env.Owner[] = proven.length === 1 ? [{ repo: proven[0][0], strength: "strong", signals: proven[0][1] }]
+        : proven.length > 1 ? proven.map(([r, x]) => ({ repo: r, strength: "weak" as const, signals: x })) // proofs disagree: the captain picks
+        : p.named.slice(0, 1).filter((r) => Env.imageMatch(p.key, r)).map((r) => ({ repo: r, strength: "weak" as const, signals: [...(p.sigs.get(r) ?? []), { kind: "name" as const }] }));
+      if (list.length) owners.set(p.key, list);
+    }
+    const match: Env.Match = { owner: (image) => owners.get(Env.imageKey(image)) ?? [], tagOk: (repo, tag) => !!R.commitOfTag(tag) || tagOkSet.has(`${repo}|${tag}`.toLowerCase()) };
+
     // repositories that look like a GitOps/config repository, offered when none is named (one read)
     const suggestions: string[] = cfg ? [] : await step(async () => { const l = await g.get("/user/repos?per_page=100&sort=pushed");
       return (Array.isArray(l) ? l : []).map((r: any) => String(r?.full_name ?? "")).filter((n: string) => R.repoOk(n) && Env.CONFIG_NAME.test(n.split("/")[1]) && !repos.some((x) => eq(x, n))).slice(0, 8); }, [] as string[]);
+    if (tooLarge) notes.push({ en: `${tooLarge} file${tooLarge === 1 ? "" : "s"} or folder${tooLarge === 1 ? "" : "s"} were too large for GitHub's answer (1 MB) and were left out`, tw: `有 ${tooLarge} 個檔案或資料夾太大（超過 1 MB），沒有讀` });
     if (late) notes.push({ en: `Studio stopped reading after ${DISCOVER_MS / 1000} s: the table holds what it read.`, tw: `Studio 讀了 ${DISCOVER_MS / 1000} 秒就停了：表格只有已讀到的部分。` });
     if (over) notes.push({ en: `Studio stopped after ${total} reads, the most one search makes: the table holds what it read. Name a folder of the config repository, or watch fewer repositories, and search again.`, tw: `Studio 讀了 ${total} 次（一次搜尋的上限）就停了：表格只有已讀到的部分。可以指定設定 repo 的資料夾，或少追蹤一些 repo，再搜尋一次。` });
     if (stop.aborted) return { cancelled: true };

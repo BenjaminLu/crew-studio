@@ -703,7 +703,7 @@ function envSummary(envs) {
   const set = envs.filter((e) => e.name);
   if (!set.length) return [];
   return set.map((e) => { const each = e.each || [], all = e.detect?.kind && e.detect.kind !== "none";
-    const items = [...each.map((x) => [x.repo, detectWord(x.detect)]), ...(all ? [[(e.repos || []).length ? (e.repos || []).join(", ") : T("every other repository", "其他所有 repo"), detectWord(e.detect)]] : [])];
+    const items = [...each.flatMap((x) => x.detect?.kind === "files" ? x.detect.files.map((f) => [x.repo, `${f.repository} · ${f.path}`]) : [[x.repo, detectWord(x.detect)]]), ...(all ? [[(e.repos || []).length ? (e.repos || []).join(", ") : T("every other repository", "其他所有 repo"), detectWord(e.detect)]] : [])];
     return h("div", { class: "pw-envcard", "data-prs-envsum": e.name },
       h("div", { class: "pw-envcard-h" }, h("b", {}, e.name), e.production ? prodBadge() : null, h("span", { class: "faint pw-small" }, each.length ? reposWord(each.length) : all && !(e.repos || []).length ? T("every repository", "所有 repo") : reposWord((e.repos || []).length))),
       items.length ? h("ul", { class: "pw-envcard-l" }, ...items.slice(0, 8).map(([r, w]) => h("li", {}, h("span", { class: "mono" }, r), " ", h("span", { class: "faint" }, w))),
@@ -712,7 +712,8 @@ function envSummary(envs) {
 const PROBLEM = { control: () => T("the line holds a tab or another control character: set it by hand in Advanced", "這一行有 tab 或其他控制字元：請在進階設定手動設"), "no-commit": () => T("its tag does not end in a commit, so Studio cannot tell which commit runs", "它的 tag 結尾不是 commit，Studio 看不出跑的是哪個 commit"), "not-first": () => T("another line of the file would be read first: set this one by hand in Advanced", "檔案裡另一行會先被讀到：請在進階設定手動設") };
 const PHASE = { config: () => T("the config repository's files", "設定 repo 的檔案"), files: () => T("the manifests", "manifest"), builds: () => T("each repository's build config", "各 repo 的 build 設定"), match: () => T("commits and tags", "commit 和 tag"), deployments: () => T("GitHub deployments", "GitHub deployment") };
 // what tied an image to a repository, as the table says it
-const signalWord = (x) => x.kind === "build" ? T(`builds ${x.image} (${x.path}:${x.line})`, `會 build ${x.image}（${x.path}:${x.line}）`) : x.kind === "label" ? T(`Dockerfile label ${x.image}`, `Dockerfile 標籤 ${x.image}`)
+const noHost = (i) => { const p = String(i).split("/"); return p.length > 1 && /[.:]|^localhost$/.test(p[0]) ? p.slice(1).join("/") : String(i); };
+const signalWord = (x) => x.kind === "build" ? T(`builds ${noHost(x.image)} (${x.path}:${x.line})`, `會 build ${noHost(x.image)}（${x.path}:${x.line}）`) : x.kind === "label" ? T(`Dockerfile label ${noHost(x.image)}`, `Dockerfile 標籤 ${noHost(x.image)}`)
   : x.kind === "commit" ? T(`commit ${x.sha} is in the repository`, `commit ${x.sha} 在這個 repo`) : x.kind === "tag" ? T(`tag ${x.tag} is one of its git tags`, `tag ${x.tag} 是它的 git tag`) : T("names alike only", "只是名稱相近");
 /**
  * Find environments automatically: ① where to look (each repository's GitHub deployments, a GitOps/config repository,
@@ -760,13 +761,16 @@ function discoverModal(o = {}) {
     catch (e) { res = null; error = e.message; go("sources"); }
     finally { clearInterval(poll); progress = null; }
   }
+  // what tied this line's image and tag to the repository, right under the line
+  const sigLine = (e) => e.signals?.length ? h("span", { class: "pw-small pw-disc-sig", "data-prs-discover-signals": "" }, e.signals.map(signalWord).join(" · ")) : null;
   const pathLink = (e) => h("a", { href: e.url, target: "_blank", rel: "noopener noreferrer", class: "mono pw-small pw-path" }, ...`${e.path}:${e.line}`.split("/").flatMap((x, i, a) => i < a.length - 1 ? [`${x}/`, h("wbr", {})] : [x]));
   const evidence = (c) => h("div", { class: "pw-disc-ev" },
     c.evidence.path ? pathLink(c.evidence) : extLink(c.evidence.url, T(c.evidence.text, c.evidence.tw || c.evidence.text), { class: "pw-small" }),
     c.evidence.path ? h("code", { class: "pw-disc-line" }, c.evidence.text) : null,
-    ...(c.evidence.more || []).map((m) => pathLink(m)),
+    sigLine(c.evidence),
+    ...(c.evidence.more || []).flatMap((m) => [pathLink(m), sigLine(m)]),
     c.evidence.more?.length ? h("span", { class: "faint pw-small" }, T(`${c.evidence.more.length + 1} services: live when every one runs it`, `${c.evidence.more.length + 1} 個服務：每個都跑到才算上線`)) : null,
-    c.evidence.signals?.length ? h("span", { class: "pw-small pw-disc-sig", "data-prs-discover-signals": "" }, c.evidence.signals.map(signalWord).join(" · ")) : null,
+    c.evidence.alsoFor?.length ? h("span", { class: "pw-small pw-warn", "data-prs-discover-also": "" }, T(`also proposed for ${c.evidence.alsoFor.join(", ")}`, `也被提議給 ${c.evidence.alsoFor.join("、")}`)) : null,
     c.strength === "weak" ? h("span", { class: "pw-small pw-warn" }, c.evidence.signals?.some((x) => x.kind !== "name" && x.kind !== "label") ? T("the proofs point at more than one repository", "證據指向不只一個 repo") : T("the image's name only resembles the repository's", "image 名稱只是和 repo 名相近")) : null,
     c.problem ? h("span", { class: "pw-small pw-warn" }, PROBLEM[c.problem]()) : null);
   const srcWord = (c) => c.source === "file" ? T("config repo", "設定 repo") : T("GitHub deployment", "GitHub deployment");
@@ -778,7 +782,7 @@ function discoverModal(o = {}) {
     if (g.state === "set") { const c = g.candidates.find((x) => JSON.stringify(x.detect) === JSON.stringify(g.current)) || g.candidates[0]; kids.push(h("span", { class: "pw-chip set" }, T("already set", "已設定")), evidence(c)); }
     else if (g.state === "ok") { const c = g.candidates[0], rest = g.candidates.length - 1;
       kids.push(h("label", { class: "pw-disc-cand" }, h("input", { type: "checkbox", "data-prs-discover-tick": g.id, checked: cur === c.id, disabled: !on, "aria-label": T(`${repo} ${env}: use this`, `${repo} ${env}：採用`), onchange: (e) => { choice.set(g.id, e.target.checked ? c.id : "skip"); foot_(); } }), h("span", { class: "pw-chip" }, srcWord(c))), evidence(c),
-        rest ? h("span", { class: "faint pw-small" }, T(`${rest} other line${rest === 1 ? "" : "s"} name this image but say no commit: left out`, `另有 ${rest} 行寫了這個 image 但看不出 commit：不採用`)) : null); }
+        rest ? h("span", { class: "faint pw-small" }, rest === 1 ? T("1 other line names this image but says no commit: left out", "另有 1 行寫了這個 image 但看不出 commit：不採用") : T(`${rest} other lines name this image but say no commit: left out`, `另有 ${rest} 行寫了這個 image 但看不出 commit：不採用`)) : null); }
     else { const n = g.candidates.filter(usable).length;
       kids.push(h("span", { class: "pw-chip amb" }, n > 1 ? T(`${n} possible, pick one`, `${n} 個可能，挑一個`) : T("check and pick", "確認後挑選")),
         h("div", { class: "pw-disc-pick", role: "radiogroup", "aria-label": T(`${repo} ${env}: pick one`, `${repo} ${env}：挑一個`) },
@@ -801,8 +805,8 @@ function discoverModal(o = {}) {
               h("small", {}, T("One repository holding the deploy manifests (Kubernetes, kustomize overlays, Helm values). Studio reads the line that names each repository's image and its tag.", "一個專門放部署設定（k8s manifest、kustomize overlay、helm values）的 repo。Studio 讀寫著各 repo image 和 tag 的那一行。")),
               h("span", { class: "pw-disc-cfg" },
                 h("input", { class: "input mono", "data-prs-discover-config": "", value: cfg, disabled: !cfgOn, placeholder: "owner/deploy-config", "aria-label": T("Config repository (owner/repo)", "設定 repo（owner/repo）"), oninput: (e) => { cfg = e.target.value; foot_(); }, onkeydown: (e) => { if (e.key === "Enter") run(); } }),
-                h("input", { class: "input mono", "data-prs-discover-ref": "", value: ref, disabled: !cfgOn, placeholder: T("branch (default)", "branch（預設）"), "aria-label": T("Branch", "branch"), oninput: (e) => { ref = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") run(); } }),
-                h("input", { class: "input mono", "data-prs-discover-path": "", value: folder, disabled: !cfgOn, placeholder: T("only this folder (optional), e.g. deploy/", "只看這個資料夾（可不填），例如 deploy/"), "aria-label": T("Folder", "資料夾"), oninput: (e) => { folder = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") run(); } })),
+                h("label", { class: "field" }, h("span", { class: "lbl" }, T("Branch (optional)", "branch（可不填）")), h("input", { class: "input mono", "data-prs-discover-ref": "", value: ref, disabled: !cfgOn, placeholder: T("default branch", "預設 branch"), oninput: (e) => { ref = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") run(); } })),
+                h("label", { class: "field" }, h("span", { class: "lbl" }, T("Only this folder (optional)", "只看這個資料夾（可不填）")), h("input", { class: "input mono", "data-prs-discover-path": "", value: folder, disabled: !cfgOn, placeholder: T("e.g. deploy/ — faster on a large repository", "例如 deploy/，大 repo 會快很多"), oninput: (e) => { folder = e.target.value; }, onkeydown: (e) => { if (e.key === "Enter") run(); } }))),
               cfgOn && sug.length ? h("span", { class: "pw-sug", "data-prs-discover-suggest": "" }, h("span", { class: "faint pw-small" }, T("Looks like one:", "看起來像：")),
                 ...sug.map((r) => h("button", { class: "badge", "data-prs-discover-suggest-repo": r, onclick: () => { cfg = r; draw(); } }, r))) : null))));
     } else if (phase === "scan") {
@@ -835,8 +839,8 @@ function discoverModal(o = {}) {
           ...(showSet ? allSet.map((r) => row(r, "set")) : []),
           ...none.map((r) => row(r, "none"))) : null,
         h("div", { class: "pw-legend" }, h("span", {}, h("span", { class: "pw-chip" }, T("green", "綠")), T(" sure", " 確定")), h("span", {}, h("span", { class: "pw-chip amb" }, T("amber", "黃")), T(" pick one", " 要你挑")), h("span", {}, h("span", { class: "pw-chip none" }, T("grey", "灰")), T(" not found", " 沒找到"))),
-        res.skipped?.length ? h("details", { class: "pw-adv", "data-prs-discover-skipped": "" }, h("summary", { class: "pw-small" }, res.skipped.length === 1 ? T("1 file names an image but no environment", "1 個檔案寫了 image 但看不出環境") : T(`${res.skipped.length} files name an image but no environment`, `${res.skipped.length} 個檔案寫了 image 但看不出環境`)),
-          h("ul", { class: "pw-small mono" }, ...res.skipped.map((x) => h("li", {}, x.path)))) : null);
+        res.skipped?.length ? h("details", { class: "pw-adv", "data-prs-discover-skipped": "" }, h("summary", { class: "pw-small" }, res.skipped.length === 1 ? T("1 file left out (no environment, or already set for another repository)", "1 個檔案沒採用（看不出環境，或已設定給別的 repo）") : T(`${res.skipped.length} files left out (no environment, or already set for another repository)`, `${res.skipped.length} 個檔案沒採用（看不出環境，或已設定給別的 repo）`)),
+          h("ul", { class: "pw-small mono" }, ...res.skipped.map((x) => h("li", {}, x.path, x.why === "set-for" ? h("span", { class: "faint" }, T(` — already set for ${x.repos.join(", ")}`, ` —— 已設定給 ${x.repos.join("、")}`)) : null)))) : null);
     }
     box.replaceChildren(...kids.filter(Boolean)); foot_(); };
   async function accept() {
@@ -883,19 +887,20 @@ function settingsModal(o = {}) {
   const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", "image: registry/app:{tag}"], ["ref", T("ref (optional)", "ref（可省略）")]] };
   const firstEmpty = (e) => e === added ? (FIELDS[e.detect?.kind] || []).find(([f]) => f !== "ref" && !e.detect?.[f])?.[0] ?? null : null;
   const fieldsOf = (dt, attr, focus) => (FIELDS[dt?.kind] || []).map(([f, l]) => h("input", { class: "input", value: dt?.[f] || "", placeholder: l, "aria-label": l, [attr]: f, ...(f === focus ? { autofocus: true } : {}), oninput: (ev) => { dt[f] = ev.target.value; } }));
-  const hint = (dt) => dt?.kind === "files" ? h("ul", { class: "faint pw-small pw-envhint mono", "data-prs-files-list": "" }, ...(dt.files || []).map((f) => h("li", {}, `${f.repository} · ${f.path} · ${f.template}`)), h("li", { class: "pw-warn" }, T("Found automatically: run Find environments again to change them.", "自動找到的：要改請重新自動找環境。")))
+  const hint = (dt) => dt?.kind === "files" ? h("div", { class: "pw-envhint", "data-prs-files-list": "" }, h("ul", { class: "faint pw-small mono", style: "margin:0" }, ...(dt.files || []).map((f) => h("li", {}, `${f.repository} · ${f.path} · ${f.template}`))),
+      h("p", { class: "faint pw-small", style: "margin:4px 0 0" }, T("Found automatically: run Find environments again to change them.", "自動找到的：要改請重新自動找環境。")))
     : dt?.kind === "file" ? h("p", { class: "faint pw-small pw-envhint", "data-prs-template-hint": "" }, T("Studio finds this line in the file and reads the tag at {tag}; the tag must end in the commit (7–40 hex characters), e.g. app:1.4.0-3f2a1c9.", "Studio 在檔案裡找這一行，讀 {tag} 位置的 tag；tag 結尾要是 commit（7–40 個十六進位字元），例如 app:1.4.0-3f2a1c9。")) : null;
   // one repository's own detection inside an environment (what Find environments automatically writes)
   const eachRow = (e, x, j) => h("div", { class: "pw-envrow pw-eachrow", "data-prs-env-each": x.repo || String(j) },
     h("input", { class: "input mono", value: x.repo || "", placeholder: "owner/repo", "aria-label": T("Repository", "repo"), "data-prs-each-repo": "", oninput: (ev) => { x.repo = ev.target.value.trim(); } }),
-    h("select", { class: "input", "aria-label": T("How it is detected in this repository", "這個 repo 怎麼偵測"), onchange: (ev) => { x.detect = { kind: ev.target.value }; drawEnvs(); } }, KINDS.map(([k, l]) => h("option", { value: k, selected: x.detect?.kind === k }, l))),
+    h("select", { class: "input", "aria-label": T("How it is detected in this repository", "這個 repo 怎麼偵測"), onchange: (ev) => { x.detect = { kind: ev.target.value }; drawEnvs(); } }, KINDS.filter(([k]) => k !== "files" || x.detect?.kind === "files").map(([k, l]) => h("option", { value: k, selected: x.detect?.kind === k }, l))),
     ...fieldsOf(x.detect, "data-prs-each-field"),
     h("button", { class: "pw-x", "aria-label": T("Remove this repository", "移除這個 repo"), onclick: () => { e.each.splice(j, 1); drawEnvs(); } }, icon("x")), hint(x.detect));
   const drawEnvs = () => { sumBox.replaceChildren(...envSummary(envs)); drawRows(); };
   const drawRows = () => envBox.replaceChildren(...envs.map((e, i) => h("div", { class: "pw-envrow", "data-prs-env": String(i), "data-prs-env-name": e.name || null, "data-prs-env-new": e === added ? "" : null },
     h("input", { class: "input pw-envname", value: e.name || "", placeholder: T("name", "名稱"), "aria-label": T("Environment name", "環境名稱"), oninput: (ev) => { e.name = ev.target.value; } }),
     h("label", { class: "pw-check" }, h("input", { type: "checkbox", checked: !!e.production, onchange: (ev) => { e.production = ev.target.checked; } }), T(" production", " 正式")),
-    h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, [...KINDS, ...(e.each?.length || !e.detect?.kind || e.detect.kind === "none" ? [NONE] : [])].map(([k, l]) => h("option", { value: k, selected: (e.detect?.kind || "none") === k }, l))),
+    h("select", { class: "input", "aria-label": T("How it is detected", "怎麼偵測"), onchange: (ev) => { e.detect = { kind: ev.target.value }; drawEnvs(); } }, [...KINDS.filter(([k]) => k !== "files" || e.detect?.kind === "files"), ...(e.each?.length || !e.detect?.kind || e.detect.kind === "none" ? [NONE] : [])].map(([k, l]) => h("option", { value: k, selected: (e.detect?.kind || "none") === k }, l))),
     ...fieldsOf(e.detect, "data-prs-env-field", firstEmpty(e)),
     e.detect?.kind && e.detect.kind !== "none" ? h("input", { class: "input", value: (e.repos || []).join(", "), placeholder: T("only these repositories (optional)", "只用在這些 repo（可省略）"), "aria-label": T("Repositories", "repo"), oninput: (ev) => { e.repos = ev.target.value.split(",").map((x) => x.trim()).filter(Boolean); } }) : null,
     h("button", { class: "pw-x", "aria-label": T("Remove this environment", "移除這個環境"), onclick: () => { envs.splice(i, 1); drawEnvs(); } }, icon("x")),
