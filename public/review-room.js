@@ -1592,7 +1592,9 @@ function header(r) {
       ds ? pill({ "data-room-diffstat": "" }, h("b", { class: "add" }, `+${ds.added}`), " ", h("b", { class: "del" }, `−${ds.removed}`), T(` · ${ds.files} file${ds.files === 1 ? "" : "s"}`, ` · ${ds.files} 個檔案`)) : null,
       // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
       // a room that takes turns: the pill is the tutor picker (this room's pick, Studio's default, or Automatic)
-      r.open && !r.snapshot ? tutorButton(r) : offer?.independence ? pill({ class: offer.independence.level === "same" ? "warn" : "", "data-independence": offer.independence.level }, T(`Tutor: ${offer.provider} · ${offer.model ?? "default model"} — ${offer.independence.en}`, `導師：${offer.provider} · ${offer.model ?? "預設模型"}：${offer.independence.zh}`)) : null),
+      // "Explain with": the built-in tutor or one of the captain's own skills (public/review-explain.js)
+      !r.snapshot ? window.crewRoomExplain?.picker(r) : null,
+      window.crewRoomExplain?.active(id) ? null : r.open && !r.snapshot ? tutorButton(r) : offer?.independence ? pill({ class: offer.independence.level === "same" ? "warn" : "", "data-independence": offer.independence.level }, T(`Tutor: ${offer.provider} · ${offer.model ?? "default model"} — ${offer.independence.en}`, `導師：${offer.provider} · ${offer.model ?? "預設模型"}：${offer.independence.zh}`)) : null),
     RR.tutorMenu === id && r.open && !r.snapshot ? tutorMenu(r) : null,
     kind === "pr" && !r.snapshot ? h("button", { type: "button", class: "rr-back", "data-room-check": id, disabled: PR.checking.has(id) || r.checking || null, onclick: () => checkNow(id) }, PR.checking.has(id) || r.checking ? T("Reading GitHub…", "正在讀取 GitHub…") : T("Check for new commits", "檢查新的 commit")) : null,
     kind === "pr" && /^https:\/\/github\.com\//.test(r.subject?.url || "") ? h("a", { class: "rr-back", href: r.subject.url, target: "_blank", rel: "noopener noreferrer", "data-room-github": "" }, T("Open on GitHub", "在 GitHub 開啟")) : null,
@@ -1757,9 +1759,11 @@ routes.room = (arg) => {
   // entering a room while a turn runs: the board shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);
+  // the room presented by one of the captain's skills: its versions, its output and its chat in place of the board
+  const XP = window.crewRoomExplain; if (XP && !r.snapshot) { XP.ensure(arg); if (XP.active(arg)) return h("div", { class: "rr-room rx-room", "data-review-room": r.card.id }, header(r), XP.view(r)); }
   queueMicrotask(() => arriveIn(arg, r));
   return h("div", { class: "rr-room", "data-review-room": r.card.id },
-    header(r), boardView(r), promptBar(r), drawer(r), citePanel(r),
+    header(r), boardView(r), promptBar(r), drawer(r), citePanel(r), !r.snapshot ? XP?.dialogs(r) : null,
     RR.zoom ? h("div", { class: "rr-zoom", "data-zoom": "", role: "dialog", "aria-modal": "true", "aria-label": RR.zoom.alt, onclick: (e) => { if (e.target === e.currentTarget) { RR.zoom = null; rerender(); } } },
       h("button", { type: "button", class: "btn", onclick: () => { RR.zoom = null; rerender(); } }, T("Close", "關閉")), h("img", { src: RR.zoom.src, alt: RR.zoom.alt })) : null);
 };
@@ -1777,5 +1781,6 @@ function arriveIn(id, r) {
     .catch((e) => RR.err.set(id, e.message)).finally(() => { redraw(id); schedule(); });
 }
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
+window.crewReviewRoomData = (id) => RR.rooms.get(id) || null;
 window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, board: BOARD };
 })();

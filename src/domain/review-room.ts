@@ -51,6 +51,7 @@ import { parseLocator, type Finding, type Locator } from "../runtime/locator";
 import { clipStore, kokoroSpeaker, localSynth, MAX_POINT, readClip, roomClip } from "../voice/kokoro";
 import { isRoomPoint } from "../voice/points";
 import { langOf, type Mix } from "../voice/runs";
+import { installExplainer } from "./review-explain";
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -1371,11 +1372,34 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   /** A tutor round's admission, the same for a turn and a translation: the round sandbox only, the pinned skills, the Task's
    *  node (an auxiliary owner for a branch or pull request room), the member verified and selected natively, staffing's
    *  receipt for the tutor seat. On a refusal nothing is held. */
-  async function admit(k: Key, s: S, tutor: Tutor) {
+  /** A pull request or directory room no Task hosts yet: its host Task, made once, only after the captain confirmed a paid round
+   *  (a tutor turn, or an explainer run; a pasted pull request's auto-teach counts the paste as that confirm: the paste box named
+   *  the tutor and the paid round before it). A directory's (review-room-dir-host) has no project and no crew; a pull request's
+   *  (review-room-host) is bound to the project's approved crew. Both write nothing. */
+  async function ensureHost(k: Key, by: string) {
+    const room0 = load(k)!, project = k.kind === "dir" ? null : room0.subject?.project ?? null;
+    if (engine.grants.open("sandbox-off", project)) throw refuse(k.kind === "dir" ? "The tutor runs only in the round sandbox: an open sandbox-off grant is in effect; end it first" : "The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
+    if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
+    live.set(k.id, -1);
+    try {
+      if (k.kind === "dir") {
+        try { const h = engine.start({ workflow: DIR_HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { dir: String(room0.subject?.url ?? ""), room: k.id }, by } as any); room0.host = h.id; save(k, room0); }
+        catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_host"); }
+      } else {
+        // a team that covers code-firstmate writes the project's crew-derived staffing
+        try { const def = codeDef(); if (def && project) engine.deps.teamStaffing?.(def, project); } catch {}
+        try { const h = engine.start({ workflow: HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { project: String(project ?? ""), pr: String(room0.subject?.url ?? "") }, by } as any); room0.host = h.id; save(k, room0); }
+        catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_crew"); }
+      }
+    } finally { live.delete(k.id); }
+  }
+  /** instr: another seat on the tutor's member with its own pinned texts (the explainer: Studio's frame and the captain's skill,
+   *  src/domain/review-explain.ts); absent: the tutor's own pinned skills */
+  async function admit(k: Key, s: S, tutor: Tutor, instr?: { seat: string; texts: { id: string; sha256: string; text: string }[] }) {
     const off = engine.grants.open("sandbox-off", s.run.ctx.project ?? s.run.params?.project ?? null);
     if (off) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
     if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
-    const sk = skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
+    const sk = instr ? instr.texts.map((t) => ({ ...t, ref: t.id })) : skills(), docs = docsHostsOf(s.run); if ("refused" in docs) throw refuse(docs.refused, "policy");
     // the tutor's round is one of the Task's jobs, admitted like any role's: the merge card's live node owns it (a branch or
     // pull request room: an auxiliary owner of the review node, which never advances the Task), the native selection verifies
     // the reviewer member's capability, and staffing issues its receipt for the tutor seat
@@ -1394,7 +1418,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     } catch (e) { held?.release(); throw e; }
     const system = sk.map((k) => k.text).join("\n"), rules = new OperatingRules(engine.deps.dataDir).section(run.params?.project || null);
     // an adaptive tutor names the member it runs on: staffing's receipt is for that member, never the role's approved one
-    const aux = { seat: TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level ?? "unknown", crew: !tutor.outside, ...(tutor.picked ? { picked: true } : {}) } } : {}) };
+    const aux = { seat: instr?.seat ?? TUTOR_SEAT, texts: sk.map((k) => ({ sha256: k.sha256, text: k.text })), ...(tutor.adaptive ? { member: { provider: pick.provider, model: pick.model ?? null, effort: pick.effort ?? null, independence: tutor.level ?? "unknown", crew: !tutor.outside, ...(tutor.picked ? { picked: true } : {}) } } : {}) };
     const receipt = (r: any) => engine.deps.instructionReceipt?.(x, TUTOR_ROLE, jobInstructions(system, r), provider, { ...aux, rules: r });
     let admissionReceipt: unknown; try { admissionReceipt = receipt(rules); } catch (e: any) { held?.release(); throw refuse(`The tutor's staffing could not be admitted: ${String(e?.message ?? e).slice(0, 300)}`, "staffing"); }
     return { x, held, provider, sk, system, rules, admissionReceipt, receipt, pick, tutor };
@@ -1900,8 +1924,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     return { from, to: s.head, commits: anc ? Number(git(s.wt, ["rev-list", "--count", `${from}..${s.head}`]).out) || 0 : null, rewritten: known && !anc }; };
   /** the room's agreement for board questions as the page reads it: on, and whether it holds for the plan offered now */
   const followView = (r: Room | null, offer: any) => r?.followUps ? { on: true, at: r.followUps.at, used: r.followUps.used ?? 0, limit: FOLLOW_LIMIT, current: !!offer && !offer.error && agreedTo(r, offer) } : null;
+  // "Explain with": the room presented by one of the captain's own skills (src/domain/review-explain.ts), on the tutor's seat
+  const explainer = installExplainer({ engine, dataDir: o.dataDir, role: TUTOR_ROLE, keyOf, load, subjectOf, offerOf, tutorFor, admit, ensureHost: (k, _offer, by) => ensureHost(k, by),
+    tutorBusy: (id) => live.has(id), subjectRecord,
+    // its own live event: a run's progress redraws the explainer's parts, never the whole room (whose output frame would reload)
+    notify: (k) => { try { engine.deps.send("review-explain", { card: k.id }); } catch {} },
+    github: (k, room) => { const repo = room?.subject?.repository; let p: any = repo ? connected(repo) : null;
+      if (!p) { const run = k.run ? engine.get(k.run) : null, pid = run?.params?.project; if (pid && run?.ctx?.pr?.adapter === "github") p = (o.projects as any)?.get?.(pid) ?? null; }
+      if (!p) return null; const a = o.github?.(p) ?? null; return a && (!repo || String(a.grant.repository).toLowerCase() === String(repo).toLowerCase()) ? a : null; } });
   let self: any = null;
   return (self = {
+    /** the room's "Explain with" (src/domain/review-explain.ts): the picker's skills, its runs and versions, a version's page */
+    explain: explainer,
     /** the summary a merge card shows: never readiness, never an answer */
     summary(c: SCard) {
       if (c.kind !== "merge") return null; const k0 = keyOf(c.id), r0 = load(k0), r = r0 ? settled(r0) : null;
@@ -2034,6 +2068,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const lang = LANGS[String(a.lang)] ? String(a.lang) : "en", own = String(a.text ?? "").trim(), canned = ACTIONS[action];
       const text = own || (canned ? (lang === "en" ? canned.en : canned.zh) : ""); if (!text || text.length > 4000) throw refuse("Write a question (at most 4000 characters) / 請寫下問題（最多 4000 字）", "bad_text");
       if (live.has(k.id)) throw refuse("A turn is already running in this room / 這個審查室已有一回合在進行", "busy");
+      if (explainer.running(k.id)) throw refuse("A skill is working on this room's explanation: stop it or wait / 這間審查室的 skill 正在產生說明：請先停止或等它完成", "busy");
       // what is usable is read again first: the tutor the captain confirms is the one this machine can run now
       try { await engine.deps.refreshUsable?.(); } catch {}
       if ((!s.run || !s.node) && k.kind === "dir") {
@@ -2041,12 +2076,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         // (review-room-dir-host: no project, no crew, it writes nothing); the turn then runs on it like any other
         const offer0 = offerOf(k); if ("error" in offer0) throw refuse(offer0.error!, offer0.code ?? "no_tutor");
         if (a.confirm !== offer0.hash) throw refuse(`Each turn is a paid model round on ${offer0.provider} ${offer0.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer0.provider} ${offer0.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer: offer0 });
-        if (engine.grants.open("sandbox-off", null)) throw refuse("The tutor runs only in the round sandbox: an open sandbox-off grant is in effect; end it first", "sandbox");
-        if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
-        const room0 = load(k)!; live.set(k.id, -1);
-        try { const h = engine.start({ workflow: DIR_HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { dir: String(room0.subject?.url ?? ""), room: k.id }, by } as any); room0.host = h.id; save(k, room0); }
-        catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_host"); }
-        finally { live.delete(k.id); }
+        await ensureHost(k, by);
         return this.start(id, a, by);
       }
       if ((!s.run || !s.node) && k.kind === "pr") {
@@ -2054,16 +2084,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
         // writes nothing), bound to the project's approved crew; the turn then runs on it like any other
         const offer0 = offerOf(k); if ("error" in offer0) throw refuse(offer0.error!, offer0.code ?? "no_crew");
         if (a.confirm !== offer0.hash) throw refuse(`Each turn is a paid model round on ${offer0.provider} ${offer0.model ?? "(default model)"}: confirm it to start / 每一回合都是付費的模型執行（${offer0.provider} ${offer0.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer: offer0 });
-        const room0 = load(k)!, project = room0.subject?.project ?? null;
-        if (engine.grants.open("sandbox-off", project)) throw refuse("The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
-        if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
-        live.set(k.id, -1);
-        // only now, after the captain confirmed (a pasted pull request's auto-teach counts the paste as that confirm: the paste box
-        // named the tutor and the paid round before it): a team that covers code-firstmate writes the project's crew-derived staffing
-        try { const def = codeDef(); if (def && project) engine.deps.teamStaffing?.(def, project); } catch {}
-        try { const h = engine.start({ workflow: HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { project: String(project ?? ""), pr: String(room0.subject?.url ?? "") }, by } as any); room0.host = h.id; save(k, room0); }
-        catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_crew"); }
-        finally { live.delete(k.id); }
+        await ensureHost(k, by);
         return this.start(id, a, by);
       }
       if (!s.run || !s.node) throw noHost();

@@ -274,7 +274,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const known=this.communityPins.get(pin?.repository+'@'+pin?.head);if(!known||JSON.stringify(known)!==JSON.stringify(pin)||typeof path!=='string'||path.length>300||path.split('/').some(p=>p==='..'||p==='.'||!p)||!/^((\.github|docs)\/)?(pull_request_template\.md|PULL_REQUEST_TEMPLATE(\/[A-Za-z0-9_.-]+\.md)?|CONTRIBUTING\.md|ISSUE_TEMPLATE(\.[Mm][Dd]|\/[A-Za-z0-9_.-]+\.(md|ya?ml))?|AGENTS\.md)$/i.test(path))throw new Error('Community content target is not allowlisted');
     return this.communityRequest(pin.source,`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pin.head}`,signal);
   }
-  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "closed-issues" | "open-pulls" | "pull-files", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
+  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "issue" | "closed-issues" | "open-pulls" | "pull-files", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
     const approvedHead = typeof approvedHeadOrFresh === "string" ? approvedHeadOrFresh : undefined;
     if (typeof approvedHeadOrFresh === "boolean") fresh = approvedHeadOrFresh;
     signal?.throwIfAborted();
@@ -287,6 +287,8 @@ export class GitHubPrAdapter implements PrAdapter {
     // the files a pull request changes (the review room reads a pull request by its URL: src/domain/review-room.ts)
     else if (kind === "pull-files" && /^[1-9][0-9]*$/.test(target)) suffix = `/pulls/${target}/files?per_page=100&page=${page}`;
     // the open issues of the granted repository, oldest first (src/domain/issue-triage.ts snapshots them)
+    // one issue (or pull request) of the granted repository by its number: the review room's explainer reads the issues a pull request links
+    else if (kind === "issue" && /^[1-9][0-9]*$/.test(target) && page === 1) suffix = `/issues/${target}`;
     else if (kind === "issues" && target === this.grant.repository) suffix = `/issues?state=open&sort=created&direction=asc&per_page=50&page=${page}`;
     // what triage checks before investigating (read only): the recently closed issues (one page) and the open pull requests
     else if (kind === "closed-issues" && target === this.grant.repository && page === 1) suffix = `/issues?state=closed&sort=updated&direction=desc&per_page=50&page=1`;

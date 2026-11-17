@@ -12,7 +12,7 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   change's line counts, the tutor and its independence), the board and the dock are fixed rows; only the board flexes and
   nothing in the room grows the page. At 1440×900 the page never scrolls; the board's camera brings what is asked for into
   view.
-- **The board is the room's only view** (`public/review-board.js`; there is no stage). Every scene is a region of one
+- **The board is the tutor's only view** (`public/review-board.js`; there is no stage; a room explained with one of the captain's own skills shows that skill's output instead: "Explain with your own skill" below). Every scene is a region of one
   canvas the camera owns, a row of its own for each turn: the welcome, each answer, each lesson chapter, a check, a turn
   still being written. An answer's region (`sceneCard`) is a handwritten title under its kicker (what was asked, and the
   question), the tutor's points as numbered steps on the left and an illustration beside them on the right (see "Steps and
@@ -697,6 +697,93 @@ the destination and the shape, decided before any DNS lookup:
 - Every call, refused or not, is a source the room lists. A source's address is kept as an address only when it was
   fetched and parses as http(s); a refused or unparsable one is kept as plain text, and the page renders a link only for
   a fetched http(s) address. A citation Studio could not verify is plain text, not a link.
+
+## Explain with your own skill
+
+The room can be presented by one of the captain's own skills instead of the tutor's board (`src/domain/review-explain.ts`,
+`public/review-explain.js`). Quality first: a skill's run is not one model round.
+
+- **The picker** (`[data-explain-picker]`, "Explain with" / 解釋用, in the header of every room that is not a Library snapshot):
+  Studio's tutor (the default: the board as above, unchanged) or any skill in Studio's skill library (the Skills page; a skill
+  in `~/.claude/skills` or `~/.codex/skills` is imported there first). The captain's own skills (a folder, a skills home, a git
+  URL) come first, then the ones Studio ships. Picking is free: the tutor, or a skill that already has an output in this room,
+  switches at once (`POST /api/review-room/<room>/explain/select {skill | null}`); a skill with none asks for its first run.
+  While a skill is selected, the tutor picker pill steps aside and the room shows the skill's output instead of the board.
+- **A run is paid and confirmed** like a tutor turn: the offer (`GET …/explain/offer?skill=&kind=generate|ask`) names the
+  room tutor's provider, model and effort (the same pick and independence label as a turn), the skill and its version,
+  the materials it gets, "no round cap", the expected time (the median of this skill's earlier finished runs here, else
+  "not known yet"), the safety limit, and the isolation. `POST …/explain/generate {skill, confirm}` starts only with that
+  offer's hash; a changed tutor, skill version or limit asks again. A pull request or directory room no Task hosts yet makes
+  its host Task once, after this confirmation, as a tutor turn does (`ensureHost`).
+- **Admission.** A run's rounds are jobs of the room's tutor seat on the same member, admitted the same way (the native
+  selection, the round sandbox with nothing to write and no host beyond the model, the staffing receipt), under an auxiliary
+  seat of its own per skill version (`review-room-explainer:<skill>@v<n>`) whose pinned texts are Studio's frame
+  (`EXPLAINER_FRAME`) and the skill's body, each by sha256. Each round gets a fresh receipt. One run at a time per room, and
+  neither a tutor turn nor a translation while it runs (and the other way round).
+- **As many rounds as the skill needs.** A round that ends before the skill calls `explain_done {entry, summary}` (a
+  follow-up: `explain_answer`) is followed by another, whose prompt carries the files written so far, its notes
+  (`out/.notes.md`), its progress lines and its last message. A run ends when the skill says it is done, the captain presses
+  Stop (`POST …/explain/stop`: the round that runs is cancelled; what it cost is recorded; a stopped generation keeps no
+  version), the wall-clock safety limit passes (Studio-wide, `POST /api/review-room/explain/settings {limitMin}`, 1 to
+  1440 minutes, default 120, `CREW_REVIEW_EXPLAIN_LIMIT_MIN`; also shown and editable in the confirmation), the provider
+  fails (not signed in, out of quota), or two rounds in a row call no tool and change no file (stalled: never an endless
+  paid loop). A round's own time is 25 minutes (`CREW_REVIEW_EXPLAIN_ROUND_MS`) and 400 tool calls
+  (`CREW_REVIEW_EXPLAIN_ROUND_TOOLS`); running out of either only starts the next round.
+- **Materials, read once, read-only**, into the run's workspace (`materials/`): the pull request's title and description,
+  the diff base..head (3 MB at most), the diffstat, the commits with their messages, the head of every changed text file
+  (300 KB each, 3 MB in all), reviews and comments, check runs and commit statuses at the head and the issues the
+  description links (GitHub GET only, when the room's repository is a connected project; the adapter's new `issue` read is
+  one issue by number). A README lists them and says which text is untrusted; untrusted text is fenced. The skill reads them
+  with `mat_list/mat_read/mat_search`, its own supporting files with `skill_*` (a copy), and writes only `out/` (`out_*`,
+  `out_write_base64` for a picture or a video, 60 MB in all). No shell, no network, no web tools, no board tools; a skill's
+  scripts never run here.
+- **Live progress**: the stage shows the skill's own `explain_progress` lines, the round, the time so far, the cost and the
+  safety limit, and its live log (the round's tool calls and what it said); it runs in the background, the captain may
+  leave. The explainer's live event is its own (`review-explain`): a progress line redraws the explainer's parts, never the
+  whole room.
+- **Versions.** Every generation, and every follow-up that changed the output, is a new version (`v1`, `v2`, …: the output's
+  files, its working notes and dotfiles left out, never changed once written), listed in the left rail with its summary and
+  where it came from; an older one is shown again with a click. A follow-up that changed nothing makes no version.
+- **Rendering.** HTML (and Markdown, rendered by Studio) is shown in an iframe with `sandbox="allow-scripts"` only (never
+  `allow-same-origin`: an opaque origin), loaded from `/rrx/<capability>/<room>/<v>/<file>`: a 30-minute capability signed
+  with a key the explainer holds in memory (the frame sends no cookie). Every file there is served with `OUTPUT_CSP`:
+  `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:;
+  media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; …; frame-ancestors 'self'`, so it cannot read
+  Studio, fetch anything (Studio's own address included) or reach a token. Studio puts two scripts first in every page: a
+  storage shim (an opaque origin throws `SecurityError` on `localStorage`; the shim keeps an in-memory one so a page that
+  stores its language still renders) and the selection helper. A picture or a video is shown by Studio's own `<img>` /
+  `<video>` from `GET …/explain/media/<v>/<file>` (session, ranges, the same CSP). The frame sits in a layer of its own over
+  the stage, so a redraw of the room never reloads it. The tutor's own rule (model text only in text nodes) is unchanged.
+- **Follow-ups** (the chat on the right): each question is a run with the selected skill, given the current version (its
+  files in `out/`, with whatever context the output embeds), the question and, optionally, a selection; it answers with
+  `explain_answer {answer, cites, updated, summary}`. The answer shows as text with its citations as chips; when the skill
+  changed the output the chat says "The output is now vN". The first follow-up asks for its confirmation in the chat, with
+  "ask the next ones on this plan without confirming each" (kept per room, bound to the offer's hash; a new model, skill
+  version or limit asks again).
+- **Box a region to ask.** The frame is cross-origin, so Studio cannot screenshot it: "Box a region to ask" lays a drawing
+  overlay over the output; the rectangle goes to the frame's helper by `postMessage`, which answers with what lies there,
+  text only: the visible text, the nearest headings, the ids of figure elements (`data-node`, `data-node-id`, `data-id`,
+  an SVG element's id). Studio listens only to the frame it made and only for that request; the reply is clipped and sent
+  to the skill as untrusted page text. A video: "Pause here and ask" sends the paused time.
+- **Recorded** like other paid rounds: each round's record under the host's review node (`room-<room>-x<n>/`, attempt k for
+  round k), and one `review-room-explain` ledger entry per run: subject, skill pin (id, version, sha256, files hash, body and
+  frame hashes), provider, model, effort, confirmation (or consent), rounds with their jobs and costs, status, why it
+  stopped, cost, time, the limit, the version it read and the one it made.
+
+  data/…/<room>-explain/state.json      the selected skill, runs (rounds, cost, progress, answers), versions, consent
+  data/…/<room>-explain/v<n>/            a version's files
+  data/…/<room>-explain/work/run-<n>/    a run's workspace (materials/, skill/, out/), removed when the run ends
+  data/review-room-explain.json         the safety limit
+
+Proved by `tests/review-room-explain.ts` (the runner on a real merge card with a scripted provider: picker, confirmation,
+two rounds to a version, materials and their read-only tools, the ledger, the served page's CSP and scripts and its
+capability, a follow-up with a selection making v2, consent, Stop, the stall guard, the safety limit, busy rooms) and
+`tests/review-room-explain-ui.mjs` (a real isolated Studio and Chromium: the picker and confirmation, progress and Stop,
+the frame's sandbox and CSP — the page in it cannot fetch, cannot read Studio's page or cookies, has working storage —
+boxing a region and the follow-up that carries it, the answer and v2 in the rail, an older version, a paused video).
+
+Not yet: a skill's scripts (a package's `skill_run`) and its own web access are not offered to an explainer run; a
+generation stopped half-way keeps nothing; a Library snapshot of a room does not include the skill's versions.
 
 ## The per pull request record
 
