@@ -220,7 +220,7 @@ try {
     ok(rl.status === 400 && /rate limit/i.test(rl.body.error), "a rate limit fails the search with a message", J(rl.body));
     W2.stop(); }
   // a config repository too large to list at once: walked folder by folder within the budget
-  { const d5 = mkdtempSync(join(tmpdir(), "pr-watch-envs-big-")), W5 = make(d5); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/checkout-api" }); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/web-app" });
+  { const d5 = mkdtempSync(join(tmpdir(), "pr-watch-envs-big-")), W5 = createPrWatch({ dataDir: d5, poller: new GitHubPoller() }); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/checkout-api" }); await callOn(W5)("/api/prs/watch", { url: "https://github.com/northwind/web-app" });
     await until(() => !!W5.snapshot.at && !W5.view().refreshing, 15000);
     gh.knobs.treeTooBig = true; const n0 = gh.calls.length, b5 = (await callOn(W5)("/api/prs/envs/discover", { config: cfg })).body;
     const walks = gh.calls.slice(n0).filter((c) => c.path.includes("/git/trees/") && !c.path.includes("recursive"));
@@ -232,6 +232,27 @@ try {
     const n1 = gh.calls.length; await callOn(W5)("/api/prs/envs/discover", { config: cfg, ref: "release/v1" });
     const after = gh.calls.slice(n1).map((c) => c.path);
     ok(after.some((x) => x === `/repos/${cfg}/commits?sha=release%2Fv1&per_page=1`) && after.some((x) => new RegExp(`^/repos/${cfg}/git/trees/[0-9a-f]{40}\\?recursive=1$`).test(x)) && !after.some((x) => x.includes("%2F") && x.includes("/git/trees/")), "a branch named release/v1 is resolved to its commit first", J(after.filter((x) => x.includes(cfg))));
+    // a folder layer that names neither a repository nor an environment (a region, a cluster) is still walked
+    gh.knobs.treeTooBig = true; D.files["northwind/cluster-config/clusters/us-east-1/checkout-api/prod.yaml"] = `image: registry.example/checkout-api:${sha("cl").slice(0, 12)}\n`;
+    const b7 = (await callOn(W5)("/api/prs/envs/discover", { config: "northwind/cluster-config", deployments: false })).body; gh.knobs.treeTooBig = false;
+    ok(b7.groups?.find((g: any) => g.repo === ca && g.env === "production")?.candidates[0]?.evidence.path === "clusters/us-east-1/checkout-api/prod.yaml", "a region folder between clusters/ and the service is walked too", J(b7.groups ?? b7));
+    // a config repository that cannot be read at all fails the search, as a rate limit does
+    const bad = await callOn(W5)("/api/prs/envs/discover", { config: "northwind/no-such-config" });
+    ok(bad.status === 400 && /northwind\/no-such-config/.test(bad.body.error), "a config repository that cannot be read fails the search with why", J(bad.body));
+    // closing the dialog mid-scan cancels the search: the next one starts at once
+    const first = callOn(W5)("/api/prs/envs/discover", { config: cfg }), cancel = await callOn(W5)("/api/prs/envs/cancel", {}), r1 = await first;
+    const r2 = await callOn(W5)("/api/prs/envs/discover", { config: cfg });
+    ok(cancel.body.running === true && r1.body.cancelled === true && r2.status === 200 && Array.isArray(r2.body.groups), "a cancelled search ends; the next one runs", J([cancel.body, r1.body.cancelled, r2.status]));
+    // a branch the captain named is kept in the detect: Accept saves it, and a refresh reads that branch
+    const rb = (await callOn(W5)("/api/prs/envs/discover", { config: cfg, ref: "release/v1" })).body, gp = rb.groups.find((g: any) => g.repo === ca && g.env === "production");
+    ok(gp?.candidates[0]?.detect.ref === "release/v1" && rb.groups.find((g: any) => g.repo === ca && g.env === "dev")?.candidates[0]?.detect.ref === undefined, "a manifest found on a named branch keeps it in its detect", J(gp));
+    const n5 = gh.calls.length; // Accept starts a refresh itself
+    const acc5 = await callOn(W5)("/api/prs/envs/accept", { picks: [{ repo: ca, env: gp.env, detect: gp.candidates[0].detect }], base: W5.view().settings });
+    ok(acc5.status === 200 && R.envsFor(W5.state.settings.environments, ca).find((e) => e.name === "production")?.detect.ref === "release/v1", "Accept saves the branch", J(acc5.body).slice(0, 200));
+    await until(() => gh.calls.slice(n5).some((c) => c.path.includes("/contents/apps/checkout-api/overlays/prod/deployment.yaml?ref=")), 15000);
+    ok(gh.calls.slice(n5).some((c) => c.path === `/repos/${cfg}/contents/apps/checkout-api/overlays/prod/deployment.yaml?ref=release%2Fv1`), "the next refresh reads the manifest on that branch");
+    const again5 = (await callOn(W5)("/api/prs/envs/discover", { config: cfg, ref: "release/v1" })).body;
+    ok(again5.groups.find((g: any) => g.repo === ca && g.env === "production")?.state === "set", "searching that branch again: already set");
     W5.stop(); W6.stop(); }
 
   // an old state.json (one environment per repository) loads folded, every repository seeing what it saw

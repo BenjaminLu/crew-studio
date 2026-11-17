@@ -1292,6 +1292,7 @@ export function createPrWatch(d: PrWatchDeps) {
   const noToken = () => Object.assign(new Error("GitHub is not connected: Studio has no token"), { tw: "GitHub 尚未連線：Studio 沒有權杖" });
   const rateLimited = () => Object.assign(new Error("GitHub rate limit: wait a little and search again"), { tw: "GitHub 限流：請稍等再搜尋一次" });
   /** where a search runs now, for the dialog's progress line (GET /api/prs/envs/progress) */
+  let discoverStop: AbortController | null = null; // envs/cancel: the dialog closed while its search ran
   let discovering: { phase: "config" | "files" | "deployments"; what: string; reads: () => number; budget: number } | null = null;
   /** The sources step: the watched repositories, the config repository used last, and repositories that look like one (one read). */
   async function envSources() {
@@ -1304,19 +1305,20 @@ export function createPrWatch(d: PrWatchDeps) {
     return { repos, envConfig: state.envConfig ?? null, configSuggestions: [...new Map([...saved, ...suggestions].map((r) => [r.toLowerCase(), r] as const)).values()] };
   }
   async function discoverEnvs(b: any) {
-    if (discovering) throw Object.assign(new Error("A search is already running"), { tw: "已經在搜尋了" });
+    if (discovering) throw Object.assign(new Error("Another search is still running (another window?): it ends within 2 minutes; search again then"), { tw: "另一個搜尋還在跑（別的視窗？）：最多 2 分鐘內結束，之後再搜尋一次" });
     const token = tokenNow(); if (!token) throw noToken();
     const repos = watchedRepos();
     if (!repos.length) throw Object.assign(new Error("Watch a repository first"), { tw: "請先追蹤 repo" });
-    try { return await discoverRun(b, token, repos); } finally { discovering = null; }
+    discoverStop = new AbortController();
+    try { return await discoverRun(b, token, repos, discoverStop.signal); } finally { discovering = null; discoverStop = null; }
   }
-  async function discoverRun(b: any, token: string, repos: string[]) {
+  async function discoverRun(b: any, token: string, repos: string[], stop: AbortSignal) {
     const cfg = String(b?.config ?? "").trim(), refIn = String(b?.ref ?? "").trim();
     if (cfg && !R.repoOk(cfg)) throw Object.assign(new Error("The config repository is owner/repo"), { tw: "設定 repo 要寫成 owner/repo" });
     if (refIn && (refIn.length > 200 || /[\u0000- ~^:?*\\[]|\.\./.test(refIn))) throw Object.assign(new Error("The ref is a branch, tag or commit"), { tw: "ref 要是 branch、tag 或 commit" });
     const total = d.limits?.discoverReads ?? DISCOVER_BUDGET, budget = { left: total };
     // the whole search ends within DISCOVER_MS: past it nothing more is read, what was read is proposed
-    const g = reader(apiBase(), token, AbortSignal.timeout(DISCOVER_MS), null, null, { budget });
+    const g = reader(apiBase(), token, AbortSignal.any([AbortSignal.timeout(DISCOVER_MS), stop]), null, null, { budget });
     const at = (phase: "config" | "files" | "deployments", what: string) => { discovering = { phase, what, reads: () => total - Math.max(0, budget.left), budget: total }; };
     at("config", cfg);
     const notes: { en: string; tw: string }[] = []; let over = false, late = false;
@@ -1350,7 +1352,7 @@ export function createPrWatch(d: PrWatchDeps) {
           for (const t of Array.isArray(j?.tree) ? j.tree.slice(0, 5000) : []) {
             const name = String(t?.path ?? ""); if (!name || name.includes("/")) continue; const path = dir.path ? `${dir.path}/${name}` : name;
             if (t.type === "blob" && okBlob(path, t.size)) blobs.push(path);
-            else if (t.type === "tree" && /^[0-9a-f]{40}$/i.test(String(t.sha ?? "")) && dir.depth < 8) { const s = score(name); if (s > 0 || dir.depth === 0) queue.push({ path, sha: String(t.sha), depth: dir.depth + 1, score: s + (dir.score === 99 ? 0 : dir.score) }); } } }
+            else if (t.type === "tree" && /^[0-9a-f]{40}$/i.test(String(t.sha ?? "")) && dir.depth < 8) { const s = score(name); queue.push({ path, sha: String(t.sha), depth: dir.depth + 1, score: s + (dir.score === 99 ? 0 : dir.score) }); } } }
         notes.push({ en: `${cfg}: its file tree is too large for GitHub to list at once, so Studio walked it folder by folder (${walked} folder${walked === 1 ? "" : "s"}, those naming a watched repository or an environment first)${queue.length ? `; ${queue.length} more were not looked at` : ""}`,
           tw: `${cfg}：檔案樹太大，GitHub 無法一次列出，Studio 改成一層一層看（看了 ${walked} 個資料夾，有 repo 名或環境名的優先）${queue.length ? `；還有 ${queue.length} 個沒看` : ""}` }); }
       if (commit && (tree || big)) { config = { repository: cfg, ref };
@@ -1361,10 +1363,13 @@ export function createPrWatch(d: PrWatchDeps) {
         let unread = 0; at("files", cfg);
         await pool(ranked.slice(0, cap), 4, async ({ p }) => {
           const j = await step(() => g.get(`${repoPath(cfg)}/contents/${p.split("/").map(enc).join("/")}?ref=${commit}`), null, () => { unread++; });
-          if (j?.type === "file" && j.encoding === "base64" && typeof j.content === "string" && Number(j.size) <= 200_000) files.push({ repository: cfg, ref, path: p, text: Buffer.from(j.content, "base64").toString("utf8") }); });
+          if (j?.type === "file" && j.encoding === "base64" && typeof j.content === "string" && Number(j.size) <= 200_000) files.push({ repository: cfg, ref, path: p, text: Buffer.from(j.content, "base64").toString("utf8"), pinned: !!refIn }); });
         if (unread) notes.push({ en: `${cfg}: ${unread} file${unread === 1 ? "" : "s"} could not be read`, tw: `${cfg}：有 ${unread} 個檔案讀不到` });
         files.sort((a, z) => a.path.localeCompare(z.path)); }
     }
+    // the config repository named could not be read at all: the search fails with why, as a rate limit does
+    if (stop.aborted) return { cancelled: true };
+    if (cfg && !config && !over && !late) { const n = notes.find((x) => x.en.startsWith(`${cfg}:`)); throw Object.assign(new Error(n?.en ?? `${cfg} could not be read`), { tw: n?.tw ?? `讀不到 ${cfg}` }); }
     // each repository's GitHub environments that have a deployment (at most 8 a repository)
     const deployments: Env.DeploymentSeen[] = [];
     if (b?.deployments !== false) await pool(repos, 4, async (repo) => { at("deployments", repo);
@@ -1379,6 +1384,7 @@ export function createPrWatch(d: PrWatchDeps) {
       return (Array.isArray(l) ? l : []).map((r: any) => String(r?.full_name ?? "")).filter((n: string) => R.repoOk(n) && Env.CONFIG_NAME.test(n.split("/")[1]) && !repos.some((x) => eq(x, n))).slice(0, 8); }, [] as string[]);
     if (late) notes.push({ en: `Studio stopped reading after ${DISCOVER_MS / 1000} s: the table holds what it read.`, tw: `Studio 讀了 ${DISCOVER_MS / 1000} 秒就停了：表格只有已讀到的部分。` });
     if (over) notes.push({ en: `Studio stopped after ${total} reads, the most one search makes: the table holds what it read. Name the config repository's branch, or watch fewer repositories, and search again.`, tw: `Studio 讀了 ${total} 次（一次搜尋的上限）就停了：表格只有已讀到的部分。可以指定設定 repo 的 branch，或少追蹤一些 repo，再搜尋一次。` });
+    if (stop.aborted) return { cancelled: true };
     const p = Env.propose(repos, state.settings.environments, deployments, files);
     const saved = state.envConfig?.repository && !cfg ? [state.envConfig.repository] : [];
     return { repos, config, configSuggestions: [...new Set([...saved, ...suggestions])], ...p, notes, reads: total - Math.max(0, budget.left), budget: total, over };
@@ -1480,6 +1486,7 @@ export function createPrWatch(d: PrWatchDeps) {
       case "sending/test-dm": if (actor) throw new Error("Only the captain sends a test DM"); return await sendTestDm(b);
       case "push-check": return await pushCheck(b);
       case "envs/sources": if (actor) throw new Error("Only the captain looks for environments"); return await envSources();
+      case "envs/cancel": discoverStop?.abort(); return { ok: true, running: !!discovering };
       case "envs/discover": if (actor) throw new Error("Only the captain looks for environments"); return await discoverEnvs(b);
       case "envs/accept": if (actor) throw new Error("Only the captain accepts environments"); return await acceptEnvs(b, actor);
       case "refresh": { const { token } = ensure(); if (!state.watch.repos.length && !state.watch.prs.length) return view(); if (!token) return { ...view(), error: disabled() ? { en: "The pull request list is off (CREW_PR_WATCH=0)", tw: "PR 列表已關閉（CREW_PR_WATCH=0）" } : { en: "GitHub is not connected: Studio has no token", tw: "GitHub 尚未連線：Studio 沒有權杖" } };

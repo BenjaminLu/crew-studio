@@ -113,7 +113,9 @@ export type Group = { id: string; repo: string; env: string; candidates: Candida
   /** ok: one strong usable candidate and nothing set yet (ticked); pick: the captain chooses; set: the settings already detect it this way */
   state: "ok" | "pick" | "set"; current: R.EnvDetect | null };
 export type DeploymentSeen = { repo: string; environment: string; sha: string | null; ref: string | null };
-export type FileSeen = { repository: string; ref: string; path: string; text: string };
+/** A manifest read from the config repository at `ref`; `pinned` when the captain named that branch (the detect then
+ *  keeps it, so a refresh reads the same branch), otherwise the default branch (the detect follows it). */
+export type FileSeen = { repository: string; ref: string; path: string; text: string; pinned?: boolean };
 export type Proposal = { groups: Group[]; envs: { name: string; production: boolean; rank: number; existing: boolean }[]; skipped: { path: string; why: "no-environment" }[] };
 
 const same = (a: R.EnvDetect | null, b: R.EnvDetect | null) => JSON.stringify(a) === JSON.stringify(b);
@@ -136,7 +138,7 @@ export function propose(repos: string[], existing: R.EnvSetting[], deployments: 
     let any = false; const k = envOfPath(f.path, repos);
     for (const repo of repos) for (const x of scanManifest(f.text, repo)) {
       if (!k) { any = true; continue; }
-      const g = groupOf(repo, k), detect: R.EnvDetect = { kind: "file", repository: f.repository, path: f.path, template: x.template };
+      const g = groupOf(repo, k), detect: R.EnvDetect = { kind: "file", repository: f.repository, path: f.path, template: x.template, ...(f.pinned ? { ref: f.ref } : {}) };
       if (g.candidates.some((c) => same(c.detect, detect))) continue;
       g.candidates.push({ id: `${g.id}c${g.candidates.length + 1}`, source: "file", detect, strength: x.strength, problem: x.problem, evidence: { path: f.path, line: x.line, text: x.text, url: blobUrl(f.repository, f.ref, f.path, x.line) } }); }
     if (any) skipped.push({ path: f.path, why: "no-environment" });

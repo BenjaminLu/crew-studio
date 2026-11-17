@@ -75,7 +75,7 @@ try {
   ok(await C('northwind/web-app|staging').getAttribute('data-state') === 'pick' && await C('northwind/web-app|staging').locator('[data-prs-discover-pick]').count() === 2 && /2 possible, pick one/.test(await C('northwind/web-app|staging').innerText()), 'web-app staging: an amber "2 possible, pick one" with both manifests');
   const ledger = C('northwind/ledger|production');
   ok(await ledger.locator('[data-prs-discover-pick]:disabled').count() === 1 && /does not end in a commit/.test(await ledger.innerText()) && /only resembles/.test(await ledger.innerText()), 'ledger: the tag with no commit cannot be picked; the look-alike is marked weak');
-  ok(/^Found 3 repositories' 7 environments · 3 need a pick · 1 not found/.test(await p.locator('[data-prs-discover-summary]').innerText()), 'the summary counts what was found, what needs a pick and what was not found', await p.locator('[data-prs-discover-summary]').innerText());
+  ok(/^Found 7 environments in 3 repositories · 3 need a pick · 1 not found/.test(await p.locator('[data-prs-discover-summary]').innerText()), 'the summary counts what was found, what needs a pick and what was not found', await p.locator('[data-prs-discover-summary]').innerText());
   ok(await p.locator('.pw-legend .pw-chip').count() === 3, 'a legend for green, amber and grey');
   ok(await p.locator('[data-prs-discover-accept]').isDisabled() && (await p.locator('[data-prs-discover-accept]').innerText()) === 'Accept' && /^3 need a pick$/.test(await p.locator('[data-prs-discover-left]').innerText()), 'Accept waits, with no number, while 3 need a pick', await p.locator('[data-prs-discover-left]').innerText());
   await p.click('[data-prs-discover-left]');
@@ -102,6 +102,8 @@ try {
   const prow = p.locator('[data-prs-env-name="production"]');
   ok(await prow.locator('[data-prs-env-each="northwind/web-app"] [data-prs-each-field="template"]').inputValue() === 'newTag: "{tag}"', 'Advanced: each repository\'s own row, editable by hand');
   ok(await p.evaluate(() => { const r = document.querySelector('[data-prs-env-name="production"] input.pw-envname').getBoundingClientRect(), c = document.querySelector('[data-prs-env-name="production"] select').getBoundingClientRect(); return Math.abs(r.top - c.top) < 4; }), 'an Advanced row lays its fields side by side (the grid template is valid)');
+  ok(await p.evaluate(() => { const row = document.querySelector('[data-prs-env-each="northwind/web-app"]'), x = row.querySelector(':scope > .pw-x').getBoundingClientRect(), b = row.getBoundingClientRect(), t = row.querySelector('[data-prs-each-field="template"]').getBoundingClientRect(), rp = row.querySelector('[data-prs-each-repo]').getBoundingClientRect();
+    return x.top - b.top < 20 && b.right - x.right < 16 && t.width >= 280 && rp.width >= 200; }), 'Advanced: the repository and template fields are wide, × at the top right');
   await p.screenshot({ path: join(shots, 'envs-settings-after-1440-light.png'), fullPage: true });
   await prow.locator('[data-prs-env-each="northwind/web-app"] .pw-x').click();
   ok(!(await p.locator('[data-prs-envsum="production"]').innerText()).includes('northwind/web-app'), 'the cards follow a hand edit at once');
@@ -115,10 +117,16 @@ try {
     await o.p.click('[data-prs-settings]'); await o.p.waitForSelector('[data-prs-envs-find]'); await o.p.click('[data-prs-envs-find]');
     await o.p.waitForFunction((c) => document.querySelector('[data-prs-discover-config]')?.value === c, cfg);
     if (w === 390) await o.p.screenshot({ path: join(shots, `envs-sources-${w}-${theme}-${lang}.png`), fullPage: true });
+    if (w === 390 && theme === 'light') { // closed mid-scan: the search is cancelled and the next one starts at once
+      await o.p.click('[data-prs-discover-run]'); await o.p.click('[data-prs-discover-cancel]'); await o.p.waitForSelector('[data-prs-dialog="settings"]');
+      await o.p.click('[data-prs-envs-find]'); await o.p.waitForFunction((c) => document.querySelector('[data-prs-discover-config]')?.value === c, cfg); }
     await o.p.click('[data-prs-discover-run]'); await o.p.waitForSelector('[data-prs-discover-table]');
     ok(await o.p.locator('[data-prs-discover-repo="northwind/checkout-api"]').count() === 0 && await o.p.locator('[data-prs-discover-repo="northwind/web-app"]').count() === 1 && await o.p.locator('[data-prs-discover-showset]').count() === 1, `${w} ${theme} ${lang}: searching again folds checkout-api (all set); web-app, edited by hand, is proposed again`);
     await o.p.click('[data-prs-discover-showset]'); await o.p.waitForSelector('[data-prs-discover-repo="northwind/checkout-api"]');
     ok(await o.p.locator('[data-prs-discover-group="northwind/checkout-api|production"]').getAttribute('data-state') === 'set', `${w} ${theme} ${lang}: shown on demand, as already set`);
+    ok(await o.p.locator('[data-prs-discover-error]').count() === 0, `${w} ${theme} ${lang}: no "already running" error after a cancelled search`);
+    ok(await o.p.evaluate(() => [...document.querySelectorAll('.pw-disc-ev a.pw-path')].every((a) => a.querySelectorAll('wbr').length >= 1)), `${w} ${theme} ${lang}: paths break only after a slash`);
+    if (w === 390) ok(await o.p.locator('[data-prs-discover-footnote]').isHidden(), '390: the footer note gives the buttons the room');
     const fits = await o.p.evaluate(() => document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll('.pw-disc-ev a')].every((a) => { const r = a.getBoundingClientRect(), m = a.closest('.modal').getBoundingClientRect(); return r.right <= m.right + 1; }));
     ok(fits, `${w} ${theme} ${lang}: no sideways scroll, no evidence cut off`);
     if (lang === 'zh-TW') ok(/GitHub 環境 dev：最近一次部署/.test(await o.p.locator('[data-prs-discover-group="northwind/checkout-api|dev"]').innerText()), `${w} ${theme}: the evidence reads in Traditional Chinese`);

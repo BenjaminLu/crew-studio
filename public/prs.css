@@ -144,8 +144,15 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-envcard-l{margin:6px 0 0;padding-left:18px;display:grid;gap:3px;font-size:12.5px}.pw-envcard-l li{overflow-wrap:anywhere}
 .pw-adv>summary{cursor:pointer;font-size:13px;font-weight:600;margin:2px 0 8px}
 .pw-eachrow{border-style:dashed}
-/* a settings row: as many fields per line as fit (the old template mixed auto-fit with flexible tracks, which is invalid) */
-.pw-envrow{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}.pw-envrow>.pw-x{justify-self:end}
+/* a settings row: its fields wrap as they fit, the long ones (repository, path, template) wider, × at the top right
+   (the old grid template mixed auto-fit with flexible tracks, which is invalid) */
+.pw-envrow:not(.pw-sendrow):not(.pw-contactrow){display:flex;flex-wrap:wrap;position:relative;padding-right:36px}
+.pw-envrow:not(.pw-sendrow):not(.pw-contactrow)>*{flex:1 1 180px;min-width:0}
+.pw-envrow>.pw-envname{flex:0 1 160px}.pw-envrow>.pw-check{flex:0 0 auto}.pw-envrow>select{flex:1 1 240px}
+.pw-envrow>[data-prs-env-field="repository"],.pw-envrow>[data-prs-each-field="repository"],.pw-envrow>[data-prs-each-repo]{flex:1 1 220px}
+.pw-envrow>[data-prs-env-field="path"],.pw-envrow>[data-prs-each-field="path"],.pw-envrow>[data-prs-env-field="template"],.pw-envrow>[data-prs-each-field="template"]{flex:2 1 300px}
+.pw-envrow:not(.pw-sendrow):not(.pw-contactrow)>.pw-x{position:absolute;top:10px;right:6px;flex:none}
+.pw-envrow:not(.pw-sendrow):not(.pw-contactrow)>.pw-envhint{flex-basis:100%}
 .pw-warn{color:var(--warn)}
 .pw-linkbtn{font:inherit;background:none;border:0;padding:0;color:var(--accent-text);cursor:pointer;text-decoration:underline}.pw-linkbtn.pw-warn{color:var(--warn)}
 .pw-src{display:grid;gap:8px}
@@ -167,8 +174,8 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-disc-envlbl{display:none;font-size:12px;color:var(--text-3)}
 .pw-disc-pick{display:grid;gap:6px;min-width:0}
 .pw-disc-cand{display:flex;gap:6px;align-items:flex-start;min-width:0}.pw-disc-cand>input{margin-top:3px}
-.pw-disc-cand>*,.pw-disc-ev>*{min-width:0;overflow-wrap:anywhere}
-.pw-disc-ev{display:flex;gap:4px 6px;align-items:baseline;flex-wrap:wrap;min-width:0}.pw-disc-ev a{overflow-wrap:anywhere;word-break:break-word}
+.pw-disc-cand>*,.pw-disc-ev>:not(.pw-path){min-width:0;overflow-wrap:anywhere}
+.pw-disc-ev{display:flex;gap:4px 6px;align-items:baseline;flex-wrap:wrap;min-width:0}.pw-disc-ev a{overflow-wrap:anywhere}.pw-disc-ev a.pw-path{overflow-wrap:break-word}
 .pw-disc-line{font:11.5px var(--f-mono);background:var(--surface-2);border-radius:4px;padding:1px 5px;overflow-wrap:anywhere;max-width:100%}
 .pw-chip{display:inline-flex;align-items:center;font:500 11px var(--f-mono);border-radius:5px;padding:1px 6px;background:var(--ok-soft);color:var(--ok);width:max-content;max-width:100%}
 .pw-chip.amb{background:color-mix(in srgb,var(--warn) 16%,var(--surface));color:var(--warn)}
@@ -181,4 +188,5 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
   .pw-mx{overflow-x:visible}
   .pw-mx-row{grid-template-columns:minmax(0,1fr)!important}.pw-mx-head{display:none}
   .pw-disc-envlbl{display:block}
+  [data-prs-discover-footnote]{display:none}
 }

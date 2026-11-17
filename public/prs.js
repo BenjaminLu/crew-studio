@@ -735,6 +735,7 @@ function discoverModal(o = {}) {
   const left = h("button", { class: "pw-linkbtn pw-warn pw-small", "data-prs-discover-left": "", onclick: () => box.querySelector('[data-prs-discover-group][data-need] input[type="radio"]')?.focus() });
   const note = h("span", { class: "faint pw-small x-grow", "data-prs-discover-footnote": "" });
   const cancelBtn = h("button", { class: "btn", "data-prs-discover-cancel": "", onclick: () => close() }, T("Cancel", "取消"));
+  let closed = false;
   const foot_ = () => {
     const review = phase === "review" && !!res, n = new Set(picks().map((p) => p.repo)).size, need = review ? open().length : 0;
     acceptBtn.hidden = !review; runBtn.hidden = review || phase === "scan";
@@ -748,7 +749,7 @@ function discoverModal(o = {}) {
   async function run() {
     if (phase === "scan") return; error = null; asked = ref.trim(); go("scan");
     const poll = setInterval(async () => { try { progress = await getJ("/api/prs/envs/progress"); if (phase === "scan") draw(); } catch {} }, 400);
-    try { res = await postJ("/api/prs/envs/discover", { config: cfgOn ? cfg.trim() : "", ref: cfgOn ? asked : "", deployments: depOn });
+    try { const got = await postJ("/api/prs/envs/discover", { config: cfgOn ? cfg.trim() : "", ref: cfgOn ? asked : "", deployments: depOn }); if (closed || got.cancelled) return; res = got;
       choice.clear(); rowOn.clear(); showSet = false;
       for (const g of res.groups) choice.set(g.id, g.state === "ok" ? g.candidates[0].id : g.state === "set" || !g.candidates.some(usable) ? "skip" : null);
       for (const e of res.envs) prod[e.name] = prod0[e.name] = e.production;
@@ -757,7 +758,7 @@ function discoverModal(o = {}) {
     finally { clearInterval(poll); progress = null; }
   }
   const evidence = (c) => h("div", { class: "pw-disc-ev" },
-    c.evidence.path ? extLink(c.evidence.url, `${c.evidence.path}:${c.evidence.line}`, { class: "mono pw-small" }) : extLink(c.evidence.url, T(c.evidence.text, c.evidence.tw || c.evidence.text), { class: "pw-small" }),
+    c.evidence.path ? h("a", { href: c.evidence.url, target: "_blank", rel: "noopener noreferrer", class: "mono pw-small pw-path" }, ...`${c.evidence.path}:${c.evidence.line}`.split("/").flatMap((x, i, a) => i < a.length - 1 ? [`${x}/`, h("wbr", {})] : [x])) : extLink(c.evidence.url, T(c.evidence.text, c.evidence.tw || c.evidence.text), { class: "pw-small" }),
     c.evidence.path ? h("code", { class: "pw-disc-line" }, c.evidence.text) : null,
     c.strength === "weak" ? h("span", { class: "pw-small pw-warn" }, T("the image's name only resembles the repository's", "image 名稱只是和 repo 名相近")) : null,
     c.problem ? h("span", { class: "pw-small pw-warn" }, PROBLEM[c.problem]()) : null);
@@ -811,7 +812,7 @@ function discoverModal(o = {}) {
         ...envs.map((env) => cell(repo, env)));
       kids.push(
         h("div", { class: "pw-disc-sum" },
-          h("p", { class: "pw-small", style: "margin:0", tabindex: "-1", "data-prs-discover-summary": "" }, T(`Found ${reposWord(found.length)}' ${m} environment${m === 1 ? "" : "s"} · ${k} need${k === 1 ? "s" : ""} a pick · ${none.length} not found`, `找到 ${found.length} 個 repo 的 ${m} 個環境 · ${k} 個要你挑 · ${none.length} 個 repo 沒找到`),
+          h("p", { class: "pw-small", style: "margin:0", tabindex: "-1", "data-prs-discover-summary": "" }, T(`Found ${m} environment${m === 1 ? "" : "s"} in ${reposWord(found.length)} · ${k} need${k === 1 ? "s" : ""} a pick · ${none.length} not found`, `找到 ${found.length} 個 repo 的 ${m} 個環境 · ${k} 個要你挑 · ${none.length} 個 repo 沒找到`),
             res.config ? h("span", { class: "faint" }, ` · ${res.config.repository} @ ${res.config.ref}`) : null, h("span", { class: "faint" }, T(` · ${res.reads} of ${res.budget} reads`, ` · 讀了 ${res.reads}／${res.budget} 次`)), " ",
             h("button", { class: "pw-linkbtn pw-small", "data-prs-discover-sources": "", onclick: () => go("sources") }, T("Change sources", "改來源"))),
           ...(res.notes || []).map((n) => h("p", { class: "pw-small pw-warn pw-disc-note", "data-prs-discover-note": "" }, LX(n)))),
@@ -847,7 +848,9 @@ function discoverModal(o = {}) {
     else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); } };
   document.addEventListener("keydown", keys, true);
   const close = pwModal(T("Find environments automatically", "自動找環境"), [box, err, foot(left, note, cancelBtn, runBtn, acceptBtn)],
-    { wide: true, id: "discover", onClose: () => { document.removeEventListener("keydown", keys, true); if (!done) o.onCancel?.(); } });
+    { wide: true, id: "discover", onClose: () => { closed = true; document.removeEventListener("keydown", keys, true);
+      if (phase === "scan") postJ("/api/prs/envs/cancel", {}).catch(() => {}); // closed mid-scan: the search stops, the next one can start
+      if (!done) o.onCancel?.(); } });
   document.querySelector('[data-prs-dialog="discover"] .pw-mf')?.classList.add("pw-sticky");
   draw(); box.querySelector("[data-prs-discover-config]")?.focus();
   // the sources: the config repository used last, else the first that looks like one, already filled in

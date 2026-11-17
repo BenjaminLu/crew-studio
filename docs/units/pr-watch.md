@@ -94,7 +94,10 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
   everything is already set folded behind "Show N already set"; a summary (found N repositories' M environments · K
   need a pick · J not found), the reads used and any note (budget, walk, unreadable) above the table; a legend; a sticky
   footer whose Accept names the repositories it saves, or links "K need a pick" to the first. A failed search returns
-  to the sources with the message and no table. After Accept the dialog closes with a toast.
+  to the sources with the message and no table. Closing it mid-scan cancels the search (`POST /api/prs/envs/cancel`),
+  so the next one starts at once. After Accept the dialog closes with a toast. A manifest found on a branch the captain
+  named keeps that branch as its detect's `ref` (a refresh and the release brief read the same branch); on the default
+  branch the detect has no `ref` and follows it.
   It proposes, for every watched repository at once (the repositories and the single pull requests' repositories):
   - its GitHub environments that have a deployment (`GET …/environments`, then `…/deployments?environment=…&per_page=1`
     for at most 8, `github-pages` left out), as a "GitHub Deployment" detect;
@@ -103,8 +106,9 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     offered, the last one used first): its default branch (or the branch given), resolved to its commit first
     (`commits?sha=<branch>&per_page=1`, so a branch named `release/v1` works), its file tree at that commit
     (`git/trees/<sha>?recursive=1`; when GitHub truncates it or it is over the 1 MB Studio reads, walked one folder per
-    read, at most 80 folders, those naming a watched repository or an environment first, and said so with how many were
-    left), then at most 60 YAML/JSON files of 200 KB or less, those whose path names a watched
+    read, at most 80 folders, those naming a watched repository or an environment first, any other folder after them,
+    and said so with how many were left; a config repository that cannot be read at all fails the search with why),
+    then at most 60 YAML/JSON files of 200 KB or less, those whose path names a watched
     repository and an environment first, then a repository, then an environment, shallow first. In each file, a line
     naming an image built from a repository — `registry/path/name:tag` on one line, or the name on one line and
     `tag:`/`newTag:` on one of the next four (Helm values, kustomize `images`) — where the image's name or a path part is
