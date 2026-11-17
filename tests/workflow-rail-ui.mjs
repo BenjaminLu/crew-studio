@@ -40,6 +40,7 @@ try {
   await p.keyboard.press("Escape"); await p.waitForFunction(() => document.activeElement?.matches(".r-step[data-step='review']"));
   ok(true, "keyboard: Escape closes the drawer and returns focus to the step");
   await p.focus("[data-after='plan']"); await p.keyboard.press("Enter"); await p.waitForFunction(() => document.activeElement?.matches(".wf-menu [data-mi='agent']"));
+  ok(await p.locator('.wf-menu button[class="null"]').count() === 0, "menu items carry no class=null");
   await p.keyboard.press("ArrowDown"); ok(await p.evaluate(() => document.activeElement?.dataset.mi) === "check", "keyboard: + opens the templates with the first focused; arrows move");
   await p.keyboard.press("Escape"); ok(await p.evaluate(() => document.activeElement?.dataset.after) === "plan" && await p.locator(".wf-menu").count() === 0, "keyboard: Escape closes the menu back to +");
   });
@@ -60,8 +61,10 @@ try {
 
   await tryStep("task 2", async () => {
   // 2. change a step's model, agent and skill
-  await p.click(".r-step[data-step='review'] .r-name"); await p.click(".wf-drawer [data-preset='strongest']");
-  ok(await p.getAttribute(".wf-drawer [data-preset='strongest']", "aria-pressed") === "true" && (await p.textContent(".r-step[data-step='review'] .r-who")).includes("strongest model"), "task 2: Strongest is one click and shows on the step");
+  await p.click(".r-step[data-step='review'] .r-name");
+  ok(await p.waitForFunction(() => document.activeElement?.matches(".wf-drawer .wf-dh"), null, { timeout: 3000 }).then(() => true, () => false), "a click opens the drawer without focusing the name field (no phone keyboard)");
+  await p.click(".wf-drawer [data-preset='strongest']");
+  ok(await p.getAttribute(".wf-drawer [data-preset='strongest']", "aria-pressed") === "true" && (await p.textContent(".r-step[data-step='review'] .r-who")).includes("highest effort"), "task 2: Strongest is one click and shows on the step as the highest effort");
   ok(/highest reasoning effort/.test(await p.textContent("[data-rail-preset-note]")), "task 2: the drawer says what Strongest sets");
   await p.selectOption("[data-rail-role]", "builder");
   ok((await p.textContent(".r-step[data-step='review'] .r-who")).includes("Builder"), "task 2: the drawer's Role changes the step's agent");
@@ -150,6 +153,7 @@ try {
   const chipText = (await p.locator(".wf-chip").allTextContents()).join("\n");
   ok(!/If (is |adopt|recapture|escalate|door change|is unavailable)/.test(chipText), "outcome words read as plain language", chipText.match(/If [^\n→↩]*/g)?.slice(0, 6).join(" | "));
   ok(chipText.includes("Rescope ↩") && !chipText.includes("Needs a new scope ↩ back"), "a card's choice without a label reads as its own word");
+  ok((await p.textContent(".r-step[data-step='after-merge'] .r-who")).includes("runs its checks"), "a hook with only checks says it runs them");
   ok(!(await p.locator(".r-who").allTextContents()).some((t) => /\b[a-z]+\.[a-z-]+\b/.test(t)), "automatic steps show plain action names, not ids");
   const gates = await p.$$eval(".r-link .r-gates", (gs) => gs.map((g) => { const rs = [...g.querySelectorAll(".r-gate")].map((x) => x.getBoundingClientRect()), link = g.parentElement.getBoundingClientRect();
     return { n: rs.length, overlap: rs.some((a, i) => rs.some((b, j) => i < j && a.bottom > b.top && b.bottom > a.top)), inside: rs.every((r) => r.right <= link.right - 28 && r.bottom <= link.bottom + 1) }; }));
@@ -230,6 +234,10 @@ try {
   const z = await zctx.newPage(); z.on("pageerror", (e) => errors.push(String(e))); await z.goto(`${base}/#/workflows/ship-feature`); await z.waitForSelector("[data-rail-wrap]");
   ok((await z.textContent("[data-rail-story]")).includes("結束於") && /。/.test(await z.textContent("[data-rail-story]")) && !/\.\s/.test(await z.textContent("[data-rail-story]")), "zh-TW: the sentence is translated, with a full-width period");
   ok(!/closed|result/.test(await z.textContent("[data-rail-ends]")), "zh-TW: ends carry no English result word");
+  await z.goto(`${base}/#/workflows/code-firstmate`); await z.waitForSelector("[data-rail-story]");
+  ok(!/[A-Za-z]。/.test(await z.textContent("[data-rail-story] .wf-2")), "zh-TW: an English description keeps its own period");
+  for (let i = 0; i < 12 && await z.locator(".r-phase.col").count(); i++) await z.locator(".r-phase.col [data-phase]").first().click();
+  ok((await z.locator(".r-loopline").allTextContents()).some((t) => /如果 \S.* 的檢查沒過，就修正再試/.test(t)), "zh-TW: the loop line spaces Latin words and reads naturally");
 
   ok(errors.length === 0, "no page errors", errors.join("\n"));
 } catch (e) { fail++; console.log("  FAIL  " + (e?.stack || e)); console.log(log.slice(-3000)); }

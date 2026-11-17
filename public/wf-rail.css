@@ -359,3 +359,4 @@ button.wf-chip:hover{border-color:var(--border-strong);color:var(--text)}
 .r-dropped{font-size:12px;margin:6px 0 0 88px}
 @media (max-width: 760px){.r-dropped{margin-left:56px}}
 .wf-drawer .wf-seg button{white-space:nowrap;padding:4px 6px}
+.wf-drawer .wf-dh:focus{outline:none}

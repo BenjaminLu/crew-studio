@@ -19,7 +19,11 @@ P.sliders ??= '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" 
 P.book ??= '<path d="M4 4h10a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4z"/><path d="M4 16a4 4 0 0 1 4-4h10"/>';
 
 // kit.js's h, flattening nested child lists (h_ is app.js's alias of it)
-const h = (tag, attrs = {}, ...kids) => h_(tag, attrs, ...kids.flat(Infinity));
+const h = (tag, attrs = {}, ...kids) => h_(tag, Object.fromEntries(Object.entries(attrs || {}).filter(([, v]) => v != null)), ...kids.flat(Infinity));
+// how the last action came: keys, or a pointer (a click or tap must not raise the phone keyboard or leave a focus ring)
+let viaKeys = false; addEventListener("keydown", () => { viaKeys = true; }, true); addEventListener("pointerdown", () => { viaKeys = false; }, true);
+// zh-TW: a space between Chinese and a Latin word or number ("如果 Spec 的檢查")
+const zhSpace = (t) => String(t).replace(/([\u3400-\u9fff])([A-Za-z0-9])/g, "$1 $2").replace(/([A-Za-z0-9])([\u3400-\u9fff])/g, "$1 $2");
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const attr = (v) => String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 // replaceChildren for built lists: nested lists flattened, null / false parts dropped (never rendered as "null")
@@ -315,8 +319,11 @@ function build(ed, X) {
     // the model catalog (as the graph editor's node panel reads it) is fetched the first time a drawer opens
     if (!MODELS.value && !MODELS.pending) MODELS.pending = X.api("/api/models").then((v) => { MODELS.value = v; if (!disposed && R.sel) paint(true); }).catch(() => {});
     R.sel = id; paint(); drawer.classList.add("open"); document.body.classList.add("drawer-open");
-    // the drawer takes the focus on its title (the step name), selected when the step is new
-    setTimeout(() => { const i = drawer.querySelector("[data-rail-name]"); if (i && R.sel === id) { i.focus({ preventScroll: true }); if (focusName) i.select(); } }, 30); };
+    // opened from the keyboard (or a new step) the focus goes to the name, selected when new; opened by a click or tap it goes to
+    // the drawer's header, so no keyboard pops up and Escape still closes it
+    const keys = viaKeys || focusName;
+    setTimeout(() => { if (R.sel !== id) return; const i = drawer.querySelector("[data-rail-name]"), head = drawer.querySelector(".wf-dh");
+      if (keys && i) { i.focus({ preventScroll: true }); if (focusName) i.select(); } else head?.focus({ preventScroll: true }); }, 30); };
   const closeDrawer = () => { const was = R.sel, a = document.activeElement, back = !!was && (drawer.contains(a) || a === document.body || !a);
     R.sel = null; drawer.classList.remove("open"); document.body.classList.remove("drawer-open"); drawer.replaceChildren(); if (disposed) return; paint();
     // and gives it back to the step it was opened from
@@ -341,7 +348,7 @@ function build(ed, X) {
   const drawDrawer = () => {
     const id = R.sel; if (!id) { drawer.replaceChildren(); return; }
     if (M.groups.has(id)) { const g = M.groups.get(id);
-      put(drawer, h("div", { class: "wf-dh" }, h("div", { class: "wf-num" }, String(M.num(id)), h("span", { class: "k k-group" }, icon("fork"))), h("input", { value: kindName("group"), readonly: true, "aria-label": T("Step name", "步驟名稱") }), closeBtn()),
+      put(drawer, h("div", { class: "wf-dh", tabindex: "-1" }, h("div", { class: "wf-num" }, String(M.num(id)), h("span", { class: "k k-group" }, icon("fork"))), h("input", { value: kindName("group"), readonly: true, "aria-label": T("Step name", "步驟名稱") }), closeBtn()),
         h("div", { class: "wf-db" }, section("fork", kindName("group"), null, h("p", {}, T(`${g.members.map((m) => node(m).label).join(" and ")} start at the same time. The next step waits for ${g.members.length > 2 ? "all of them" : "both"}.`, `${g.members.map((m) => node(m).label).join("、")} 同時開始，下一步等它們都完成。`)),
           h("p", { class: "wf-dim" }, T("Parallel steps are read-only here for now. Change them in the graph editor.", "同時進行的步驟目前在這裡唯讀，請到流程圖編輯器修改。")), h("a", { class: "btn", href: `${base()}/advanced`, "data-rail-graph": "" }, icon("workflow"), T("Open the graph editor", "開啟流程圖編輯器")))),
         h("div", { class: "wf-df" }, h("span"), h("button", { type: "button", class: "btn", onclick: closeDrawer }, T("Done", "完成"))));
@@ -383,7 +390,7 @@ function build(ed, X) {
     }
     secs.push(stepAdvanced(n, ro));
     put(drawer, 
-      h("div", { class: "wf-dh" }, h("div", { class: "wf-num" }, String(M.num(n.id)), h("span", { class: `k k-${n.kind}` }, icon(KIC[n.kind] || "agent"))), name, closeBtn()),
+      h("div", { class: "wf-dh", tabindex: "-1" }, h("div", { class: "wf-num" }, String(M.num(n.id)), h("span", { class: `k k-${n.kind}` }, icon(KIC[n.kind] || "agent"))), name, closeBtn()),
       h("div", { class: "wf-db" }, h("div", { class: "wf-dim", style: "font-size:12px;padding-top:10px" }, kindName(n.kind), M.onMain.has(n.id) ? "" : M.isEnd(n.id) ? T(" · an end", " · 結束點") : T(" · only reached by a branch", " · 只有分支會到")),
         ...problemsFor(n.id).map((p) => h("div", { class: "wf-warn" }, icon("alert"), p.text)), ...secs),
       h("div", { class: "wf-df" }, ro ? h("span") : h("button", { type: "button", class: "btn danger", "data-rail-remove": n.id, onclick: () => removeStep(n.id) }, icon("trash"), T("Remove step", "移除步驟")), h("button", { type: "button", class: "btn", "data-act": "close", onclick: closeDrawer }, T("Done", "完成"))));
@@ -501,9 +508,9 @@ function build(ed, X) {
     if (!main && !n.detail) return null;
     return h("div", { class: "r-io" }, gets ? [T(`gets ${fit(gets, 60)}`, `拿到 ${fit(gets, 60)}`), h("span", { class: "r-arrow" }, " · ")] : null, T("hands ", "交出 "), n.detail ? h("b", {}, fit(n.detail, 70)) : T("its result", "它的結果"), to); };
   const whoLine = (n) => { const role = roleOf(n);
-    const pk = presetOf(n).kind, pw = pk === "strongest" ? T("strongest model", "最強模型") : pk === "fast" ? T("fast model", "快速模型") : pk === "custom" ? [n.model, n.effort].filter(Boolean).join(" ") : null;
+    const pk = presetOf(n).kind, pw = pk === "strongest" ? T("highest effort", "最高推理強度") : pk === "fast" ? T("lowest effort", "最低推理強度") : pk === "custom" ? [n.model, n.effort].filter(Boolean).join(" ") : null;
     if (n.kind === "agent") return [T("AI", "AI"), role?.label || n.role, pw, n.skills?.length ? T(`${n.skills.length} skill${n.skills.length > 1 ? "s" : ""}`, `${n.skills.length} 個技能`) : null].filter(Boolean).join(" · ");
-    if (n.kind === "hook") return M.isEnd(n.id) ? T("End", "結束") : `${T("Automatic", "自動")} · ${actionName(n.do)}`;
+    if (n.kind === "hook") return M.isEnd(n.id) ? T("End", "結束") : `${T("Automatic", "自動")} · ${n.do ? actionName(n.do) : n.checks?.length ? T("runs its checks", "執行它的檢查") : actionName(null)}`;
     return ""; };
   const row = (id) => {
     const n = node(id), g = M.groups.get(id), main = M.onMain.has(id), kind = g ? "group" : n.kind, cp = kind === "card" || kind === "check", loop = kind === "loop", num = M.num(id), ro = readOnly();
@@ -512,7 +519,7 @@ function build(ed, X) {
       : h("span", { class: `r-node k-${kind}`, "data-node": id }, String(num));
     let body;
     if (loop) { const p = node(n.args?.producer), giveUp = M.edges.find((e) => e.from === id && /(^|\|)(cap|stalled)(\||$)/.test(e.when || ""));
-      body = [h("div", { class: "r-loopline" }, h("b", {}, n.label), " ", h("span", { class: "wf-2" }, T(`if ${p?.label || "the step"}'s checks fail, refine and try again · max ${n.args?.round_cap ?? 3} rounds`, `如果${p?.label || "那一步"}的檢查沒過，精修再試 · 最多 ${n.args?.round_cap ?? 3} 輪`), giveUp ? T(` · then ${M.isEnd(giveUp.to) ? `ends: ${M.label(giveUp.to)}` : `${M.onMain.has(M.rep(giveUp.to)) ? "step" : "detour:"} ${M.label(giveUp.to)}`}`, ` · 然後到 ${M.label(giveUp.to)}`) : ""))]; }
+      body = [h("div", { class: "r-loopline" }, h("b", {}, n.label), " ", h("span", { class: "wf-2" }, T(`if ${p?.label || "the step"}'s checks fail, refine and try again · max ${n.args?.round_cap ?? 3} rounds`, zhSpace(`如果${p?.label || "那一步"}的檢查沒過，就修正再試`) + ` · 最多 ${n.args?.round_cap ?? 3} 輪`), giveUp ? T(` · then ${M.isEnd(giveUp.to) ? `ends: ${M.label(giveUp.to)}` : `${M.onMain.has(M.rep(giveUp.to)) ? "step" : "detour:"} ${M.label(giveUp.to)}`}`, ` · 然後到 ${M.label(giveUp.to)}`) : ""))]; }
     else if (cp) { const L = main ? M.link(id, M.next(id)) : [];
       const what = kind === "card" ? [h("span", { class: "r-cpk" }, T("Checkpoint · you decide", "檢查點 · 你決定")), L.some((e) => e.when) && main ? [" ", h("span", { class: "wf-2" }, icon("arrow", "ic sm"), " ", h("b", {}, [...new Set(L.flatMap((e) => (e.when || "").split("|")).filter(Boolean))].map((w) => optLabel(n, w)).join(" / ")), T(" continues", " 就繼續"))] : null]
         : [h("span", { class: "r-cpk ok" }, T("Checkpoint · must pass", "檢查點 · 必須通過")), " ", h("span", { class: "wf-2" }, (n.checks || []).slice(0, 3).map((c) => checkTitle(c.use)).join(", "), (n.checks || []).length > 3 ? ` +${n.checks.length - 3}` : "", n.join === "all" ? T(" · waits for every input", " · 等所有輸入") : "")];
@@ -618,7 +625,7 @@ function build(ed, X) {
   // the description's first sentence (or its heading before a colon), capitalised: the "how" after the one sentence on top
   const howLine = () => { let d = String(ed.def.description || "").trim(); if (!d) return "";
     d = d.split(/(?<=[.!?。])\s+/)[0]; if (d.length > 120 && /:\s/.test(d.slice(0, 100))) d = d.slice(0, d.search(/:\s/));
-    d = fit(d, 140).replace(/^./, (c) => c.toUpperCase()); return /[.!?。…]$/.test(d) ? d : d + T(".", "。"); };
+    d = fit(d, 140).replace(/^./, (c) => c.toUpperCase()); return /[.!?。…]$/.test(d) ? d : d + (/[\u3400-\u9fff]/.test(d) ? "。" : "."); };
   const story = () => { const e = okEndNode(), d = howLine();
     return h("p", { class: "r-story", "data-rail-story": "" }, T("Takes ", "拿到 "), h("b", {}, storyStart()), h("span", { class: "r-arrow" }, " → "), T("ends with ", "結束於 "), h("b", {}, e ? e.label : T("its last step", "最後一步")), T(".", "。"),
       d ? h("span", { class: "wf-2" }, " ", d) : null); };
