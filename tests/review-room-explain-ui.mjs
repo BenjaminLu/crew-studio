@@ -66,13 +66,20 @@ const ROOM = { card: { id: ID, run: "R-050", node: "review", title: { en: "Pull 
 const OFFER = { kind: "generate", skill: { id: "walkthrough", v: 1, name: "walkthrough" }, provider: "claude", model: "claude-opus-5", effort: null, independence: { level: "vendor", en: "Different vendor from the author.", zh: "和作者不同供應商。" }, paid: true, hash: "c0ffee0000000001", limitMin: 120,
   rounds: { en: "No round cap: the skill keeps going until it is satisfied, you stop it, or the safety limit passes.", zh: "不限輪數" }, materials: { en: ["the diff", "the commits", "reviews and comments"], zh: ["diff", "commit", "review 與留言"] }, expected: null,
   isolation: { en: "The output is shown in an isolated frame: it cannot read Studio, reach the network or see any token.", zh: "產出放在隔離框裡顯示" },
-  scripts: { run: true, count: 3, interpreters: ["python3 3.12.4"], network: true, browser: true, credentials: ["ANTHROPIC_API_KEY"], missing: [], en: "The skill's 3 scripts run when it calls them, each in Studio's sandbox, with python3 3.12.4. With network: through Studio's proxy, to public hosts only.", zh: "這個 skill 的 3 個腳本會在它呼叫時執行，每次都在 Studio 的沙盒裡，可以連網。" } };
+  scripts: { run: true, count: 3, interpreters: ["python3 3.12.4"], network: true, browser: false, credentials: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"], keys: ["ANTHROPIC_API_KEY"], endpoints: ["ANTHROPIC_BASE_URL"], missing: ["ffmpeg"], approved: false,
+    limits: { cpuS: 300, fileMB: 60, wallS: 600, calls: 60 },
+    rows: { network: { en: "Through Studio's proxy, public hosts only (never this Mac or its network); every host is logged", zh: "經過 Studio 的代理，只能連公開主機" }, access: { en: "Writes only the output folder and its temp folder", zh: "只寫產出資料夾" },
+      limits: { en: "300 s of CPU · files up to 60 MB · 10 min · 60 calls per round", zh: "CPU 300 秒 · 檔案 60 MB · 10 分鐘 · 每輪 60 次" }, browser: { en: "None installed (Playwright's headless shell): steps that need one fail", zh: "沒有安裝" },
+      missing: { en: "ffmpeg", zh: "ffmpeg" }, approval: { en: "This version is not approved for workflows on the Skills page: confirming here lets its scripts run for this run only.", zh: "這個版本沒有在技能頁核准給工作流程用：在這裡確認只讓它的腳本在這一次執行裡跑。" } },
+    en: "The skill's 3 scripts run when it calls them, each in Studio's sandbox, with python3 3.12.4. With network: through Studio's proxy, to public hosts only.", zh: "這個 skill 的 3 個腳本會在它呼叫時執行，每次都在 Studio 的沙盒裡，可以連網。" } };
 const ASK_OFFER = { ...OFFER, kind: "ask", hash: "c0ffee0000000002" };
+/** a script call's line as the server sends it (src/domain/review-explain.ts ScriptLine) */
+const SL = (x) => ({ args: "", limit: null, limits: { cpuS: 300, fileMB: 60, wallS: 600, diskMB: 120 }, exit: null, signal: null, ms: 0, hosts: [], refused: [], refusal: null, stderr: "", ...x });
 const run = (n, kind, status, extra = {}) => ({ n, kind, skill: { id: "walkthrough", v: 1, name: "walkthrough", sha256: "x" }, status, by: "captain", at: new Date(Date.now() - 4 * 60_000).toISOString(), ended: status === "running" ? null : new Date().toISOString(), provider: "claude", model: "claude-opus-5", effort: null, confirm: "c", limitMin: 120, rounds: [{ n: 1, job: "J1" }], cost: { usd: 0.42 }, error: null, progress: [], from: null, version: null, ...extra });
 
 try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await ctx.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
+  await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("keep-lang")) localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
     // no speech in this test (the room's voice controls read the voices; headless Chromium has none)
     Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechSynthesisUtterance = function (t) { this.text = t; };
     window.SpeechRecognition = class { static async available() { return "unavailable"; } start() {} stop() {} }; window.Audio = function (src) { return { src, play: async () => {}, pause() {} }; }; });
@@ -109,15 +116,42 @@ try {
   await p.click('[data-explain-skill="walkthrough"]'); await p.waitForSelector("[data-explain-start]:not([disabled])");
   const conf = await p.$eval("[data-explain-confirm]", (e) => e.textContent);
   ok(/claude · claude-opus-5/.test(conf) && /the diff, the commits, reviews and comments/.test(conf) && /No round cap/.test(conf) && /not known yet/.test(conf) && /isolated frame/.test(conf) && (await p.$eval("[data-explain-limit]", (e) => e.value)) === "120", "the confirmation names the model, the materials, rounds, expected time, the safety limit and the isolation", conf);
-  ok((await p.$eval("[data-explain-scripts]", (e) => e.getAttribute("data-explain-scripts"))) === "run" && /Run, sandboxed, with network · python3 3\.12\.4/.test(conf) && /Studio's sandbox/.test(conf), "the confirmation says the skill's scripts run, sandboxed, with network, and names the interpreter", conf);
+  ok((await p.$eval("[data-explain-scripts]", (e) => e.getAttribute("data-explain-scripts"))) === "run" && /Run, sandboxed, with network · python3 3\.12\.4/.test(conf), "the confirmation says the skill's scripts run, sandboxed, with network, and names the interpreter", conf);
+  const srows = await p.$$eval("[data-explain-srow]", (es) => Object.fromEntries(es.map((e) => [e.dataset.explainSrow, { text: e.textContent, chips: [...e.querySelectorAll(".rx-chipname")].map((c) => c.textContent), weight: getComputedStyle(e).fontWeight, small: e.closest(".faint") !== null }])));
+  ok(JSON.stringify(srows.credentials?.chips) === '["ANTHROPIC_API_KEY"]' && JSON.stringify(srows.endpoints?.chips) === '["ANTHROPIC_BASE_URL"]' && /public hosts only/.test(srows.network?.text) && /300 s of CPU/.test(srows.limits?.text) && /None installed/.test(srows.browser?.text) && srows.missing?.text === "ffmpeg" && !!srows.access,
+    "the scripts are rows of their own: network, credentials and endpoints as chips by name, files, limits, browser, missing", JSON.stringify(srows));
+  ok(Object.values(srows).every((r) => Number(r.weight) < 600 && !r.small), "the rows are at normal weight, not one small faint paragraph", JSON.stringify(Object.values(srows).map((r) => [r.weight, r.small])));
+  const warn = await p.$eval("[data-explain-confirm] [data-explain-unapproved]", (e) => ({ text: e.textContent, cls: e.className, color: getComputedStyle(e).borderLeftColor }));
+  ok(/not approved for workflows on the Skills page/.test(warn.text) && /rx-warn/.test(warn.cls), "an unapproved version is a warning line of its own", JSON.stringify(warn));
+  ok(/Output frame/.test(conf) && !/Isolation/.test(conf), "the output frame's row is named for the frame (no clash with the scripts' network)", conf);
   await p.screenshot({ path: join(shots, "2-confirm.png") });
-  onGenerate = (r) => { X = { ...X, selected: { id: "walkthrough", v: 1 }, running: 1, runs: [run(1, "generate", "running", { progress: [{ at: "t", text: "reading the diff and the commits" }, { at: "t", text: "drawing the rounding figure" }] })], log: [{ ts: "2026-11-01T10:01:00Z", kind: "tool", text: "mat_read {\"path\":\"diff.txt\"}" }] }; answer(r, X); };
+  onGenerate = (r) => { X = { ...X, selected: { id: "walkthrough", v: 1 }, running: 1, runs: [run(1, "generate", "running", { progress: [{ at: "t", text: "reading the diff and the commits" },
+    { at: "t", text: "build.py — exit 0 · 0.1 s", script: SL({ script: "scripts/build.py", args: "spec.json", outcome: "ok", exit: 0, ms: 120 }) },
+    { at: "t", text: "fetch.py — exit 0", script: SL({ script: "scripts/fetch.py", args: "--url https://api.model-vendor.example/v1", outcome: "ok", exit: 0, ms: 3400, hosts: ["api.model-vendor.example"], refused: [{ host: "169.254.169.254", why: "a metadata address" }] }) },
+    { at: "t", text: "check.py — exit 3", script: SL({ script: "scripts/check.py", args: "index.html", outcome: "fail", exit: 3, ms: 90, stderr: "Traceback: missing <h1>" }) },
+    { at: "t", text: "spin.py — CPU", script: SL({ script: "scripts/spin.py", outcome: "limit", limit: "cpu", signal: "SIGXCPU", ms: 300200 }) },
+    { at: "t", text: "passwd — refused", script: SL({ script: "../../etc/passwd", outcome: "refused", refusal: "../../etc/passwd is not a script of walkthrough@v1" }) },
+    { at: "t", text: "drawing the rounding figure" }] })], log: [{ ts: "2026-11-01T10:01:00Z", kind: "tool", text: "mat_read {\"path\":\"diff.txt\"}" }] }; answer(r, X); };
   await p.click("[data-explain-start]"); await p.waitForSelector("[data-explain-progress]");
   ok(posts.at(-1)[0] === "generate" && posts.at(-1)[1].skill === "walkthrough" && posts.at(-1)[1].confirm === OFFER.hash, "Confirm and start sends the skill and the exact confirmation", JSON.stringify(posts.at(-1)));
   const prog = await p.$eval("[data-explain-progress]", (e) => e.textContent);
   ok(/walkthrough is making the explanation/.test(prog) && /drawing the rounding figure/.test(prog) && /you can leave the room/.test(prog) && /safety limit 120 min/.test(prog) && !!(await p.$("[data-explain-generating]")), "the run shows live progress in the stage and in the rail", prog);
+  const callRows = () => p.$$eval("[data-explain-progress] li", (es) => es.filter((e) => e.querySelector("[data-explain-call]")).map((e) => ({ mark: e.querySelector(".d").textContent, cls: e.className, sum: e.querySelector("summary").textContent })));
+  let cr = await callRows();
+  ok(cr.length === 5 && cr[0].mark === "✓" && /^build\.py — done · 0\.1 s$/.test(cr[0].sum) && cr[1].mark === "⚠" && /reached api\.model-vendor\.example/.test(cr[1].sum) && /refused 169\.254\.169\.254/.test(cr[1].sum)
+    && cr[2].mark === "✗" && /check\.py — failed, exit 3/.test(cr[2].sum) && cr[3].mark === "⚠" && /spin\.py — hit the CPU limit \(300 s\)/.test(cr[3].sum) && cr[4].mark === "✗" && /passwd — refused: .*not a script/.test(cr[4].sum),
+    "each script call is a line with its outcome: ✓ done, ⚠ a limit or a refused host, ✗ failed or refused; the result first", JSON.stringify(cr));
+  await p.click('[data-explain-call="fail"] summary');
+  ok(/stderr:\nTraceback: missing <h1>/.test(await p.$eval('[data-explain-call="fail"] .rx-calldetail', (e) => e.textContent)) && /refused 169\.254\.169\.254 \(a metadata address\)/.test(await p.$eval('[data-explain-progress] li:nth-of-type(3) .rx-calldetail', (e) => e.textContent)),
+    "a line opens to its stderr tail and every host it reached or was refused");
   await p.click("[data-explain-log]"); ok(/mat_read/.test(await p.$eval("[data-explain-logtext]", (e) => e.textContent)), "the skill's live log opens");
   await p.screenshot({ path: join(shots, "3-progress.png") });
+  // the same lines in Traditional Chinese (built by the page from the call, not the server's English text)
+  await p.evaluate(() => { sessionStorage.setItem("keep-lang", "1"); localStorage.setItem("crew.lang", "zh-TW"); }); await p.reload(); await p.waitForSelector("[data-explain-progress] [data-explain-call]");
+  cr = await callRows();
+  ok(/build\.py — 完成/.test(cr[0].sum) && /碰到 CPU 上限（300 秒）/.test(cr[3].sum) && /被拒/.test(cr[4].sum) && /連到 api\.model-vendor\.example/.test(cr[1].sum), "the lines are in the captain's language", JSON.stringify(cr));
+  await p.screenshot({ path: join(shots, "3b-progress-zh.png") });
+  await p.evaluate(() => { sessionStorage.removeItem("keep-lang"); localStorage.setItem("crew.lang", "en"); }); await p.reload(); await p.waitForSelector("[data-explain-progress]");
   onStop = (r) => { X = { ...X, running: null, runs: [run(1, "generate", "stopped", { stop: "stopped by the captain" })] }; answer(r, X); };
   await p.click("[data-explain-stop]"); await p.waitForSelector("[data-explain-empty]");
   ok(posts.at(-1)[0] === "stop" && /Stopped/.test(await p.$eval("[data-explain-empty]", (e) => e.textContent)) && /stopped by the captain/.test(await p.$eval("[data-explain-empty]", (e) => e.textContent)), "Stop stops it, and the stage says so");
@@ -156,6 +190,9 @@ try {
   ok(posts.at(-1)[0] === "ask" && first.question === "Why round here?" && first.version === 1 && first.selection?.headings?.includes("Step 1 · rounding") && first.selection.nodes.includes("round") && /Math\.round/.test(first.selection.text) && first.selection.rect?.w > 100 && !first.confirm,
     "the follow-up carries the boxed region: headings, figure ids, text, the rectangle", JSON.stringify(first));
   ok(/paid run on claude · claude-opus-5 with walkthrough/.test(await p.$eval("[data-explain-askconfirm]", (e) => e.textContent)), "a follow-up asks for its paid run's confirmation, in the chat");
+  const askc = await p.$eval("[data-explain-askconfirm]", (e) => ({ scripts: e.querySelector("[data-explain-askscripts]")?.textContent ?? "", chips: [...e.querySelectorAll(".rx-chipname")].map((c) => c.textContent), warn: e.querySelector("[data-explain-unapproved]")?.textContent ?? "", consent: e.querySelector("label").textContent }));
+  ok(/Its scripts run in this follow-up too: sandboxed, with network/.test(askc.scripts) && JSON.stringify(askc.chips) === '["ANTHROPIC_API_KEY"]' && /approves this run only/.test(askc.warn) && /their scripts included \(sandboxed, with network\)/.test(askc.consent),
+    "the follow-up's confirmation says its scripts run (network, the credential, unapproved), and so does the don't-ask-again consent", JSON.stringify(askc));
   await p.check("[data-explain-consent]"); await p.click("[data-explain-askok]");
   await p.waitForSelector('[data-explain-answer="3"][data-status="done"]', { timeout: 10000 });
   ok(posts.at(-1)[1].confirm === ASK_OFFER.hash && posts.at(-1)[1].consent === true && posts.at(-1)[1].selection?.nodes?.includes("round"), "confirmed with “don't ask again”: the same question goes with the confirmation and the consent", JSON.stringify(posts.at(-1)[1]));

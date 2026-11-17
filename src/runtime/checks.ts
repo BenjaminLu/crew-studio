@@ -494,6 +494,23 @@ export function reapMarked(marker: string) {
     }
   } catch {}
 }
+/** Kill every process (but Studio) whose working folder or an open file lies under one of these folders, until none is left:
+ *  a call's leftover that double-forked, called setsid() and dropped its environment escapes the group kill and reapMarked, but
+ *  not this while it still sits in or holds a file of its folders. Best effort, like reapMarked; a caller that must be sure no
+ *  leftover can touch a folder also takes the folder out of the sandbox's reach (src/domain/review-explain.ts renames it). */
+export function sweepHolders(dirs: string[], tries = 6): number {
+  if (process.platform !== "darwin") return 0;
+  const ds = dirs.filter((x) => x && existsSync(x)); if (!ds.length) return 0; let killed = 0;
+  for (let i = 0; i < tries; i++) {
+    let pids: number[] = [];
+    try { const r = Bun.spawnSync(["/usr/sbin/lsof", "-t", "-w", ...ds.flatMap((x) => ["+D", x])], { stdout: "pipe", stderr: "ignore", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
+      pids = [...new Set(r.stdout.toString().split("\n").map(Number).filter((p) => Number.isInteger(p) && p > 1 && p !== process.pid))]; } catch { return killed; }
+    if (!pids.length) break;
+    for (const p of pids) { try { process.kill(p, "SIGKILL"); killed++; } catch {} }
+    Bun.sleepSync(50);
+  }
+  return killed;
+}
 export async function sandboxed(argv: string[], o: { cwd: string; out: string; tmp: string; stdin?: string; timeoutS: number; network: boolean; env?: Record<string, string>; reads?: string[]; dataDir?: string | null; signal?: AbortSignal;
   /** false: argv is untrusted (a reviewer's command), so its program's folder is never added to the reads; the caller resolved it on a fixed PATH */
   argvRead?: boolean;

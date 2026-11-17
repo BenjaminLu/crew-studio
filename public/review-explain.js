@@ -79,6 +79,51 @@ async function openConfirm(r, sid, kind) {
   try { const o = await api(`${base(id)}/offer?skill=${enc(sid)}&kind=${kind}`); X.confirm = { ...X.confirm, offer: o, loading: false }; } catch (e) { X.confirm = { ...X.confirm, offer: { error: e.message }, loading: false }; }
   render();
 }
+/** the skill's scripts in a confirmation: a head line, then one row each (credentials and endpoints as chips by name), and a
+ *  version the Skills page never approved as its own warning line */
+const chips = (names) => h("span", { class: "rx-chips" }, names.map((n) => h("code", { class: "rx-chipname" }, n)));
+function scriptRows(s, row) {
+  if (!s) return [];
+  if (!s.run) return [row(T("The skill's scripts", "skill 的腳本"), h("span", { "data-explain-scripts": "off" }, h("b", {}, T("Do not run", "不會執行")), " — ", T(s.en, s.zh)))];
+  const R = s.rows || {}, w = (x) => (x ? T(x.en, x.zh) : "");
+  return [
+    row(T("The skill's scripts", "skill 的腳本"), h("span", { "data-explain-scripts": "run" }, h("b", {}, T(`Run, sandboxed, ${s.network ? "with network" : "no network here"}`, `會執行，在沙盒裡、${s.network ? "可以連網" : "這裡不能連網"}`)), ` · ${(s.interpreters || []).join(T(", ", "、"))}`,
+      R.approval ? h("span", { class: "rx-warn", "data-explain-unapproved": "" }, w(R.approval)) : null)),
+    row(T("Network", "網路"), h("span", { "data-explain-srow": "network" }, w(R.network))),
+    row(T("Credentials", "憑證"), h("span", { "data-explain-srow": "credentials" }, (s.keys || []).length ? chips(s.keys) : T("none", "沒有"), h("small", { class: "faint" }, T(" from the environment Studio started with (the same values Studio sees); never a key Studio stores, its GitHub token or its session keys", "（來自 Studio 啟動時的環境，和 Studio 看到的同一份；絕不會拿到 Studio 保存的金鑰、GitHub token 或 session 金鑰）")))),
+    ...((s.endpoints || []).length ? [row(T("Endpoints", "端點"), h("span", { "data-explain-srow": "endpoints" }, chips(s.endpoints)))] : []),
+    row(T("Files", "檔案"), h("span", { "data-explain-srow": "access" }, w(R.access))),
+    row(T("Per-call limits", "每次呼叫上限"), h("span", { "data-explain-srow": "limits" }, w(R.limits))),
+    row(T("Browser", "瀏覽器"), h("span", { "data-explain-srow": "browser" }, w(R.browser))),
+    ...(R.missing ? [row(T("Missing here", "這裡缺"), h("span", { "data-explain-srow": "missing" }, w(R.missing)))] : [])];
+}
+/** one line for a follow-up's confirmation: its scripts run too */
+function scriptSummary(s) {
+  if (!s) return null;
+  if (!s.run) return h("p", { class: "faint", "data-explain-askscripts": "off" }, T("The skill's scripts do not run.", "skill 的腳本不會執行。"));
+  const keys = s.keys || [];
+  return h("p", { "data-explain-askscripts": "run" }, T(`Its scripts run in this follow-up too: sandboxed, ${s.network ? "with network" : "no network here"}`, `這次追問也會執行它的腳本：在沙盒裡、${s.network ? "可以連網" : "這裡不能連網"}`),
+    keys.length ? [T(" · credentials ", " · 憑證 "), chips(keys)] : T(" · no credential", " · 沒有憑證"),
+    !s.approved ? h("span", { class: "rx-warn", "data-explain-unapproved": "" }, T("Not approved for workflows on the Skills page: confirming here approves this run only.", "沒有在技能頁核准給工作流程用：在這裡確認只核准這一次。")) : null);
+}
+/** a script call in the progress list, in the captain's language: the result first, then the time and the hosts; it opens to
+ *  its stderr tail and every host it reached or was refused */
+function scriptLine(c) {
+  const name = String(c.script || "").split("/").pop(), L = c.limits || {};
+  const how = c.outcome === "refused" ? T(`refused: ${c.refusal || ""}`, `被拒：${c.refusal || ""}`)
+    : c.limit === "cpu" ? T(`hit the CPU limit (${L.cpuS} s)`, `碰到 CPU 上限（${L.cpuS} 秒）`)
+    : c.limit === "file" ? T(`hit the file-size limit (${L.fileMB} MB)`, `碰到檔案大小上限（${L.fileMB} MB）`)
+    : c.limit === "time" ? T(`hit the time limit (${Math.round((L.wallS || 0) / 60)} min)`, `碰到時間上限（${Math.round((L.wallS || 0) / 60)} 分鐘）`)
+    : c.limit === "disk" ? T(`hit the disk limit (${L.diskMB} MB)`, `碰到磁碟上限（${L.diskMB} MB）`)
+    : c.signal ? T(`stopped by ${c.signal}`, `被 ${c.signal} 停止`) : c.exit === 0 ? T("done", "完成") : T(`failed, exit ${c.exit}`, `失敗，exit ${c.exit}`);
+  const bits = [c.outcome === "refused" ? null : `${((c.ms || 0) / 1000).toFixed(1)} s`, (c.hosts || []).length ? T(`reached ${c.hosts.join(", ")}`, `連到 ${c.hosts.join("、")}`) : null,
+    (c.refused || []).length ? T(`refused ${c.refused.map((x) => x.host).join(", ")}`, `被擋 ${c.refused.map((x) => x.host).join("、")}`) : null].filter(Boolean);
+  const mark = c.outcome === "ok" && !(c.refused || []).length ? "✓" : c.outcome === "limit" || (c.outcome === "ok" && (c.refused || []).length) ? "⚠" : "✗";
+  const cls = mark === "✓" ? "done" : mark === "⚠" ? "warn" : "bad";
+  const detail = [c.args ? `${T("args", "參數")}: ${c.args}` : null, ...(c.hosts || []).map((x) => `${T("reached", "連到")} ${x}`), ...(c.refused || []).map((x) => `${T("refused", "被擋")} ${x.host} (${x.why})`), c.stderr ? `stderr:\n${c.stderr}` : null].filter(Boolean).join("\n");
+  return { cls, mark, body: h("details", { class: "rx-call", "data-explain-call": c.outcome, "data-explain-limit": c.limit || "" }, h("summary", {}, h("b", {}, name), ` — ${how}`, bits.length ? h("span", { class: "faint" }, ` · ${bits.join(" · ")}`) : null),
+    h("pre", { class: "rx-calldetail" }, detail || T("(nothing more)", "（沒有更多）"))) };
+}
 function confirmDialog(r) {
   const c = X.confirm; if (!c || c.id !== r.card.id) return null; const o = c.offer, id = c.id;
   const close = () => { X.confirm = null; render(); };
@@ -101,8 +146,8 @@ function confirmDialog(r) {
           row(T("Rounds", "輪數"), T(o.rounds.en, o.rounds.zh)),
           row(T("Expected time", "預計時間"), o.expected ? T(`about ${o.expected.minutes} min (from ${o.expected.from} earlier run${o.expected.from === 1 ? "" : "s"})`, `約 ${o.expected.minutes} 分鐘（依之前 ${o.expected.from} 次）`) : T("not known yet: the first run of this skill here (often 10–30 min)", "還不知道：這是這個 skill 在這裡第一次跑（常見 10–30 分鐘）")),
           row(T("Safety limit", "安全時限"), h("span", { class: "rx-limit" }, h("input", { type: "number", min: "1", max: "1440", value: String(o.limitMin), "data-explain-limit": "", "aria-label": T("Safety limit in minutes", "安全時限（分鐘）"), onchange: (e) => setLimit(e.target.value) }), T(" min of wall clock, then Studio stops it", " 分鐘，到了 Studio 會停下"))),
-          row(T("Isolation", "安全"), T(o.isolation.en, o.isolation.zh)),
-          ...(o.scripts ? row(T("The skill's scripts", "skill 的腳本"), h("span", { "data-explain-scripts": o.scripts.run ? "run" : "off" }, o.scripts.run ? h("b", {}, T(`Run, sandboxed, ${o.scripts.network ? "with network" : "no network here"} · ${(o.scripts.interpreters || []).join(", ")}`, `會執行，在沙盒裡、${o.scripts.network ? "可以連網" : "這裡不能連網"} · ${(o.scripts.interpreters || []).join("、")}`)) : h("b", {}, T("Do not run", "不會執行")), h("br"), h("small", { class: "faint" }, T(o.scripts.en, o.scripts.zh)))) : [])),
+          row(T("Output frame", "產出顯示框"), T(o.isolation.en, o.isolation.zh)),
+          ...scriptRows(o.scripts, row)),
         c.note ? h("p", { class: "rr-err", role: "alert" }, c.note) : null],
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn", onclick: close }, T("Cancel", "取消")),
         h("button", { type: "button", class: "btn primary", "data-explain-start": "", disabled: c.loading || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
@@ -151,7 +196,8 @@ function progressCard(r, st, run) {
     h("div", { class: "rx-gencard" },
       h("h3", {}, T(`${run.skill.name} is making the explanation`, `${run.skill.name} 正在產生說明`)),
       h("div", { class: "faint" }, T(`${fmtMin(ms)} so far · round ${rounds || 1} · it runs in the background: you can leave the room · safety limit ${run.limitMin} min`, `已跑 ${fmtMin(ms)} · 第 ${rounds || 1} 輪 · 在背景跑，可以先離開 · 安全時限 ${run.limitMin} 分鐘`), money(run.cost) ? ` · ${money(run.cost)}` : ""),
-      h("ol", { class: "rx-steps" }, prog.length ? prog.slice(-12).map((p, i, a) => h("li", { class: i === a.length - 1 ? "now" : "done" }, h("span", { class: "d" }, i === a.length - 1 ? "●" : "✓"), p.text)) : h("li", { class: "now" }, h("span", { class: "d" }, "●"), T("Starting…", "開始中…"))),
+      h("ol", { class: "rx-steps" }, prog.length ? prog.slice(-12).map((p, i, a) => { if (p.script) { const s = scriptLine(p.script); return h("li", { class: s.cls }, h("span", { class: "d" }, s.mark), s.body); }
+        return h("li", { class: i === a.length - 1 ? "now" : "done" }, h("span", { class: "d" }, i === a.length - 1 ? "●" : "✓"), p.text); }) : h("li", { class: "now" }, h("span", { class: "d" }, "●"), T("Starting…", "開始中…"))),
       h("div", { class: "rx-foot" },
         h("button", { type: "button", class: "btn sm", "data-explain-log": "", "aria-expanded": String(X.logOpen.has(id)), onclick: () => { if (X.logOpen.has(id)) X.logOpen.delete(id); else X.logOpen.add(id); refresh(id); } }, T("The skill's live log", "skill 的即時紀錄")),
         h("button", { type: "button", class: "btn sm", "data-explain-stop": "", disabled: X.posting.has(`${id}/stop`) ? true : null, onclick: () => stop(id) }, T("Stop", "停止"))),
@@ -196,7 +242,7 @@ function msgs(r, st) {
     const sel = run.selection;
     out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, sel ? h("span", { class: "rx-thumb" }, sel.time != null ? `⏸ ${ts(sel.time)}` : `▭ ${sel.headings?.slice(-1)[0] || T("boxed region", "框選的區域")}`) : null, run.question));
     out.push(h("div", { class: "rx-m ai", "data-explain-answer": run.n, "data-status": run.status },
-      run.status === "running" ? [h("span", { class: "faint" }, T("Working on it…", "處理中…")), ...(run.progress || []).slice(-3).map((p) => h("div", { class: "faint" }, `· ${p.text}`)),
+      run.status === "running" ? [h("span", { class: "faint" }, T("Working on it…", "處理中…")), ...(run.progress || []).slice(-3).map((p) => { if (p.script) { const s = scriptLine(p.script); return h("div", { class: `rx-callrow ${s.cls}` }, h("span", { class: "d" }, s.mark), " ", s.body); } return h("div", { class: "faint" }, `· ${p.text}`); }),
         h("div", {}, h("button", { type: "button", class: "btn sm", "data-explain-stop": "", onclick: () => stop(id) }, T("Stop", "停止")))]
       : run.status === "done" ? [...String(run.answer || "").split(/\n{2,}/).map((p) => h("p", {}, p)),
         run.cites?.length ? h("div", { class: "rx-cites" }, run.cites.map((c) => h("span", { class: "rx-cite", "data-explain-cite": "" }, c))) : null,
@@ -206,7 +252,10 @@ function msgs(r, st) {
   }
   if (a) out.push(h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "" },
     h("p", {}, T(`This follow-up is a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"} with ${a.offer.skill.name}.`, `這個追問會用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 和 ${a.offer.skill.name} 付費執行。`)),
-    h("label", {}, h("input", { type: "checkbox", "data-explain-consent": "", onchange: (e) => { if (e.target.checked) X.consent.add(id); else X.consent.delete(id); } }), T(" Ask the next follow-ups here on this plan without confirming each", " 之後在這裡用同樣的設定追問時不用再確認")),
+    scriptSummary(a.offer.scripts),
+    h("label", {}, h("input", { type: "checkbox", "data-explain-consent": "", onchange: (e) => { if (e.target.checked) X.consent.add(id); else X.consent.delete(id); } }),
+      a.offer.scripts?.run ? T(` Ask the next follow-ups here on this plan without confirming each, their scripts included (sandboxed${a.offer.scripts.network ? ", with network" : ""})`,` 之後在這裡用同樣的設定追問時不用再確認，包括執行它的腳本（在沙盒裡${a.offer.scripts.network ? "、可以連網" : ""}）`)
+        : T(" Ask the next follow-ups here on this plan without confirming each", " 之後在這裡用同樣的設定追問時不用再確認")),
     h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; refresh(id); } }, T("Cancel", "取消")),
       h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => X.send?.(a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並追問")))));
   const err = X.err.get(id); if (err) out.push(h("div", { class: "rx-m sys rr-err", role: "alert" }, err));

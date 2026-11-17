@@ -15,6 +15,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:net";
+import { createHash } from "node:crypto";
 import { harness, suite, until } from "./rt-harness";
 const { ok, end } = suite("review-room-explain-scripts");
 if (process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")) { console.log("FAIL  this suite needs macOS sandbox-exec (the round sandbox)"); process.exit(1); }
@@ -75,7 +76,9 @@ def get(u):
 out["model"] = get("http://api.model-vendor.example/v1/messages")
 out["metadata"] = get("http://169.254.169.254/latest/meta-data/")
 out["env"] = sorted(os.environ.keys())
+import hashlib
 out["anthropic"] = os.environ.get("ANTHROPIC_API_KEY", "")
+out["anthropic_sha"] = hashlib.sha256(out["anthropic"].encode()).hexdigest()
 out["leaked"] = [k for k, v in os.environ.items() if "never-for-scripts" in v or k in ("GITHUB_TOKEN", "GH_TOKEN") or (k.startswith("CREW_") and k != "CREW_RUN_KILL")]
 reads = {}
 for p in sys.argv[1:]:
@@ -94,8 +97,20 @@ print(json.dumps(res))
 `);
 put("scripts/spin.py", "while True:\n    pass\n");
 put("scripts/loud.py", "import sys\nfor i in range(6000):\n    sys.stdout.write('line %05d %s\\n' % (i, 'x' * 40))\nprint('LAST LINE')\n");
-put("scripts/bigfile.py", "import sys\ntry:\n    with open('big.bin', 'wb') as f:\n        for i in range(64):\n            f.write(b'0' * 65536)\n    print('WROTE ALL')\nexcept OSError as e:\n    print('STOPPED', e.errno)\n    sys.exit(3)\n");
+put("scripts/bigfile.py", "import sys\ntry:\n    with open('big.bin', 'wb') as f:\n        for i in range(64):\n            f.write(b'0' * 65536)\n    print('WROTE ALL')\nexcept OSError as e:\n    print('STOPPED', e)\n    sys.exit(3)\n");
 put("scripts/wait.sh", "#!/bin/sh\nsleep 60\n", 0o755);
+// a leftover that escapes every group kill: double fork, setsid, an empty environment; it keeps writing and plants links
+put("scripts/surv.py", `import os, sys
+secret = sys.argv[1]
+if os.fork() == 0:
+    os.setsid()
+    if os.fork() == 0:
+        os.execve("/bin/sh", ["/bin/sh", "-c", "i=0; while [ $i -lt 40 ]; do date >> survivor.txt; ln -sf '" + secret + "' leak.txt 2>/dev/null; ln -sf /etc etcdir 2>/dev/null; i=$((i+1)); sleep 0.2; done"], {})
+    os._exit(0)
+print("parent done")
+`);
+put("scripts/diskfill.py", "import os, time\nd = os.environ['TMPDIR']\nfor i in range(400):\n    open(os.path.join(d, 'f%d' % i), 'wb').write(b'0' * 900000); time.sleep(0.01)\nprint('FILLED')\n");
+put("scripts/browser.py", "import os, subprocess, sys\nr = subprocess.run([os.environ['CHROME_BIN'], '--headless', '--disable-gpu', '--dump-dom', 'file://' + os.path.abspath('index.html')], capture_output=True, text=True, timeout=60)\nprint('DOM', r.returncode, r.stdout[:400])\n");
 E.skillLibrary().importFolder(pkgDir, "captain");
 const lib = () => E.skillLibrary().library().find((s: any) => s.name === "page-kit")!;
 const v1 = lib();
@@ -108,6 +123,7 @@ const scripted = (pid: string, model: string) => ({ id: pid, model, sandboxFree:
   return { interrupt() {}, async *send(text: string) { me.text = text;
     for (const [name, args] of script.shift() ?? []) {
       if (name === "msg") { yield { type: "message", text: args } as any; continue; }
+      if (name === "sleep") { await Bun.sleep(args); continue; }
       const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json(); results.push([name, j]);
       yield { type: "toolStart", id: name, name, args } as any; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) } as any; }
     yield { type: "turnEnd", status: "ok", usage: { usd: 0.1, inTokens: 10, outTokens: 5 } } as any; } }; } });
@@ -120,11 +136,17 @@ const runRes = (i: number) => results.filter(([n]) => n === "skill_run")[i]?.[1]
 let e: any = await refused(() => X.generate(id, { skill: v1.id }, "captain"));
 const offer = e?.offer;
 ok(e?.code === "confirm_required" && offer?.scripts?.run === true && offer.scripts.network === true && offer.scripts.interpreters.some((x: string) => /^python3 \d/.test(x)) && offer.scripts.interpreters.includes("/bin/bash")
-  && /run when it calls them, each in Studio's sandbox/.test(offer.scripts.en) && /With network: through Studio's proxy, to public hosts only/.test(offer.scripts.en) && /ANTHROPIC_API_KEY/.test(offer.scripts.en) && /never Studio's own keys or tokens/.test(offer.scripts.en)
+  && /run when it calls them, each in Studio's sandbox/.test(offer.scripts.en) && /With network: through Studio's proxy, to public hosts only/.test(offer.scripts.en) && /ANTHROPIC_API_KEY/.test(offer.scripts.en) && /never a key Studio stores/.test(offer.scripts.en)
   && /沙盒/.test(offer.scripts.zh) && /可以連網/.test(offer.scripts.zh) && !/GITHUB_TOKEN|GH_TOKEN/.test(JSON.stringify(offer)),
   "the confirmation says the skill's scripts run, sandboxed, with network, names the interpreters and the one credential they get", JSON.stringify(offer?.scripts));
 ok(offer?.scripts?.approved === false && /not approved for workflows on the Skills page: confirming here lets its scripts run for this run only/.test(offer.scripts.en) && offer.scripts.limits?.cpuS === 300,
   "a version never approved on the Skills page: the confirmation says this run's confirmation is the approval; the caps are part of it", JSON.stringify(offer?.scripts));
+ok(JSON.stringify(offer?.scripts?.keys) === '["ANTHROPIC_API_KEY"]' && Array.isArray(offer.scripts.endpoints) && /public hosts only/.test(offer.scripts.rows?.network?.en) && /300 s of CPU/.test(offer.scripts.rows?.limits?.en) && /not approved/.test(offer.scripts.rows?.approval?.en) && /核准/.test(offer.scripts.rows?.approval?.zh) && !!offer.scripts.rows?.browser,
+  "the confirmation's rows: network, credentials by name (endpoints apart), limits, browser, the unapproved note, in both languages", JSON.stringify(offer?.scripts?.rows));
+process.env.ANTHROPIC_BASE_URL = "https://gateway.example";
+const withEp = X.offer(id, v1.id, "generate").scripts;
+ok(withEp.endpoints.includes("ANTHROPIC_BASE_URL") && !withEp.keys.includes("ANTHROPIC_BASE_URL"), "a base URL is listed as an endpoint, not a credential", JSON.stringify(withEp));
+delete process.env.ANTHROPIC_BASE_URL;
 process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S = "7";
 ok(X.offer(id, v1.id, "generate").hash !== offer.hash, "a changed cap is a new confirmation");
 delete process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S;
@@ -142,6 +164,10 @@ script.push([
   ["skill_run", { script: "scripts/wait.sh", timeout_s: 5 }],
   ["skill_run", { script: "scripts/loud.py" }],
   ["skill_run", { script: "../../etc/passwd" }],
+  ["skill_run", { script: "scripts/surv.py", args: [join(data, "github-token")] }],
+  ["out_read", { path: "survivor.txt" }], ["sleep", 1500], ["out_read", { path: "survivor.txt" }], ["out_list", {}], ["out_read", { path: "leak.txt" }],
+  ["skill_run", { script: "scripts/diskfill.py" }],
+  ["skill_run", { script: "scripts/browser.py" }],
   ["explain_done", { entry: "index.html", summary: "The page page-kit's scripts built and checked" }]]);
 process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S = "2"; process.env.CREW_REVIEW_EXPLAIN_SCRIPT_FILE_MB = "1";
 // tight caps for the cap checks below (the confirmation names them, so it is read again)
@@ -161,7 +187,9 @@ ok(/built by page-kit one/.test(page) && /percent, built by its script/.test(pag
 let net: any = null; try { net = JSON.parse(n?.stdout ?? ""); } catch {}
 ok(!!net && /hello from the model at \/v1\/messages/.test(net.model), "a script reaches a public host through Studio's proxy (network allowed)", JSON.stringify(n).slice(0, 600));
 ok(!!net && /^ERR/.test(net.metadata), "a metadata address is refused by the proxy's address guard", net?.metadata);
-ok(!!net && net.anthropic === "test-anthropic-key-for-explainer-scripts" && net.leaked.length === 0 && !net.env.includes("GITHUB_TOKEN") && !net.env.includes("GH_TOKEN"), "the script's env has the captain's exported model key and none of Studio's tokens", JSON.stringify(net && { env: net.env, leaked: net.leaked }));
+ok(!!net && net.anthropic === "[redacted]" && net.anthropic_sha === createHash("sha256").update("test-anthropic-key-for-explainer-scripts").digest("hex") && !JSON.stringify(X.view(id)).includes("test-anthropic-key-for-explainer-scripts"),
+  "the key reaches the script, and its value is redacted from what the script printed (the result, the round, the page)", JSON.stringify({ a: net?.anthropic, sha: net?.anthropic_sha }));
+ok(!!net && net.env.includes("ANTHROPIC_API_KEY") && net.leaked.length === 0 && !net.env.includes("GITHUB_TOKEN") && !net.env.includes("GH_TOKEN"), "the script's env has the captain's exported model key and none of Studio's tokens", JSON.stringify(net && { env: net.env, leaked: net.leaked }));
 ok(!!net && Object.values(net.reads).every((t: any) => /^DENIED/.test(t)), "Studio's token and key files stay unreadable to a script", JSON.stringify(net?.reads));
 const calls = run1.rounds.flatMap((rr: any) => rr.scripts ?? []);
 const netCall = calls.find((cc: any) => cc.script === "scripts/net.py");
@@ -175,11 +203,34 @@ ok(big?.exit !== 0 && /STOPPED/.test(big?.stdout ?? "") && (!existsSync(bigFile)
 ok(wait?.timedOut === true && wait.ms < 20000, "the wall-clock cap (timeout_s) stops a script that waits", JSON.stringify(wait));
 ok(loud?.exit === 0 && loud.stdout.length <= 64 * 1024 && /LAST LINE/.test(loud.stdout) && !/line 00000/.test(loud.stdout), "output is cut to its last 64 KiB", String(loud?.stdout?.length));
 ok(!!bad?.error && /not a script of/.test(bad.error), "only the package's own scripts run", JSON.stringify(bad));
-ok(calls.length === 8 && calls.every((cc: any) => typeof cc.ms === "number" && cc.at && cc.scriptSha256 && "exit" in cc && typeof cc.stdout === "string") && calls.find((cc: any) => cc.script === "scripts/build.py")?.argv.join(" ") === "spec.json",
-  "every call is kept on its round: the command, its exit, its time, the tail of its output", JSON.stringify(calls.map((cc: any) => [cc.script, cc.exit, cc.ms, cc.timedOut, cc.signal])));
-ok(run1.progress.some((pp: any) => /^ran scripts\/build\.py spec\.json: exit 0/.test(pp.text)), "each call is a progress line the captain sees live", JSON.stringify(run1.progress.map((pp: any) => pp.text)));
+// the leftover: it is killed or cut off when its call ends; nothing it planted is followed by Studio
+const reads = results.filter(([nm]) => nm === "out_read").map(([, j]) => j), listed = results.filter(([nm]) => nm === "out_list").map(([, j]) => j).at(-1);
+ok(typeof reads[0]?.text === "string" && reads[0].text === reads[1]?.text, "a leftover that escaped the group kill writes nothing more in the output folder once its call ended", JSON.stringify([reads[0]?.text?.split("\n").length, reads[1]?.text?.split("\n").length]));
+ok(!!reads[2]?.error && !/STUDIO-SECRET/.test(JSON.stringify(reads[2])), "a link it planted is not followed by Studio's reads", JSON.stringify(reads[2]));
+const v1files = v.versions[0].files.map((f: any) => f.path);
+ok(!v1files.includes("leak.txt") && !v1files.some((p: string) => p.startsWith("etcdir")) && !v1files.some((p: string) => /STUDIO-SECRET/.test(readFileSync(join(E.rdir(r.id), "review-room", `${id}-explain`, "v1", p), "latin1"))), "the version keeps no link and nothing of Studio's secrets", JSON.stringify(v1files));
+const fill = runRes(10);
+const fillLine = run1.progress.find((pp: any) => pp.script?.script === "scripts/diskfill.py");
+ok(fillLine?.script.limit === "disk" && !/FILLED/.test(fill?.stdout ?? ""), "a call that fills its temp folder past the disk limit is stopped and named so", JSON.stringify({ fill, line: fillLine?.text }));
+const br = runRes(11), hasBrowser = !!(await import("../src/domain/review-explain")).headlessBrowser();
+if (hasBrowser) ok(br?.exit === 0 && /DOM 0 /.test(br.stdout) && /<h1>/.test(br.stdout), "a headless browser starts inside the sandbox ($CHROME_BIN) and renders the page", JSON.stringify(br).slice(0, 600));
+else console.log("  note  no Playwright headless shell on this machine: the browser path is not exercised here");
+const ran = calls.filter((cc: any) => cc.outcome !== "refused");
+ok(calls.length === 12 && ran.length === 11 && ran.every((cc: any) => typeof cc.ms === "number" && cc.at && cc.scriptSha256 && "exit" in cc && typeof cc.stdout === "string") && calls.find((cc: any) => cc.script === "scripts/build.py")?.argv.join(" ") === "spec.json",
+  "every call is kept on its round: the command, its exit, its time, the tail of its output (and the refused one)", JSON.stringify(calls.map((cc: any) => [cc.script, cc.exit, cc.ms, cc.timedOut, cc.signal, cc.outcome])));
+const lines = run1.progress.filter((pp: any) => pp.script), lineOf = (s: string) => lines.find((pp: any) => pp.script.script === s);
+ok(/^build\.py — exit 0 · \d+\.\d s$/.test(lineOf("scripts/build.py")?.text ?? "") && lineOf("scripts/build.py").script.outcome === "ok" && lineOf("scripts/build.py").script.args === "spec.json", "each call is a progress line, the result first", JSON.stringify(lines.map((pp: any) => pp.text)));
+ok(lineOf("scripts/spin.py")?.script.outcome === "limit" && lineOf("scripts/spin.py").script.limit === "cpu" && /hit the CPU limit \(2 s\)/.test(lineOf("scripts/spin.py").text)
+  && lineOf("scripts/bigfile.py")?.script.limit === "file" && /hit the file-size limit \(1 MB\)/.test(lineOf("scripts/bigfile.py").text)
+  && lineOf("scripts/wait.sh")?.script.limit === "time" && /hit the time limit/.test(lineOf("scripts/wait.sh").text), "a limit a call hit is named with its value (CPU, file size, time)", JSON.stringify(lines.map((pp: any) => [pp.text, pp.script.limit])));
+const netLine = lineOf("scripts/net.py")?.script;
+ok(netLine?.hosts.includes("api.model-vendor.example") && netLine.refused.some((x: any) => x.host === "169.254.169.254") && /refused 169\.254\.169\.254/.test(lineOf("scripts/net.py").text) && /<Studio data>\/github-token/.test(netLine.args) && !netLine.args.includes(data),
+  "a call's line names the hosts it reached and was refused, with its paths shortened", JSON.stringify(netLine));
+const refLine = lines.find((pp: any) => pp.script.outcome === "refused");
+ok(refLine?.script.script === "../../etc/passwd" && /not a script of/.test(refLine.script.refusal) && /^passwd — refused:/.test(refLine.text), "a call refused before it ran is a line too, with why", JSON.stringify(refLine));
+ok(lines.find((pp: any) => pp.script.script === "scripts/check.py")?.script.stderr === "" && typeof netLine?.stderr === "string", "each line carries its stderr tail for the page to open");
 const led = E.trusted(r.id).entries.filter((y: any) => y.record === "review-room-explain").at(-1);
-ok(led?.data.skill.filesSha256 === v1.filesSha256 && led.data.scripts?.run === true && led.data.rounds[0].scripts.length === 8 && led.data.rounds[0].scripts.some((cc: any) => cc.script === "scripts/net.py" && cc.hosts.includes("api.model-vendor.example")), "the ledger has the package's hash and every call", JSON.stringify(led?.data).slice(0, 600));
+ok(led?.data.skill.filesSha256 === v1.filesSha256 && led.data.scripts?.run === true && led.data.rounds[0].scripts.length === 12 && led.data.rounds[0].scripts.some((cc: any) => cc.outcome === "refused") && led.data.rounds[0].scripts.some((cc: any) => cc.script === "scripts/net.py" && cc.hosts.includes("api.model-vendor.example")), "the ledger has the package's hash and every call", JSON.stringify(led?.data).slice(0, 600));
 ok(!existsSync(ws("")), "the run's workspace (with its read-only package copy) is gone");
 
 // ---------- a changed package is a new version: a new confirmation, and the new script runs ----------
@@ -197,11 +248,25 @@ ok(run2.status === "done" && run2.skill.v === 2 && run2.skill.filesSha256 === v2
 // ---------- text only (the Skills page's decision for a version): the scripts do not run ----------
 E.deps.skillPackages.decide(v2.id, 2, "text-only", "captain", "test");
 const off = X.offer(id, v2.id, "generate");
-ok(off.scripts?.run === false && /text only/.test(off.scripts.en) && off.hash !== e.offer.hash, "a version set to text only: the confirmation says its scripts do not run", JSON.stringify(off.scripts));
+ok(off.scripts?.run === false && /text only/.test(off.scripts.en) && (off.scripts.en.match(/do not run/g) ?? []).length === 1 && (off.scripts.zh.match(/不會執行/g) ?? []).length === 1 && off.hash !== e.offer.hash, "a version set to text only: the confirmation says its scripts do not run", JSON.stringify(off.scripts));
 script.push([["out_write", { path: "index.html", content: "<h1>by hand</h1>" }], ["explain_done", { entry: "index.html", summary: "text only" }]]);
 await X.generate(id, { skill: v2.id, confirm: off.hash }, "captain");
 const run3 = await waitRun(3);
 ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do not run here/.test(prompts.at(-1)!.text), "with text only the round has no skill_run and is told so", prompts.at(-1)!.tools.join(","));
+
+// ---------- Studio's bun standing in for node: a bunfig.toml or .env the agent wrote in the working folder is not honoured ----------
+{
+  const { skillTools } = await import("../src/skillpkg/run");
+  const root2 = mkdtempSync(join(tmpdir(), "crew-skill-bun-")), skill = join(root2, "skill"), work = join(root2, "out"); mkdirSync(join(skill, "scripts"), { recursive: true }); mkdirSync(work);
+  writeFileSync(join(skill, "scripts", "hello.js"), "console.log('HELLO', process.env.PLANTED ?? 'no-env', globalThis.PWNED ?? 'no-preload');\n");
+  writeFileSync(join(work, "bunfig.toml"), 'preload = ["./evil.js"]\n'); writeFileSync(join(work, "evil.js"), "globalThis.PWNED = 'PWNED';\n"); writeFileSync(join(work, ".env"), "PLANTED=from-dotenv\n");
+  const status: any = { state: "ready", blocking: false, reasons: [], runtimes: { node: { name: "node", bin: process.execPath, version: "bun", source: "studio", dir: join(process.execPath, "..", "..") } }, bins: [], envKey: null, env: null, decision: null };
+  const pkgs: any = { pkg: () => ({ scripts: [{ path: "scripts/hello.js", lang: "node", sha256: "x" }] }), runReads: () => [] };
+  const t: any = skillTools({ skills: [{ id: "bunny", v: 1, sha256: "a", filesSha256: "b", dir: skill, status, run: true }], packages: pkgs, round: { cwd: work, writes: [work], tmp: join(root2, "tmp"), dataDir: data, protect: [], egress: null, run: "R", node: "n", visit: 1 }, record: () => {} })
+    .find((x: any) => x.name === "skill_run");
+  const out2 = await t.run({ skill: "bunny", script: "scripts/hello.js" });
+  ok(/HELLO no-env no-preload/.test(out2.stdout), "bun as node ignores a bunfig.toml preload and a .env written in its working folder", JSON.stringify(out2).slice(0, 400));
+}
 
 upstream.stop(true); egress.stop(); H.stop();
 end();

@@ -606,6 +606,16 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-steps li { display: flex; gap: 8px; }
 .rx-steps li.done .d { color: var(--ok, #1a7f37); }
 .rx-steps li.now .d { color: var(--accent); }
+.rx-steps li.warn .d, .rx-callrow.warn .d { color: var(--warn); }
+.rx-steps li.bad .d, .rx-callrow.bad .d { color: var(--bad); }
+.rx-steps li { min-width: 0; }
+.rx-call { min-width: 0; overflow-wrap: anywhere; }
+.rx-call > summary { cursor: pointer; list-style: none; }
+.rx-call > summary::-webkit-details-marker { display: none; }
+.rx-calldetail { margin: 6px 0 0; font: 11px/1.45 var(--f-mono, ui-monospace, monospace); background: var(--surface-2); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
+.rx-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; vertical-align: middle; }
+.rx-chipname { font: 500 11.5px var(--f-mono, ui-monospace, monospace); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; }
+.rx-warn { display: block; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: var(--warn-soft); color: var(--text); border-left: 3px solid var(--warn); font-size: 12.5px; }
 .rx-log { max-height: 240px; overflow: auto; font-size: 11px; background: var(--surface-2); border-radius: 8px; padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rx-layer { position: fixed; z-index: 5; background: #fff; }
 .rx-layer[hidden] { display: none; }

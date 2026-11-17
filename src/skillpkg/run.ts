@@ -41,6 +41,7 @@ export function skillTools(o: { skills: RoundSkill[]; packages: SkillPackages; r
   };
   // the shims: a package manager on PATH before any real one, failing with the reason
   const shims = join(o.round.tmp, "skill-shims"); mkdirSync(shims, { recursive: true });
+  const bunConfig = join(shims, "bunfig.toml"); writeFileSync(bunConfig, "");
   for (const m of MANAGERS) writeFileSync(join(shims, m), `#!/bin/sh\necho "Studio: ${m} is not available when a skill runs. A skill's dependencies come from the lockfiles inside it (package-lock.json, uv.lock, requirements with hashes) and Studio installs them before the round; nothing is installed at run time. Use what is already installed, or ask for a new skill version whose lockfile has the package." >&2\nexit 127\n`, { mode: 0o755 });
   const budget = o.budget ?? {calls: 0};
   const list = (s: RoundSkill) => { const out: { path: string; bytes: number }[] = []; const walk = (rel: string) => { for (const e of readdirSync(join(s.dir, rel), { withFileTypes: true })) { const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) walk(r); else if (e.isFile()) out.push({ path: r, bytes: lstatSync(join(s.dir, r)).size }); } }; walk(""); return out.sort((a, b) => a.path.localeCompare(b.path)); };
@@ -81,7 +82,9 @@ export async function resolve(specifier, context, nextResolve) {
 }
 `);
       const argv = script.lang === "python" ? [venv ? join(venv, "bin", "python") : st.runtimes.python?.bin ?? "", path, ...args]
-        : script.lang === "node" ? [st.runtimes.node?.bin ?? "", ...(loader ? ["--experimental-loader", loader] : []), path, ...args] : script.lang === "shell" ? ["/bin/bash", path, ...args] : [];
+        // Studio's bun standing in for node reads bunfig.toml and .env from its working folder, which the agent writes: an empty
+        // config of Studio's own and no env file, so nothing written there runs or reaches the script's environment
+        : script.lang === "node" ? [st.runtimes.node?.bin ?? "", ...(st.runtimes.node?.source === "studio" ? [`--config=${bunConfig}`, "--no-env-file"] : []), ...(loader ? ["--experimental-loader", loader] : []), path, ...args] : script.lang === "shell" ? ["/bin/bash", path, ...args] : [];
       if (!argv[0]) throw new Error(`${script.path}: Studio runs Python, Node and shell scripts; this one is ${script.lang}${script.lang !== "other" ? " and its runtime is missing" : ""}`);
       const binDirs = [...new Set(st.bins.filter((b) => b.path && b.state !== "missing").map((b) => dirname(b.path!)))];
       const PATH = [shims, ...(x.path ?? []), venv ? join(venv, "bin") : null, nodeModules ? join(nodeModules, ".bin") : null, st.runtimes.node ? dirname(st.runtimes.node.bin) : null, st.runtimes.python ? dirname(st.runtimes.python.bin) : null, ...binDirs, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter(Boolean).join(":");
