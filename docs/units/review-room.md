@@ -761,10 +761,14 @@ The room can be presented by one of the captain's own skills instead of the tuto
     regular files only, never following a link. It writes only there and in its own temp folder (`$TMPDIR`, its `$HOME`
     in there, removed after the call); it reads the materials (`$MATERIALS_DIR`), the package (`$SKILL_DIR`), the system,
     the interpreters' installs and the folders on Studio's `PATH` (the round profile's rule; the confirmation says so).
-    Studio's data folder (keys, tokens, policies, other rooms) and the captain's secret folders are denied. Studio's bun,
-    when it stands in for node, runs with an empty config of Studio's own and `--no-env-file`, so a `bunfig.toml` preload or
-    a `.env` written in the working folder is not honoured; python runs the script file, whose folder (the read-only
-    package) is first on `sys.path`, never the working folder.
+    Studio's data folder (keys, tokens, policies, other rooms) and the captain's secret folders are denied. A bun that runs
+    a node script (Studio's own, or a `node` on PATH whose real file is a bun: an alias or a link) gets an empty config of
+    Studio's own and `--no-env-file`, so a `bunfig.toml` preload or a `.env` written in the working folder is not honoured.
+    Python runs the script file, whose folder (the read-only package) is first on `sys.path`, never the working folder.
+    `PYTHONSAFEPATH` is not set: it would also drop the script's own folder and break a skill that imports a module beside
+    its script. So a child interpreter a script starts itself with `python -m …` or `python -c …` in the working folder
+    puts that folder first on its path and imports what is there; that folder holds what the skill and the model wrote,
+    the same principal as the script, inside the same sandbox, network and caps. Studio never starts one that way.
   - *Network*: allowed, through Studio's egress proxy only (`HTTPS_PROXY`/`HTTP_PROXY`, a credential of its own per call,
     `anyHost`: any public name; `src/egress.ts`). The proxy's address guard still refuses loopback, this Mac's addresses,
     private, link-local and metadata addresses, so a script never reaches Studio or the local network. A client that

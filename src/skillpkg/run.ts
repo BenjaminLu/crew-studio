@@ -9,12 +9,15 @@
 // skill_run exists only for an approved script skill; package managers fail with a clear error (an install at run time
 // would be code nobody approved); each call is recorded with the skill, version, both hashes, the script and its hash.
 import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { roundExec } from "../runtime/checks";
 import type { EgressEvent } from "../egress";
 import type { SkillPackages, SkillStatus } from "./index";
 import { envDir } from "./prepare";
+/** The node a script runs on is bun: Studio's own, or a `node` on PATH that resolves to a bun (an alias or a link) */
+const isBun = (rt: { bin: string; source?: string } | undefined) => { if (!rt) return false; if (rt.source === "studio") return true;
+  try { return /^bun(-|$)/.test(basename(realpathSync(rt.bin))); } catch { return false; } };
 
 export type SkillRunRecord = { skill: string; v: number; sha256: string; filesSha256: string; script: string; scriptSha256: string; argv: string[]; cwd: string; exit: number | null; ms: number; timedOut: boolean;
   stdoutTail: string; stderrTail: string; egress: { allowed: string[]; refused: { host: string; why: string }[] }; signal?: string | null };
@@ -84,7 +87,7 @@ export async function resolve(specifier, context, nextResolve) {
       const argv = script.lang === "python" ? [venv ? join(venv, "bin", "python") : st.runtimes.python?.bin ?? "", path, ...args]
         // Studio's bun standing in for node reads bunfig.toml and .env from its working folder, which the agent writes: an empty
         // config of Studio's own and no env file, so nothing written there runs or reaches the script's environment
-        : script.lang === "node" ? [st.runtimes.node?.bin ?? "", ...(st.runtimes.node?.source === "studio" ? [`--config=${bunConfig}`, "--no-env-file"] : []), ...(loader ? ["--experimental-loader", loader] : []), path, ...args] : script.lang === "shell" ? ["/bin/bash", path, ...args] : [];
+        : script.lang === "node" ? [st.runtimes.node?.bin ?? "", ...(isBun(st.runtimes.node) ? [`--config=${bunConfig}`, "--no-env-file"] : []), ...(loader ? ["--experimental-loader", loader] : []), path, ...args] : script.lang === "shell" ? ["/bin/bash", path, ...args] : [];
       if (!argv[0]) throw new Error(`${script.path}: Studio runs Python, Node and shell scripts; this one is ${script.lang}${script.lang !== "other" ? " and its runtime is missing" : ""}`);
       const binDirs = [...new Set(st.bins.filter((b) => b.path && b.state !== "missing").map((b) => dirname(b.path!)))];
       const PATH = [shims, ...(x.path ?? []), venv ? join(venv, "bin") : null, nodeModules ? join(nodeModules, ".bin") : null, st.runtimes.node ? dirname(st.runtimes.node.bin) : null, st.runtimes.python ? dirname(st.runtimes.python.bin) : null, ...binDirs, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter(Boolean).join(":");

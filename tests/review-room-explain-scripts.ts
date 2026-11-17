@@ -11,9 +11,9 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   - the confirmation says the scripts run, sandboxed, with network, and names the interpreters; a changed package is a new
 //     version with a new confirmation; text only (the Skills page's decision) keeps the scripts from running.
 //        bun tests/review-room-explain-scripts.ts
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { connect } from "node:net";
 import { createHash } from "node:crypto";
 import { harness, suite, until } from "./rt-harness";
@@ -260,12 +260,16 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
   const root2 = mkdtempSync(join(tmpdir(), "crew-skill-bun-")), skill = join(root2, "skill"), work = join(root2, "out"); mkdirSync(join(skill, "scripts"), { recursive: true }); mkdirSync(work);
   writeFileSync(join(skill, "scripts", "hello.js"), "console.log('HELLO', process.env.PLANTED ?? 'no-env', globalThis.PWNED ?? 'no-preload');\n");
   writeFileSync(join(work, "bunfig.toml"), 'preload = ["./evil.js"]\n'); writeFileSync(join(work, "evil.js"), "globalThis.PWNED = 'PWNED';\n"); writeFileSync(join(work, ".env"), "PLANTED=from-dotenv\n");
-  const status: any = { state: "ready", blocking: false, reasons: [], runtimes: { node: { name: "node", bin: process.execPath, version: "bun", source: "studio", dir: join(process.execPath, "..", "..") } }, bins: [], envKey: null, env: null, decision: null };
-  const pkgs: any = { pkg: () => ({ scripts: [{ path: "scripts/hello.js", lang: "node", sha256: "x" }] }), runReads: () => [] };
-  const t: any = skillTools({ skills: [{ id: "bunny", v: 1, sha256: "a", filesSha256: "b", dir: skill, status, run: true }], packages: pkgs, round: { cwd: work, writes: [work], tmp: join(root2, "tmp"), dataDir: data, protect: [], egress: null, run: "R", node: "n", visit: 1 }, record: () => {} })
-    .find((x: any) => x.name === "skill_run");
-  const out2 = await t.run({ skill: "bunny", script: "scripts/hello.js" });
-  ok(/HELLO no-env no-preload/.test(out2.stdout), "bun as node ignores a bunfig.toml preload and a .env written in its working folder", JSON.stringify(out2).slice(0, 400));
+  // Studio's own bun, and a `node` on PATH that is a link to a bun (the host's node, as far as Studio's resolver knows)
+  const alias = join(root2, "bin", "node"); mkdirSync(join(root2, "bin")); symlinkSync(realpathSync(process.execPath), alias);
+  for (const [label, node] of [["Studio's bun", { name: "node", bin: process.execPath, version: "bun", source: "studio", dir: join(process.execPath, "..", "..") }], ["a node that links to bun", { name: "node", bin: alias, version: "22.0.0", source: "host", dir: root2 }]] as [string, any][]) {
+    const status: any = { state: "ready", blocking: false, reasons: [], runtimes: { node }, bins: [], envKey: null, env: null, decision: null };
+    const pkgs: any = { pkg: () => ({ scripts: [{ path: "scripts/hello.js", lang: "node", sha256: "x" }] }), runReads: () => [dirname(realpathSync(process.execPath))] };
+    const t: any = skillTools({ skills: [{ id: "bunny", v: 1, sha256: "a", filesSha256: "b", dir: skill, status, run: true }], packages: pkgs, round: { cwd: work, writes: [work], tmp: join(root2, "tmp"), dataDir: data, protect: [], egress: null, run: "R", node: "n", visit: 1 }, record: () => {} })
+      .find((x: any) => x.name === "skill_run");
+    const out2 = await t.run({ skill: "bunny", script: "scripts/hello.js" });
+    ok(/HELLO no-env no-preload/.test(out2.stdout), `${label} ignores a bunfig.toml preload and a .env written in its working folder`, JSON.stringify(out2).slice(0, 400));
+  }
 }
 
 upstream.stop(true); egress.stop(); H.stop();
