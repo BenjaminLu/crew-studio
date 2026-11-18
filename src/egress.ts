@@ -13,7 +13,8 @@ import { createServer, connect, isIP, type Server, type Socket } from "node:net"
 import { dirname } from "node:path";
 import { lookup as dnsLookup } from "node:dns";
 import { lookup } from "node:dns/promises";
-import { BROKER_PORTS } from "./egress-client";
+import { BROKER_PORTS, tunnelIdleMs } from "./egress-client";
+export { tunnelIdleMs } from "./egress-client";
 import { guardedLookup, isLoopbackAddress, localAddresses } from "./egress-guard";
 
 export type EgressMeta = { purpose?: "round" | "skill" | "prepare"; run?: string; node?: string; visit?: number; skill?: string; script?: string; strict?: boolean;
@@ -109,7 +110,7 @@ export class Egress {
         this.record(host, port, true, method, round, undefined, meta);
         const up = this.dial(port, to.address); up.once("connect", () => {
           if (client.destroyed || !token || !this.rounds.has(token)) { up.destroy(); return; }
-          client.setTimeout(120000, () => { client.destroy(); up.destroy(); }); up.setTimeout(120000, () => { client.destroy(); up.destroy(); });
+          const idle = tunnelIdleMs(); client.setTimeout(idle, () => { client.destroy(); up.destroy(); }); up.setTimeout(idle, () => { client.destroy(); up.destroy(); });
           if (method === "CONNECT") { client.write("HTTP/1.1 200 Connection Established\r\n\r\n"); const rest = head.slice(end + 4); if (rest.length) up.write(rest); }
           else { // a plain request: send it on as origin-form
             const u = new URL(target); lines[0] = `${method} ${u.pathname}${u.search} ${lines[0].split(" ")[2] ?? "HTTP/1.1"}`;
