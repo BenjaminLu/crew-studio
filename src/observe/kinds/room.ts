@@ -4,6 +4,7 @@
 // a translation or an explainer run: those are paid and only the captain starts them on the room's page.
 import { registerKind, type Entity, type Sources } from "../registry";
 import { CHAPTERS, DIR_CHAPTERS } from "../../domain/review-room";
+import { withheldOf } from "./task";
 
 const rrOf = (s: Sources): any => (s.engine as any).reviewRoom ?? null;
 const usd = (c: any) => (c && typeof c.usd === "number" ? c.usd : 0);
@@ -60,8 +61,14 @@ function roomData(s: Sources, id: string, full: boolean): Record<string, unknown
   };
 }
 const ROOM_ID = /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/;
+/** The Task a room belongs to: its own (R-…), its merge card's, or the one its subject names. A room of a Task whose text is
+ *  withheld from Firstmate (issue text, a peer's Studio) is withheld too: its tutor's words come from that text. */
+function roomWithheld(s: Sources, id: string, data?: any): string | null {
+  const e = s.engine, runId = /^R-\d+$/.test(id) ? id : /^SC-\d+$/.test(id) ? e.cards.get(id)?.run : data?.task?.id ?? data?.subject?.task ?? null;
+  const r = runId ? e.get(runId) : null; return r ? withheldOf(e, r) : null;
+}
 /** A listed room: the room list's own row (cheap), the full view only on studio_get. */
-const entityOf = (s: Sources, row: any): Entity => ({ id: row.id, title: roomTitle(row), updatedAt: row.updatedAt ?? null,
+const entityOf = (s: Sources, row: any): Entity => ({ id: row.id, title: roomTitle(row), updatedAt: row.updatedAt ?? null, withheld: roomWithheld(s, row.id),
   data: { id: row.id, kind: row.kind, open: !!row.open, running: !!row.running, answered: row.turns ?? 0, repository: row.repository ?? null, zone: row.zone ?? null },
   full: () => roomData(s, row.id, true) ?? {} });
 
@@ -94,5 +101,5 @@ registerKind({
     return rows.filter((r) => (filter.open !== true || r.open) && (!filter.zone || r.zone === filter.zone)).map((r) => entityOf(s, r)); },
   get: (s, id) => { const rr = rrOf(s); if (!rr || !ROOM_ID.test(id)) return null; let row: any = null; try { row = rr.list().find((r: any) => r.id === id); } catch {}
     const data = roomData(s, id, false); if (!data) return null;
-    return { id, title: roomTitle(row ?? { id, kind: (data.kind as string) ?? "", repository: (data.subject as any)?.repository }, (data.subject as any)?.number), updatedAt: row?.updatedAt ?? null, data, full: () => roomData(s, id, true) ?? data }; },
+    return { id, title: roomTitle(row ?? { id, kind: (data.kind as string) ?? "", repository: (data.subject as any)?.repository }, (data.subject as any)?.number), updatedAt: row?.updatedAt ?? null, withheld: roomWithheld(s, id, data), data, full: () => roomData(s, id, true) ?? data }; },
 });

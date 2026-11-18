@@ -53,6 +53,8 @@ function wrappedPaths(v: unknown, at = ""): string[] {
   return [];
 }
 const item = (def: KindDef, e: Entity) => ({ ref: refOf(def.kind, e.id), kind: def.kind, route: routeOf(def, e.id), title: e.title, updatedAt: e.updatedAt });
+/** What an envelope weighs as sent: itself, its untrusted paths listed twice (in it and in _meta) and the trust note. */
+function finalBytes(env: Envelope): number { const u = wrappedPaths(env.data).map((p) => `data.${p}`); return Buffer.byteLength(JSON.stringify({ ...env, untrusted: u })) + Buffer.byteLength(JSON.stringify(trustMeta(u))) + 10; }
 /** An envelope, cut to its budget, with its untrusted paths and `_meta["studio/trust"]`. */
 function finish(env: Envelope, budget: number): Envelope & { _meta: ReturnType<typeof trustMeta> } {
   // the untrusted list and the trust note count toward the budget too (cutting only ever shortens them)
@@ -80,28 +82,28 @@ export function createObserve(s: Sources) {
       if (!f) throw bad(`studio_list ${def.kind}: unknown filter ${k.slice(0, 40)}. Its filters: ${known.join(", ") || "none"}.`, `studio_list ${def.kind}：沒有 ${k.slice(0, 40)} 這個 filter。可用的：${known.join("、") || "無"}。`);
       if (typeof v !== f.type || (f.enum && !f.enum.includes(String(v)))) throw bad(`studio_list ${def.kind}: filter ${k} is ${f.enum ? f.enum.join(" | ") : f.type}.`, `studio_list ${def.kind}：filter ${k} 必須是 ${f.enum ? f.enum.join(" | ") : f.type}。`); }
     const key = listKey({ kind: def.kind, filter }), offset = offsetOf(a.cursor, key, `studio_list {kind: "${def.kind}"}`);
-    const all = def.list(s, filter), budget = BUDGET[depth], items: any[] = [], entries: any[] = [];
-    let used = 600, next = offset;
-    for (; next < all.length && items.length < PAGE.list; next++) {
-      const e = all[next], shaped = shape(def, e.data, e.withheld), one = fit(shaped.data, Math.floor(budget / 2)).value, it = item(def, e), bytes = Buffer.byteLength(JSON.stringify([it, one]));
-      if (items.length && used + bytes > budget) break; used += bytes; items.push(it); entries.push(one);
-    }
-    const more = next < all.length;
-    return finish({ ref: `${def.kind}:*`, kind: def.kind, route: def.listRoute, updatedAt: null, data: { total: all.length, offset, shown: items.length, filter, entries, about: def.about }, untrusted: [], nextCursor: more ? cursorOf(key, next) : null, truncated: false, items }, budget);
+    const all = def.list(s, filter), budget = BUDGET[depth];
+    // a page is as many entities as fit whole: the last one that does not fit starts the next page (the cursor), never a cut
+    const rows: { it: any; one: any; cut: boolean }[] = [];
+    const env = (n: number): Envelope => ({ ref: `${def.kind}:*`, kind: def.kind, route: def.listRoute, updatedAt: null, data: { total: all.length, offset, shown: n, filter, entries: rows.slice(0, n).map((r) => r.one), about: def.about }, untrusted: [], nextCursor: offset + n < all.length ? cursorOf(key, offset + n) : null, truncated: rows.slice(0, n).some((r) => r.cut), items: rows.slice(0, n).map((r) => r.it) });
+    for (let i = offset; i < all.length && rows.length < PAGE.list; i++) { const e = all[i], f = fit(shape(def, e.data, e.withheld).data, Math.floor(budget / 2));
+      rows.push({ it: item(def, e), one: f.value, cut: f.truncated }); if (rows.length > 1 && finalBytes(env(rows.length)) > budget) { rows.pop(); break; } }
+    return finish(env(rows.length), budget);
   };
   const find = (a: Record<string, unknown>) => {
     onlyKeys(a, "studio_find", ["query", "kinds", "cursor"]);
     const q = typeof a.query === "string" ? a.query.trim().toLowerCase() : ""; if (!q || q.length > 200) throw bad("studio_find: query is 1 to 200 characters (an id like R-162, a pull request number, a name).", "studio_find：query 是 1 到 200 個字（像 R-162 的 id、PR 編號或名稱）。");
-    const ks = a.kinds === undefined ? kinds() : Array.isArray(a.kinds) && a.kinds.length ? a.kinds.map((k) => kindOrFail(k, "studio_find").kind) : (() => { throw bad(`studio_find: kinds is a list of ${kinds().join(", ")}.`, `studio_find：kinds 是 ${kinds().join("、")} 的列表。`); })();
+    const ks = a.kinds === undefined ? kinds() : Array.isArray(a.kinds) && a.kinds.length ? [...new Set(a.kinds.map((k) => kindOrFail(k, "studio_find").kind))] : (() => { throw bad(`studio_find: kinds is a list of ${kinds().join(", ")}.`, `studio_find：kinds 是 ${kinds().join("、")} 的列表。`); })();
     const key = listKey({ q, ks }), offset = offsetOf(a.cursor, key, "studio_find");
     const hits: { def: KindDef; e: Entity }[] = [];
     // only Studio's and the captain's words are searched: a hit on someone else's text would let it steer what is found
     const words = (v: unknown): string[] => (typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(words) : v && typeof v === "object" ? ((v as any).untrusted === true ? [] : Object.values(v).flatMap(words)) : typeof v === "number" ? [String(v)] : []);
     for (const k of ks) { const def = kindDef(k)!;
       for (const e of def.search ? def.search(s, q) : def.list(s, {})) { const hay = [refOf(def.kind, e.id), e.title, ...words(shape(def, e.data, e.withheld).data)].join("\n").toLowerCase(); if (hay.includes(q)) hits.push({ def, e }); } }
-    const page = hits.slice(offset, offset + PAGE.find);
-    const items = page.map(({ def, e }) => ({ ...item(def, e), resource_link: { type: "resource_link" as const, uri: uriOf(def.kind, e.id), name: refOf(def.kind, e.id), title: e.title } }));
-    return finish({ ref: `find:${q.slice(0, 60)}`, kind: "find", route: "#/board", updatedAt: null, data: { query: q, kinds: ks, total: hits.length, offset, shown: items.length }, untrusted: [], nextCursor: offset + PAGE.find < hits.length ? cursorOf(key, offset + PAGE.find) : null, truncated: false, items }, BUDGET.summary);
+    const linked = ({ def, e }: { def: KindDef; e: Entity }) => ({ ...item(def, e), resource_link: { type: "resource_link" as const, uri: uriOf(def.kind, e.id), name: refOf(def.kind, e.id), title: e.title } });
+    const env = (n: number): Envelope => ({ ref: `find:${q.slice(0, 60)}`, kind: "find", route: "#/board", updatedAt: null, data: { query: q, kinds: ks, total: hits.length, offset, shown: n }, untrusted: [], nextCursor: offset + n < hits.length ? cursorOf(key, offset + n) : null, truncated: false, items: hits.slice(offset, offset + n).map(linked) });
+    let n = Math.min(PAGE.find, Math.max(0, hits.length - offset)); while (n > 1 && finalBytes(env(n)) > BUDGET.summary) n--;
+    return finish(env(n), BUDGET.summary);
   };
   const now = (a: Record<string, unknown>) => {
     onlyKeys(a, "studio_now", ["depth"]); const depth = depthOf(a, "studio_now"), n = nowSummary(s), t = (s.now ?? Date.now)();

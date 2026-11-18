@@ -13,13 +13,21 @@ const SEL_KEYS = new Set(["kind", "id", "label"]);
 export const FOCUS_LIMITS = { route: 200, ref: 200, id: 160, label: 80, dialog: 60, tab: 64, kept: 20, tabs: 20 } as const;
 const clean = (v: unknown, n: number) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 
+/** The page only: `#/<page>` and, when it is a Studio id, `/<id>`. A query (a list's search box writes what the captain typed
+ *  into it) and any other path text are dropped, never kept. */
+export const STUDIO_ID = /^(?:R-\d+|SC-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/;
+export function cleanRoute(v: unknown): string | null {
+  const m = /^#\/([\w-]{1,40})(?:\/([^?\s]*))?/.exec(String(v ?? "").trim()); if (!m) return null;
+  let id = ""; try { id = decodeURIComponent(m[2] ?? ""); } catch {}
+  return `#/${m[1]}${STUDIO_ID.test(id) ? `/${id}` : ""}`;
+}
 /** Check a report from the board; the reason when it is refused. Unknown keys are refused: a report carries nothing else. */
 export function readReport(b: unknown): { ok: true; tab: string; visible: boolean; report: FocusReport } | { ok: false; error: string } {
   if (!b || typeof b !== "object" || Array.isArray(b)) return { ok: false, error: "send {route, ref?, selection?, dialog?, label?, tab, visible}" };
   const o = b as Record<string, unknown>, extra = Object.keys(o).find((k) => !KEYS.has(k));
   if (extra) return { ok: false, error: `a focus report carries only route, ref, selection, dialog, label, tab and visible (not ${extra.slice(0, 40)})` };
-  const route = clean(o.route, FOCUS_LIMITS.route);
-  if (!/^#\/[\w-]{1,40}(?:\/[^\s]*)?$/.test(route)) return { ok: false, error: "route is the board's #/… address" };
+  const route = cleanRoute(o.route);
+  if (!route) return { ok: false, error: "route is the board's #/… address" };
   const tab = clean(o.tab, FOCUS_LIMITS.tab); if (!/^[\w-]{1,64}$/.test(tab)) return { ok: false, error: "tab is the window's id" };
   let selection: FocusReport["selection"] = null;
   if (o.selection != null) { const s = o.selection as Record<string, unknown>;
