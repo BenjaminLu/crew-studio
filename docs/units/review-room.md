@@ -857,15 +857,24 @@ The room can be presented by one of the captain's own skills instead of the tuto
     src/skillpkg/crew.ts: both short hashes, each script with its flags, the hosts approving it allows, its lockfiles and
     programs), and the confirmation (and a follow-up's, in the chat) carries the pick 「核准（含 script）」 Approve with
     scripts / 「只當文字」 Text only; Confirm stays off until one is picked, and a start without it (or with only a standing
-    consent) is refused `confirm_required`. The pick (`skillDecision`) is recorded once the run is admitted, through the same
+    consent) is refused `confirm_required`. The pick sits at the end of the dialog, so until it is made the sticky footer says
+    「請在下面選「核准（含 script）」或「只當文字」才能開始。」 with a button that scrolls to it; the scripts and network rows
+    above say they depend on that decision rather than promising a run or a network. The options stay at every width (390 px
+    too). The pick (`skillDecision`) is recorded once the run is admitted, through the same
     signed ledger (`SkillPackages.decide`, `via: "review-room"`, with the room and the Task), bound to the hashes the
-    confirmation showed; the run and its start record keep `decided`. A decided version shows its decision ("Approved with
+    confirmation showed; the run and its start record keep `decided`. Once written it is the version's decision: it stays
+    if the run then fails or is stopped. A follow-up's "don't ask again" given with the pick is stored for the offer with
+    the decision in force (the hash the next follow-up's offer has), not the pending one. A decided version shows its decision ("Approved with
     scripts · decided in the review room") and asks nothing. Text only: the run has no `skill_run` and the first message
     says the scripts do not run. Approved: before its first round the run waits for the version's prepare (or starts it:
     `SkillPackages.ensure`, the lockfile-derived egress list and the sandboxed install of §4); the stage shows "Studio is
     installing the skill's dependencies from its lockfiles (sandboxed)…", and the run's plan is read again so `skill_run`
     gets the prepared env. A prepare that fails or a runtime that is missing stops the run before any paid round, `why:
     "prepare"`, with the reasons in en and zh. Only a missing program does not stop it (the agent is told what is missing).
+    This holds for a version approved elsewhere whose prepare failed too: it fails `why: "prepare"`, where it used to fall
+    back to the runtimes found on the host. Stop and the safety limit do not wait for a prepare (its steps can take up to
+    900 s): the run ends at once (`why: "captain"` or `"limit"`, its `prepare` `left`) and frees the tutor seat, and the
+    prepare, the version's and shared with every other waiter, goes on in the background.
 - **Live progress**: the stage shows Studio's steps (read the materials, the skill working round by round with its own
   `explain_progress` lines, its own check, the frame), done, current and upcoming, a bar of the time used of the safety limit,
   the cost and its live log (the round's tool calls and what it said); it runs in the background, the captain may leave, and
@@ -961,9 +970,11 @@ token files unreadable; writes outside `out/` refused; the CPU, file-size, wall-
 round and the ledger; a changed script is v2 with a new confirmation; text only; an undecided script version with a
 hash-pinned requirements lock decided in the confirmation: the ledger line via the review room, the prepare from a local
 wheel index, the script importing its pinned package from the prepared env; text only picked there; a decided version
-asked nothing; a failed prepare stopping the run before any round). The page side (`tests/review-room-explain-ui.mjs`):
+asked nothing; a failed prepare stopping the run before any round; Stop during a held-open prepare ending the run at once
+while the prepare finishes for the version; a follow-up's consent given with the pick letting the next follow-up go). The page side (`tests/review-room-explain-ui.mjs`):
 the pick with the card's facts, Confirm off until it is made, the pick sent, the prepare step, a failed prepare's reason,
-a decided version's line, a follow-up's pick in the chat.
+a decided version's line, a follow-up's pick in the chat; while undecided, the rows above saying they depend on the
+decision, the footer's line and its button to the pick, and at 390 px both options visible and the pick enabling Confirm.
 
 Not yet: the explainer's own web tools (beyond what a script fetches); a script's Python packages come only from the
 runtime or a prepared env (the captain's user site-packages are not read); a generation stopped half-way keeps nothing; a Library snapshot of a room does not include the skill's versions; the new tab lasts as long as its capability (30 minutes: a reload after that is refused; open it again from the room), and that capability stays in the browser's history until it expires; instructions are remembered per skill, not per room.

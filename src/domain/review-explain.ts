@@ -110,8 +110,9 @@ type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running"
   progress: { at: string; text: string; script?: ScriptLine }[];
   /** the captain's decision on the version's scripts made with this run's confirmation (docs/units/skill-packages.md §3) */
   decided?: "approved" | "text-only";
-  /** Studio preparing the version's env (its lockfiles) before the first round: running, done, or failed with the reasons */
-  prepare?: { state: "running" | "done" | "failed"; at: string; reasons?: { en: string; zh: string }[] };
+  /** Studio preparing the version's env (its lockfiles) before the first round: running, done, failed with the reasons, or left
+   *  (the run was stopped, or passed its safety limit, while it ran; the prepare itself goes on for the version) */
+  prepare?: { state: "running" | "done" | "failed" | "left"; at: string; reasons?: { en: string; zh: string }[] };
   /** why it stopped or failed, as a code the page words in the captain's language (stop / error keep Studio's English detail) */
   /** a stalled run: how many rounds in a row left the output unchanged */
   stalled?: number; /** rounds in a row cut at the model's output limit, when that stopped the run */ cut?: number;
@@ -224,7 +225,8 @@ export type ExplainerDeps = {
 export function installExplainer(d: ExplainerDeps) {
   const { engine } = d;
   const secret = randomBytes(32);
-  const running = new Map<string, { run: number; job: string | null; stop: string | null }>();
+  /** wake: ends a wait that is not a round (the version's prepare) when the captain stops the run */
+  const running = new Map<string, { run: number; job: string | null; stop: string | null; wake?: () => void }>();
   const dirOf = (k: any) => `${String(k.file).replace(/\.json$/, "")}-explain`;
   const stateFile = (k: any) => join(dirOf(k), "state.json");
   const cache = new Map<string, XState>();
@@ -561,8 +563,15 @@ export function installExplainer(d: ExplainerDeps) {
       const pk: SkillPackages | null = engine.deps.skillPackages ?? null;
       if (plan?.run && pk && pk.decision(run.skill.id, run.skill.v)?.scripts === "approved" && pk.status(run.skill.id, run.skill.v).state !== "ready") {
         run.prepare = { state: "running", at: now() }; save(); d.notify(k);
-        const ps = await pk.ensure(run.skill.id, run.skill.v);
-        if (ps.state === "ready" || (ps.state === "not-ready" && !ps.blocking)) { run.prepare = { state: "done", at: now(), ...(ps.reasons.length ? { reasons: ps.reasons } : {}) }; plan = planOf(run.skill); }
+        // a prepare can take many minutes (src/skillpkg/prepare.ts): Stop and the safety limit do not wait for it. The run ends at
+        // once and frees the tutor seat; the prepare is the version's, shared with every other waiter, and goes on in the background
+        const ensuring = pk.ensure(run.skill.id, run.skill.v); ensuring.catch(() => {});
+        let wake = () => {}; const woke = new Promise<null>((r) => { wake = () => r(null); }); live.wake = wake;
+        const timer = setTimeout(wake, Math.max(0, deadline - Date.now()));
+        const ps = live.stop ? null : await Promise.race([ensuring, woke]).finally(() => { clearTimeout(timer); live.wake = undefined; });
+        if (!ps) { run.prepare = { state: "left", at: now() };
+          Object.assign(run, live.stop ? { status: "stopped", stop: live.stop, why: "captain" } : { status: "stopped", stop: `the safety limit of ${run.limitMin} min passed`, why: "limit" }); }
+        else if (ps.state === "ready" || (ps.state === "not-ready" && !ps.blocking)) { run.prepare = { state: "done", at: now(), ...(ps.reasons.length ? { reasons: ps.reasons } : {}) }; plan = planOf(run.skill); }
         else { const rs = ps.reasons.length ? ps.reasons : [{ en: `${run.skill.id}@v${run.skill.v} is ${ps.state}`, zh: `${run.skill.id}@v${run.skill.v}：${ps.state}` }];
           run.prepare = { state: "failed", at: now(), reasons: rs };
           Object.assign(run, { status: "failed", why: "prepare", error: clip(`Studio could not prepare the skill's dependencies: ${rs.map((r) => r.en).join("; ")} / Studio 沒辦法準備這個 skill 的依賴：${rs.map((r) => r.zh).join("；")}`, 900) }); }
@@ -680,10 +689,13 @@ export function installExplainer(d: ExplainerDeps) {
       pk.assertDecidable(pin.id, pin.v, { sha256: o0.decide.facts.sha256, filesSha256: o0.decide.facts.filesSha256 });
       if (pk.decision(pin.id, pin.v)) throw refuse("The skill's decision changed since you confirmed: confirm again / 確認之後這個 skill 的決定變了，請再確認一次", "confirm_required");
       decided = pick === "scripts" ? "approved" : "text-only";
+      // recorded once the run is admitted; it is the version's decision from now on and stays even if this run then fails or is stopped
       pk.decide(pin.id, pin.v, decided, /^captain\b/i.test(by) ? by : "captain", "review-room", { card: k.id, run: s.run.id });
       plan = planOf(pin); }
     if (kind === "generate") { st.selected = { id: pin.id, v: pin.v }; try { rememberPrompt(pin.id, prompt); } catch {} }
-    if (kind === "ask" && a.consent === true && a.confirm === o0.hash) st.consent = { plan: o0.hash, by: clip(by || "captain", 80), at: now() };
+    // "don't ask again" is for what the next follow-up's offer will be: after a pick, the offer with the decision in force
+    if (kind === "ask" && a.consent === true && a.confirm === o0.hash) { let plan2 = o0.hash; if (decided) { const o1: any = offer(k, skill, kind, prompt); if (!o1.error) plan2 = o1.hash; }
+      st.consent = { plan: plan2, by: clip(by || "captain", 80), at: now() }; }
     else if (kind === "ask" && a.confirm === o0.hash && st.consent) delete st.consent;
     run = { n: (st.runs.at(-1)?.n ?? 0) + 1, kind, skill: pin, status: "running", by: clip(by || "captain", 80), at: now(), ended: null, provider: adm.provider?.id ?? tutor.pick.provider, model: adm.provider?.model ?? tutor.pick.model ?? "",
       effort: tutor.pick.effort ?? null, confirm: o0.hash, limitMin: o0.limitMin, rounds: [], cost: null, error: null, progress: [], from: from?.n ?? null, version: null, ...(decided ? { decided } : {}), ...(kind === "ask" ? { question, selection } : { prompt }), ...(agreed ? { auto: true } : {}) };
@@ -743,7 +755,7 @@ export function installExplainer(d: ExplainerDeps) {
     ask(id: string, a: any, by: string) { return start(id, "ask", a, by); },
     /** stop the run: its round is cancelled now (what it cost so far is recorded); a generation stopped keeps no version */
     stop(id: string) { const k = d.keyOf(id), live = running.get(k.id); if (!live) return viewOf(k);
-      live.stop = "stopped by the captain"; if (live.job) engine.deps.agents.cancel(live.job); return viewOf(k); },
+      live.stop = "stopped by the captain"; if (live.job) engine.deps.agents.cancel(live.job); live.wake?.(); return viewOf(k); },
     running(id: string) { return running.has(id); },
     setSettings(a: { limitMin?: unknown }) { const v = Number(a?.limitMin);
       if (!Number.isFinite(v) || v < LIMIT_RANGE.min || v > LIMIT_RANGE.max) throw refuse(`limitMin is a number of minutes from ${LIMIT_RANGE.min} to ${LIMIT_RANGE.max}`, "bad_request");

@@ -11,7 +11,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   - the confirmation says the scripts run, sandboxed, with network, and names the interpreters; a changed package is a new
 //     version with a new confirmation; text only (the Skills page's decision) keeps the scripts from running.
 //        bun tests/review-room-explain-scripts.ts
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { connect } from "node:net";
@@ -278,7 +278,8 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
 
 // ---------- an undecided script skill with a hash-pinned requirements lock: decided in the confirmation, prepared, then run ----------
 {
-  const mkSkill = (name: string, requirements: string) => { const d = mkdtempSync(join(tmpdir(), `crew-skill-${name}-`)), f = join(d, name); mkdirSync(join(f, "scripts"), { recursive: true });
+  const dirs: Record<string, string> = {};
+  const mkSkill = (name: string, requirements: string) => { const d = mkdtempSync(join(tmpdir(), `crew-skill-${name}-`)), f = join(d, name); mkdirSync(join(f, "scripts"), { recursive: true }); dirs[name] = f;
     writeFileSync(join(f, "SKILL.md"), `---\nname: ${name}\ndescription: A page made by a script that needs one pinned package.\n---\n# ${name}\n\nRun scripts/use-py.py with a word.\n`);
     writeFileSync(join(f, "requirements.txt"), requirements);
     writeFileSync(join(f, "scripts", "use-py.py"), "import sys\nimport fixture_py\nout = fixture_py.shout(sys.argv[1] if len(sys.argv) > 1 else 'none')\nopen('index.html', 'w').write('<h1>' + out + '</h1>')\nprint(out)\n");
@@ -321,6 +322,38 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
   await X.generate(id, { skill: bad.id, confirm: o4.hash, skillDecision: "scripts" }, "captain"); const runD = await waitRun(nD, 240000);
   ok(runD?.status === "failed" && runD.why === "prepare" && runD.prepare?.state === "failed" && /could not prepare the skill's dependencies/.test(runD.error) && /沒辦法準備這個 skill 的依賴/.test(runD.error) && runD.rounds.length === 0 && prompts.length === roundsBefore,
     "a prepare that fails stops the run before any paid round, with the reason in en and zh", JSON.stringify({ s: runD?.status, why: runD?.why, e: runD?.error, rounds: runD?.rounds?.length }));
+
+  // Stop while the version's prepare runs (it can take many minutes): the run stops at once and frees the room; the prepare
+  // is the version's and goes on (here a prepare held open by the test until it is released)
+  const pk = E.deps.skillPackages, ensure0 = pk.ensure.bind(pk), slow = mkSkill("dep-kit-slow", fx.requirements);
+  // (one prepare for the version, whoever waits for it: the approval's own and the run's)
+  let release: () => void = () => {}, held: Promise<any> | null = null;
+  pk.ensure = ((sid: string, sv: number, ...rest: any[]) => { if (sid !== slow.id) return ensure0(sid, sv, ...rest);
+    return held ??= new Promise((ok2) => { release = () => ok2(ensure0(sid, sv, ...rest)); }); }) as any;
+  const o5: any = X.offer(id, slow.id, "generate"), nE = n0(), roundsE = prompts.length;
+  await X.generate(id, { skill: slow.id, confirm: o5.hash, skillDecision: "scripts" }, "captain");
+  await until(() => X.view(id).runs.find((x: any) => x.n === nE)?.prepare?.state === "running", 30000);
+  const t0 = Date.now(); X.stop(id);
+  const runE = await waitRun(nE, 5000), took = Date.now() - t0;
+  ok(runE?.status === "stopped" && runE.why === "captain" && runE.prepare?.state === "left" && runE.rounds.length === 0 && prompts.length === roundsE && !X.running(id) && took < 3000,
+    "Stop during the prepare ends the run at once (why: captain, no round) and frees the room; it does not wait for the prepare", JSON.stringify({ s: runE?.status, why: runE?.why, p: runE?.prepare, took, running: X.running(id), rounds: runE?.rounds?.length, prompts: prompts.length - roundsE }));
+  release(); await until(() => pk.status(slow.id, 1).state === "ready", 240000);
+  ok(pk.status(slow.id, 1).state === "ready" && X.view(id).runs.find((x: any) => x.n === nE)?.status === "stopped", "the prepare went on in the background and finished for the version; the stopped run stays stopped");
+  pk.ensure = ensure0 as any;
+
+  // "don't ask again" with a pick in the follow-up: the consent is for the offer with the decision in force, so the next follow-up
+  // goes without asking (the pre-decision hash would never match again)
+  const from = X.view(id).versions.filter((x: any) => x.skill.id === dep.id).at(-1)!;
+  const dF = dirs["dep-kit"]; writeFileSync(join(dF, "scripts", "use-py.py"), "print('v2')\n"); rmSync(join(dF, "requirements.txt")); E.skillLibrary().importFolder(dF, "captain");
+  const o6: any = X.offer(id, null, "ask", from.n), nF = n0();
+  ok(o6.kind === "ask" && o6.decide?.state === "pending" && o6.skill.v === 2, "a follow-up on a new, undecided version asks for the pick", JSON.stringify({ d: o6.decide?.state, v: o6.skill }));
+  script.push([["explain_answer", { answer: "Because of the lock.", cites: [], updated: false, summary: "lock" }]]);
+  await X.ask(id, { question: "Why this lock?", selection: null, version: from.n, confirm: o6.hash, consent: true, skillDecision: "text-only" }, "captain"); const runF = await waitRun(nF);
+  const o7: any = X.offer(id, null, "ask", from.n);
+  ok(runF?.status === "done" && o7.decide?.state === "text-only" && o7.hash !== o6.hash && X.view(id).consent?.plan === o7.hash, "the consent given with the pick is stored for the offer after the decision", JSON.stringify({ s: runF?.status, e: runF?.error, consent: X.view(id).consent, o6: o6.hash, o7: o7.hash }));
+  const nG = n0(); script.push([["explain_answer", { answer: "Still the lock.", cites: [], updated: false, summary: "lock again" }]]);
+  await X.ask(id, { question: "And again?", selection: null, version: from.n }, "captain"); const runG = await waitRun(nG);
+  ok(runG?.status === "done" && runG.auto === true, "the next follow-up goes without asking", JSON.stringify({ s: runG?.status, auto: runG?.auto, e: runG?.error }));
 }
 
 upstream.stop(true); egress.stop(); prepEgress.stop(); fx.stop(); H.stop();
