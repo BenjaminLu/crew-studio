@@ -20,7 +20,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const until = async (f: () => any, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await f(); if (v) return v; await sleep(50); } return null; };
 const d = mkdtempSync(join(tmpdir(), "crew-term-screen-")), pr = join(d, "p"); mkdirSync(pr);
 const svc = new Terminals({ dataDir: d, projects: () => [{ id: "p", name: "P", path: pr }], transcripts: false, shell: "/bin/sh", env: { PATH: "/usr/bin:/bin", HOME: d, TERM: "xterm-256color", LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } } as any);
-const E = "\x1b", TOK = "ghp_" + "Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8", LINK = "https://claude.ai/code/session_01ABCDEFGHIJKLMNOPQRSTUV";
+const E = "\x1b", TOK = "ghp_" + "Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8", LINK = "https://claude.ai/code/" + "rc-01ABCDEFGHIJKLMNOPQRSTUV";
 const CONTROL = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/;
 const leaks = (lines: string[]) => { const t = lines.join("\n"); return [TOK.slice(4, 14), TOK.slice(-12), "ABCDEFGHIJ", "KLMNOPQRSTUV"].filter((p) => t.includes(p)); };
 /** A terminal that prints `payload` and stays open; its tail once drawn. */
