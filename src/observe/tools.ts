@@ -17,7 +17,7 @@ export function observeSpecs() {
   const kindEnum = kinds();
   return [
     { type: "function" as const, name: "studio_now", annotations: READ_ONLY("What the captain is looking at now"),
-      description: `What the captain is looking at and what needs them now: the page, item and dialog in each Studio window (with how long ago; over 10 minutes it is "last seen"), the cards waiting for the captain (most urgent first), the work running with its progress and cost, and what changed in the last hour. Call it first, then studio_get or studio_find; cite the refs you use (${examples()}).`,
+      description: `What the captain is looking at and what needs them now: the page, item and dialog in each Studio window (with how long ago; over 10 minutes it is "last seen"), the cards waiting for the captain (most urgent first), the work running with its progress and cost, and what changed in the last hour. Call it first, then studio_get or studio_find; cite the refs you use (${examples()}). To read several cards or Tasks, call studio_list for that kind once rather than studio_get on each.`,
       inputSchema: { type: "object", additionalProperties: false, properties: { depth: depthSchema } }, outputSchema: ENVELOPE_SCHEMA },
     { type: "function" as const, name: "studio_find", annotations: READ_ONLY("Search Studio"),
       description: `Search Studio by id or name across Tasks, cards, review rooms and pull requests (kinds: ${kindEnum.join(", ")}). Returns matching refs with their board pages and resource links; read one with studio_get.`,

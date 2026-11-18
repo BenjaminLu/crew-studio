@@ -94,6 +94,11 @@ try {
   const cards: any = await O.call("studio_list", { kind: "card" });
   ok(cards.items[0].ref === `card:${F.ids.doorCard}` && cards.data.entries[0].urgency === "one-way door" && cards.data.entries[0].options.map((x: any) => x.id).join() === "go,hold", "Q4: the one-way door card comes first, with the choices the captain has", J(cards.data.entries[0]));
   ok(now1.data.waiting[0].ref === `card:${F.ids.doorCard}` && now1.data.counts.waiting === openBefore && now1.data.waiting.some((w: any) => w.kind === "failure"), "Q4: studio_now lists the same card first, then the failed Task's card", J(now1.data.waiting));
+  { const w = now1.data.waiting[0];
+    ok(w.door === "one-way" && w.urgency === cards.data.entries[0].urgency && J(w.options) === J(["Ship it", "Hold"]) && w.title === "Decide"
+      && w.question?.untrusted === true && /pricing page/.test(w.question.text) && now1.untrusted.includes("data.waiting[0].question"),
+      "Q4: studio_now says what the door card asks, how urgent (studio_get's words) and its choices, its question marked untrusted", J(w)); }
+  ok(new Set(now1.data.waiting.filter((w: any) => w.question).map((w: any) => w.question.text)).size === now1.data.waiting.filter((w: any) => w.question).length, "each fixture card asks its own question", J(now1.data.waiting.map((w: any) => w.question?.text)));
   ok(F.E.cards.list({ open: true }).length === openBefore && specs.every((s) => !/answer|approve|prepare|start|send/.test(s.name)), "Q4: reading answered nothing, and no read tool answers, approves or prepares a card");
   const shownCard = F.E.cards.view(F.E.cards.get(F.ids.doorCard)!);
   const fullCard: any = await O.call("studio_get", { ref: `card:${F.ids.doorCard}`, depth: "full" }), C_KEYS = ["id", "run", "node", "visit", "kind", "status", "createdAt", "workflow", "door", "confirmDoor", "title", "runTitle"] as const;
@@ -164,6 +169,8 @@ try {
       ok(!J(mergeRoom).includes("IGNORE") && mergeRoom.data.withheld, "a merge card's room on a withheld Task is withheld too", J(mergeRoom).slice(0, 200));
       const fullTask: any = await O.call("studio_get", { ref: `task:${tainted.id}`, depth: "full" }), cardList: any = await O.call("studio_list", { kind: "card", filter: { run: tainted.id } });
       // (its steps' labels are the workflow's own, so the fixture's card title, its node label, may show there; the cards may not)
+      { const nw: any = (await O.call("studio_now", { depth: "full" })).data.waiting.filter((w: any) => w.task === `task:${tainted.id}`);
+        ok(nw.length > 0 && nw.every((w: any) => w.withheld && !("question" in w) && !("title" in w)) && !J(nw).includes("CARD TITLE"), "studio_now shows a withheld Task's card with no title or question", J(nw)); }
       ok(fullTask.data.cards.length > 0 && !J(fullTask.data.cards).includes("CARD TITLE") && !J(cardList.data.entries).includes("CARD TITLE") && !J(cardList.items).includes("CARD TITLE"), "a withheld Task's cards, at full depth or listed, carry no title", J(fullTask.data.cards));
       // a proposal whose execution Task is withheld: the execution's state, never its words
       const parent: any = F.E.get(F.ids.plain), w0 = parent.workflow, c0 = parent.ctx.childRun;

@@ -6,13 +6,15 @@ import type { SCard } from "../../runtime/cards";
 
 /** The Inbox's urgency: a one-way door or a captain-only decision first, then a failed Task's card, then the oldest. */
 export const urgency = (c: SCard) => (c.door === "one-way" || c.confirmDoor ? 0 : c.captainOnly ? 1 : c.kind === "failure" || c.failure ? 2 : 3);
+/** The urgency as the read tools name it (studio_get card and studio_now say the same words). */
+export const urgencyLabel = (c: SCard) => ["one-way door", "captain only", "failure", "decision"][urgency(c)];
 export const byUrgency = (a: SCard, b: SCard) => urgency(a) - urgency(b) || String(a.createdAt).localeCompare(String(b.createdAt));
 
 function cardData(s: Sources, c0: SCard, full: boolean): Record<string, unknown> {
   const c = s.engine.cards.view(c0), r = s.engine.get(c.run), withheld = r ? withheldOf(s.engine, r) : null;
   return {
     id: c.id, run: c.run, node: c.node, visit: c.visit, kind: c.kind, status: c.status, createdAt: c.createdAt, workflow: c.workflow,
-    door: c.door, confirmDoor: c.confirmDoor, captainOnly: !!c.captainOnly, urgency: ["one-way door", "captain only", "failure", "decision"][urgency(c)],
+    door: c.door, confirmDoor: c.confirmDoor, captainOnly: !!c.captainOnly, urgency: urgencyLabel(c),
     options: (c.options ?? []).map((o) => ({ id: o.id, label: o.label, labelZh: o.labelZh ?? null })),
     ...(withheld ? {} : { title: c.title, runTitle: c.runTitle }),
     answer: c.answer ? { choice: c.answer.choice, by: c.answer.by, at: c.answer.at, note: c.answer.note } : null,
