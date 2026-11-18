@@ -91,6 +91,34 @@ const again = async (pg) => { if (!(await pg.$("[data-explain-empty] [data-expla
 const versionsLoaded = (pg, n) => pg.waitForFunction((k) => document.querySelector("[data-explain-versions] .rx-vercount")?.textContent === String(k), n, { timeout: 15000 });
 
 try {
+  // ---------- baton by default: opening the room starts its generation for this head by itself (no confirmation), once; Try again ----------
+  { const ca = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await ca.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await ca.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const baton = { id: "baton", v: 1, name: "baton", sha256: "x" }, due = { on: true, skill: "baton", head: H, due: true, tried: null };
+    let A = { skills: [{ id: "baton", name: "baton", description: "Hand a change on as one page.", v: 1, source: "builtin", own: false }], log: [], settings: { limitMin: 120, defaultSkill: "baton", autoRun: true }, busy: false,
+      selected: { id: "baton", v: 1 }, tutor: false, auto: due, versions: [], running: null, consent: null, runs: [] };
+    const autos = [], confirms = [];
+    await ca.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await ca.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await ca.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: A }));
+    await ca.route(new RegExp(`/api/review-room/${ID}/explain/(offer|generate)`), (r) => { confirms.push(r.request().url()); r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required" } }); });
+    await ca.route(new RegExp(`/api/review-room/${ID}/explain/auto$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); autos.push(b);
+      const failed = run(autos.length, "generate", "failed", { skill: baton, opened: true, head: H, why: "provider", error: "The CLI reported an error. Reason: the vendor is down", rounds: [{ n: 1, job: "J1" }] });
+      A = { ...A, auto: { ...due, due: false, why: "done", tried: { head: H, skill: "baton", at: new Date().toISOString(), run: autos.length } }, runs: [...A.runs.slice(0, autos.length - 1), failed] };
+      r.fulfill({ json: A }); });
+    const w = await ca.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-retry]", { timeout: 15000 }); await w.waitForTimeout(300);
+    const st = await w.evaluate(() => ({ ended: document.querySelector("[data-explain-ended]")?.dataset.explainEnded, text: document.querySelector("[data-explain-empty]")?.textContent || "", modal: !!document.querySelector(".rx-modal") }));
+    ok(autos.length === 1 && autos[0].retry === undefined && !confirms.length && !st.modal, "opening a room explained with baton starts its generation by itself: one POST …/explain/auto, no paid confirmation", JSON.stringify({ autos, confirms, st }));
+    ok(st.ended === "provider" && /vendor is down/.test(st.text) && /Try again/.test(st.text), "it failed: the stage says why and offers Try again; nothing retries by itself", JSON.stringify(st));
+    await w.reload(); await w.waitForSelector("[data-explain-retry]", { timeout: 15000 }); await w.waitForTimeout(600);
+    ok(autos.length === 1, "reopening the room (Studio says this head is done) starts nothing more", JSON.stringify(autos));
+    await w.click("[data-explain-retry]"); await w.waitForTimeout(600);
+    ok(autos.length === 2 && autos[1].retry === true && !confirms.length, "Try again asks Studio to start it once more, still without a paid confirmation", JSON.stringify(autos));
+    await ca.close(); }
+
   // ---------- the output's line: no column left of the output; the board / output switch and the version menu, by mouse and keys ----------
   { const c9 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await c9.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
