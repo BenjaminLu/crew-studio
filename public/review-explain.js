@@ -42,8 +42,9 @@ const KIND = { html: ["HTML page", "HTML 頁"], markdown: ["Markdown", "Markdown
 const WHY = { captain: () => T("You stopped it.", "你按了停止。"), cancelled: () => T("It was cancelled.", "已取消。"), limit: (r) => T(`It ran past the safety limit of ${r.limitMin} min, so Studio stopped it.`, `超過 ${r.limitMin} 分鐘的安全時限，Studio 停下了它。`),
   interrupted: () => T("Studio stopped while it ran.", "執行到一半時 Studio 停止了。"), closed: () => T("The room stopped taking paid runs: its card was answered or its pull request closed.", "這間審查室不再接受付費執行：卡片已回覆，或 PR 已關閉。"),
   admission: () => T("A round could not be admitted.", "有一輪無法開始。"), provider: () => T("The model's provider refused or failed.", "模型供應商拒絕或失敗。"), stalled: (r) => r.stalled ? T(`The output did not change for ${r.stalled} rounds in a row, so Studio stopped it.`, `產出連續 ${r.stalled} 輪都沒有變，Studio 停下了它。`) : T("The output stopped changing, so Studio stopped it.", "產出不再變化，Studio 停下了它。"),
-  entry: () => T("The skill named an output file that is not there.", "skill 說的產出檔案不存在。"), error: () => T("It could not run.", "無法執行。"), start: () => T("It could not start.", "無法開始。") };
-const DETAIL = new Set(["admission", "provider", "error", "start", "entry"]);
+  entry: () => T("The skill named an output file that is not there.", "skill 說的產出檔案不存在。"), error: () => T("It could not run.", "無法執行。"), start: () => T("It could not start.", "無法開始。"),
+  prepare: () => T("Studio could not install the skill's dependencies, so no round ran.", "Studio 沒辦法安裝 skill 的依賴，所以沒有開始任何一輪。") };
+const DETAIL = new Set(["admission", "provider", "error", "start", "entry", "prepare"]);
 const whyOf = (r) => { const f = WHY[r.why]; return { text: f ? f(r) : r.status === "stopped" ? T("It was stopped.", "已停止。") : T("It did not finish.", "沒有完成。"), detail: !f || DETAIL.has(r.why) ? bi(r.error || r.stop || "") : "" }; };
 
 async function load(id) {
@@ -168,7 +169,7 @@ function promptUi(c) {
   const sv = q("[data-explain-promptsave]"); if (sv) sv.disabled = (v.trim() || null) === (c.def ?? null) || v.length > PROMPT_MAX;
   const rs = q("[data-explain-promptreset]"); if (rs) rs.hidden = c.def == null || v === c.def;
   const nt = q("[data-explain-promptnote]"); if (nt) nt.textContent = c.note || "";
-  const go = q("[data-explain-start]"); if (go) go.disabled = !!(c.pending || c.stale || c.loading || c.offer?.error || X.posting.has(`${c.id}/gen`));
+  const go = q("[data-explain-start]"); if (go) go.disabled = !!(c.pending || c.stale || c.loading || c.offer?.error || needsPick(c) || X.posting.has(`${c.id}/gen`));
 }
 /** the built-in checklist is already in the text (either language): inserting it again would only repeat it */
 const hasExample = (v, ex) => !!ex && [ex.en, ex.zh].some((t) => t && String(v || "").includes(t));
@@ -216,7 +217,31 @@ function scriptSummary(s) {
   const keys = s.keys || [];
   return h("p", { "data-explain-askscripts": "run" }, T(`Its scripts run in this follow-up too: sandboxed, ${s.network ? "with network" : "no network here"}`, `這次追問也會執行它的腳本：在沙盒裡、${s.network ? "可以連網" : "這裡不能連網"}`),
     keys.length ? [T(" · credentials ", " · 憑證 "), chips(keys)] : T(" · no credential", " · 沒有憑證"),
-    !s.approved ? h("span", { class: "rx-warn", "data-explain-unapproved": "" }, T("Not approved for workflows on the Skills page: confirming here approves this run only.", "沒有在技能頁核准給工作流程用：在這裡確認只核准這一次。")) : null);
+    !s.approved ? h("span", { class: "rx-warn", "data-explain-unapproved": "" }, T("This version has no decision yet: choose below.", "這個版本還沒決定：請在下面選。")) : null);
+}
+/** The captain's decision on a script version (docs/units/skill-packages.md §3), shown as the team-change card shows it: pending,
+ *  its scripts with their flags, the hosts approving it allows, its lockfiles and programs, and the pick made with this
+ *  confirmation (recorded Studio-wide for exactly this version); decided, the decision. */
+const needsPick = (c) => c?.offer?.decide?.state === "pending" && c.decision !== "scripts" && c.decision !== "text-only";
+const viaWords = (via) => via === "review-room" ? T("in the review room", "在審查室") : /^page/.test(via || "") ? T("on the Crew page", "在團隊頁") : via === "card" || /card/.test(via || "") ? T("on the team-change card", "在團隊變更卡上") : T("earlier", "之前");
+function decideFacts(f) {
+  return [h("div", { class: "faint mono" }, `${f.id}@v${f.v} · ${String(f.sha256).slice(0, 12)} / ${String(f.filesSha256).slice(0, 12)}`),
+    h("ul", { class: "rx-dscripts" }, f.scripts.slice(0, 12).map((sc) => h("li", { class: "mono" }, sc.path, sc.flags?.length ? h("span", { class: "faint" }, ` · ${sc.flags.join(", ")}`) : null)), f.scripts.length > 12 ? h("li", { class: "faint" }, T(`… ${f.scripts.length - 12} more`, `… 還有 ${f.scripts.length - 12} 個`)) : null),
+    h("div", { "data-explain-dfact": "hosts" }, T("Network when it runs: ", "執行時可連："), f.hosts?.length ? f.hosts.join(", ") : T("none", "不連網")),
+    f.locks?.length ? h("div", { "data-explain-dfact": "locks" }, T("Dependencies from its lockfiles, installed by Studio before it runs: ", "依賴照它的 lockfile，由 Studio 事先安裝："), f.locks.join(", ")) : null,
+    f.bins?.length ? h("div", { "data-explain-dfact": "bins" }, T(`Programs it uses: ${f.bins.join(", ")}`, `會用到的程式：${f.bins.join("、")}`)) : null];
+}
+function decideRows(c, row) {
+  const d = c.offer?.decide; if (!d) return [];
+  if (d.state !== "pending") return [row(T("Decision", "決定"), h("span", { "data-explain-decision": d.state }, h("b", {}, d.state === "approved" ? T("Approved with scripts", "已核准（含 script）") : T("Text only", "只當文字")), ` · ${T("decided", "決定於")} ${viaWords(d.via)}`,
+    d.state === "approved" && d.ready && d.ready !== "ready" ? h("small", { class: "faint" }, T(" · Studio installs its dependencies before the first round", " · Studio 會在第一輪之前安裝它的依賴")) : null))];
+  const f = d.facts, radio = (v, label) => h("label", { class: "rx-pickopt" }, h("input", { type: "radio", name: "rx-decide", value: v, "data-explain-decide": v, checked: c.decision === v ? true : null, onchange: () => { c.decision = v; promptUi(c); } }), " ", label);
+  return [row(T("Decision", "決定"), h("div", { "data-explain-decidebox": "" },
+    h("p", {}, T(`This version has ${f.scripts.length} script${f.scripts.length === 1 ? "" : "s"} and no decision yet. Choose once, for exactly this version, Studio-wide:`, `這個版本有 ${f.scripts.length} 個 script，還沒決定。只決定這個版本，全 Studio 生效：`)),
+    ...decideFacts(f),
+    h("div", { class: "rx-pick", role: "radiogroup", "aria-label": T("Its scripts", "它的 script") },
+      radio("scripts", T("Approve with scripts", "核准（含 script）")), radio("text-only", T("Text only", "只當文字"))),
+    h("small", { class: "faint" }, T("Text only: the skill gets its text and never runs its scripts. A new version asks again.", "只當文字：skill 只拿到文字，不跑 script。新版本會再問。"))))];
 }
 /** a script call in the progress list, in the captain's language: the result first, then the time and the hosts; it opens to
  *  its stderr tail and every host it reached or was refused */
@@ -243,8 +268,8 @@ function scriptLine(c) {
 function confirmDialog(r) {
   const c = X.confirm; if (!c || c.id !== r.card.id) return null; const o = c.offer, id = c.id;
   const row = (k, ...v) => [h("span", {}, k), h("span", {}, ...v)];
-  const start = async () => { if (c.pending || c.stale) return; X.posting.add(`${id}/gen`); render();
-    try { X.st.set(id, await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: c.offer.hash, ...(c.kind === "generate" ? { prompt: c.prompt ?? "" } : {}) })); X.confirm = null; X.shown.delete(id); X.returnTo = null; schedule(id); render(); focusLater("[data-explain-stop]"); }
+  const start = async () => { if (c.pending || c.stale || needsPick(c)) return; X.posting.add(`${id}/gen`); render();
+    try { X.st.set(id, await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: c.offer.hash, ...(c.kind === "generate" ? { prompt: c.prompt ?? "" } : {}), ...(c.offer.decide?.state === "pending" && !needsPick(c) ? { skillDecision: c.decision } : {}) })); X.confirm = null; X.shown.delete(id); X.returnTo = null; schedule(id); render(); focusLater("[data-explain-stop]"); }
     catch (e) { if (e.offer) X.confirm = { ...c, offer: e.offer, note: bi(e.message) }; else X.confirm = { ...c, note: bi(e.message) }; render(); }
     finally { X.posting.delete(`${id}/gen`); } };
   const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); await openConfirm(r, c.sid, c.kind, undefined, c.kind === "generate" ? c.prompt ?? "" : undefined); } catch (e) { X.confirm = { ...c, note: bi(e.message) }; render(); } };
@@ -269,10 +294,10 @@ function confirmDialog(r) {
           row(h("label", { for: "rx-limit" }, T("Safety limit", "安全時限")), h("span", { class: "rx-limit" }, h("input", { id: "rx-limit", type: "number", min: "1", max: "1440", value: String(o.limitMin), "data-explain-limit": "", onchange: (e) => setLimit(e.target.value) }),
             T(" min of wall clock, then Studio stops it · applies to every room", " 分鐘，到了 Studio 會停下 · 所有審查室共用"))),
           row(T("Output frame", "產出顯示框"), T(o.isolation.en, o.isolation.zh)),
-          ...scriptRows(o.scripts, row)),
+          ...scriptRows(o.scripts, row), ...decideRows(c, row)),
         c.note ? h("p", { class: "rx-state err", role: "alert" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), c.note) : null],
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn", onclick: closeDialog }, T("Cancel", "取消")),
-        h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", disabled: c.loading || c.pending || c.stale || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
+        h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", disabled: c.loading || c.pending || c.stale || o?.error || needsPick(c) || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
 }
 
 /** "What should it produce?": the captain's own instructions for this generation (trusted, sent apart from the pull request's
@@ -379,7 +404,7 @@ function stage(r, st) {
       h("span", { class: "rx-tag", "data-explain-isolation": "" }, media ? T("Shown by Studio", "由 Studio 顯示") : T("Isolated frame · no network · cannot read Studio · storage kept by Studio in memory", "隔離框 · 不能連網 · 不能讀 Studio · 儲存由 Studio 代管"))));
 }
 function progressCard(r, st, run) {
-  const id = r.card.id, ms = Date.now() - Date.parse(run.at), rounds = run.rounds.length, prog = run.progress || [], read = prog.length > 1 || rounds > 0;
+  const id = r.card.id, ms = Date.now() - Date.parse(run.at), rounds = run.rounds.length, prog = run.progress || [], prep = run.prepare || null, read = prog.length > 1 || rounds > 0 || !!prep;
   const pct = Math.max(2, Math.min(100, Math.round((ms / (run.limitMin * 60000)) * 100)));
   const step = (cls, mark, text, kids) => h("li", { class: cls }, h("span", { class: "d", "aria-hidden": "true" }, mark), h("div", {}, text, kids || null));
   return h("div", { class: "rx-gen", "data-x-stage": "", "data-explain-progress": run.n },
@@ -388,7 +413,11 @@ function progressCard(r, st, run) {
       h("div", { class: "faint" }, T(`${fmtMin(ms)} so far · round ${rounds || 1} · it runs in the background: you can leave, Studio tells you when it is done`, `已跑 ${fmtMin(ms)} · 第 ${rounds || 1} 輪 · 在背景跑：可以先離開，做好了 Studio 會通知`), money(run.cost) ? ` · ${money(run.cost)}` : ""),
       h("ol", { class: "rx-steps", "data-explain-steps": "" },
         step(read ? "done" : "now", read ? "✓" : "●", T("Studio reads the materials (read-only)", "Studio 讀材料（唯讀）")),
-        step(read ? "now" : "todo", read ? "●" : "○", T(`The skill works, round by round (round ${rounds || 1})`, `skill 一輪輪地做（第 ${rounds || 1} 輪）`),
+        // a version approved with scripts: its dependencies from its lockfiles, in Studio's sandbox, before the first round
+        prep ? h("li", { class: prep.state === "running" ? "now" : prep.state === "done" ? "done" : "bad", "data-explain-prepare": prep.state }, h("span", { class: "d", "aria-hidden": "true" }, prep.state === "running" ? "●" : prep.state === "done" ? "✓" : "✕"),
+          h("div", {}, prep.state === "running" ? T("Studio is installing the skill's dependencies from its lockfiles (sandboxed)…", "Studio 正在照 skill 的 lockfile 安裝依賴（在沙盒裡）…") : prep.state === "done" ? T("Studio installed the skill's dependencies", "Studio 已安裝 skill 的依賴") : T("Studio could not install the skill's dependencies", "Studio 沒辦法安裝 skill 的依賴"),
+            (prep.reasons || []).length ? h("small", { class: "faint" }, ` · ${(prep.reasons || []).map((x) => T(x.en, x.zh)).join(T("; ", "；"))}`) : null)) : null,
+        step(read && !(prep && prep.state === "running") ? "now" : "todo", read && !(prep && prep.state === "running") ? "●" : "○", T(`The skill works, round by round (round ${rounds || 1})`, `skill 一輪輪地做（第 ${rounds || 1} 輪）`),
           // the skill's own lines, and each script call with its outcome (✓ ⚠ ✗), worded here in the captain's language
           prog.length > 1 ? h("ul", { class: "rx-sub-steps" }, prog.slice(1).slice(-12).map((p) => { if (!p.script) return h("li", {}, p.text); const s = scriptLine(p.script); return h("li", { class: `rx-callrow ${s.cls}` }, h("span", { class: "d" }, s.mark), " ", s.body); })) : null),
         step("todo", "○", T("It checks its own output, then says it is done", "它自己檢查產出，滿意了才說完成")),
@@ -413,7 +442,7 @@ function syncAsk(r, st) {
 }
 /** Ask in room id: its own state, version, selection and draft, only while that room is the one shown and explained by a skill
  *  (a question never goes to another room's /ask, whatever was drawn last). The paid confirmation comes back as an offer. */
-async function send(id, q, confirm, consent) {
+async function send(id, q, confirm, consent, decision) {
   const r = window.crewReviewRoomData?.(id); if (!r || !onRoom(id) || !active(id)) return;
   const text = String(q ?? X.draft.get(id) ?? "").trim(); if (!text) return; const m = askMode(r, state(id));
   if (L.full) exitFull(); // the follow-up's confirmation and its answer are in the chat
@@ -422,7 +451,7 @@ async function send(id, q, confirm, consent) {
   if (m !== "ask") return;
   const v = shownVersion(id); X.posting.add(`${id}/ask`); X.ask = null; refresh(id);
   const s = X.sel.get(id);
-  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, selection: s ? { ...s, version: v.n } : null, ...(confirm ? { confirm, consent: !!consent } : {}) })); X.draft.delete(id); X.sel.delete(id); X.boxing = null;
+  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, selection: s ? { ...s, version: v.n } : null, ...(confirm ? { confirm, consent: !!consent } : {}), ...(decision ? { skillDecision: decision } : {}) })); X.draft.delete(id); X.sel.delete(id); X.boxing = null;
     const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; schedule(id); }
   catch (e) { if (e.code === "confirm_required" && e.offer) { X.ask = { id, q: text, offer: e.offer }; want = "[data-explain-askok]"; } else X.err.set(id, bi(e.message)); }
   finally { X.posting.delete(`${id}/ask`); refresh(id); }
@@ -475,11 +504,15 @@ function msgs(r, st) {
   if (a) out.push(h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid follow-up", "確認付費追問") },
     h("p", {}, T(`This follow-up is a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"} with ${a.offer.skill.name}.`, `這個追問會用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 和 ${a.offer.skill.name} 付費執行。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
     scriptSummary(a.offer.scripts),
+    a.offer.decide?.state === "pending" ? h("div", { "data-explain-decidebox": "" }, ...decideFacts(a.offer.decide.facts)) : null,
     h("label", {}, h("input", { type: "checkbox", "data-explain-consent": "", onchange: (e) => { if (e.target.checked) X.consent.add(id); else X.consent.delete(id); } }),
       a.offer.scripts?.run ? T(` Ask the next follow-ups here on this plan without confirming each, their scripts included (sandboxed${a.offer.scripts.network ? ", with network" : ""})`, ` 之後在這裡用同樣的設定追問時不用再確認，包括執行它的腳本（在沙盒裡${a.offer.scripts.network ? "、可以連網" : ""}）`)
         : T(" Ask the next follow-ups here on this plan without confirming each", " 之後在這裡用同樣的設定追問時不用再確認")),
     h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; refresh(id); focusLater("[data-explain-q]"); } }, T("Cancel", "取消")),
-      h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並追問")))));
+      a.offer.decide?.state === "pending"
+        ? [h("button", { type: "button", class: "btn sm", "data-explain-askok": "text-only", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id), "text-only") }, T("Text only, then ask", "只當文字並追問")),
+          h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "scripts", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id), "scripts") }, T("Approve with scripts and ask", "核准（含 script）並追問"))]
+        : h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並追問")))));
   const err = X.err.get(id); if (err) out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), err));
   return h("div", { class: "rx-msgs", "data-x-msgs": "" }, out);
 }

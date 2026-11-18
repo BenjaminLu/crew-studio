@@ -35,6 +35,7 @@ import { folderTools, insideDir, type AgentTool } from "../agent";
 import { mdToDocHtml } from "../docrender";
 import { git } from "../git";
 import { chmodTree, type SkillPackages, type SkillStatus } from "../skillpkg";
+import { pendingScripts, type PendingSkill } from "../skillpkg/crew";
 import { findBin } from "../skillpkg/recipes";
 import { skillTools, type SkillRunRecord } from "../skillpkg/run";
 import { sweepHolders } from "../runtime/checks";
@@ -105,10 +106,14 @@ type Round = { n: number; job: string | null; status: string; tools: number; cos
 type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running" | "done" | "failed" | "stopped"; by: string; at: string; ended: string | null;
   provider: string; model: string; effort: string | null; confirm: string; limitMin: number; rounds: Round[]; cost: any; error: string | null; stop?: string;
   progress: { at: string; text: string; script?: ScriptLine }[];
+  /** the captain's decision on the version's scripts made with this run's confirmation (docs/units/skill-packages.md §3) */
+  decided?: "approved" | "text-only";
+  /** Studio preparing the version's env (its lockfiles) before the first round: running, done, or failed with the reasons */
+  prepare?: { state: "running" | "done" | "failed"; at: string; reasons?: { en: string; zh: string }[] };
   /** why it stopped or failed, as a code the page words in the captain's language (stop / error keep Studio's English detail) */
   /** a stalled run: how many rounds in a row left the output unchanged */
   stalled?: number;
-  why?: "captain" | "cancelled" | "limit" | "interrupted" | "closed" | "admission" | "provider" | "stalled" | "entry" | "error" | "start";
+  why?: "captain" | "cancelled" | "limit" | "interrupted" | "closed" | "admission" | "provider" | "stalled" | "entry" | "error" | "start" | "prepare";
   from: number | null; version: number | null; question?: string; selection?: Selection | null; answer?: string; cites?: string[]; summary?: string; auto?: boolean;
   /** a generation's: what the captain asked this output to contain ("" = the skill's own default), trusted, part of the confirmation */
   prompt?: string };
@@ -248,8 +253,8 @@ export function installExplainer(d: ExplainerDeps) {
     return { pin: { id: s.id, v: s.current, sha256: s.sha256, filesSha256: s.filesSha256, name: String(s.name || s.id).slice(0, 80), bodySha: sha(body) }, body, dir: join(lv.dir, "files"), files: lv.rec.files ?? [] };
   };
   /** What a run of this version may execute: null for a skill without scripts. Its scripts run unless the captain chose text
-   *  only for this version (the Skills page's decision), on the runtimes found here (a version approved and prepared for a
-   *  workflow brings its prepared env), with network through Studio's proxy, the credentials named and, when one is installed,
+   *  only for this version (decided on the team-change card, the Crew page or the confirmation), on the runtimes found here (a version approved and prepared
+   *  brings its prepared env; an approved one not prepared yet is prepared before the first round), with network through Studio's proxy, the credentials named and, when one is installed,
    *  a headless browser. Nothing is installed or fetched to make a plan. */
   type Plan = { run: boolean; why?: { en: string; zh: string }; scripts: { path: string; lang: string }[]; status: SkillStatus | null; interpreters: string[]; missing: string[];
     network: boolean; egress: any; browser: string | null; credentials: string[]; approved?: boolean };
@@ -259,10 +264,11 @@ export function installExplainer(d: ExplainerDeps) {
     const base = { scripts: pkg.scripts.map((s: any) => ({ path: s.path, lang: s.lang })), status: null, interpreters: [], missing: [], network: false, egress: null, browser: null, credentials: [] };
     if (!pk) return { ...base, run: false, why: { en: "Studio's skill packages are not set up here", zh: "這裡沒有 Studio 的 skill 套件服務" } };
     const decision = pk.decision(p.id, p.v);
-    if (decision?.scripts === "text-only") return { ...base, run: false, why: { en: "you chose text only for this version on the Skills page", zh: "你在技能頁把這個版本設成「只當文字」" } };
+    if (decision?.scripts === "text-only") return { ...base, run: false, why: { en: "you chose text only for this version", zh: "你把這個版本設成「只當文字」" } };
     const dataDir = engine.deps.dataDir;
     let status: SkillStatus = pk.status(p.id, p.v);
-    if (status.state !== "ready" || status.blocking) {
+    // a version approved and prepared brings its prepared env (a missing program alone keeps it); anything else, the runtimes found here
+    if (!(status.state === "ready" || (status.state === "not-ready" && !status.blocking && decision?.scripts === "approved"))) {
       const runtimes: { node?: Runtime; python?: Runtime } = {};
       if (pkg.runtimes.includes("node")) { const n = resolveNode({ dataDir }); if (n) runtimes.node = n; }
       if (pkg.runtimes.includes("python")) { const py = hostPython({ dataDir }); if (py) runtimes.python = py; }
@@ -280,6 +286,18 @@ export function installExplainer(d: ExplainerDeps) {
     return { ...base, run, ...(run ? {} : { why: { en: `no runtime for its scripts on this Mac (${missing.join(", ")})`, zh: `這台 Mac 沒有它腳本需要的執行環境（${missing.join("、")}）` } }), status, interpreters, missing,
       network: !!egress, egress, browser: headlessBrowser(), credentials: SCRIPT_CREDENTIALS.filter((c) => !!process.env[c]?.trim()), approved: decision?.scripts === "approved" };
   };
+  /** The captain's decision on a script version's scripts, as the confirmation shows it: pending (with what the team-change card
+   *  shows: scripts and flags, the hosts approving allows, lockfiles, programs; src/skillpkg/crew.ts), or the decision in force.
+   *  null for a version without scripts. The pick is recorded in the same signed ledger, via "review-room". */
+  type Decide = { state: "pending"; facts: PendingSkill } | { state: "approved" | "text-only"; via: string; at: string; sig: string; ready: string | null };
+  const decisionOf = (p: { id: string; v: number; sha256: string; filesSha256: string }): Decide | null => {
+    const pk: SkillPackages | null = engine.deps.skillPackages ?? null; if (!pk) return null;
+    let script = false; try { script = pk.isScript(p.id, p.v); } catch {} if (!script) return null;
+    const d0 = pk.decision(p.id, p.v);
+    if (d0) { let ready: string | null = null; if (d0.scripts === "approved") { try { ready = pk.status(p.id, p.v).state; } catch {} } return { state: d0.scripts, via: d0.via, at: d0.at, sig: d0.sig, ready }; }
+    const f = pendingScripts(pk, [p])[0]; return f ? { state: "pending", facts: f } : null;
+  };
+  const decideKey = (x: Decide | null) => !x ? null : x.state === "pending" ? `pending:${x.facts.sha256}:${x.facts.filesSha256}` : x.sig;
   /** what a confirmation pins of a plan: a change to any of it asks again */
   const planKey = (t: any) => JSON.stringify(t ? { run: t.run, interpreters: t.interpreters ?? [], network: t.network ?? false, credentials: t.credentials ?? [], browser: t.browser ?? false, approved: t.approved ?? false, limits: t.limits ?? null } : null);
   /** the confirmation's words for a plan */
@@ -288,7 +306,7 @@ export function installExplainer(d: ExplainerDeps) {
     if (!p.run) return { run: false, count: p.scripts.length, en: `The skill has ${p.scripts.length} script${p.scripts.length === 1 ? "" : "s"}; they do not run: ${p.why!.en}.`, zh: `這個 skill 有 ${p.scripts.length} 個腳本，不會執行：${p.why!.zh}。` };
     const l = SCRIPT_LIMITS(), keys = p.credentials.filter((c) => !/_BASE_URL$/.test(c)), endpoints = p.credentials.filter((c) => /_BASE_URL$/.test(c));
     const creds = keys.length ? keys.join(", ") + (endpoints.length ? ` (and the endpoints ${endpoints.join(", ")})` : "") : endpoints.length ? `only the endpoints ${endpoints.join(", ")}` : null;
-    const appr = p.approved ? { en: "", zh: "" } : { en: " This version is not approved for workflows on the Skills page: confirming here lets its scripts run for this run only.", zh: "這個版本沒有在技能頁核准給工作流程用：在這裡確認只讓它的腳本在這一次執行裡跑。" };
+    const appr = p.approved ? { en: "", zh: "" } : { en: " This version has no decision yet: choose below whether its scripts run (Studio first installs its dependencies from its lockfiles) or it stays text only; the decision holds for this version, Studio-wide.", zh: "這個版本還沒決定：請在下面選要跑它的 script（Studio 會先照它的 lockfile 安裝依賴），還是只當文字；這個決定對這個版本全 Studio 有效。" };
     // the confirmation's rows, each in both languages (credentials and endpoints by name: the page shows them as chips)
     const rows = {
       network: p.network ? { en: "Through Studio's proxy, public hosts only (never this Mac or its network); every host is logged", zh: "經過 Studio 的代理，只能連公開主機（連不到這台 Mac 或區網）；每個主機都會記錄" } : { en: "None here: Studio's egress proxy is not running", zh: "這裡不能連網：Studio 的對外代理沒有在跑" },
@@ -320,7 +338,7 @@ export function installExplainer(d: ExplainerDeps) {
   const offer = (k: any, skill: unknown, kind: "generate" | "ask", prompt: unknown = null) => {
     const t = d.offerOf(k); if (t?.error) return { error: t.error, code: t.code ?? "no_tutor" };
     let p: Pin; try { p = pinOf(skill).pin; } catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "bad_skill" }; }
-    const st = read(k), limitMin = settings().limitMin, scripts = planText(planOf(p));
+    const st = read(k), limitMin = settings().limitMin, scripts = planText(planOf(p)), dec = decisionOf(p);
     // the prefill (no text given): the skill's default instructions, else the last ones it ran with, else none
     const def = kind === "generate" ? defaultPrompt(p.id) : null, last = kind === "generate" ? lastPrompt(p.id) : "";
     const text = kind === "generate" ? (prompt == null ? def ?? last : normPrompt(prompt)) : "";
@@ -329,12 +347,14 @@ export function installExplainer(d: ExplainerDeps) {
     // the whole package is pinned (SKILL.md and every file, so a changed script is a new version), and so is what its scripts get;
     // a generation's instructions too (another prompt is another paid run: it asks again)
     const hash = sha(JSON.stringify({ room: k.id, tutor: t.hash, kind, skill: p.id, v: p.v, sha256: p.sha256, filesSha256: p.filesSha256, limitMin,
-      scripts: planKey(scripts), ...(kind === "generate" ? { prompt: sha(text) } : {}) })).slice(0, 16);
+      scripts: planKey(scripts), decide: decideKey(dec), ...(kind === "generate" ? { prompt: sha(text) } : {}) })).slice(0, 16);
     return { kind, skill: { id: p.id, v: p.v, name: p.name }, provider: t.provider, model: t.model, effort: t.effort ?? null, independence: t.independence ?? null, paid: true, hash, limitMin,
       ...(kind === "generate" ? { prompt: { text, max: PROMPT_MAX, last, default: def, source, example: PROMPT_EXAMPLE } } : {}),
       rounds: { en: "No round cap: the skill keeps going until it is satisfied, you stop it, or the safety limit passes. It runs in the background; you can leave the room.", zh: "不限輪數：skill 會一直做到它滿意、你按停止，或到安全時限為止。在背景跑，可以先離開。" },
       materials: kind === "generate" ? { en: MATERIALS, zh: MATERIALS_ZH } : { en: ["the current output and what it embeds", "your question and the region you boxed", ...MATERIALS], zh: ["目前的產出和它內嵌的脈絡", "你的問題和框起來的區域", ...MATERIALS_ZH] },
       expected: expected(st, p.id, kind), cost: costs(st, p.id, kind), isolation: ISOLATION, scripts,
+      // the version's decision: pending asks the captain to pick with this confirmation (bound to the hashes shown); decided, shown
+      decide: dec ? (dec.state === "pending" ? dec : { state: dec.state, via: dec.via, at: dec.at, ready: dec.ready }) : null,
       // who pays: the provider's own account Studio runs it with (its sign-in on this Mac), never Studio
       billing: { en: `Billed to the ${t.provider} account Studio runs ${t.provider} with on this Mac (your own sign-in or key).`, zh: `由這台 Mac 上 Studio 使用的 ${t.provider} 帳號付費（你自己的登入或金鑰）。` } };
   };
@@ -527,7 +547,20 @@ export function installExplainer(d: ExplainerDeps) {
       subj = d.subjectRecord(k, s, room);
       run.progress.push({ at: now(), text: "Studio is reading the materials (read-only)" }); save(); d.notify(k);
       const mats = await materials(k, s, room, ws.mat);
-      for (let n = 1; ; n++) {
+      // a version approved with scripts runs on its prepared env: Studio prepares it now (or waits for the prepare in flight);
+      // a prepare that fails (or a runtime that is missing) stops the run with its reason
+      const pk: SkillPackages | null = engine.deps.skillPackages ?? null;
+      if (plan?.run && pk && pk.decision(run.skill.id, run.skill.v)?.scripts === "approved" && pk.status(run.skill.id, run.skill.v).state !== "ready") {
+        run.prepare = { state: "running", at: now() }; save(); d.notify(k);
+        const ps = await pk.ensure(run.skill.id, run.skill.v);
+        if (ps.state === "ready" || (ps.state === "not-ready" && !ps.blocking)) { run.prepare = { state: "done", at: now(), ...(ps.reasons.length ? { reasons: ps.reasons } : {}) }; plan = planOf(run.skill); }
+        else { const rs = ps.reasons.length ? ps.reasons : [{ en: `${run.skill.id}@v${run.skill.v} is ${ps.state}`, zh: `${run.skill.id}@v${run.skill.v}：${ps.state}` }];
+          run.prepare = { state: "failed", at: now(), reasons: rs };
+          Object.assign(run, { status: "failed", why: "prepare", error: clip(`Studio could not prepare the skill's dependencies: ${rs.map((r) => r.en).join("; ")} / Studio 沒辦法準備這個 skill 的依賴：${rs.map((r) => r.zh).join("；")}`, 900) }); }
+        save(); d.notify(k);
+      }
+      // (a run whose prepare failed has no round)
+      for (let n = 1; run.status === "running"; n++) {
         if (live.stop) { Object.assign(run, { status: "stopped", stop: live.stop, why: "captain" }); break; }
         const left = deadline - Date.now(); if (left <= 0) { Object.assign(run, { status: "stopped", stop: `the safety limit of ${run.limitMin} min passed`, why: "limit" }); break; }
         if (!engine.owns(adm.x) || !k.open()) { Object.assign(run, { status: "failed", error: "the room no longer takes paid runs (its card was answered, or its pull request closed)", why: "closed" }); break; }
@@ -581,7 +614,7 @@ export function installExplainer(d: ExplainerDeps) {
   }
 
   /** start a run (a generation or a follow-up): confirmed, admitted on the room's tutor seat, then in the background */
-  async function start(id: string, kind: "generate" | "ask", a: { skill?: unknown; confirm?: unknown; question?: unknown; selection?: unknown; version?: unknown; consent?: unknown; prompt?: unknown }, by: string) {
+  async function start(id: string, kind: "generate" | "ask", a: { skill?: unknown; confirm?: unknown; question?: unknown; selection?: unknown; version?: unknown; consent?: unknown; prompt?: unknown; skillDecision?: unknown }, by: string) {
     let k = d.keyOf(id);
     if (!k.open()) throw refuse("This room no longer takes paid runs / 這間審查室不再接受付費執行", "closed");
     if (running.has(k.id)) throw refuse("The skill is already working in this room: stop it or wait / 這間審查室的 skill 正在執行：請先停止或等它完成", "busy");
@@ -602,6 +635,10 @@ export function installExplainer(d: ExplainerDeps) {
     const o0: any = offer(k, skill, kind, prompt); if (o0.error) throw refuse(o0.error, o0.code ?? "no_tutor");
     const agreed = kind === "ask" && a.confirm !== o0.hash && st0.consent?.plan === o0.hash;
     if (a.confirm !== o0.hash && !agreed) throw refuse(`Each run is paid, on ${o0.provider} ${o0.model ?? "(default model)"}: confirm it to start / 每次執行都要付費（${o0.provider} ${o0.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer: o0 });
+    // a script version the captain never decided: the confirmation carries the pick (a standing consent never does)
+    const decKey0 = (() => { try { return decideKey(decisionOf(pinOf(skill).pin)); } catch { return null; } })();
+    const pick = a.skillDecision === "scripts" || a.skillDecision === "text-only" ? a.skillDecision : null;
+    if (o0.decide?.state === "pending" && !pick) throw refuse("This version of the skill has scripts and no decision yet: choose Approve with scripts or Text only / 這個版本的 skill 有 script，還沒決定：請選「核准（含 script）」或「只當文字」", "confirm_required", { offer: o0 });
     try { await engine.deps.refreshUsable?.(); } catch {}
     // only a pull request or directory room is hosted by a Task Studio makes; a merge card or branch room always has its Task
     { const s0 = d.subjectOf(k); if ((!s0.run || !s0.node) && (k.kind === "pr" || k.kind === "dir")) { await d.ensureHost(k, d.offerOf(k), by); k = d.keyOf(id); } }
@@ -609,7 +646,9 @@ export function installExplainer(d: ExplainerDeps) {
     const { pin, body, dir: skillDir, files: skillFiles } = pinOf(skill);
     if (pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
     // what its scripts run with, as confirmed: read once here and used for the whole run (a change since the offer asks again)
-    const plan = planOf(pin);
+    let plan = planOf(pin);
+    if (decideKey(decisionOf(pin)) !== decKey0)
+      throw refuse("The skill's decision changed since you confirmed: confirm again / 確認之後這個 skill 的決定變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
     if (planKey(planText(plan)) !== planKey(o0.scripts)) throw refuse("What the skill's scripts run with changed since you confirmed: confirm again / 確認之後腳本的執行條件變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
     const seat = seatOf(pin);
     engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [seat]: { role: d.role, pins: texts(pin, body).map((t) => t.sha256), adaptive: true } };
@@ -621,11 +660,20 @@ export function installExplainer(d: ExplainerDeps) {
     let run: XRun | null = null; const st = read(k);
     try {
     const room = d.load(k);
+    // the captain's pick, recorded in Studio's signed ledger (the team-change card's own path), bound to the hashes the confirmation
+    // showed; approving with scripts starts the version's prepare, which the run waits for before its first round
+    let decided: "approved" | "text-only" | null = null;
+    if (o0.decide?.state === "pending" && pick) { const pk = engine.deps.skillPackages as SkillPackages;
+      pk.assertDecidable(pin.id, pin.v, { sha256: o0.decide.facts.sha256, filesSha256: o0.decide.facts.filesSha256 });
+      if (pk.decision(pin.id, pin.v)) throw refuse("The skill's decision changed since you confirmed: confirm again / 確認之後這個 skill 的決定變了，請再確認一次", "confirm_required");
+      decided = pick === "scripts" ? "approved" : "text-only";
+      pk.decide(pin.id, pin.v, decided, /^captain\b/i.test(by) ? by : "captain", "review-room", { card: k.id, run: s.run.id });
+      plan = planOf(pin); }
     if (kind === "generate") { st.selected = { id: pin.id, v: pin.v }; try { rememberPrompt(pin.id, prompt); } catch {} }
     if (kind === "ask" && a.consent === true && a.confirm === o0.hash) st.consent = { plan: o0.hash, by: clip(by || "captain", 80), at: now() };
     else if (kind === "ask" && a.confirm === o0.hash && st.consent) delete st.consent;
     run = { n: (st.runs.at(-1)?.n ?? 0) + 1, kind, skill: pin, status: "running", by: clip(by || "captain", 80), at: now(), ended: null, provider: adm.provider?.id ?? tutor.pick.provider, model: adm.provider?.model ?? tutor.pick.model ?? "",
-      effort: tutor.pick.effort ?? null, confirm: o0.hash, limitMin: o0.limitMin, rounds: [], cost: null, error: null, progress: [], from: from?.n ?? null, version: null, ...(kind === "ask" ? { question, selection } : { prompt }), ...(agreed ? { auto: true } : {}) };
+      effort: tutor.pick.effort ?? null, confirm: o0.hash, limitMin: o0.limitMin, rounds: [], cost: null, error: null, progress: [], from: from?.n ?? null, version: null, ...(decided ? { decided } : {}), ...(kind === "ask" ? { question, selection } : { prompt }), ...(agreed ? { auto: true } : {}) };
     st.runs.push(run); if (st.runs.length > 500) st.runs.splice(0, st.runs.length - 500); write(k, st);
     // the run's workspace: the skill's supporting files (a read-only copy), the output folder (a follow-up's starts as its version)
     const root = join(dirOf(k), "work", `run-${run.n}`), ws: Ws = { root, mat: join(root, "materials"), skill: join(root, "skill"), out: join(root, "out") };
@@ -640,7 +688,7 @@ export function installExplainer(d: ExplainerDeps) {
       writeFileSync(join(bin, "chrome"), `#!/bin/sh\nexec '${plan.browser.replace(/'/g, `'\\''`)}' --no-sandbox --no-first-run --no-default-browser-check --user-data-dir="\${TMPDIR:-/tmp}/chrome-profile-$$" "$@"\n`, { mode: 0o755 }); }
     if (from) for (const f of from.files) { mkdirSync(dirname(join(ws.out, f.path)), { recursive: true }); writeFileSync(join(ws.out, f.path), fileOf(k, from, f.path)); }
     running.set(k.id, { run: run.n, job: null, stop: null }); d.notify(k);
-    try { engine.record(adm.x, "review-room-explain-start", { head: s.head, data: { schema: 1, card: k.id, explain: run.n, kind: run.kind, skill: { id: pin.id, v: pin.v, sha256: pin.sha256, filesSha256: pin.filesSha256 }, provider: run.provider, model: run.model, effort: run.effort, confirm: run.confirm, ...(run.auto ? { consent: true } : {}), ...(run.kind === "generate" ? { promptSha256: sha(run.prompt ?? "") } : {}), limitMin: run.limitMin, from: run.from,
+    try { engine.record(adm.x, "review-room-explain-start", { head: s.head, data: { schema: 1, card: k.id, explain: run.n, kind: run.kind, skill: { id: pin.id, v: pin.v, sha256: pin.sha256, filesSha256: pin.filesSha256 }, provider: run.provider, model: run.model, effort: run.effort, confirm: run.confirm, ...(run.auto ? { consent: true } : {}), ...(run.kind === "generate" ? { promptSha256: sha(run.prompt ?? "") } : {}), limitMin: run.limitMin, from: run.from, ...(decided ? { decided } : {}),
       scripts: plan ? { run: plan.run, interpreters: plan.interpreters, network: plan.network, credentials: plan.credentials, browser: !!plan.browser } : null } } as any); } catch {}
     void loop(k, s, room, run, adm, ws, skillFiles, from, plan);
     } catch (e: any) {

@@ -64,6 +64,12 @@ A later line for the same hashes supersedes; an edited or forged line is ignored
 - The Crew page's own change (POST /api/team/change) asks the same: a change that brings an undecided script skill is
   answered 409 `{code: "skillDecision", skills}`, the page shows the scripts and hosts in one panel, and the captain's
   answer is sent with the change (`skillDecisions`).
+- **A second place to decide: the review room's confirm.** A captain-imported skill used only to explain a pull request
+  (docs/units/review-room.md, "The skill's own scripts") never comes with a team change, so its paid run's confirmation
+  asks instead: an undecided script version's offer carries the same facts (`pendingScripts`) and the same pick, the
+  offer's hash covers the decision state, and the pick is recorded on this ledger (`decide`, `via: "review-room"`, the
+  room as `card`, the host Task as `run`) bound to the hashes shown, once the run is admitted. Approving it there prepares
+  it as below, and the run waits for that prepare before its first round; text only keeps `skill_run` out of the run.
 - Studio-wide per version hash: decided once, never asked again. A new version (any changed file) has no decision and
   inherits nothing, its hosts included. Until it is decided it blocks where it is pinned.
 - **Dispatch (captain)**: an undecided script skill blocks the round before its agent starts, outcome `blocked`, with the
@@ -126,8 +132,9 @@ hashed again; the prompt gets a footer naming the folder and the three tools.
   installed at run time"), and `PIP_NO_INDEX`, `npm_config_offline` are set: a skill that says "npm install if missing"
   fails with a clear error. The env carries no vendor token (built fresh: PATH, HOME/TMPDIR in the call's tmp).
 - Another caller with a sandbox of its own shape passes `run` (`skillTools`): the review room explainer
-  (docs/units/review-room.md, "The skill's own scripts") runs a library skill's scripts with the captain's per-run
-  confirmation instead of a workflow approval: the round's output folder as cwd and writes, the materials read-only, any
+  (docs/units/review-room.md, "The skill's own scripts") runs a library skill's scripts once the version is approved (on
+  the team-change card, the Crew page or its own confirmation, §3) and prepared, on its prepared env, and with the
+  captain's per-run confirmation: the round's output folder as cwd and writes, the materials read-only, any
   public host through the proxy (`anyHost`, never a policy list), the provider API keys the captain exported, CPU and
   file-size caps (`ulimit`, the call's exit signal recorded), and a headless Chromium (`roundProfile` `browser`). A version
   set to text only stays text only there too.

@@ -76,7 +76,7 @@ const OFFER = { kind: "generate", skill: { id: "walkthrough", v: 1, name: "walkt
     limits: { cpuS: 300, fileMB: 60, wallS: 600, calls: 60 },
     rows: { network: { en: "Through Studio's proxy, public hosts only (never this Mac or its network); every host is logged", zh: "經過 Studio 的代理，只能連公開主機" }, access: { en: "Writes only the output folder and its temp folder", zh: "只寫產出資料夾" },
       limits: { en: "300 s of CPU · files up to 60 MB · 10 min · 60 calls per round", zh: "CPU 300 秒 · 檔案 60 MB · 10 分鐘 · 每輪 60 次" }, browser: { en: "None installed (Playwright's headless shell): steps that need one fail", zh: "沒有安裝" },
-      missing: { en: "ffmpeg", zh: "ffmpeg" }, approval: { en: "This version is not approved for workflows on the Skills page: confirming here lets its scripts run for this run only.", zh: "這個版本沒有在技能頁核准給工作流程用：在這裡確認只讓它的腳本在這一次執行裡跑。" } },
+      missing: { en: "ffmpeg", zh: "ffmpeg" }, approval: { en: "This version has no decision yet: choose below whether its scripts run (Studio first installs its dependencies from its lockfiles) or it stays text only; the decision holds for this version, Studio-wide.", zh: "這個版本還沒決定：請在下面選要跑它的 script（Studio 會先照它的 lockfile 安裝依賴），還是只當文字；這個決定對這個版本全 Studio 有效。" } },
     en: "The skill's 3 scripts run when it calls them, each in Studio's sandbox, with python3 3.12.4. With network: through Studio's proxy, to public hosts only.", zh: "這個 skill 的 3 個腳本會在它呼叫時執行，每次都在 Studio 的沙盒裡，可以連網。" } };
 const ASK_OFFER = { ...OFFER, kind: "ask", hash: "c0ffee0000000002" };
 /** a script call's line as the server sends it (src/domain/review-explain.ts ScriptLine) */
@@ -141,7 +141,7 @@ try {
     "the scripts are rows of their own: network, credentials and endpoints as chips by name, files, limits, browser, missing", JSON.stringify(srows));
   ok(Object.values(srows).every((r) => Number(r.weight) < 600 && !r.small), "the rows are at normal weight, not one small faint paragraph", JSON.stringify(Object.values(srows).map((r) => [r.weight, r.small])));
   const warn = await p.$eval("[data-explain-confirm] [data-explain-unapproved]", (e) => ({ text: e.textContent, cls: e.className, color: getComputedStyle(e).borderLeftColor }));
-  ok(/not approved for workflows on the Skills page/.test(warn.text) && /rx-warn/.test(warn.cls), "an unapproved version is a warning line of its own", JSON.stringify(warn));
+  ok(/no decision yet/.test(warn.text) && /rx-warn/.test(warn.cls), "an undecided version is a warning line of its own", JSON.stringify(warn));
   ok(/Output frame/.test(conf) && !/Isolation/.test(conf), "the output frame's row is named for the frame (no clash with the scripts' network)", conf);
   ok(/Billed to the claude account/.test(conf) && /this room so far \$0\.420 over 1 run/.test(conf) && /no estimate yet/.test(conf) && /applies to every room/.test(conf), "it says who pays, what this room cost so far, and that the limit applies to every room", conf);
   ok(await p.waitForFunction(() => document.activeElement?.hasAttribute("data-explain-start"), null, { timeout: 2000 }).then(() => true, () => false), "the confirmation takes the focus on Confirm and start");
@@ -241,7 +241,7 @@ try {
     "the follow-up carries the boxed region: headings, figure ids, text, the rectangle", JSON.stringify(first));
   ok(/paid run on claude · claude-opus-5 with walkthrough/.test(await p.$eval("[data-explain-askconfirm]", (e) => e.textContent)), "a follow-up asks for its paid run's confirmation, in the chat");
   const askc = await p.$eval("[data-explain-askconfirm]", (e) => ({ scripts: e.querySelector("[data-explain-askscripts]")?.textContent ?? "", chips: [...e.querySelectorAll(".rx-chipname")].map((c) => c.textContent), warn: e.querySelector("[data-explain-unapproved]")?.textContent ?? "", consent: e.querySelector("label").textContent }));
-  ok(/Its scripts run in this follow-up too: sandboxed, with network/.test(askc.scripts) && JSON.stringify(askc.chips) === '["ANTHROPIC_API_KEY"]' && /approves this run only/.test(askc.warn) && /their scripts included \(sandboxed, with network\)/.test(askc.consent),
+  ok(/Its scripts run in this follow-up too: sandboxed, with network/.test(askc.scripts) && JSON.stringify(askc.chips) === '["ANTHROPIC_API_KEY"]' && /no decision yet/.test(askc.warn) && /their scripts included \(sandboxed, with network\)/.test(askc.consent),
     "the follow-up's confirmation says its scripts run (network, the credential, unapproved), and so does the don't-ask-again consent", JSON.stringify(askc));
   await p.check("[data-explain-consent]"); await p.click("[data-explain-askok]");
   const chatRow = await p.waitForSelector("[data-explain-answer] .rx-callrow", { timeout: 1200 }).then(() => p.$eval("[data-explain-answer] .rx-callrow", (e) => { const d = e.querySelector(".d").getBoundingClientRect(), s = e.querySelector("summary").getBoundingClientRect(); return { same: Math.abs(d.top - s.top) < 12, text: e.textContent }; }), () => null);
@@ -614,6 +614,67 @@ try {
     }
     ok(looks.every((l) => l.ok), "at 1440, 900 and 390, light and dark, English and 繁體中文: no sideways scroll, Full screen in reach, the field inside its dialog, Confirm in view with long instructions (the dialog's footer stays), the words in the captain's language", JSON.stringify(looks.filter((l) => !l.ok)));
   }
+  // ---------- an undecided script version: the decision is picked in the confirmation; the run shows its prepare ----------
+  { const c7 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await c7.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await c7.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const FACTS = { id: "walkthrough", v: 1, sha256: "a".repeat(64), filesSha256: "b".repeat(64), scripts: [{ path: "scripts/use-py.py", lang: "python", flags: ["network", "subprocess"] }], hosts: ["api.model-vendor.example"], bins: ["ffmpeg"], locks: ["python (requirements.txt)"] };
+    const PENDING = { ...OFFER, hash: "c0ffee00000000a1", decide: { state: "pending", facts: FACTS } };
+    let cur = PENDING, D = { ...X, selected: { id: "walkthrough", v: 1 }, versions: [], running: null, consent: null, runs: [] };
+    const gens = [], asks = []; let onGen = null;
+    await c7.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: D }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain/offer(\\?|$)`), (r) => r.fulfill({ json: cur }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => r.fulfill({ json: D }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain/generate$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); gens.push(b); onGen(r, b); });
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain/ask$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); asks.push(b);
+      r.fulfill(b.confirm ? { json: D } : { status: 409, json: { error: "confirm", code: "confirm_required", offer: { ...ASK_OFFER, decide: { state: "pending", facts: FACTS } } } }); });
+    const w = await c7.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    const openConfirm = async () => { await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-again], [data-explain-empty], [data-explain-open]", { timeout: 15000 });
+      await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.click("[data-explain-open]"); await w.waitForSelector("[data-explain-menu]"); await w.click('[data-explain-skill="walkthrough"]'); await w.waitForSelector("[data-explain-confirm] [data-explain-start]"); await w.waitForTimeout(60); };
+    D = { ...D, selected: null }; await openConfirm();
+    const box = await w.$eval("[data-explain-decidebox]", (e) => e.textContent);
+    const startOff = await w.$eval("[data-explain-start]", (e) => e.disabled);
+    ok(/no decision yet/.test(box) && /scripts\/use-py\.py · network, subprocess/.test(box) && /Network when it runs: api\.model-vendor\.example/.test(box) && /installed by Studio before it runs: python \(requirements\.txt\)/.test(box) && /Programs it uses: ffmpeg/.test(box) && /aaaaaaaaaaaa \/ bbbbbbbbbbbb/.test(box) && /Approve with scripts/.test(box) && /Text only/.test(box) && startOff,
+      "an undecided script version: the confirmation shows the team-change card's facts (scripts with flags, hosts, lockfiles, programs, hashes) and the pick; Confirm waits for it", JSON.stringify({ box, startOff }));
+    await (await w.$("[data-explain-decidebox]")).scrollIntoViewIfNeeded(); await w.screenshot({ path: join(shots, "15-decide-pending.png") });
+    await w.check('[data-explain-decide="scripts"]');
+    ok(!(await w.$eval("[data-explain-start]", (e) => e.disabled)), "picking Approve with scripts enables Confirm");
+    onGen = (r, b) => { D = { ...D, selected: { id: "walkthrough", v: 1 }, running: 1, runs: [run(1, "generate", "running", { decided: "approved", prepare: { state: "running", at: "t" }, rounds: [], progress: [{ at: "t", text: "Studio is reading the materials (read-only)" }] })] }; r.fulfill({ json: D }); };
+    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
+    ok(gens.at(-1)?.confirm === PENDING.hash && gens.at(-1)?.skillDecision === "scripts", "Confirm sends the exact confirmation and the pick", JSON.stringify(gens.at(-1)));
+    const prep = await w.$eval('[data-explain-prepare="running"]', (e) => e.textContent).catch(() => "");
+    ok(/installing the skill's dependencies from its lockfiles/.test(prep), "the run shows Studio installing the skill's dependencies before its first round", prep);
+    await w.screenshot({ path: join(shots, "16-decide-preparing.png") });
+    D = { ...D, running: null, runs: [run(1, "generate", "failed", { decided: "approved", why: "prepare", error: "Studio could not prepare the skill's dependencies: walkthrough@v1: preparing its dependencies failed: pip install failed / Studio 沒辦法準備這個 skill 的依賴：walkthrough@v1：準備依賴失敗：pip 安裝失敗", rounds: [], prepare: { state: "failed", at: "t", reasons: [{ en: "walkthrough@v1: preparing its dependencies failed: pip install failed", zh: "walkthrough@v1：準備依賴失敗：pip 安裝失敗" }] } })] };
+    await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector('[data-explain-ended="prepare"]', { timeout: 5000 });
+    const ended = await w.$eval('[data-explain-ended="prepare"]', (e) => e.textContent);
+    ok(/could not install the skill's dependencies, so no round ran/.test(ended) && /pip install failed/.test(ended), "a failed prepare says why the run stopped", ended);
+    // text only, picked in the confirmation
+    cur = { ...PENDING, hash: "c0ffee00000000a2" }; D = { ...D, selected: null, runs: [] }; await openConfirm();
+    await w.check('[data-explain-decide="text-only"]');
+    onGen = (r) => { D = { ...D, running: null, runs: [] }; r.fulfill({ json: D }); };
+    await w.click("[data-explain-start]"); await w.waitForTimeout(150);
+    ok(gens.at(-1)?.skillDecision === "text-only" && gens.at(-1)?.confirm === "c0ffee00000000a2", "Text only is sent with the confirmation", JSON.stringify(gens.at(-1)));
+    // already decided: the decision is shown, nothing is asked
+    cur = { ...OFFER, hash: "c0ffee00000000a3", scripts: { ...OFFER.scripts, approved: true, rows: { ...OFFER.scripts.rows, approval: null } }, decide: { state: "approved", via: "review-room", at: "2026-11-18T10:00:00Z", ready: "ready" } };
+    D = { ...D, selected: null }; await openConfirm();
+    const dec = await w.$eval("[data-explain-decision]", (e) => ({ state: e.dataset.explainDecision, text: e.textContent })).catch(() => null);
+    ok(dec?.state === "approved" && /Approved with scripts · decided in the review room/.test(dec.text) && !(await w.$("[data-explain-decide]")) && !(await w.$eval("[data-explain-start]", (e) => e.disabled)), "a decided version shows its decision and asks nothing", JSON.stringify(dec));
+    onGen = (r) => { D = { ...D, running: null }; r.fulfill({ json: D }); };
+    await w.click("[data-explain-start]"); await w.waitForTimeout(150);
+    ok(gens.at(-1)?.confirm === "c0ffee00000000a3" && !("skillDecision" in gens.at(-1)), "no pick is sent for a decided version", JSON.stringify(gens.at(-1)));
+    // a follow-up on an undecided version: the facts and the two answers in the chat
+    D = { ...D, selected: { id: "walkthrough", v: 1 }, versions: versions.slice(0, 1), runs: [run(1, "generate", "done", { version: 1 })] };
+    await w.goto(`${base}/#/board`); await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-open]", { timeout: 15000 }); await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector('[data-explain-frame="1"]', { timeout: 15000 });
+    await w.fill("[data-explain-q]", "Why this lockfile?"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-askconfirm] [data-explain-decidebox]", { timeout: 5000 });
+    ok(!!(await w.$('[data-explain-askok="scripts"]')) && !!(await w.$('[data-explain-askok="text-only"]')) && /python \(requirements\.txt\)/.test(await w.$eval("[data-explain-askconfirm]", (e) => e.textContent)), "a follow-up on an undecided version shows the facts and asks for the pick");
+    await w.click('[data-explain-askok="scripts"]'); await w.waitForTimeout(150);
+    ok(asks.at(-1)?.confirm === ASK_OFFER.hash && asks.at(-1)?.skillDecision === "scripts", "the follow-up's pick goes with its confirmation", JSON.stringify(asks.at(-1)));
+    await c7.close(); }
+
   ok(!errors.length, "no page error", errors.join(" | "));
 } catch (e) { fail++; console.log("  FAIL  the run stopped:", e?.stack || e); console.log(appLog.slice(-3000)); }
 finally { await browser.close(); app.kill(); probe.close(); }
