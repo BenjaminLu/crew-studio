@@ -47,7 +47,6 @@ import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommit
 import { unverifiedClaim } from "./report-verification";
 import { installReviewRoom } from "./review-room";
 import { installCloudHandoff, declaredTestCommands } from "./cloud-handoff";
-import type { WebBackend } from "../review-web";
 
 export { git, must };
 
@@ -182,15 +181,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   mergeabilityRetryMs?: number[]; improve?: { checkTriggers?: () => Promise<any> } | null;
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> };
-  /** the review room's web tools (tests stub them; production goes through Studio's egress proxy) */
-  reviewWeb?: WebBackend | ((check: (url: string) => string | null) => WebBackend);
-  /** the Library (Studio's artifact store): where an ended or saved review room is kept read-only */
+  /** the Library (Studio's artifact store): where an ended or saved review room's pages are kept read-only */
   artifacts?: import("../artifacts").ArtifactStore;
   /** the cloud hand-off's provider (tests: a loopback stub) and its GitHub polling interval */
   cloudProvider?: import("./cloud-handoff").CloudProvider; cloudIntervalMs?: number }) {
   installCodeQueue(engine);
   // the merge card's review room: a view on the card (its summary), never its answer or its readiness
-  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, projects: o.projects, artifacts: o.artifacts,
+  engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, projects: o.projects, artifacts: o.artifacts,
     // a pull request is read (GET) with its connected project's own grant, verified like any GitHub use (an injected adapter in tests)
     github: (p: any) => { if (o.adapter instanceof GitHubPrAdapter) return o.adapter.grant.repository === p.github?.repository ? o.adapter : null;
       if (!p.github) return null; o.projects.assertExecutable({ project: p.id, base: p.base ?? p.github.base }); const a = projectPrAdapter(p, o.dataDir, o.poller); return a instanceof GitHubPrAdapter ? a : null; } });

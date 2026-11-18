@@ -7,11 +7,12 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {probeProcess} from '../providers/probe-process';
 import {claudeAccountEnv} from '../providers/claude-native';
+import { scriptArgv } from "../self";
 type State='idle'|'pending'|'done'|'failed'|'cancelled'|'timeout';
 export type ClaudeLoginView={state:State;reason:string;reasonZh:string};
 /** "5 minutes" / "5 分鐘" for the copy; short test deadlines read in seconds. */
 const span=(ms:number):[string,string]=>ms>=60000?[`${Math.round(ms/60000)} minutes`,`${Math.round(ms/60000)} 分鐘`]:[`${Math.round(ms/1000)} seconds`,`${Math.round(ms/1000)} 秒`];
-const argv=(bin:string)=>/\.(?:mjs|js|ts)$/.test(bin)?[process.execPath,bin,'auth','login']:[bin,'auth','login'];
+const argv=(bin:string)=>scriptArgv(bin,['auth','login']);
 export class ClaudeLogin{
  private state:ClaudeLoginView={state:'idle',reason:'Sign in to Claude with your account in the browser.',reasonZh:'在瀏覽器使用你的帳號登入 Claude。'};
  /** an earlier owned process whose death was not confirmed: no new sign-in until Studio restarts */

@@ -32,11 +32,12 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 
 /* ---------- the room: five fixed rows, only the board flexes ---------- */
 .rr-room { height: 100vh; height: 100dvh; display: grid; grid-template-rows: 48px minmax(0, 1fr) 56px; gap: 10px; padding: 12px 24px; box-sizing: border-box; margin: 0 auto; min-width: 0; }
-.rr-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .rr-back { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 13px; white-space: nowrap; flex: none; text-decoration: none; cursor: pointer; }
 .rr-back:hover { color: var(--text); background: var(--surface-2); }
 .rr-back:disabled { opacity: .55; cursor: default; }
-.rr-htitle { display: grid; min-width: 0; flex: 1 1 200px; }
+/* the room's title keeps room to be read: past it the header wraps to a second row rather than squeeze it to a word */
+.rr-htitle { display: grid; min-width: min(300px, 100%); flex: 1 1 300px; }
 .rr-htitle b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rr-htitle span { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rr-pills { display: flex; gap: 6px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
@@ -161,7 +162,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
   
 }
 
-/* ---------- the lesson report (baton's packet, workflows/skills/baton): a teach answer read top to bottom ----------
+/* ---------- the lesson report (baton's packet): a teach answer read top to bottom ----------
    Sections are cards on the room's paper: a numbered heading in a display serif, the points as prose or as findings with
    a tone stripe, and Studio's drawing under them in a figure card. The report scrolls inside the room; the page does not. */
 
@@ -236,7 +237,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 
 .rp-rej { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; text-align: left; width: 100%; }
 
-/* ---------- figures in the room's semantic palette (workflows/skills/diagram-design style guide, mapped to the room's tokens):
+/* ---------- figures in the room's semantic palette (diagram-design's style guide, mapped to the room's tokens):
    accent = this change (1–2 focal), ok = new / ends well, amber = needs attention / a way back, seal = cannot be undone,
    muted = context, outside this change. A figure the tutor draws uses only these as var(--fig-…). */
 :root { --fig-paper: var(--rr-paper); --fig-card: #ffffff; --fig-card-2: #f2efe6; --fig-ink: #2d3142; --fig-muted: #4f5d75; --fig-soft: #7a8399; --fig-rule: rgba(45,49,66,.14); --fig-rule-strong: #bfc0c0;
@@ -359,7 +360,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
    button and what the shown version was made from, on one line over the output; the versions open in a menu under it */
 .rx-line { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; min-width: 0; background: var(--surface); border-bottom: 1px solid var(--border); }
 
-.rx-verbtn { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: 260px; }
+.rx-verbtn { flex: none; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: min(260px, 45%); }
 .rx-vername { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rx-vergen { flex: none; font-weight: 500; color: var(--accent-text, var(--accent)); }
 .rx-ver.gen { border: 1px dashed var(--accent); background: none; cursor: default; }
@@ -367,7 +368,8 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-verbtn[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .rx-verbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rx-vercount { font: 600 10.5px var(--f-mono, ui-monospace, monospace); color: var(--text-3); padding: 1px 5px; border-radius: 999px; background: var(--surface-2); }
-.rx-line > .rx-vhead { flex: 1; border: 0; background: none; }
+/* how the version was made stays readable (the facts and the tools give way first) */
+.rx-line > .rx-vhead { flex: 1 1 300px; min-width: min(300px, 100%); border: 0; background: none; }
 .rx-line > .rx-vhead > summary { padding: 5px 4px; }
 .rx-linefill { flex: 1; }
 .rx-autonote { flex: none; display: inline-flex; align-items: center; gap: 6px; max-width: 46%; padding: 3px 8px; border-radius: 6px; font-size: 12px; background: var(--warn-soft); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -383,13 +385,15 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-ver .k { font: 600 10.5px var(--f-mono, ui-monospace, monospace); color: var(--text-3); }
 .rx-again { margin-top: 6px; }
 .rx-note { font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
-.rx-stage { position: relative; min-width: 0; min-height: 0; background: var(--surface-2); display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.rx-stage { container-type: inline-size; position: relative; min-width: 0; min-height: 0; background: var(--surface-2); display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .rx-stagein { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
 /* the line's tools (Generate again, full screen, new tab, the isolation tag): at its right end, one row */
 .rx-linetools { flex: none; margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
 .rx-linetools .rr-chip { height: 28px; }
 .rx-linetools .rx-tag { margin-left: 2px; }
 @media (max-width: 640px) { .rx-linetools { margin-left: 0; flex-wrap: wrap; } .rx-tl { display: none; } }
+/* a narrow stage (the conversation open beside it): the tools are their icons, each still named (aria-label, title) */
+@container (max-width: 1000px) { .rx-linetools .rx-tl { display: none; } }
 .rx-slot { min-height: 0; }
 
 .rx-tag { margin-left: auto; font: 500 11px var(--f-mono, ui-monospace, monospace); color: var(--text-3); }
@@ -532,7 +536,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 /* a new head's generation over the version still shown: one strip above the output, the output kept */
 .rx-genstrip { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--accent-soft); font-size: 12.5px; }
 .rx-genstrip b { font-weight: 600; }
-.rx-vfacts { flex: none; font: 500 11px var(--f-mono, ui-monospace, monospace); white-space: nowrap; }
+.rx-vfacts { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 500 11px var(--f-mono, ui-monospace, monospace); white-space: nowrap; }
 .rx-genstrip .rx-genstrip-fill { flex: 1; }
 .rx-stagein.gen { grid-template-rows: auto minmax(0, 1fr); }
 /* a link in Studio's toast (dark on light, light on dark) reads as part of it */
@@ -574,3 +578,8 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-table { border-collapse: collapse; font-size: 13px; }
 .rx-table th, .rx-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
 .rx-table th { background: var(--surface-2); font-weight: 600; }
+
+/* a Library save of a room's pages: its list scrolls inside the room's column, the way to the room stays reachable */
+.rr-saved { flex: 1 1 auto; min-height: 0; overflow: auto; margin-top: 10px; }
+.rr-saved h2 { font-size: 15px; margin: 0 0 8px; }
+.rr-saved-list { margin: 0 0 12px; padding-left: 22px; display: grid; gap: 6px; font-size: 13px; }

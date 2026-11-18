@@ -15,12 +15,16 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
 process.env.CREW_SESSION_TOKEN ??= "test-session";
 const tmp = mkdtempSync(join(tmpdir(), "crew-room-zones-ui-")), data = join(tmp, "data"), prDir = join(data, "review-room", "pr"); mkdirSync(prDir, { recursive: true });
 const H = "a".repeat(40), B = "b".repeat(40), now = new Date().toISOString(), READ = "2026-11-01T11:00:00.000Z";
-const turn = { n: 1, action: "teach", text: "x", lang: "en", by: "captain", at: "2026-11-01T10:00:00.000Z", status: "done", ended: "2026-11-01T10:05:00.000Z", job: null, provider: "p", model: "m", effort: null, answer: "a", error: null, cost: null, round: "r", head: H };
-const room = (hex, n, repository, title, o = {}, snap = {}) => { const id = `PR-${hex.repeat(12)}-${n}`; writeFileSync(join(prDir, `${id}.json`), JSON.stringify({ schema: 1, run: "", card: id, node: "", head: H, base: B, turns: [], board: [], sources: [], check: { questions: [] },
+// a room with a page: baton's run at the room's head, done, and the version it made (the explainer's state, as Studio keeps it)
+const PAGE = { page: true };
+const paged = (id) => { const x = join(prDir, `${id}-explain`); mkdirSync(join(x, "v1"), { recursive: true }); writeFileSync(join(x, "v1", "index.html"), "<h1>page</h1>");
+  writeFileSync(join(x, "state.json"), JSON.stringify({ schema: 1, selected: { id: "studio-baton", v: 1 }, runs: [{ n: 1, kind: "generate", skill: { id: "studio-baton", v: 1, name: "baton (built in)" }, status: "done", at: "2026-11-01T10:00:00.000Z", ended: "2026-11-01T10:05:00.000Z", head: H, provider: "p", model: "m", cost: { usd: 0.3 }, rounds: [], version: 1 }],
+    versions: [{ n: 1, run: 1, skill: { id: "studio-baton", v: 1, name: "baton (built in)" }, at: "2026-11-01T10:05:00.000Z", entry: "index.html", kind: "html", files: [{ path: "index.html", bytes: 13, sha256: "0".repeat(64) }], summary: "s" }] })); };
+const room = (hex, n, repository, title, { page, ...o } = {}, snap = {}) => { const id = `PR-${hex.repeat(12)}-${n}`; if (page) paged(id); writeFileSync(join(prDir, `${id}.json`), JSON.stringify({ schema: 1, run: "", card: id, node: "", head: H, base: B, turns: [], board: [], sources: [], check: { questions: [] },
   subject: { kind: "pr", room: id, url: `https://github.com/${repository}/pull/${n}`, repository, number: n, project: "p", task: null },
   pr: { title, body: "", state: "open", merged: false, mergedAt: null, closedAt: null, draft: false, author: "a", headRef: "x", headRepo: repository, baseRef: "main", head: H, base: B, files: [], notes: [], checkedAt: now, attemptedAt: now, truncated: false, stale: null, ...snap }, ...o })); return id; };
-const waiting = room("a", 1, "acme/api", "Add rate limits"), waiting2 = room("b", 2, "acme/web", "軟體更新流程", { turns: [turn] }), reviewing = room("a", 3, "acme/api", "Rename the queue", { turns: [turn], read: READ }),
-  merged = room("a", 4, "acme/api", "Fix the login", { turns: [turn], read: READ }, { state: "closed", merged: true }), archived = room("c", 5, "acme/old", "Drop the legacy cron", { turns: [turn], read: READ, archived: { by: "captain", at: READ } });
+const waiting = room("a", 1, "acme/api", "Add rate limits"), waiting2 = room("b", 2, "acme/web", "軟體更新流程", PAGE), reviewing = room("a", 3, "acme/api", "Rename the queue", { ...PAGE, read: READ }),
+  merged = room("a", 4, "acme/api", "Fix the login", { ...PAGE, read: READ }, { state: "closed", merged: true }), archived = room("c", 5, "acme/old", "Drop the legacy cron", { ...PAGE, read: READ, archived: { by: "captain", at: READ } });
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`, env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
 const boot = async () => { const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_REVIEW_EXPLAIN_DEFAULT_SKILL: "", CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data, CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: "/nonexistent/codex", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
@@ -38,6 +42,7 @@ const search = async (p, q) => { await p.fill("[data-room-search]", q); await p.
 try {
   { const { p, ctx } = await open("en", 1440);
     ok(JSON.stringify(await p.$$eval("[data-room-zone]", (els) => els.map((e) => e.dataset.roomZone))) === '["waiting","reviewing","concluded","archived"]', "four zones, in order");
+    { const counts = await p.$$eval("[data-room-counts]", (els) => els.map((e) => e.textContent)); ok(counts.length >= 5 && !counts.some((t) => /undefined|NaN/.test(t)) && counts.some((t) => /1 version/.test(t)), "each row's counts come from the real server's list (versions, questions): never undefined", JSON.stringify(counts)); }
     ok(await zoneOf(p, waiting) === "waiting" && await zoneOf(p, reviewing) === "reviewing" && await zoneOf(p, merged) === "concluded" && await zoneOf(p, archived) === "archived", "each room is in its zone: a merged one in 已結論, not 封存");
     const repos = await p.$$eval('[data-room-zone="waiting"] [data-room-repo]', (els) => els.map((e) => [e.dataset.roomRepo, e.querySelector("h4").textContent, e.querySelectorAll("li").length]));
     ok(JSON.stringify(repos) === '[["acme/api","acme/api",1],["acme/web","acme/web",1]]', "inside a zone, rooms are grouped by repository", JSON.stringify(repos));

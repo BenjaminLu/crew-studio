@@ -1,11 +1,12 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repositories only in checked temp folders
 // The review room's tutor is admitted like any role of a staffed Task (docs/units/review-room.md, "The tutor"): on a
-// code workflow with approved staffing, a turn selects the reviewer's approved member through the native selection on the
-// merge card's live node, carries a staffing receipt for the tutor seat (the reviewer role, the tutor's own pinned
-// instructions), and runs as one of the Task's jobs through the same provider admission (receipt, owner, instructions
-// hash). A seat staffing does not know, or instructions that differ from its pins, are refused before anything is paid.
-// Stub providers and temporary data only.        bun tests/review-room-admission.ts
+// code workflow with approved staffing, a page (the explainer's baton run) selects the reviewer's approved member through the
+// native selection on the merge card's live node, carries a staffing receipt for the explainer's auxiliary seat (the reviewer
+// role, the run's own pinned instructions: Studio's frame, baton's adapter and the skill), and runs as one of the Task's jobs through the same
+// provider admission (receipt, owner, instructions hash). A seat staffing does not know, instructions that differ from its
+// pins, or a seat bound to another role are refused before anything is paid. The adaptive tutor and the captain's pick name
+// the member the receipt is for. Stub providers and temporary data only.        bun tests/review-room-admission.ts
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -13,9 +14,14 @@ import { join } from "node:path";
 import { harness, suite, until, Y } from "./rt-harness";
 const { ok, end } = suite("review-room-admission");
 const { installStaffingGuard, StaffingStore, staffingHash } = await import("../src/domain/staffing");
-const { installReviewRoom, TUTOR_SEAT, ROOM_SKILLS } = await import("../src/domain/review-room");
+const { installReviewRoom } = await import("../src/domain/review-room");
+const { EXPLAINER_FRAME } = await import("../src/domain/review-explain");
+const { BATON_ADAPTER } = await import("../src/domain/review-baton");
 const { createNativeProviderAdmission } = await import("../src/providers/native-admission");
 const { jobInstructions } = await import("../src/operating-rules");
+const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+/** baton's page, as a scripted round */
+const baton = (t = "The change adds a line") => [["out_write", { path: ".baton/packet.json", content: "{}" }], ["out_write", { path: "index.html", content: `<!doctype html><title>${t}</title><h1>${t}</h1>` }], ["explain_done", { entry: "index.html", summary: t }], ["msg", "Done."]];
 
 const flow = { id: "code-firstmate", name: "Tutor admission", kind: "code", version: 1,
   roles: [{ id: "worker", label: "Worker", skill: "pack:firstmate/skills/worker.md" }, { id: "reviewer", label: "Reviewer", skill: "pack:firstmate/skills/reviewer.md" }, { id: "designer", label: "Designer", skill: "pack:firstmate/skills/designer.md" }],
@@ -34,78 +40,95 @@ try {
     roles: { worker: { provider: "codex", model: "worker-model", effort: "low", skill: skill(flow.roles[0].skill) }, reviewer: { provider: "codex", model: "reviewer-model", effort: "high", skill: skill(flow.roles[1].skill) }, designer: { provider: "codex", model: "designer-model", effort: "medium", skill: skill(flow.roles[2].skill) } },
     review: { freshContexts: 3, distinctProviders: false } } as any, null, { run: "R-source", card: "SC-source", answerSeq: 1 });
   e.actions.prep = async (x: any) => { Object.assign(x.ctx, { worktree: repo, repo, baseCommit: base, head }); x.save(); return "ok"; };
-  // the server's native admission, with a certified stub selection: an uncertified provider is never picked silently
-  const selects: any[] = [], systems: string[] = [], certified = new WeakMap<object, any>();
+  // the server's native admission, with a certified stub selection: an uncertified provider is never picked silently; the stub
+  // runs the scripted tool calls through Studio's real tool route
+  const selects: any[] = [], systems: string[] = [], certified = new WeakMap<object, any>(), script: any[][] = [];
   e.deps.selectProvider = async (x: any, p: any, c: any) => { selects.push({ node: x.node.id, role: c?.role, pick: p, picked: c?.picked, adaptive: c?.adaptive });
-    const prov: any = { id: p.provider, model: p.model, reasoningEffort: p.effort ?? null, sandboxFree: true, start(system: string) { systems.push(system);
-      return { interrupt() {}, async *send() { yield { type: "delta", text: "The change adds a line [diff:a.txt]." }; yield { type: "turnEnd", status: "ok", usage: { usd: 0.01, inTokens: 1, outTokens: 1 } }; } }; } };
+    const prov: any = { id: p.provider, model: p.model, reasoningEffort: p.effort ?? null, sandboxFree: true, start(system: string, _tools: any[], ctx: any) { systems.push(system);
+      return { interrupt() {}, async *send() {
+        for (const [name, args] of script.shift() ?? []) {
+          if (name === "msg") { yield { type: "delta", text: args }; yield { type: "message", text: args }; continue; }
+          const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json();
+          yield { type: "toolStart", id: name, name, args }; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) }; }
+        yield { type: "turnEnd", status: "ok", usage: { usd: 0.01, inTokens: 1, outTokens: 1 } }; } }; } };
     certified.set(prov, { input: {}, expires: Date.now() + 30000, x }); return prov; };
   h.agents.providerAdmission = createNativeProviderAdmission({ certified, engine: () => e, select: async () => { throw new Error("unexpected refresh"); }, pick: async () => { throw new Error("unexpected uncertified provider"); } });
-  const room = installReviewRoom(e, { dataDir: h.data, web: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
+  // what the explainer hands staffing for its seat (the seat's name and its pinned texts), as each receipt is asked for
+  const auxes: any[] = [], realReceipt = e.deps.instructionReceipt; e.deps.instructionReceipt = (...a: any[]) => { auxes.push(a[4]); return (realReceipt as any)(...a); };
+  const room = installReviewRoom(e, { dataDir: h.data }), X = room.explain;
   const run = e.start({ workflow: flow.id, params: { project: "p", _staffing: config.hash } });
   await until(() => e.cards.list({ run: run.id, open: true }).some((c) => c.kind === "merge"), 20000);
   const card = e.cards.list({ run: run.id, open: true }).find((c) => c.kind === "merge")!;
   const offer: any = room.view(card.id).offer;
   ok(offer.provider === "codex" && offer.model === "reviewer-model" && offer.effort === "high", "the tutor is offered on the reviewer's approved member", JSON.stringify(offer));
+  const waitRun = async (n: number) => { await until(() => !X.running(card.id) && X.view(card.id).runs.find((x: any) => x.n === n)?.status !== "running", 60000); return X.view(card.id).runs.find((x: any) => x.n === n); };
+  const generate = async (confirm?: string) => { const s: any = await X.generate(card.id, { skill: "studio-baton", confirm: confirm ?? X.offer(card.id, "studio-baton", "generate").hash }, "captain"); return waitRun(s.running ?? X.view(card.id).runs.at(-1)?.n); };
+  const refusedBy = async (f: () => Promise<any>) => { try { await f(); return null; } catch (x: any) { return x; } };
 
-  // a seat staffing does not know, or pins that differ from the room's texts: refused before any provider starts
-  const seats = e.deps.auxiliarySeats; e.deps.auxiliarySeats = {};
-  let refusal: any = null; try { await room.start(card.id, { action: "how", confirm: offer.hash }, "captain"); } catch (x) { refusal = x; }
-  ok(refusal?.code === "staffing" && !systems.length, "without the tutor seat registered, staffing refuses the receipt and nothing is paid", refusal?.message);
-  e.deps.auxiliarySeats = { [TUTOR_SEAT]: { role: "reviewer", pins: ROOM_SKILLS.map(() => "0".repeat(64)) } };
-  refusal = null; try { await room.start(card.id, { action: "how", confirm: offer.hash }, "captain"); } catch (x) { refusal = x; }
-  ok(refusal?.code === "staffing" && /pinned skills/.test(refusal.message) && !systems.length, "instructions that differ from the seat's pins are refused", refusal?.message);
-  e.deps.auxiliarySeats = { [TUTOR_SEAT]: { role: "worker", pins: ROOM_SKILLS.map((k) => k.sha256) } };
-  refusal = null; try { await room.start(card.id, { action: "how", confirm: offer.hash }, "captain"); } catch (x) { refusal = x; }
-  ok(refusal?.code === "staffing" && !systems.length, "a seat bound to another role is refused");
-  e.deps.auxiliarySeats = seats;
+  // ---------- a seat staffing does not know, pins that differ from the run's texts, a seat bound to another role: refused before
+  // any provider starts (the explainer registers its seat itself: staffing is made to see another one here) ----------
+  { const real = e.deps.auxiliarySeats, seen = (f: (s: any) => any) => Object.defineProperty(e.deps, "auxiliarySeats", { configurable: true, get: () => f(real), set: () => {} });
+    const runs0 = X.view(card.id).runs.length, jobs0 = h.agents.jobs.size;
+    seen(() => ({})); let refusal: any = await refusedBy(() => generate());
+    ok(refusal?.code === "staffing" && !systems.length, "without the explainer's seat registered, staffing refuses the receipt and nothing is paid", refusal?.message);
+    let seat = ""; seen(() => new Proxy({}, { get: (_t, k) => { seat = String(k); return { role: "reviewer", pins: ["0".repeat(64), "0".repeat(64), "0".repeat(64)], adaptive: true }; } }));
+    refusal = await refusedBy(() => generate());
+    ok(refusal?.code === "staffing" && /pinned skills/.test(refusal.message) && !systems.length && /^review-room-explainer:studio-baton@v\d+$/.test(seat), "instructions that differ from the seat's pins are refused", JSON.stringify([refusal?.message, seat]));
+    const pins: string[] = []; seen(() => new Proxy({}, { get: () => ({ role: "worker", pins, adaptive: true }) }));
+    { const s0 = e.deps.instructionReceipt; e.deps.instructionReceipt = (...a: any[]) => { pins.splice(0, pins.length, ...(a[4]?.texts ?? []).map((t: any) => sha(t.text))); return (s0 as any)(...a); };
+      refusal = await refusedBy(() => generate()); e.deps.instructionReceipt = s0; }
+    ok(refusal?.code === "staffing" && pins.length === 3 && !systems.length, "a seat bound to another role is refused, even with the exact pins", refusal?.message);
+    Object.defineProperty(e.deps, "auxiliarySeats", { configurable: true, writable: true, enumerable: true, value: real });
+    ok(X.view(card.id).runs.length === runs0 && h.agents.jobs.size === jobs0, "a refused admission records no run and starts no job", JSON.stringify([X.view(card.id).runs.length - runs0, h.agents.jobs.size - jobs0])); }
 
-  // the admitted turn
-  const before = e.ledger(run.id).filter((x) => x.record === "staffing-instructions").length;
-  await room.start(card.id, { action: "how", confirm: offer.hash }, "captain"); await room.settle(card.id);
-  const t: any = (room.view(card.id) as any).turns.at(-1);
-  ok(t.status === "done" && /adds a line/.test(t.answer), "the admitted turn runs and answers", JSON.stringify(t).slice(0, 300));
-  ok(selects.length === 4 && selects.every((x) => x.node === "merge-card" && x.role === "reviewer" && x.pick.model === "reviewer-model"), "the provider is chosen through the native selection on the merge card's node, as the reviewer", JSON.stringify(selects));
+  // ---------- the admitted page ----------
+  const before = e.ledger(run.id).filter((x) => x.record === "staffing-instructions").length, sel0 = selects.length;
+  script.push(baton()); const t: any = await generate();
+  ok(t?.status === "done" && t.version === 1 && X.view(card.id).versions.length === 1, "the admitted page runs and makes its version", JSON.stringify(t && [t.status, t.error]));
+  const used = selects.slice(sel0);
+  ok(used.length >= 1 && used.every((x) => x.node === "merge-card" && x.role === "reviewer" && x.pick.model === "reviewer-model"), "the provider is chosen through the native selection on the merge card's node, as the reviewer", JSON.stringify(used));
+  const aux = auxes.filter(Boolean).at(-1), seat: string = aux?.seat ?? "", texts: { sha256: string; text: string }[] = aux?.texts ?? [], pinned = e.deps.auxiliarySeats?.[seat];
+  ok(/^review-room-explainer:studio-baton@v\d+$/.test(seat) && texts.length === 3 && texts[0].text === EXPLAINER_FRAME && texts[1].text === BATON_ADAPTER && pinned?.role === "reviewer" && JSON.stringify(pinned.pins) === JSON.stringify(texts.map((x) => sha(x.text))),
+    "the explainer registers its own seat for this skill version: the reviewer role, pinned to Studio's frame, baton's adapter and the skill's text", JSON.stringify({ seat, n: texts.length, pinned: pinned && { role: pinned.role, pins: pinned.pins.length } }));
   const rec: any = e.ledger(run.id).filter((x) => x.record === "staffing-instructions").slice(before);
-  ok(rec.length === 1 && rec[0].node === "merge-card" && rec[0].data.role === "reviewer" && rec[0].data.seat === TUTOR_SEAT && rec[0].data.model === "reviewer-model" && rec[0].data.effort === "high" && rec[0].data.config === config.hash
-    && rec[0].data.instructionsSha256 === createHash("sha256").update(systems[0]).digest("hex") && rec[0].data.skill === createHash("sha256").update(ROOM_SKILLS.map((k) => k.sha256).join("\n")).digest("hex"),
-    "staffing records the tutor seat's receipt: the reviewer's approved member, the exact instructions sent, the seat's pinned skills", JSON.stringify(rec[0]?.data));
-  ok(ROOM_SKILLS.every((k) => systems[0].includes(readFileSync(join(import.meta.dir, "..", k.ref), "utf8").trimEnd())), "the instructions sent carry every pinned room skill, byte for byte");
-  const job: any = [...h.agents.jobs.values()].find((j: any) => j.kind === "review-room");
-  ok(job?.ref === run.id && job.provider === "codex" && job.model === "reviewer-model", "the tutor's round is one of the Task's jobs", JSON.stringify(job && { ref: job.ref, provider: job.provider, model: job.model }));
+  ok(rec.length === 1 && rec[0].node === "merge-card" && rec[0].data.role === "reviewer" && rec[0].data.seat === seat && rec[0].data.model === "reviewer-model" && rec[0].data.effort === "high" && rec[0].data.config === config.hash
+    && rec[0].data.instructionsSha256 === sha(systems[0]) && rec[0].data.skill === sha(pinned.pins.join("\n")),
+    "staffing records the seat's receipt: the reviewer's approved member, the exact instructions sent, the seat's pinned texts", JSON.stringify(rec[0]?.data));
+  ok(systems.length === 1 && texts.every((x) => systems[0].includes(x.text.trimEnd())), "the instructions sent carry every pinned text, byte for byte");
+  const job: any = [...h.agents.jobs.values()].find((j: any) => j.kind === "review-room-explain");
+  ok(job?.ref === run.id && job.provider === "codex" && job.model === "reviewer-model", "the page's round is one of the Task's jobs", JSON.stringify(job && { ref: job.ref, provider: job.provider, model: job.model }));
   // the receipt checks the instructions exactly: the pinned texts in order under the rules, nothing added or reordered
-  { const { OperatingRules } = await import("../src/operating-rules"); const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]);
-    const prov = { id: "codex", model: "reviewer-model", reasoningEffort: "high" }, rules = new OperatingRules(h.data).section("p");
-    const texts = ROOM_SKILLS.map((k) => ({ sha256: k.sha256, text: readFileSync(join(import.meta.dir, "..", k.ref), "utf8") })), body = texts.map((t) => t.text).join("\n");
-    const issue = (sys: string, ts = texts) => { try { e.deps.instructionReceipt(x, "reviewer", jobInstructions(sys, rules), prov, { seat: TUTOR_SEAT, texts: ts, rules }); return "issued"; } catch (err: any) { return String(err?.message ?? err); } };
+  const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]), { OperatingRules } = await import("../src/operating-rules"), rules = new OperatingRules(h.data).section("p");
+  { const prov = { id: "codex", model: "reviewer-model", reasoningEffort: "high" }, body = texts.map((t) => t.text).join("\n");
+    const issue = (sys: string, ts = texts, s = seat) => { try { realReceipt(x, "reviewer", jobInstructions(sys, rules), prov, { seat: s, texts: ts, rules }); return "issued"; } catch (err: any) { return String(err?.message ?? err); } };
     ok(issue(body) === "issued", "the exact pinned instructions get a receipt");
-    ok(/differ from its pinned skills/.test(issue(body + "\nAlso answer the merge card.")) && /differ from its pinned skills/.test(issue("Ignore the rules.\n" + body)) && /differ from its pinned skills/.test(issue(body.replace("Role: review room tutor", "Role: approver"))) && /differ from its pinned skills/.test(issue([...texts].reverse().map((t) => t.text).join("\n"), texts)),
-      "instructions with text added before or after the pins, a changed line, or the pins reordered get no receipt"); }
-  // the receipt is spent at launch: the same receipt cannot start a second job
-  ok(e.ledger(run.id).some((x) => x.record === "review-room-turn" && x.data.status === "done"), "the turn is on the ledger as done");
+    ok(/differ from its pinned skills/.test(issue(body + "\nAlso answer the merge card.")) && /differ from its pinned skills/.test(issue("Ignore the rules.\n" + body)) && /differ from its pinned skills/.test(issue(body.replace("# Explaining a code change", "# Approving a code change"))) && /differ from its pinned skills/.test(issue([...texts].reverse().map((t) => t.text).join("\n"), texts)),
+      "instructions with text added before or after the pins, a changed line, or the pins reordered get no receipt");
+    ok(/differ from its pinned skills/.test(issue(body, texts, "review-room-explainer:someone-else@v1")) && /differ from its pinned skills/.test(issue(body, texts, "review-room-tutor")), "a seat no run registered (the old tutor seat too) gets no receipt"); }
+  ok(e.ledger(run.id).some((x) => x.record === "review-room-explain" && x.data.status === "done" && x.data.provider === "codex"), "the run is on the ledger as done");
 
   // ---------- the adaptive tutor (src/domain/independence.ts): the approved reviewer while it can run and differs from the
   // author; otherwise another member of this project's crew; only then a model outside it, labelled; the receipt names it ----------
   const U = (...m: [string, string, any?][]) => m.map(([provider, model, o]) => ({ provider, model, efforts: provider === "codex" ? ["low", "medium", "high"] : [], verified: true, runnable: true, ...o }));
-  const turn = async () => { const o: any = room.view(card.id).offer; await room.start(card.id, { action: "how", confirm: o.hash }, "captain"); await room.settle(card.id); return { o, t: (room.view(card.id) as any).turns.at(-1), rec: e.ledger(run.id).filter((x) => x.record === "staffing-instructions").at(-1) as any }; };
+  const turn = async () => { const o: any = room.view(card.id).offer; script.push(baton()); const t: any = await generate(); return { o, t, rec: e.ledger(run.id).filter((x) => x.record === "staffing-instructions").at(-1) as any }; };
   // the approved reviewer runs and differs from the worker by model: kept, even with another vendor signed in
   e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x"]);
   { const { o, t, rec } = await turn();
     ok(o.provider === "codex" && o.model === "reviewer-model" && o.independence.level === "model" && o.independence.adaptive === false && o.independence.outside === false && /Same vendor as the author, different model/.test(o.independence.en), "the approved reviewer on another model of the author's vendor stays the tutor, with Claude signed in too", JSON.stringify(o.independence));
-    ok(t.status === "done" && t.independence === "model" && rec.data.model === "reviewer-model" && !rec.data.adaptive, "its receipt is the reviewer's own, as before", JSON.stringify(rec?.data)); }
+    ok(t?.status === "done" && t.model === "reviewer-model" && rec.data.model === "reviewer-model" && !rec.data.adaptive, "its receipt is the reviewer's own, as before", JSON.stringify(rec?.data)); }
   // the approved reviewer cannot run: another member of this project's crew first (the designer), before any vendor outside it
   e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "designer-model"], ["claude", "claude-x"]);
   { const { o, t, rec } = await turn();
     ok(o.provider === "codex" && o.model === "designer-model" && o.effort === "medium" && o.independence.level === "model" && o.independence.adaptive === true && o.independence.outside === false && !/Not in this project's crew/.test(o.independence.en), "with the reviewer unable to run, a member already in the crew is preferred to a model outside it", JSON.stringify(o));
-    ok(t.status === "done" && rec.data.model === "designer-model" && rec.data.adaptive?.crew === true && rec.data.adaptive.approved?.model === "reviewer-model" && selects.at(-1)?.adaptive === true && selects.at(-1)?.picked === undefined && rec.data.adaptive.picked === undefined, "the receipt names the crew member used, and the approved one it stands in for", JSON.stringify(rec?.data)); }
+    ok(t?.status === "done" && rec.data.model === "designer-model" && rec.data.adaptive?.crew === true && rec.data.adaptive.approved?.model === "reviewer-model" && selects.at(-1)?.adaptive === true && selects.at(-1)?.picked === undefined && rec.data.adaptive.picked === undefined, "the receipt names the crew member used, and the approved one it stands in for", JSON.stringify(rec?.data)); }
   // nothing in the crew differs from the author: a model outside it, labelled, recorded; a verified Claude before an unverified one
   e.deps.usableModels = () => U(["codex", "worker-model"], ["claude", "claude-new", { verified: false }], ["claude", "claude-x"]);
   { const { o, t, rec } = await turn();
     ok(o.provider === "claude" && o.model === "claude-x" && o.effort === null && o.independence.level === "vendor" && o.independence.outside === true && /Not in this project's crew/.test(o.independence.en), "otherwise a verified model outside the crew, never an unverified Claude candidate beside a verified one, labelled", JSON.stringify(o));
-    ok(t.status === "done" && t.provider === "claude" && t.independence === "vendor" && selects.at(-1)?.pick.provider === "claude", "the turn runs on that member through the native selection", JSON.stringify({ t: { status: t.status, provider: t.provider, error: t.error }, sel: selects.at(-1) }));
-    ok(rec.data.seat === TUTOR_SEAT && rec.data.provider === "claude" && rec.data.model === "claude-x" && rec.data.effort === null && rec.data.adaptive?.independence === "vendor" && rec.data.adaptive.crew === false && rec.data.adaptive.approved?.model === "reviewer-model" && rec.data.config === config.hash,
+    ok(t?.status === "done" && t.provider === "claude" && rec.data.adaptive?.independence === "vendor" && selects.at(-1)?.pick.provider === "claude", "the page runs on that member through the native selection", JSON.stringify({ t: t && [t.status, t.provider, t.error], sel: selects.at(-1) }));
+    ok(rec.data.seat === seat && rec.data.provider === "claude" && rec.data.model === "claude-x" && rec.data.effort === null && rec.data.adaptive?.independence === "vendor" && rec.data.adaptive.crew === false && rec.data.adaptive.approved?.model === "reviewer-model" && rec.data.config === config.hash,
       "the tutor seat's receipt names the member actually used, that it is outside the crew, and the approved member it stands in for", JSON.stringify(rec?.data));
-    const job: any = [...h.agents.jobs.values()].filter((j: any) => j.kind === "review-room").at(-1);
+    const job: any = [...h.agents.jobs.values()].filter((j: any) => j.kind === "review-room-explain").at(-1);
     ok(job?.provider === "claude" && job.model === "claude-x", "the job admitted is that member's", JSON.stringify(job && { provider: job.provider, model: job.model })); }
   // a model whose verification is in its backoff is skipped: the next one is tried
   e.deps.usableModels = () => U(["codex", "worker-model"], ["claude", "claude-x"], ["claude", "claude-y"]); e.deps.verifyBackoff = (p: any) => p?.model === "claude-x";
@@ -117,16 +140,15 @@ try {
   e.deps.usableModels = () => U(["codex", "worker-model"]);
   { const { o, t, rec } = await turn();
     ok(o.provider === "codex" && o.model === "worker-model" && o.independence.level === "same" && /Same model as the author/.test(o.independence.en) && /Only one model is usable/.test(o.independence.en), "one model on this machine: the tutor runs on the author's own model, labelled", JSON.stringify(o));
-    ok(t.status === "done" && t.independence === "same" && rec.data.model === "worker-model" && rec.data.adaptive?.independence === "same", "and the receipt says so", JSON.stringify(rec?.data)); }
+    ok(t?.status === "done" && t.model === "worker-model" && rec.data.model === "worker-model" && rec.data.adaptive?.independence === "same", "and the receipt says so", JSON.stringify(rec?.data)); }
   // a member that is not usable, or a seat that is not adaptive, gets no receipt
-  { const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]), { OperatingRules } = await import("../src/operating-rules"), rules = new OperatingRules(h.data).section("p");
-    const texts = ROOM_SKILLS.map((k) => ({ sha256: k.sha256, text: readFileSync(join(import.meta.dir, "..", k.ref), "utf8") })), sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
-    const issue = (member: any) => { try { e.deps.instructionReceipt(x, "reviewer", sys, { id: member.provider, model: member.model, reasoningEffort: member.effort }, { seat: TUTOR_SEAT, texts, rules, member }); return "issued"; } catch (err: any) { return String(err?.message ?? err); } };
+  { const sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
+    const issue = (member: any) => { try { realReceipt(x, "reviewer", sys, { id: member.provider, model: member.model, reasoningEffort: member.effort }, { seat, texts, rules, member }); return "issued"; } catch (err: any) { return String(err?.message ?? err); } };
     ok(/not usable/.test(issue({ provider: "cursor", model: "composer", effort: null, independence: "vendor" })), "a member this machine cannot run gets no receipt");
     e.deps.usableModels = () => U(["codex", "worker-model", { runnable: false, held: "codex's facts expired" }]);
     ok(/not usable/.test(issue({ provider: "codex", model: "worker-model", effort: null, independence: "same" })), "nor one that is held right now");
     e.deps.usableModels = () => U(["codex", "worker-model"]);
-    const seats = e.deps.auxiliarySeats; e.deps.auxiliarySeats = { [TUTOR_SEAT]: { ...seats[TUTOR_SEAT], adaptive: false } };
+    const seats = e.deps.auxiliarySeats; e.deps.auxiliarySeats = { ...seats, [seat]: { ...seats[seat], adaptive: false } };
     ok(/approved member/.test(issue({ provider: "codex", model: "worker-model", effort: null, independence: "same" })), "a seat that is not adaptive runs only on its role's approved member"); e.deps.auxiliarySeats = seats;
     delete e.deps.usableModels;
     ok(/not usable/.test(issue({ provider: "codex", model: "worker-model", effort: null, independence: "same" })) && issue({ provider: "codex", model: "reviewer-model", effort: "high", independence: "model" }) === "issued", "without provider facts only the approved member is admitted"); }
@@ -137,7 +159,7 @@ try {
     ok(rec.length === 1 && rec[0].data.verified.join() === "tutor: claude claude-x" && /review room/.test(rec[0].data.for), "the tutor's verification by Studio is recorded on the Task's ledger", JSON.stringify(rec[0]?.data));
     const runs = h.agents.jobs.size, checked: any[] = [];
     e.deps.ensurePick = async (p: any) => { checked.push(p); throw new Error("The tutor role's claude is out of quota. / 額度已用完"); };
-    const o: any = room.view(card.id).offer; let refusal: any = null; try { await room.start(card.id, { action: "how", confirm: o.hash }, "captain"); } catch (x) { refusal = x; }
+    const refusal: any = await refusedBy(() => generate());
     ok(refusal?.code === "no_tutor" && /out of quota/.test(refusal.message) && checked[0]?.provider === "claude" && checked[0].model === "claude-x" && h.agents.jobs.size === runs, "the chosen member is verified first; one that cannot run is refused with the reason and nothing is paid", refusal?.message);
     delete e.deps.ensurePick; delete e.deps.usableModels; }
 
@@ -157,11 +179,11 @@ try {
         ok(unv.v?.offer?.provider === "claude" && unv.v.offer.model === "claude-new" && unv.v.tutorChoice.source === "room" && /Not verified on this machine yet/.test(unv.v.offer.independence.en) && /Not verified/.test(unv.v.offer.warning?.en ?? "")
           && held.v?.offer?.provider === "cursor" && held.v.offer.model === "composer" && /Held now \(cursor is out of quota\)/.test(held.v.offer.independence.en) && /out of quota/.test(held.v.offer.warning?.en ?? "") && !held.v.offer.error,
           "a model not verified or held can be picked for the room: kept, its label warns why it may not run", JSON.stringify([unv.x?.message ?? unv.v?.offer, held.x?.message ?? held.v?.offer])); }
-      // the unverified pick's turn: Studio verifies it first (one bounded request), then the turn runs on it
+      // the unverified pick's page: Studio verifies it first (one bounded request), then the page runs on it
       { const checked: any[] = []; e.deps.ensurePick = async (p: any) => { checked.push(p); return { verified: [`tutor: ${p.provider} ${p.model}`] }; };
         r0.setTutor(card.id, { provider: "claude", model: "claude-new" }, "captain"); const { t, rec } = await turn(); delete e.deps.ensurePick;
-        ok(t.status === "done" && t.provider === "claude" && t.model === "claude-new" && checked.at(-1)?.model === "claude-new" && rec.data.model === "claude-new" && rec.data.adaptive?.picked === true,
-          "a picked model not verified yet is verified by Studio first, then its turn runs on it; the receipt says the captain picked it", JSON.stringify({ t: [t.status, t.provider, t.model, t.error], checked, rec: rec?.data?.adaptive })); }
+        ok(t?.status === "done" && t.provider === "claude" && t.model === "claude-new" && checked.at(-1)?.model === "claude-new" && rec.data.model === "claude-new" && rec.data.adaptive?.picked === true,
+          "a picked model not verified yet is verified by Studio first, then its page runs on it; the receipt says the captain picked it", JSON.stringify({ t: t && [t.status, t.provider, t.model, t.error], checked, rec: rec?.data?.adaptive })); }
       // a model entered by hand: any model of a provider Studio runs, stored like any pick, listed after the machine's, said to be unlisted
       { const hand = tried({ provider: "claude", model: "claude-hand-9" }), saved = JSON.parse(readFileSync(join(e.rdir(run.id), "review-room", `${card.id}.json`), "utf8")).tutor;
         const v1: any = room.view(card.id), entry = v1.tutors.find((x: any) => x.provider === "claude" && x.model === "claude-hand-9");
@@ -169,13 +191,13 @@ try {
           && saved?.provider === "claude" && saved.model === "claude-hand-9" && entry?.listed === false && entry.current === true && /entered by hand/.test(entry.held ?? ""),
           "a model entered by hand is accepted, stored as the room's tutor and listed after the machine's models as entered by hand", JSON.stringify({ hand: hand.x?.message ?? hand.v?.offer, saved, entry }));
         const { t, rec } = await turn();
-        ok(t.status === "done" && t.provider === "claude" && t.model === "claude-hand-9" && selects.at(-1)?.pick.provider === "claude" && selects.at(-1)?.pick.model === "claude-hand-9" && selects.at(-1)?.picked === true && rec.data.model === "claude-hand-9" && rec.data.adaptive?.crew === false && rec.data.adaptive?.picked === true,
-          "the turn runs on the model entered by hand: its provider and model go to the native selection as the captain's pick (so an id the vendor's probe did not report is passed as given), and the receipt", JSON.stringify({ t: [t.status, t.provider, t.model, t.error], pick: selects.at(-1)?.pick, rec: rec?.data?.model }));
+        ok(t?.status === "done" && t.provider === "claude" && t.model === "claude-hand-9" && selects.at(-1)?.pick.provider === "claude" && selects.at(-1)?.pick.model === "claude-hand-9" && selects.at(-1)?.picked === true && rec.data.model === "claude-hand-9" && rec.data.adaptive?.crew === false && rec.data.adaptive?.picked === true,
+          "the page runs on the model entered by hand: its provider and model go to the native selection as the captain's pick (so an id the vendor's probe did not report is passed as given), and the receipt", JSON.stringify({ t: t && [t.status, t.provider, t.model, t.error], pick: selects.at(-1)?.pick, rec: rec?.data?.model }));
         // Studio's own verification is for the models on its list: a model entered by hand goes to its vendor as it is
         const checked: any[] = []; e.deps.ensurePick = async (p: any) => { checked.push(p); throw new Error("not on this machine's list"); };
-        // at run time the vendor does not offer it (the native selection's probe): the turn fails with that reason, nothing is paid, no other tutor
+        // at run time the vendor does not offer it (the native selection's probe): the page fails with that reason, nothing is paid, no other tutor
         const sel = e.deps.selectProvider; e.deps.selectProvider = async (x: any, p: any, c: any) => { if (p.model === "claude-hand-9") throw new Error("unknown or unavailable configured model for claude"); return sel(x, p, c); };
-        const o2: any = room.view(card.id).offer, runs0 = h.agents.jobs.size; let fail: any = null; try { await room.start(card.id, { action: "how", confirm: o2.hash }, "captain"); } catch (x) { fail = x; }
+        const runs0 = h.agents.jobs.size; const fail: any = await refusedBy(() => generate());
         ok(fail?.code === "no_tutor" && /unknown or unavailable configured model for claude/.test(fail.message) && !checked.length && h.agents.jobs.size === runs0 && (room.view(card.id) as any).offer.model === "claude-hand-9",
           "a model entered by hand that its vendor does not run fails visibly with the vendor's reason, starts no job and is not swapped for another", JSON.stringify([fail?.message, checked]));
         e.deps.selectProvider = sel; delete e.deps.ensurePick; }
@@ -183,26 +205,26 @@ try {
       { const bad = [{ provider: "", model: "m" }, { provider: "claude", model: "x".repeat(121) }, { provider: "claude", model: "two words" }, { provider: "claude", model: "-p" }, { provider: "claude", model: "--model=other" }, { provider: "claude", model: "" }, { provider: "gemini", model: "g-1" }, { provider: "claude" }, "claude"].map((p) => tried(p).x?.code ?? "accepted");
         const def0 = (() => { try { room.setSettings({ tutor: { provider: "claude", model: "x".repeat(121) } } as any); return "accepted"; } catch (x: any) { return x.code; } })();
         ok(bad.every((c) => c === "bad_request") && def0 === "bad_request" && JSON.parse(readFileSync(join(e.rdir(run.id), "review-room", `${card.id}.json`), "utf8")).tutor.model === "claude-hand-9", "a malformed pick (empty provider, oversize or blank model, a model id that starts with '-', unknown provider) is refused, the room's pick unchanged", JSON.stringify([bad, def0])); }
-      // the room's pick: the author's own model, picked anyway (information, not a refusal); the turn runs on it, the receipt names it
+      // the room's pick: the author's own model, picked anyway (information, not a refusal); the page runs on it, the receipt names it
       const vs: any = r0.setTutor(card.id, { provider: "codex", model: "worker-model" }, "captain");
       ok(vs.offer.provider === "codex" && vs.offer.model === "worker-model" && vs.offer.independence.level === "same" && /Same model as the author/.test(vs.offer.independence.en) && /Picked by the captain for this room/.test(vs.offer.independence.en) && vs.offer.picked === "room" && vs.tutorChoice.source === "room" && vs.offer.warning === null,
         "the room's own pick is its tutor, whatever its independence: the label says how independent it is and who picked it", JSON.stringify(vs.offer));
       { const { t, rec } = await turn();
-        ok(t.status === "done" && t.provider === "codex" && t.model === "worker-model" && t.independence === "same" && rec.data.model === "worker-model" && rec.data.adaptive?.independence === "same" && selects.at(-1)?.pick.model === "worker-model",
-          "a turn runs on the picked tutor through the native selection; the receipt names it as the seat's member", JSON.stringify({ t: [t.status, t.provider, t.model, t.error], rec: rec?.data })); }
+        ok(t?.status === "done" && t.provider === "codex" && t.model === "worker-model" && rec.data.model === "worker-model" && rec.data.adaptive?.independence === "same" && selects.at(-1)?.pick.model === "worker-model",
+          "a page runs on the picked tutor through the native selection; the receipt names it as the seat's member", JSON.stringify({ t: t && [t.status, t.provider, t.model, t.error], rec: rec?.data })); }
       // Studio's default: the room goes back to it; a default that is held is still the tutor (said), never swapped for another
       const st = room.setSettings({ tutor: { provider: "claude", model: "claude-x" } } as any) as any, vd: any = r0.setTutor(card.id, null, "captain");
       ok(st.tutor?.provider === "claude" && vd.offer.provider === "claude" && vd.offer.model === "claude-x" && vd.offer.picked === "studio" && vd.tutorChoice.source === "studio" && /Studio's default tutor/.test(vd.offer.independence.en),
         "a room without its own pick runs on Studio's default tutor", JSON.stringify({ st, offer: vd.offer }));
       // the offer the captain saw named a model that ran; it is held now: the old confirmation starts nothing, the new offer warns
-      const okHash = (room.view(card.id) as any).offer.hash;
+      const okHash = X.offer(card.id, "studio-baton", "generate").hash;
       e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x", { runnable: false, held: "claude is out of quota" }]);
-      { const vh: any = room.view(card.id); let refusal: any = null; try { await room.start(card.id, { action: "how", confirm: "x" }, "captain"); } catch (x) { refusal = x; }
+      { const vh: any = room.view(card.id), refusal: any = await refusedBy(() => generate("x"));
         ok(!vh.offer.error && vh.offer.provider === "claude" && vh.offer.model === "claude-x" && /Held now \(claude is out of quota\)/.test(vh.offer.independence.en) && refusal?.code === "confirm_required" && refusal.offer?.provider === "claude",
-          "a picked tutor that is held is never swapped for another vendor: it stays the tutor, its label says it is held, and the turn asks to confirm on it", JSON.stringify({ offer: vh.offer, refusal: refusal?.code }));
-        const runs1 = h.agents.jobs.size; let stale: any = null; try { await room.start(card.id, { action: "how", confirm: okHash }, "captain"); } catch (x) { stale = x; }
-        ok(stale?.code === "confirm_required" && stale.offer?.hash === vh.offer.hash && vh.offer.hash !== okHash && /out of quota/.test(stale.offer?.warning?.en ?? "") && h.agents.jobs.size === runs1,
-          "a confirmation given before the picked model turned held starts nothing: the captain confirms again on the offer that warns", JSON.stringify({ code: stale?.code, okHash, now: vh.offer.hash })); }
+          "a picked tutor that is held is never swapped for another vendor: it stays the tutor, its label says it is held, and the page asks to confirm on it", JSON.stringify({ offer: vh.offer, refusal: refusal?.code }));
+        const runs1 = h.agents.jobs.size, stale: any = await refusedBy(() => generate(okHash)), now = X.offer(card.id, "studio-baton", "generate");
+        ok(stale?.code === "confirm_required" && stale.offer?.hash === now.hash && now.hash !== okHash && /out of quota/.test(vh.offer.warning?.en ?? "") && h.agents.jobs.size === runs1,
+          "a confirmation given before the picked model turned held starts nothing: the captain confirms again on the offer that warns", JSON.stringify({ code: stale?.code, okHash, now: now.hash })); }
       // Studio's default may be any model too: one this machine does not list, entered by hand, is kept and listed for the room list
       { const sd = room.setSettings({ tutor: { provider: "codex", model: "codex-hand-2" } } as any) as any, choices = r0.tutorChoices(), vd2: any = room.view(card.id);
         ok(sd.tutor?.model === "codex-hand-2" && choices.some((x: any) => x.model === "codex-hand-2" && x.listed === false && x.current) && vd2.offer.model === "codex-hand-2" && vd2.offer.picked === "studio" && /Not reported by codex on this machine \(entered by hand\); the vendor decides/.test(vd2.offer.independence.en)
@@ -218,19 +240,14 @@ try {
       room.setSettings({ tutor: null } as any); e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x"]);
       r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain");
       // from the review: a pick whose independence is unknown (an author outside Studio) still gets its receipt, claiming nothing
-      { const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]), { OperatingRules } = await import("../src/operating-rules"), rules = new OperatingRules(h.data).section("p");
-        const texts = ROOM_SKILLS.map((k) => ({ sha256: k.sha256, text: readFileSync(join(import.meta.dir, "..", k.ref), "utf8") })), sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
-        let got = "issued"; try { e.deps.instructionReceipt(x, "reviewer", sys, { id: "claude", model: "x-1", reasoningEffort: null }, { seat: TUTOR_SEAT, texts, rules, member: { provider: "claude", model: "claude-x", effort: null, independence: "unknown", crew: false } }); } catch (err: any) { got = String(err?.message ?? err); }
+      { const sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
+        let got = "issued"; try { realReceipt(x, "reviewer", sys, { id: "claude", model: "x-1", reasoningEffort: null }, { seat, texts, rules, member: { provider: "claude", model: "claude-x", effort: null, independence: "unknown", crew: false } }); } catch (err: any) { got = String(err?.message ?? err); }
         ok(!/malformed/.test(got), "a picked tutor whose independence from the author is unknown is admitted (its receipt claims no independence)", got); }
-      // from the review: a translation runs on the tutor the captain confirmed; a pick changed while it was admitted asks again
-      { r0.setTutor(card.id, null, "captain"); const realU = e.deps.refreshUsable; let refusalT: any = null;
-        const room0: any = room.view(card.id), done = room0.turns.some((t: any) => t.status === "done" && !t.studio);
+      // from the review: a page's tutor is read after what is usable is refreshed: a pick changed while it was admitted asks again
+      { r0.setTutor(card.id, null, "captain"); const realU = e.deps.refreshUsable, hash = X.offer(card.id, "studio-baton", "generate").hash, runs2 = X.view(card.id).runs.length;
         e.deps.refreshUsable = async () => { e.deps.refreshUsable = realU; r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); };
-        try { await room.translate(card.id, { lang: "zh-TW", confirm: "x" }, "captain"); } catch (x) { refusalT = x; } e.deps.refreshUsable = realU;
-        ok(done && refusalT?.code === "confirm_required" && refusalT.offer?.provider === "claude", "a translation's tutor is read after what is usable is refreshed: a pick changed meanwhile asks to confirm again, never runs on the old confirmation", JSON.stringify([refusalT?.code, refusalT?.offer?.provider])); }
-      // from the review: starting the room over keeps the tutor the captain picked for it
-      { r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); await room.settle(card.id); room.reset(card.id, "captain"); const vr: any = room.view(card.id);
-        ok(vr.turns.length === 0 && vr.tutorChoice?.source === "room" && vr.offer?.provider === "claude", "started over, a room keeps the tutor the captain picked for it", JSON.stringify(vr.tutorChoice)); }
+        const refusalT: any = await refusedBy(() => generate(hash)); e.deps.refreshUsable = realU;
+        ok(refusalT?.code === "confirm_required" && refusalT.offer?.provider === "claude" && X.view(card.id).runs.length === runs2, "a page's tutor is read after what is usable is refreshed: a pick changed meanwhile asks to confirm again, never runs on the old confirmation", JSON.stringify([refusalT?.code, refusalT?.offer?.provider])); }
       r0.setTutor(card.id, null, "captain"); delete e.deps.usableModels; } }
 } finally { for (const r of e.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await e.cancel(r.id, "cleanup"); h.stop(); rmSync(repo, { recursive: true, force: true }); }
 end();
