@@ -584,6 +584,7 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-ic { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; flex: none; margin-right: 6px; vertical-align: -3px; }
 .rx-state { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid; max-width: 520px; }
 .rx-state p { margin: 4px 0 0; }
+.rx-state > div { min-width: 0; overflow-wrap: anywhere; }
 .rx-state.warn, .rx-m.warn { background: color-mix(in srgb, var(--warn, #b54708) 9%, var(--surface)); border-color: color-mix(in srgb, var(--warn, #b54708) 40%, transparent); }
 .rx-state.warn .rx-ic, .rx-m.warn .rx-ic { background: var(--warn, #b54708); color: #fff; }
 .rx-state.err, .rx-m.err { background: color-mix(in srgb, var(--bad, #b42318) 8%, var(--surface)); border-color: color-mix(in srgb, var(--bad, #b42318) 40%, transparent); }
@@ -725,6 +726,8 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-cost > span:nth-child(odd) { color: var(--text-3); }
 .rx-limit input { width: 70px; font: inherit; }
 .rx-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
+.rx-foot > .rx-footmsg { flex: 1 1 100%; max-width: none; margin: 0; padding: 8px 12px; font-size: 13px; box-sizing: border-box; }
+.rx-foot > .rx-footmsg:not(.err) { border-color: var(--border); background: var(--surface-2); }
 .rx-modal > .rx-foot { position: sticky; bottom: -18px; margin: 8px -18px -18px; padding: 10px 18px; background: var(--surface); border-top: 1px solid var(--border); z-index: 1; }
 @media (max-width: 760px) { .rx-pick { display: none; } }
 @media (max-width: 900px) {
