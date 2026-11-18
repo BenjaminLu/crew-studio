@@ -1,7 +1,8 @@
 // Pull requests (pr:owner/repo#1645): Studio's pull request list as the board's #/prs page reads it (prWatch.view(), the
 // /api/prs route's own shaping), open ones in the captain's order and merged ones followed until production. Reading never
 // asks GitHub: it is the last snapshot. Nothing here writes to GitHub, nor to Studio's own list.
-import { registerKind, type Entity, type Sources } from "../registry";
+import { refOf, registerKind, seqPage, sinceOf, type Entity, type Sources } from "../registry";
+import { eventView, readEvents, retroStore } from "../events";
 
 const viewOf = (s: Sources): any => { try { return s.prs?.()?.view() ?? null; } catch { return null; } };
 const snapOf = (s: Sources): any => { try { return (s.prs?.() as any)?.snapshot ?? null; } catch { return null; } };
@@ -43,6 +44,13 @@ registerKind({
     { path: "labels", trust: "untrusted", source: "the pull request's labels (GitHub)" },
     { path: "ops[].quote", trust: "untrusted", source: "a line of the pull request's description (GitHub)" },
   ],
+  // studio_logs pr:…: its go-live timeline in Studio's log (merged, live or partly live per environment, drift, the captain's
+  // marks and incidents), oldest first, after `since`
+  logs: (s, id, o) => { const d = all(s).find((x) => eq(x.id, id)); if (!d) return null;
+    const { hits } = readEvents(s, { since: null, kinds: null, ref: refOf("pr", d.id) }), store = retroStore(s), pg = seqPage(hits, sinceOf(o.since).seq, o.tail);
+    return { cursor: pg.cursor, updatedAt: d.mergedAt ?? null, data: { tab: d.tab, waitsAt: d.tab !== "open" ? waitsAt(d) : null, events: pg.page.map((e) => eventView(s, e, store)), more: pg.more } }; },
+  logCursor: "seq",
+  logFields: ["tab", "waitsAt", "events", "more"].map((path) => ({ path, trust: "studio" as const })),
   list: (s, filter) => all(s).filter((d) => (!filter.tab || filter.tab === "all" || d.tab === filter.tab) && (!filter.repo || eq(d.repo, String(filter.repo)))).map((d) => entity(s, d)),
   get: (s, id) => { const d = all(s).find((x) => eq(x.id, id)); return d ? entity(s, d) : null; },
 });
