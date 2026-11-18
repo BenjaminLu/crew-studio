@@ -18,6 +18,7 @@ export const READING_RULES = [
 /** How to look at Studio with the read tools (src/observe/tools.ts), where a session has them. */
 export const OBSERVE_RULES = [
   "Where studio_now is listed, call it first: it says what the captain is looking at, what waits for them and what runs. Then read with studio_get, studio_find or studio_list, follow a Task or room with studio_logs and what changed with studio_events; when studio_now says sharing is off, do not guess what the captain sees.",
+  "To read several cards or Tasks, call studio_list for that kind once rather than studio_get on each.",
 ] as const;
 /** The kinds the read tools know (the registry's, src/observe/registry.ts; tests/observe-index.ts keeps them equal). Listed
  *  here so the MCP helper names them without loading the providers. */

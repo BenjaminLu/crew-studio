@@ -26,6 +26,13 @@ try {
     ok(g.ref === l.items[0].ref && bytes(g) <= BUDGET.full && !bare(g).includes("IGNORE ALL") && !bare(l).includes("IGNORE ALL"), `${k}: read whole, the injection line only inside untrusted text`, bare(g).slice(0, 200));
     ok(!J(g).includes(SECRET) && !J(l).includes(SECRET), `${k}: no secret`);
   }
+  // studio_now with a P2 page in focus: the page's ref and board route come from its kind; the waiting cards keep their urgency
+  for (const k of ["skill", "workflow", "doc", "project"]) {
+    const ref = (await O.call("studio_list", { kind: k }) as any).items[0].ref, def = kindDef(k)!;
+    F.focus.put("tab-p2", { route: def.listRoute, ref, selection: null, dialog: null, label: `${k} page` });
+    const n: any = await O.call("studio_now", {});
+    ok(n.data.focus.current?.ref === ref && typeof n.data.focus.current.open === "string" && n.data.focus.current.open.startsWith("#/") && n.data.waiting.every((w: any) => typeof w.urgency === "string") && !bare(n).includes("IGNORE ALL"),
+      `studio_now: a ${k} page in focus shows its ref and board route; waiting cards keep their urgency`, J(n.data.focus.current)); }
   ok(kinds().every((k) => kindDef(k)!.fields.length > 0) && !J(shape(kindDef("doctor")!, { id: "x", undeclared: "y" }).data).includes("undeclared"), "every kind declares its fields; an undeclared one is never emitted");
 
   // ---------- consistency: each kind reads what its page's own function returns ----------
