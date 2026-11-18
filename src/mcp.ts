@@ -11,6 +11,11 @@
 import { mcpContent } from "./tool-content";
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
+import { SERVER_INSTRUCTIONS } from "./observe/instructions";
+import { negotiateProtocolVersion } from "./mcp-protocol";
+
+// one fixed order whatever order Studio answers in, so a client's prompt cache sees the same tool list every time
+const byName = (tools: any) => Array.isArray(tools) ? [...tools].sort((a, b) => { const x = String(a?.name ?? ""), y = String(b?.name ?? ""); return x < y ? -1 : x > y ? 1 : 0; }) : tools;
 
 const flag = (name: string) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] ?? "" : null; };
 const GRANT_FILE = flag("--grant-file");
@@ -39,10 +44,10 @@ rl.on("line", async (line) => {
   try {
     switch (m.method) {
       case "initialize":
-        return reply({ protocolVersion: m.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "studio", version: "0.2.0" } });
+        return reply({ protocolVersion: negotiateProtocolVersion(m.params?.protocolVersion), capabilities: { tools: {} }, serverInfo: { name: "studio", version: "0.2.0" }, instructions: SERVER_INSTRUCTIONS });
       case "notifications/initialized": return;
       case "ping": return reply({});
-      case "tools/list": return reply({ tools: await call("/api/tools") });
+      case "tools/list": return reply({ tools: byName(await call("/api/tools")) });
       case "tools/call": {
         const r = await call(`/api/tools/${encodeURIComponent(m.params?.name ?? "")}`, m.params?.arguments ?? {});
         return reply({ content: mcpContent(r), isError: !!r?.error }); // a picture (a reviewer's image read) goes as an image block
