@@ -134,6 +134,12 @@ try {
     const body = JSON.parse(await (await import("node:fs/promises")).readFile(await dl.path(), "utf8"));
     ok(dl.suggestedFilename() === `${ID}.json` && body.room === ID && body.record?.card === ID && Array.isArray(body.record.turns), "Download gives the room's record as Studio keeps it, as a file", JSON.stringify({ name: dl.suggestedFilename(), keys: Object.keys(body), rec: Object.keys(body.record || {}).slice(0, 6) }));
     await w.screenshot({ path: join(shots, "0-old-board.png") });
+    // the real export route: read only, with Studio's session, as a file never cached; an unknown room is a 404, a write is refused
+    const ex = await w.evaluate(async (id) => { const r = await fetch(`/api/review-room/${id}/export`), no = await fetch("/api/review-room/PR-000000000000-9/export"), post = await fetch(`/api/review-room/${id}/export`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      return { s: r.status, type: r.headers.get("content-type"), cd: r.headers.get("content-disposition"), cache: r.headers.get("cache-control"), no: no.status, post: post.status }; }, ID);
+    const bare = await fetch(`${base}/api/review-room/${ID}/export`), bareRoom = await fetch(`${base}/api/review-room/${ID}`);
+    ok(ex.s === 200 && /application\/json/.test(ex.type) && ex.cd === `attachment; filename="${ID}.json"` && ex.cache === "no-store" && ex.no === 404 && ex.post >= 400 && bare.status === bareRoom.status,
+      "the export route: the room's JSON as a file, never cached; no such room is a 404; a POST is refused; outside Studio's page it is read as the room itself is", JSON.stringify({ ex, bare: bare.status, room: bareRoom.status }));
     await co.close(); }
 
   // ---------- the page could not reach Studio to start it: never a "Starting…" that nothing ends ----------

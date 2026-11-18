@@ -446,8 +446,8 @@ function lineTools(r, st, v) {
   return h("span", { class: "rx-linetools", "data-x-linetools": "" },
     sid && !run && r.open && !readOnly() ? h("button", { type: "button", class: "rr-chip", "data-explain-regen": "", title: T("A new version of this page, with the skill's instructions (confirmed)", "用 skill 的指示產生這頁的新版本（要確認）"),
       onclick: () => openConfirm(r, sid, "generate", "[data-explain-regen]", v.skill.id === sid && typeof v.prompt === "string" ? v.prompt : undefined) }, "↻ ", T("Generate again", "重新產生")) : null,
-    h("button", { type: "button", class: "rr-chip", "data-explain-full": "", title: T("Full screen (F)", "全螢幕（F）"), "aria-keyshortcuts": "F", onclick: () => enterFull(id, v) }, "⛶ ", h("span", { class: "rx-tl" }, T("Full screen", "全螢幕"))),
-    page ? h("button", { type: "button", class: "rr-chip", "data-explain-newtab": "", title: T("Opens this version alone in a new tab, isolated as here", "在新分頁單獨開這一版，一樣隔離"), onclick: () => openTab(id, v) }, "↗ ", h("span", { class: "rx-tl" }, T("New tab", "新分頁"))) : null,
+    h("button", { type: "button", class: "rr-chip", "data-explain-full": "", title: T("Full screen (F)", "全螢幕（F）"), "aria-label": T("Full screen", "全螢幕"), "aria-keyshortcuts": "F", onclick: () => enterFull(id, v) }, "⛶ ", h("span", { class: "rx-tl" }, T("Full screen", "全螢幕"))),
+    page ? h("button", { type: "button", class: "rr-chip", "data-explain-newtab": "", title: T("Opens this version alone in a new tab, isolated as here", "在新分頁單獨開這一版，一樣隔離"), "aria-label": T("Open in a new tab", "在新分頁開啟"), onclick: () => openTab(id, v) }, "↗ ", h("span", { class: "rx-tl" }, T("New tab", "新分頁"))) : null,
     h("span", { class: "rx-tag", "data-explain-isolation": "", title: media ? "" : T("The page runs in an isolated frame: no network, it cannot read Studio, storage kept by Studio in memory", "頁面在隔離框裡執行：不能連網、不能讀 Studio，儲存由 Studio 在記憶體代管") }, media ? T("Shown by Studio", "由 Studio 顯示") : T("Isolated", "隔離")));
 }
 /** on the line, with an older version shown: the generation Studio started for the new head did not finish (why, Try again) */

@@ -164,14 +164,21 @@ v = X.view(id);
 ok(v.versions.length === 1 && !readFileSync(join(vdir, "index.html"), "utf8").includes("changed"), "the page is unchanged and no version was made, whatever the model tried", JSON.stringify(v.versions.map((x: any) => x.n)));
 ok(v.consent?.plan === askOffer.hash, "the captain agreed to ask the next questions on this plan without confirming each");
 { const o = X.offer(id, null, "ask", 1) as any; ok(o.kind === "ask" && o.hash === askOffer.hash, "the question's offer is the same hash the run checks", JSON.stringify(o)); }
+// a question never reads the skill: one whose stored files changed on disk (the skill can no longer run) still answers
+{ const lv = E.skillLibrary().libVersion(lib.id, 1), f = join(lv.dir, "files", "templates", "page.html"), was = readFileSync(f, "utf8"); writeFileSync(f, was + "<!-- changed -->\n");
+  const ge = await refused(() => X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain"));
+  script.push([["explain_answer", { answer: "Still answerable.", cites: [] }]]); const nq2 = X.view(id).runs.length;
+  await X.ask(id, { question: "Does it still answer?", version: 1 }, "captain"); const rq = await waitRun(nq2 + 1);
+  ok(ge?.code === "skill_pin" && rq.status === "done" && rq.answer === "Still answerable." && rq.skill.id === lib.id && rq.from === 1, "a skill that cannot run any more still has its page asked about: a question never pins or copies the skill", JSON.stringify({ ge: ge?.code, rq: { s: rq.status, e: rq.error } }));
+  writeFileSync(f, was); }
 // the page changes only by generating again: v2
 script.push([["out_write", { path: "index.html", content: PAGE.replace("<h2>Step 1 · rounding</h2>", "<h2>Step 1 · rounding</h2><p data-node=\"half\">Halves round up: 2.5 becomes 3.</p>") }], ["explain_done", { entry: "index.html", summary: "with halves" }]]);
-await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain"); await waitRun(3);
+await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain"); await waitRun(4);
 v = X.view(id); ok(v.versions.length === 2 && readFileSync(join(E.rdir(r.id), "review-room", `${id}-explain`, "v2", "index.html"), "utf8").includes("data-node=\"half\""), "Generate again makes v2", JSON.stringify(v.versions.map((x: any) => x.n)));
 // with that agreement, a follow-up starts without the confirmation; it does not change the page: no new version
 script.push([["explain_answer", { answer: "No: the test pins 300.", cites: ["test/percent.test.ts:L2"], updated: false }]]);
 v = await X.ask(id, { question: "Is there a test?", version: 2 }, "captain");
-const run3 = await waitRun(4);
+const run3 = await waitRun(5);
 ok(run3.status === "done" && run3.auto === true && run3.version === null && run3.from === 2 && X.view(id).versions.length === 2 && /Q \(v1\): Why round here\?/.test(prompts.at(-1)!.text),
   "an agreed question runs unconfirmed, about the version now shown (v2), with the room's earlier answers; switching versions kept the conversation", JSON.stringify(run3));
 
@@ -183,7 +190,7 @@ e = await refused(() => room.start(id, { action: "how", confirm: (room.view(id) 
 ok(e?.code === "busy", "while the skill works, the tutor takes no turn in this room", e?.message);
 ok(X.view(id).log.some((l: any) => /explain_progress/.test(l.text)), "the live log shows the round's tool calls", JSON.stringify(X.view(id).log));
 X.stop(id);
-const run4 = await waitRun(5, 20000);
+const run4 = await waitRun(6, 20000);
 ok(run4.status === "stopped" && /captain/.test(run4.stop) && run4.version === null && X.view(id).versions.length === 2 && X.view(id).running === null, "Stop ends the run at once; nothing half-made becomes a version", JSON.stringify(run4));
 
 // ---------- a run that cannot start after its admission: it says why, and holds nothing (the next one starts) ----------

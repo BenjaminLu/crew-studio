@@ -385,9 +385,12 @@ export function installExplainer(d: ExplainerDeps) {
     zh: "產出放在隔離框裡顯示：不能讀 Studio、拿不到任何 token、不能抓任何東西，Studio 的頁面也不讓它導向 Studio 以外的地方；儲存由 Studio 在記憶體裡代管。skill 只讀材料和自己的檔案、只寫自己的產出資料夾。" };
   /** the paid run the captain confirms: the room tutor's provider and model, this skill at this version, the safety limit */
   /** prompt (a generation): the captain's instructions this offer is for; null = the last ones this skill ran with (the prefill) */
-  const offer = (k: any, skill: unknown, kind: "generate" | "ask", prompt: unknown = null) => {
+  /** the skill a question's run names: the version's own (a question runs Studio's question frame, never the skill's text) */
+  const askPin = (v: XVersion): Pin => ({ id: v.skill.id, v: v.skill.v, name: v.skill.name, sha256: "", filesSha256: "", bodySha: sha(QA_FRAME) });
+  const offer = (k: any, skill: unknown, kind: "generate" | "ask", prompt: unknown = null, askFrom: XVersion | null = null) => {
     const t = d.offerOf(k); if (t?.error) return { error: t.error, code: t.code ?? "no_tutor" };
-    let p: Pin; try { p = pinOf(skill).pin; } catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "bad_skill" }; }
+    // a question never reads the skill: it is named from the version asked about, whatever the library holds now
+    let p: Pin; if (kind === "ask" && askFrom) p = askPin(askFrom); else try { p = pinOf(skill).pin; } catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "bad_skill" }; }
     // a question runs no skill script: only a generation names the scripts' plan and the version's decision
     const st = read(k), limitMin = settings().limitMin, scripts = kind === "ask" ? null : planText(planOf(p)), dec = kind === "ask" ? null : decisionOf(p);
     // the prefill (no text given): the skill's default instructions, else the last ones it ran with, else none
@@ -707,7 +710,7 @@ export function installExplainer(d: ExplainerDeps) {
         run.prepare = { state: "running", at: now() }; save(); d.notify(k);
         // "don't ask again" given for a follow-up's offer before the prepare moves to the offer after it: the prepared env changes
         // the interpreters the plan names, not what the captain agreed to
-        const askHash = (): string | null => { try { const o: any = offer(k, run.skill.id, "ask"); return o.error ? null : o.hash; } catch { return null; } };
+        const askHash = (): string | null => { try { const o: any = offer(k, run.skill.id, "ask", null, st.versions.at(-1) ?? null); return o.error ? null : o.hash; } catch { return null; } };
         const askBefore = st.consent ? askHash() : null;
         // a prepare can take many minutes (src/skillpkg/prepare.ts): Stop and the safety limit do not wait for it. The run ends at
         // once and frees the tutor seat; the prepare is the version's, shared with every other waiter, and goes on in the background
@@ -738,7 +741,7 @@ export function installExplainer(d: ExplainerDeps) {
           owns: () => engine.owns(adm.x) && k.open() && !live.stop, ...(adm.held ? { auxOwner: adm.x } : {}), project: s.run.params?.project || null, rules: adm.rules,
           maxTools: ROUND_TOOLS(), timeoutMs: Math.max(5_000, Math.min(ROUND_MS(), left)), onStart: (id: string) => { live.job = id; round.job = id; save(); d.notify(k); },
           sandbox: { writes: [], reads: [], allow: [] },
-          record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, `room-${k.id}-x${run.n}`), header: { run: s.run.id, node: s.node.id, round: `room-${k.id}-x${run.n}`, head: s.head, base: s.base, card: k.id, subject: subj, explain: run.n, kind: run.kind, role: "review-room-explainer", skills: run.kind === "ask" ? [`${QA_SEAT}@sha256:${sha(QA_FRAME)}`] : [`review-room-explainer@sha256:${sha(EXPLAINER_FRAME)}`, `${run.skill.id}@v${run.skill.v}@sha256:${run.skill.sha256}`], package: { filesSha256: run.skill.filesSha256, scripts: plan ? (plan.run ? plan.interpreters : "not run") : null }, ...(n > 1 ? { attempt: n } : {}) } } }).catch((e: any) => { const j = live.job ? engine.deps.agents.jobs?.get(live.job) : null; return { id: j?.id ?? null, status: "failed", error: String(e?.message ?? e), tools: j?.tools ?? 0, cost: j?.cost ?? null }; });
+          record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, `room-${k.id}-x${run.n}`), header: { run: s.run.id, node: s.node.id, round: `room-${k.id}-x${run.n}`, head: s.head, base: s.base, card: k.id, subject: subj, explain: run.n, kind: run.kind, role: run.kind === "ask" ? QA_SEAT : "review-room-explainer", skills: run.kind === "ask" ? [`${QA_SEAT}@sha256:${sha(QA_FRAME)}`] : [`review-room-explainer@sha256:${sha(EXPLAINER_FRAME)}`, `${run.skill.id}@v${run.skill.v}@sha256:${run.skill.sha256}`], package: { filesSha256: run.skill.filesSha256, scripts: plan ? (plan.run ? plan.interpreters : "not run") : null }, ...(n > 1 ? { attempt: n } : {}) } } }).catch((e: any) => { const j = live.job ? engine.deps.agents.jobs?.get(live.job) : null; return { id: j?.id ?? null, status: "failed", error: String(e?.message ?? e), tools: j?.tools ?? 0, cost: j?.cost ?? null }; });
         live.job = null;
         Object.assign(round, { job: job.id ?? round.job, status: job.status, tools: job.tools ?? 0, cost: job.cost ?? null, ended: now(), error: job.error ?? null });
         run.cost = addCost(run.cost, job.cost); last = String(job.answer ?? "").trim();
@@ -803,7 +806,7 @@ export function installExplainer(d: ExplainerDeps) {
     }
     // a follow-up runs with the skill that made the version asked about (an older version in the rail may be another skill's)
     const skill = kind === "ask" ? from!.skill.id : a.skill;
-    const o0: any = offer(k, skill, kind, prompt); if (o0.error) throw refuse(o0.error, o0.code ?? "no_tutor");
+    const o0: any = offer(k, skill, kind, prompt, from); if (o0.error) throw refuse(o0.error, o0.code ?? "no_tutor");
     const agreed = kind === "ask" && a.confirm !== o0.hash && st0.consent?.plan === o0.hash;
     if (a.confirm !== o0.hash && !agreed) throw refuse(`Each run is paid, on ${o0.provider} ${o0.model ?? "(default model)"}: confirm it to start / 每次執行都要付費（${o0.provider} ${o0.model ?? "預設模型"}），請確認後開始`, "confirm_required", { offer: o0 });
     // a script version the captain never decided: the confirmation carries the pick (a standing consent never does)
@@ -814,18 +817,18 @@ export function installExplainer(d: ExplainerDeps) {
     // only a pull request or directory room is hosted by a Task Studio makes; a merge card or branch room always has its Task
     { const s0 = d.subjectOf(k); if ((!s0.run || !s0.node) && (k.kind === "pr" || k.kind === "dir")) { await d.ensureHost(k, d.offerOf(k), by); k = d.keyOf(id); } }
     const s = d.subjectOf(k); if (!s.run || !s.node) throw refuse("No Task hosts this room's paid rounds / 沒有任務能承載這間審查室的付費回合", "no_host");
-    const { pin, body, dir: skillDir, files: skillFiles } = pinOf(skill);
-    if (kind === "generate" && pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
+    const { pin, body, dir: skillDir, files: skillFiles } = kind === "ask" ? { pin: askPin(from!), body: "", dir: "", files: [] as string[] } : pinOf(skill);
+    if (kind === "generate" && pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt, from) });
     // what its scripts run with, as confirmed: read once here and used for the whole run (a change since the offer asks again)
     let plan = kind === "ask" ? null : planOf(pin);
     if (kind === "generate" && decideKey(decisionOf(pin)) !== decKey0)
-      throw refuse("The skill's decision changed since you confirmed: confirm again / 確認之後這個 skill 的決定變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
-    if (planKey(planText(plan)) !== planKey(o0.scripts)) throw refuse("What the skill's scripts run with changed since you confirmed: confirm again / 確認之後腳本的執行條件變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
+      throw refuse("The skill's decision changed since you confirmed: confirm again / 確認之後這個 skill 的決定變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt, from) });
+    if (planKey(planText(plan)) !== planKey(o0.scripts)) throw refuse("What the skill's scripts run with changed since you confirmed: confirm again / 確認之後腳本的執行條件變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt, from) });
     // a question is the room tutor's own (Studio's question frame, no skill text); a generation runs the skill
     const seat = kind === "ask" ? QA_SEAT : seatOf(pin), instr = kind === "ask" ? qaTexts() : texts(pin, body);
     engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [seat]: { role: d.role, pins: instr.map((t) => t.sha256), adaptive: true } };
     const tutor = d.tutorFor(k, s);
-    if (tutor.pick.provider !== o0.provider || (tutor.pick.model ?? null) !== (o0.model ?? null)) throw refuse("The room's tutor changed: confirm again / 審查室的導師變了：請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
+    if (tutor.pick.provider !== o0.provider || (tutor.pick.model ?? null) !== (o0.model ?? null)) throw refuse("The room's tutor changed: confirm again / 審查室的導師變了：請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt, from) });
     const adm = await d.admit(k, s, tutor, { seat, texts: instr });
     if (running.has(k.id) || d.tutorBusy(k.id)) { adm.held?.release(); throw refuse("Something else started in this room meanwhile / 這間審查室剛好開始了別的執行", "busy"); }
     // from here the admission is held: anything that fails before the run is handed to its loop releases it and says why
@@ -844,7 +847,7 @@ export function installExplainer(d: ExplainerDeps) {
       plan = planOf(pin); }
     if (kind === "generate") { st.selected = { id: pin.id, v: pin.v }; try { rememberPrompt(pin.id, prompt); } catch {} }
     // "don't ask again" is for what the next follow-up's offer will be: after a pick, the offer with the decision in force
-    if (kind === "ask" && a.consent === true && a.confirm === o0.hash) { let plan2 = o0.hash; if (decided) { const o1: any = offer(k, skill, kind, prompt); if (!o1.error) plan2 = o1.hash; }
+    if (kind === "ask" && a.consent === true && a.confirm === o0.hash) { let plan2 = o0.hash; if (decided) { const o1: any = offer(k, skill, kind, prompt, from); if (!o1.error) plan2 = o1.hash; }
       st.consent = { plan: plan2, by: clip(by || "captain", 80), at: now() }; }
     else if (kind === "ask" && a.confirm === o0.hash && st.consent) delete st.consent;
     run = { n: (st.runs.at(-1)?.n ?? 0) + 1, kind, skill: pin, status: "running", by: clip(by || "captain", 80), at: now(), ended: null, provider: adm.provider?.id ?? tutor.pick.provider, model: adm.provider?.model ?? tutor.pick.model ?? "",
@@ -855,7 +858,8 @@ export function installExplainer(d: ExplainerDeps) {
     if (existsSync(join(root, "pkg"))) chmodTree(join(root, "pkg"), true); rmSync(root, { recursive: true, force: true }); mkdirSync(ws.mat, { recursive: true }); mkdirSync(ws.out, { recursive: true });
     // the whole package as pinned: Studio's read-only copy, hashed again against both of the version's hashes (or refused)
     const pk: SkillPackages | null = engine.deps.skillPackages ?? null;
-    if (pk) ws.skill = pk.roundCopy(pin.id, pin.v, join(root, "pkg"));
+    if (kind === "ask") mkdirSync(ws.skill, { recursive: true }); // a question gets no skill files
+    else if (pk) ws.skill = pk.roundCopy(pin.id, pin.v, join(root, "pkg"));
     else { mkdirSync(ws.skill, { recursive: true }); for (const f of skillFiles) { try { const src = join(skillDir, f); if (existsSync(src) && lstatSync(src).isFile()) { mkdirSync(dirname(join(ws.skill, f)), { recursive: true }); cpSync(src, join(ws.skill, f)); } } catch {} } }
     // a headless browser a script may start: a shim that runs it without its own inner sandbox (it cannot nest in the round's)
     // and with a profile in the call's temp folder
@@ -899,7 +903,7 @@ export function installExplainer(d: ExplainerDeps) {
     /** kind ask: the offer of a follow-up on version v (its own skill; the newest version when v is not given) */
     offer(id: string, skill: unknown, kind: unknown, v?: unknown, prompt: unknown = null) { const k = d.keyOf(id), st = read(k);
       if (kind !== "ask") return offer(k, skill, "generate", prompt); const x = st.versions.find((y) => y.n === Number(v)) ?? st.versions.at(-1);
-      return x ? offer(k, x.skill.id, "ask") : { error: "There is no output to ask about yet / 還沒有可以追問的產出", code: "not_found" }; },
+      return x ? offer(k, x.skill.id, "ask", null, x) : { error: "There is no output to ask about yet / 還沒有可以追問的產出", code: "not_found" }; },
     /** the room's way of explaining: the built-in tutor (null) or a library skill; free, nothing runs */
     select(id: string, skill: unknown) { const k = d.keyOf(id), st = read(k);
       if (skill === null || skill === "tutor") { st.selected = null; delete st.tutor; } else { preapprove(String(skill)); const p = pinOf(skill).pin; st.selected = { id: p.id, v: p.v }; delete st.tutor; }
