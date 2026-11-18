@@ -38,7 +38,59 @@ function propCard(e) {
     h("div", { class: "x-req" }, e.kind === "proposal" ? e.request.replace(/^- /, "") : `“${e.request}”`),
     h("div", { class: "x-row wrap" }, metricLine(e), e.status === "adopted" ? tracking(e.tracking) : evalBar(e.evals)));
 }
-function viewImprove() {
+// the two tabs of #/improve: proposals, retros and skills; and the retro's candidates (workflows/studio.retro.yaml)
+const improveTabs = (on) => h("div", { class: "tb-tabs pw-tabs x-tabs", role: "group", "aria-label": T("Improve", "改進") },
+  [["overview", "#/improve", "Proposals and retros", "提案與回顧"], ["candidates", "#/improve/candidates", "Candidates", "候選"]].map(([k, href, en, tw]) =>
+    h("a", { class: "tb-tab", href, "aria-current": k === on ? "page" : null, "data-improve-tab": k }, T(en, tw), k === "candidates" && I.cand ? h("span", { class: "tb-count num" }, String(I.cand.rows.length)) : null)));
+const loadCand = async () => { if (I.candBusy) return; I.candBusy = true;
+  try { const r = await X.get("/api/improve/candidates"); I.cand = Array.isArray(r.rows) ? r : { rows: [], other: [], dismissed: [], window: { days: 30 }, error: r.error || `HTTP ${r._http}` }; }
+  catch (e) { I.cand = { rows: [], other: [], dismissed: [], window: { days: 30 }, error: String(e) }; } finally { I.candBusy = false; } X.refresh(["improve"]); };
+window.onExt.push((t, d) => { if (t === "improve" && (d?.candidates || S.route?.arg === "candidates")) loadCand(); });
+// a candidate's ref: the pull request on GitHub, the Task, the room; a note's own page
+const refOf = (c) => c.groupKind === "pr" ? (/^[\w.-]+\/[\w.-]+#\d+$/.test(c.group) ? h("a", { href: `https://github.com/${c.group.replace("#", "/pull/")}`, target: "_blank", rel: "noopener", class: "mono" }, c.group) : h("span", { class: "mono" }, c.group))
+  : c.groupKind === "task" ? h("a", { href: `#/run/${encodeURIComponent(c.group)}`, class: "mono" }, c.group) : c.groupKind === "room" ? h("a", { href: `#/room/${encodeURIComponent(c.group)}`, class: "mono" }, c.group) : null;
+const KIND = { note: ["Noted", "手記"], pr: ["Pull requests", "Pull requests"], run: ["Tasks", "任務"], room: ["Review rooms", "審查室"] };
+const CLASS_TW = { "note.captain": "你記下的問題", "note.firstmate": "跟 Firstmate 說的問題", "pr.rollback": "回滾", "pr.incident": "事故", "pr.partial-24h": "部分上線超過一天", "pr.ship-undo": "撤回上線標記" };
+const CLASS_EN = { "note.captain": "Problems you noted", "note.firstmate": "Problems you told Firstmate", "pr.rollback": "Rollbacks", "pr.incident": "Incidents" };
+const classTitle = (c) => T(CLASS_EN[c.class] || c.title, CLASS_TW[c.class] || (c.class.startsWith("run.") ? `任務用同一種方式失敗：${c.class.slice(4)}` : c.class.startsWith("room.") ? `審查室回合同樣中斷：${c.class.slice(5)}` : c.title));
+function candRow(c) {
+  const dismiss = h("button", { class: "btn ghost icon x-cand-x", "data-cand-dismiss": c.key, "aria-label": T(`Not needed: ${c.title} (${c.group})`, `不用：${c.title}（${c.group}）`), title: T("Not needed (new hits only add to its count)", "不用（之後的命中只加次數）"),
+    onclick: async () => { dismiss.disabled = true; const r = await X.post("/api/improve/candidates/dismiss", { key: c.key }); if (r.error) { dismiss.disabled = false; return toast(r.error); } I.cand = r; X.refresh(["improve"]);
+      toast(h("span", {}, T("Marked not needed", "已標成不用"), " ", h("button", { class: "btn sm", onclick: async () => { const u = await X.post("/api/improve/candidates/undismiss", { key: c.key }); if (!u.error) { I.cand = u; X.refresh(["improve"]); } } }, T("Undo", "復原")))); } }, icon("x"));
+  return h("div", { class: "lib-row x-cand", role: "listitem", "data-cand": c.key },
+    h("div", { class: "x-cand-b" },
+      c.note ? h("div", { class: "x-cand-note" }, `“${c.note.text}”`) : null,
+      h("div", { class: "run-s" }, c.groupKind === "note" ? null : refOf(c), c.count > 1 ? h("span", { class: "badge" }, T(`${c.count} times`, `${c.count} 次`)) : null,
+        c.recurring ? h("span", { class: "faint" }, T(`in ${c.recurring.groups} ${c.groupKind === "room" ? "rooms" : "Tasks"} within ${c.recurring.days} days`, `${c.recurring.days} 天內在 ${c.recurring.groups} 個${c.groupKind === "room" ? "審查室" : "任務"}出現`)) : null,
+        c.note?.sel ? h("span", { class: "faint", title: c.note.sel }, T("with a selection", "附選取")) : null,
+        h("span", { class: "faint" }, ago(c.lastTs)))),
+    dismiss);
+}
+function viewCandidates() {
+  if (!I.cand) { loadCand(); return X.loading(); }
+  const c = I.cand, groups = new Map();
+  for (const r of c.rows) { const g = groups.get(r.class) ?? []; g.push(r); groups.set(r.class, g); }
+  const order = ["note", "pr", "run", "room"], keys = [...groups.keys()].sort((a, b) => order.indexOf(a.split(".")[0]) - order.indexOf(b.split(".")[0]) || a.localeCompare(b));
+  const others = c.other.reduce((n, o) => n + o.count, 0);
+  return h("div", { class: "page", "data-improve-candidates": "" },
+    h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Improve", "改進")),
+      h("p", {}, T(`What went wrong in the last ${c.window.days} days, for the next retro: what you noted, rollbacks and incidents, and failures that repeat. Studio works it out from its log each time; × marks one not needed.`,
+        `最近 ${c.window.days} 天出過的問題，留給下次 retro：你記下的、回滾和事故、一再發生的失敗。Studio 每次都從事件紀錄重新算；按 × 標成不用。`)))),
+    improveTabs("candidates"),
+    keys.length ? keys.map((k) => { const rows = groups.get(k); return h("section", { "data-cand-class": k },
+      h("div", { class: "sec-head" }, h("h2", {}, classTitle(rows[0])), h("span", { class: "vbadge" }, T(...(KIND[k.split(".")[0]] || [k, k]))), h("span", { class: "faint" }, String(rows.length))),
+      h("div", { class: "card", role: "list", style: "display:grid" }, rows.map(candRow))); })
+      : h("div", { class: "card" }, h("div", { class: "empty", "data-cand-empty": "" }, icon("check"), h("b", {}, T("Nothing to look at", "沒有要看的")),
+        T("Press ! on a pull request, a review room or a Task to note a problem, or tell Firstmate.", "在 PR、審查室或任務頁按 ! 記下問題，或跟 Firstmate 說。"))),
+    c.other.length ? h("details", { class: "card x-other", "data-cand-other": "" }, h("summary", {}, T(`${others} other signal${others === 1 ? "" : "s"}`, `其他 ${others} 個訊號`), h("span", { class: "faint" }, T(" · only counted", " · 只計數"))),
+      h("div", { class: "x-other-l" }, c.other.map((o) => h("div", { class: "kv", "data-cand-other-class": o.class }, h("span", { class: "mono" }, o.class), h("span", {}, T(`${o.count} × in ${o.groups}`, `${o.count} 次・${o.groups} 處`)))))) : null,
+    c.dismissed.length ? h("details", { class: "card x-other", "data-cand-dismissed": "" }, h("summary", {}, T(`${c.dismissed.length} marked not needed`, `${c.dismissed.length} 個標成不用`)),
+      h("div", { class: "x-other-l" }, c.dismissed.map((d) => h("div", { class: "kv", "data-cand-dismissed-key": d.key }, h("span", {}, h("span", { class: "mono" }, d.class), " ", d.group),
+        h("span", {}, d.since ? T(`+${d.since} since`, `之後 +${d.since}`) : "", " ", h("button", { class: "btn sm", onclick: async () => { const u = await X.post("/api/improve/candidates/undismiss", { key: d.key }); if (u.error) return toast(u.error); I.cand = u; X.refresh(["improve"]); } }, T("Show again", "重新顯示"))))))) : null);
+}
+function viewImprove(arg) {
+  if (arg === "candidates") return viewCandidates();
+  if (!I.cand) loadCand(); // the tab's count
   if (!I.ov) { load(); return X.loading(); }
   const o = I.ov;
   const offered = o.edits.filter((e) => ["offered", "drafting", "evaluating"].includes(e.status));
@@ -55,6 +107,7 @@ function viewImprove() {
       h("p", {}, T("Retros find what keeps going wrong; each fix is a skill edit, replay-evaluated on recorded tasks before it reaches you. Studio keeps its own skill versions: firstmate's files are never written.",
         "回顧找出一再出錯的地方；每個修正都是一次技能修改，先在任務紀錄上重放評測，才交給你。Studio 保存自己的技能版本，不會寫入 firstmate 的檔案。"))),
       h("div", { class: "actions x-wrap" }, wfSel, daysSel, run)),
+    improveTabs("overview"),
     h("section", {}, h("div", { class: "sec-head" }, h("h2", {}, T("Proposals", "提案")), X.pill("human", String(offered.length)), h("span", { class: "x-grow" }),
       h("span", { class: "faint", style: "font-size:12px" }, T("Evals:", "評測：")), mode),
       offered.length ? h("div", { class: "x-grid" }, offered.map(propCard)) : h("div", { class: "card" }, h("div", { class: "empty" }, icon("check"), h("b", {}, T("No open proposals", "沒有待決定的提案")),
@@ -160,6 +213,71 @@ function viewSkill(arg) {
       h("div", { class: "card", style: "display:grid" }, s.cases.map((c) => h("div", { class: "lib-row" }, h("div", { class: "run-s" }, h("b", {}, c.title), c.from.seq != null ? h("a", { href: `#/event/${c.from.seq}` }, `#${c.from.seq}`) : null,
         h("span", { class: "faint" }, c.ask)))))) : null);
 }
+
+// ---------- the quick note: 記問題（!） on the pull request, review room and Task pages ----------
+// One line of the captain's, kept verbatim for the retro, with the page it was written on as a removable context chip
+// (the page, its Task or room, and any text selected). Enter saves, Esc cancels, the toast takes it back. The key ! (or the
+// full-width ！ an input method types) opens it, except while typing in a field, during a composition or with a dialog open.
+const QN_PAGES = ["prs", "room", "run"];
+const QN = { pop: null };
+const qnOn = () => QN_PAGES.includes(S.route?.name);
+const qnContext = () => {
+  const n = S.route?.name, arg = String(S.route?.arg || "").split("/")[0], sel = String(getSelection?.()?.toString() || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const ref = (n === "run" || n === "room") && /^[\w.-]{1,80}$/.test(arg) ? arg : null;
+  const route = n === "prs" ? "#/prs" : ref ? `#/${n}/${ref}` : `#/${n}`;
+  const label = n === "prs" ? T("Pull requests", "Pull requests") : n === "room" ? (ref ? T(`Review room ${ref}`, `審查室 ${ref}`) : T("Review rooms", "審查室")) : ref ? T(`Task ${ref}`, `任務 ${ref}`) : T("Tasks", "任務");
+  return { route, ref, sel: sel || null, label };
+};
+const qnModal = () => !!document.querySelector("#modalRoot > *, [aria-modal='true'], dialog[open]");
+function qnClose(refocus = true) { const p = QN.pop; if (!p) return; QN.pop = null; p.el.remove(); document.removeEventListener("pointerdown", p.off, true); if (refocus) p.from?.focus?.({ preventScroll: true }); }
+function qnOpen(anchor) {
+  if (QN.pop) { QN.pop.input.focus(); return; }
+  const from = document.activeElement instanceof HTMLElement ? document.activeElement : null, ctx = qnContext();
+  let keep = true;
+  const input = h("input", { type: "text", maxlength: 500, "data-qnote-input": "", "aria-label": T("What went wrong, in one line", "一句話：哪裡出了問題"), placeholder: T("What went wrong? Enter saves, Esc cancels", "哪裡出了問題？Enter 儲存、Esc 取消") });
+  const chip = h("span", { class: "qn-chip", "data-qnote-chip": "" }, h("span", { title: ctx.sel ? `${ctx.label} · “${ctx.sel}”` : ctx.label }, ctx.label, ctx.sel ? ` · “${ctx.sel}”` : ""),
+    h("button", { type: "button", "data-qnote-chip-x": "", "aria-label": T("Leave the page out of the note", "不附上這一頁"), onclick: () => { keep = false; chip.remove(); input.focus(); } }, "×"));
+  const el = h("div", { class: "qn-pop", role: "dialog", "aria-label": T("Note a problem", "記問題"), "data-qnote": "" }, input,
+    h("div", { class: "qn-row" }, chip, h("span", { class: "x-grow" }), h("span", { class: "faint" }, T("For the retro · Enter saves", "留給 retro · Enter 儲存"))));
+  const save = async () => {
+    const text = input.value.trim(); if (!text) return input.focus();
+    input.disabled = true;
+    const r = await X.post("/api/improve/notes", { text, ...(keep ? { route: ctx.route, ref: ctx.ref, sel: ctx.sel } : {}) });
+    if (r.error) { input.disabled = false; input.focus(); return toast(r.error); }
+    qnClose();
+    toast(h("span", { "data-qnote-saved": r.note }, T("Noted for the retro", "已記下，會進 retro"), " ", h("button", { class: "btn sm", "data-qnote-undo": r.note, onclick: async (e) => { e.currentTarget.disabled = true; const u = await X.post(`/api/improve/notes/${encodeURIComponent(r.note)}/undo`, {}); toast(u.error ? u.error : T("Note taken back", "已復原")); } }, T("Undo", "復原"))));
+  };
+  // its own keys stay its own: Enter saves, Esc cancels (the review room's Escape never sees them)
+  input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.isComposing || e.keyCode === 229) return; if (e.key === "Enter") { e.preventDefault(); void save(); } else if (e.key === "Escape") { e.preventDefault(); qnClose(); } });
+  const off = (e) => { if (!el.contains(e.target) && !anchor?.contains?.(e.target)) qnClose(false); };
+  document.body.append(el);
+  const b = (anchor && anchor.isConnected ? anchor : document.querySelector("[data-qnote-open]"))?.getBoundingClientRect(), w = el.offsetWidth;
+  el.style.top = `${Math.round(b ? Math.min(b.bottom + 6, innerHeight - el.offsetHeight - 8) : 72)}px`;
+  el.style.left = `${Math.round(Math.max(16, Math.min(b ? b.left : (innerWidth - w) / 2, innerWidth - w - 16)))}px`;
+  QN.pop = { el, input, from, off }; document.addEventListener("pointerdown", off, true);
+  input.focus();
+}
+const qnButton = (fixed) => h("button", { type: "button", class: `btn qn-btn${fixed ? " qn-fixed" : ""}`, "data-qnote-open": "", title: T("Note a problem for the retro (!)", "記下問題，留給 retro（!）"), onclick: (e) => qnOpen(e.currentTarget) }, icon("alert", "ic sm"), h("span", {}, T("Note a problem", "記問題")), h("kbd", {}, "!"));
+// the button in the page's header (a room's own header), else fixed at the top right
+function qnMount() {
+  const view = document.getElementById("view"); if (!view) return;
+  const have = document.querySelector("[data-qnote-open]");
+  if (!qnOn()) { have?.remove(); qnClose(false); return; }
+  const head = view.querySelector(".rr-head, .phead"); if (have && (head ? head.contains(have) : have.classList.contains("qn-fixed"))) return;
+  have?.remove();
+  if (!head) { document.body.append(qnButton(true)); return; }
+  const actions = head.classList.contains("phead") ? head.querySelector(":scope > .actions") : null;
+  if (actions) actions.prepend(qnButton(false)); else head.append(qnButton(false));
+}
+new MutationObserver(() => qnMount()).observe(document.getElementById("view") || document.body, { childList: true });
+addEventListener("hashchange", () => setTimeout(qnMount, 0)); setTimeout(qnMount, 0);
+addEventListener("keydown", (e) => {
+  if (!qnOn() || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.keyCode === 229) return;
+  if (e.key !== "!" && e.key !== "！") return;
+  const t = e.target instanceof Element ? e.target : null;
+  if (t?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), #chat") || qnModal()) return;
+  e.preventDefault(); qnOpen(document.querySelector("[data-qnote-open]"));
+});
 
 Object.assign(routes, { improve: viewImprove, retro: viewRetro, edit: viewEdit, skill: viewSkill });
 X.nav("improve", "wand", "Improve", "改進", "changes", "navImprove");

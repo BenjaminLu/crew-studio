@@ -35,6 +35,8 @@ import * as Rel from "./pr-watch-release";
 import * as F from "./pr-watch-follow";
 import * as S from "./pr-watch-slack";
 import * as Env from "./pr-watch-envs";
+import type { StudioLog } from "./rawlog";
+import { oneLine, PR_SIGNALS, RetroStore, shipEvents, signal, type ShipEvent, type ShipMark } from "./retro-signals";
 
 export const APPLY_WORKFLOW = "pr-watch-apply-depends", FOLLOW_WORKFLOW = "pr-follow";
 export const INTERVAL_MS = 5 * 60_000;
@@ -142,6 +144,9 @@ export type State = { schema: 1; settings: Settings; watch: { repos: string[]; p
   /** merged pull requests the captain marked as in production by hand (key: the id in lower case), for teams whose
    *  production version Studio cannot read; dropped when the environments confirm production. Absent in older files. */
   manual?: Record<string, { id: string; at: string }>;
+  /** what Studio last wrote to its event log for each followed merged pull request (key: the id in lower case): the merge,
+   *  and each environment's state, so a restart writes no event twice. Dropped with the pull request when it is retired. */
+  emitted?: Record<string, ShipMark>;
   /** the follow-through: each open card (by run), the team member picked for a team, the heads the captain said not to
    *  test or not to merge yet, and the comments the captain classified */
   follow: { open: Record<string, FollowOpen>; picks: Record<string, string>; skip: Record<string, string>; hold: Record<string, string>; classified: Record<string, F.NoteKind> };
@@ -249,6 +254,7 @@ export function cleanSettings(v: any): Settings {
 }
 
 export type PrWatchDeps = { dataDir: string; poller: GitHubPoller; notify?: (type: string, data: unknown) => void; now?: () => number;
+  /** Studio's event log: the go-live signals (pr_merged, pr_live, pr_live_partial, pr_drift), the captain's ship marks and incidents */ log?: StudioLog;
   /** tests lower the caps; production uses MAX_ROWS, MAX_MERGED, READ_BUDGET, DISCOVER_BUDGET and DISCOVER_FILES */ limits?: { rows?: number; reads?: number; autoReads?: number; merged?: number; discoverReads?: number; discoverFiles?: number; discoverDirs?: number } };
 /** the cap on reads for a repository's own environments was reached (they are for show: never fails a refresh) */
 class OverAuto extends Error {}
@@ -326,25 +332,32 @@ export function createPrWatch(d: PrWatchDeps) {
    *  the ones dropped 14 days after that (never picked up again). Written without counting as a change of the watch list. */
   function followShipped(sn: Snapshot) {
     let changed = false;
+    const emitted = state.emitted ??= {}, owed: ShipEvent[] = [];
+    const retire = (k: string) => { state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000); delete emitted[k]; };
     for (const [id, by] of Object.entries(sn.reverted ?? {})) { const k = id.toLowerCase();
       if (state.reverted?.[k] === by && state.retired.includes(k)) continue;
-      delete state.shipped[k]; state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000);
+      delete state.shipped[k]; retire(k);
       state.reverted = Object.fromEntries([...Object.entries(state.reverted ?? {}).filter(([x]) => x !== k), [k, by]].slice(-500)); changed = true; }
     const manual = state.manual ??= {};
     // merged into a branch that is not a release base (a saved state may hold some from before this rule): not followed
     for (const id of Object.keys(sn.offBase ?? {})) { const k = id.toLowerCase();
-      if (state.shipped[k]) { delete state.shipped[k]; changed = true; } if (manual[k]) { delete manual[k]; changed = true; } }
+      if (state.shipped[k]) { delete state.shipped[k]; changed = true; } if (manual[k]) { delete manual[k]; changed = true; } if (emitted[k]) { delete emitted[k]; changed = true; } }
     for (const r of sn.merged ?? []) { const k = r.id.toLowerCase(), cur = state.shipped[k], st = R.shipState(r.envs), mk = manual[k];
       // marked by hand and now confirmed by the environments: an ordinary live row, still counted from the (earlier) mark
       if (st.live && mk) { delete manual[k]; changed = true; }
       const liveAt = st.live || mk ? cur?.liveAt ?? mk?.at ?? sn.at : null;
-      if (!cur || cur.liveAt !== liveAt || cur.mergedAt !== r.mergedAt) { state.shipped[k] = { id: r.id, mergedAt: r.mergedAt, liveAt }; changed = true; } }
+      if (!cur || cur.liveAt !== liveAt || cur.mergedAt !== r.mergedAt) { state.shipped[k] = { id: r.id, mergedAt: r.mergedAt, liveAt }; changed = true; }
+      // the go-live signals: only what changed since the last one written (an environment per transition, never a service)
+      const sh = shipEvents(emitted[k], r); if (sh.events.length) { emitted[k] = sh.next; owed.push(...sh.events); changed = true; } }
     for (const [k, v] of Object.entries(state.shipped)) {
       const sp = R.splitId(v.id), followed = (sn.merged ?? []).some((r) => r.id.toLowerCase() === k) || (!!sp && (has(state.watch.repos, sp.repo) || has(state.watch.prs, v.id)));
-      if (v.liveAt && now() - Date.parse(v.liveAt) > R.LIVE_KEEP_MS) { delete state.shipped[k]; state.retired = [...state.retired.filter((x) => x !== k), k].slice(-2000); changed = true; }
+      if (v.liveAt && now() - Date.parse(v.liveAt) > R.LIVE_KEEP_MS) { delete state.shipped[k]; retire(k); changed = true; }
       else if (!followed) { delete state.shipped[k]; changed = true; } }
     for (const k of Object.keys(manual)) if (!state.shipped[k]) { delete manual[k]; changed = true; } // dropped or no longer followed
+    const keys = Object.keys(emitted); if (keys.length > 2000) { for (const k of keys.slice(0, keys.length - 2000)) delete emitted[k]; changed = true; }
+    // the record first, then the events: a crash between the two loses an event, never writes one twice
     if (changed) write(stateFile, state);
+    for (const e of owed) signal(d.log, e.type, e.data);
   }
 
   async function pool<T, U>(xs: T[], n: number, f: (x: T) => Promise<U>): Promise<U[]> {
@@ -1654,10 +1667,22 @@ export function createPrWatch(d: PrWatchDeps) {
         const rows = mergedRows(snap, state), at = iso(), manual = state.manual ??= {};
         const picked = ids.map((id) => { const r = rows.find((x) => eq(x.id, id)); if (!r || r.tab !== "merged") throw new Error(`${id} is not a merged pull request waiting to go live`); return r; });
         for (const r of picked) { const k = r.id.toLowerCase(); delete manual[k]; manual[k] = { id: r.id, at }; state.shipped[k] = { id: r.id, mergedAt: r.mergedAt, liveAt: at }; }
-        state.manual = Object.fromEntries(Object.entries(manual).slice(-500)); write(stateFile, state); return view(); }
+        state.manual = Object.fromEntries(Object.entries(manual).slice(-500)); write(stateFile, state);
+        for (const r of picked) signal(d.log, "pr_ship_mark", { pr: r.id }, { actor: "captain" });
+        return view(); }
       case "ship/undo": { const id = String(b?.pr ?? ""), k = id.toLowerCase(); if (!R.splitId(id)) throw new Error("A pull request is owner/repo#number");
         if (!state.manual?.[k]) throw new Error(`${id} was not marked as in production by hand (or production now confirms it)`);
-        delete state.manual[k]; if (state.shipped[k]) state.shipped[k].liveAt = null; write(stateFile, state); return view(); }
+        const shown = state.manual[k].id; delete state.manual[k]; if (state.shipped[k]) state.shipped[k].liveAt = null; write(stateFile, state);
+        signal(d.log, "pr_ship_undo", { pr: shown }, { actor: "captain" }); return view(); }
+      // a rollback or an incident the captain names on a merged pull request: the kind goes in the event; the captain's one
+      // line is kept apart at captain trust (data/retro/state.json) and the event names it by id
+      case "incident": { const id = String(b?.pr ?? ""), kind = b?.kind === "rollback" ? "rollback" : b?.kind === "incident" ? "incident" : null;
+        if (!kind) throw new Error("Choose rollback or incident");
+        const r = mergedRows(snap, state).find((x) => eq(x.id, id)) ?? snap.rows.find((x) => eq(x.id, id)); if (!r) throw new Error("Choose a pull request in the list");
+        const text = oneLine(b?.note); if (!text) throw new Error("Say in one line what happened");
+        const note = new RetroStore(d.dataDir).addNote({ text, by: "captain", kind: "incident", route: "#/prs", ref: r.id, pr: r.id });
+        signal(d.log, "pr_incident", { pr: r.id, kind, note: note.id }, { actor: "captain" });
+        return { ok: true, note: note.id }; }
       case "brief": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the merged pull requests to release"); return await buildBrief(ids); }
       case "apply": { const ids = validIds(b?.prs, 50); if (!ids.length) throw new Error("Choose the pull requests to apply");
         const run = await startApply(ids, b?.shortForm === undefined ? state.settings.shortForm : !!b.shortForm); return ({ ok: true, task: run.id, href: `#/run/${run.id}` }); }
@@ -1735,6 +1760,18 @@ export function createPrWatch(d: PrWatchDeps) {
   }
   const tools = { list: () => TOOLS.map((t) => ({ ...t })), call: tool, writes: (name: string) => !["prs_list", "prs_get", "prs_refresh"].includes(name) };
 
+  /** A merged pull request's way to production, from Studio's event log: the merge (at GitHub's time), each environment's
+   *  transitions, the captain's marks and incidents (with the captain's own line). */
+  function timeline(id: string) {
+    if (!R.splitId(id)) return { pr: id, events: [] };
+    const store = new RetroStore(d.dataDir), evs = d.log ? d.log.poll() : [];
+    const events = evs.filter((e) => (PR_SIGNALS as string[]).includes(e.type) && typeof e.data?.pr === "string" && eq(e.data.pr, id)).slice(-200).map((e) => {
+      const x = e.data ?? {}, note = e.type === "pr_incident" && typeof x.note === "string" ? store.note(x.note) : null;
+      return { type: e.type, ts: e.type === "pr_merged" && typeof x.mergedAt === "string" ? x.mergedAt : e.ts, env: x.env ?? null, production: x.production ?? null, tag: x.tag ?? null, pods: x.pods ?? null, kind: x.kind ?? null, note: note?.text ?? null };
+    });
+    return { pr: id, events };
+  }
+
   // ---------- routes ----------
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   const fail = (e: any, status = 400) => json({ error: String(e?.message ?? e).slice(0, 300), ...(e?.tw ? { tw: e.tw } : {}) }, status);
@@ -1744,6 +1781,7 @@ export function createPrWatch(d: PrWatchDeps) {
       if (p === "/api/prs") { ensure(); return json(view()); }
       if (p === "/api/prs/count") return json({ count: count(), refreshedAt: snap.at });
       if (p === "/api/prs/sending") return json(sendingView());
+      if (p === "/api/prs/timeline") return json(timeline(String(url.searchParams.get("pr") ?? "")));
       if (p === "/api/prs/envs/progress") return json(discovering ? { running: true, phase: discovering.phase, what: discovering.what, reads: discovering.reads(), budget: discovering.budget } : { running: false });
       return json({ error: "not found" }, 404);
     }
@@ -1752,5 +1790,5 @@ export function createPrWatch(d: PrWatchDeps) {
     try { return json(await act(p.slice("/api/prs/".length), b)); }
     catch (e: any) { return e instanceof NoSuchAction ? json({ error: "not found" }, 404) : fail(e); }
   }
-  return { handle, install, view, count, refresh, ensure, tools, stop: () => { sub?.cancel(); sub = null; }, get state() { return state; }, get snapshot() { return snap; } };
+  return { handle, install, view, count, refresh, ensure, tools, followShipped, timeline, stop: () => { sub?.cancel(); sub = null; }, get state() { return state; }, get snapshot() { return snap; } };
 }

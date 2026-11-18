@@ -23,6 +23,7 @@ import { allocate } from "../ids";
 import type { AgentJob, AgentTool, Agents } from "../agent";
 import type { Provider } from "../providers";
 import type { StudioLog } from "../rawlog";
+import { signal } from "../retro-signals";
 import { ProviderRefusal } from "../providers/policy";
 import { localUnrestricted } from "../local-execution";
 import { RoundBlocked } from "../round-blocked";
@@ -462,7 +463,8 @@ export class Engine {
     if (this.closed(r.id)) return;
     // one write, no fsync of its own: the fold ignores it, and the next commit's fsync makes it durable with the file
     const ev = this.append(r, { type, summary, ...data }, false);
-    this.deps.log.emit({ type: `run_${type}`, workflow: r.workflow, task: r.id, summary, data: { version: r.version, ...data } });
+    // the run's end as a failure reaches Studio's log once, typed, from raiseFailure (run_failed: its code, never its text)
+    if (type !== "failed" && type !== "failure") this.deps.log.emit({ type: `run_${type}`, workflow: r.workflow, task: r.id, summary, data: { version: r.version, ...data } });
     this.deps.send("wrun", { id: r.id, project: this.projectOf(r), status: r.status, event: ev, nodes: this.nodeStates(r) });
   }
   /** The run's events as far as they can be read: a torn tail is left out, and nothing after a corrupt line is (see readLog). */
@@ -1698,6 +1700,8 @@ export class Engine {
     catch (e: any) { this.emit(r, "log", `failure card could not be raised: ${String(e?.message ?? e).slice(0, 200)}`); }
     r.failureCard = c?.id ?? null; this.commit(r, `failure ${f.class}: ${f.code}`);
     this.emit(r, "failure", `${f.class} · ${f.code}: ${f.message.slice(0, 200)}`, { node: node?.id ?? null, card: c?.id ?? null, class: f.class, code: f.code });
+    // the retro's signal: a run that ended failed, by its typed code (the message stays in the run's own log)
+    if (r.status === "failed" || ended) signal(this.deps.log, "run_failed", { task: r.id, ...(node ? { node: node.id } : {}), failure: f.code, cls: f.class }, { task: r.id });
     return c;
   }
   /** Send an agent's question to Firstmate: true when it was sent (the question then waits on the run, no card). */

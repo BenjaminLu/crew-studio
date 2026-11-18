@@ -8,35 +8,56 @@ import { join } from "node:path";
 import { pluck, type RawEv } from "./rawlog";
 
 export type Detector = {
-  id: string; title: string; explain?: string; kind: "regex" | "duration"; types?: string[]; field: string; pattern?: string;
-  where?: Record<string, string>; center?: number; below?: number; above?: number; group: "task" | "actor" | "pr"; min_groups?: number;
+  id: string; title: string; explain?: string; kind: "regex" | "duration" | "pair"; types?: string[]; field: string; pattern?: string;
+  where?: Record<string, string>; center?: number; below?: number; above?: number; group: "task" | "actor" | "pr" | "room" | "note"; min_groups?: number;
+  /** a field whose value names the hit's class: <id>.<value> (one detector, a class per failure code or why) */ split?: string;
+  /** pair: a start event (types, where) not followed by its end (until, until_where, the same match fields) within hours */
+  until?: string[]; until_where?: Record<string, string>; match?: string[]; hours?: number;
+  /** the retro's candidate list (studio source): always a candidate, a candidate once it repeats on min_groups groups within
+   *  window_days, or only counted; count_only: classes (patterns on the split value) that are only counted */
+  candidate?: "always" | "repeat" | "never"; window_days?: number; count_only?: string[];
   propose?: { role: string; section?: string; rule: string; target?: number; eval?: { ask: string; terms: string[]; expect: { pattern: string; why: string }[] } };
 };
 export type MetricDef = { id: string; label: string; count?: { type?: string; types?: string[]; pattern?: string }; ratio?: [string, string];
   quantile?: { field: string; q: number; where?: Record<string, string> } };
 export type Trigger = { kind: "every"; days: number } | { kind: "count"; type: string; n: number } | { kind: "repeat"; min_groups: number };
 export type RetroConfig = { workflow: string; source: "firstmate" | "studio"; window_days: number; triggers: Trigger[]; metrics: MetricDef[]; classes: Detector[] };
-export type Hit = { seq: number; ts: string; task: string | null; actor: string; text: string; group: string };
+export type Hit = { seq: number; ts: string; task: string | null; actor: string; text: string; group: string; class?: string };
 export type ClassResult = { id: string; title: string; explain: string | null; found: boolean; count: number; groups: string[]; firstTs: string | null; lastTs: string | null;
   examples: Hit[]; perWeek: number; note: string | null; role: string | null };
 export type Report = { id: string; workflow: string; createdAt: string; trigger: string; window: { from: string; to: string; days: number; events: number };
   metrics: { id: string; label: string; value: number | null }[]; classes: ClassResult[]; proposals: string[]; skipped: { class: string; why: string }[] };
 
 const match = (e: RawEv, where?: Record<string, string>) => !where || Object.entries(where).every(([k, v]) => pluck(e, k).some((x) => String(x) === String(v)));
-const groupOf = (e: RawEv, g: Detector["group"]) => (g === "actor" ? e.actor : g === "pr" ? (e.pr != null ? `#${e.pr}` : null) : e.task) ?? e.actor ?? "?";
+const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+const groupOf = (e: RawEv, g: Detector["group"]) => (g === "actor" ? e.actor : g === "pr" ? (e.pr != null ? `#${e.pr}` : str(e.data?.pr)) : g === "room" ? str(e.data?.room) : g === "note" ? str(e.data?.note) : e.task) ?? e.actor ?? "?";
+/** a field path, or several separated by | (the first one an event has) */
+const values = (e: RawEv, field: string) => { for (const f of field.split("|")) { const v = pluck(e, f.trim()); if (v.length) return v; } return [] as any[]; };
+const classOf = (d: Detector, e: RawEv) => { if (!d.split) return d.id; const v = values(e, d.split).find((x) => typeof x === "string" || typeof x === "number"); const s = String(v ?? ""); return `${d.id}.${/^[\w.-]{1,60}$/.test(s) ? s : "other"}`; };
+const keyOf = (e: RawEv, fields: string[]) => fields.map((f) => String(values(e, f)[0] ?? "")).join("\u0000");
 
-/** Every hit of one class among the events (any window: the caller slices). */
-export function detect(d: Detector, events: RawEv[]): Hit[] {
+/** Every hit of one class among the events (any window: the caller slices). A pair's open start counts once `now` is past its hours. */
+export function detect(d: Detector, events: RawEv[], now = Date.now()): Hit[] {
   const hits: Hit[] = [];
+  if (d.kind === "pair") {
+    const ms = (d.hours ?? 24) * 3600e3, on = d.match ?? [];
+    events.forEach((e, i) => {
+      if ((d.types && !d.types.includes(e.type)) || !match(e, d.where)) return;
+      const k = keyOf(e, on), endE = events.slice(i + 1).find((x) => (d.until ?? []).includes(x.type) && match(x, d.until_where) && keyOf(x, on) === k);
+      const took = (endE ? Date.parse(endE.ts) : now) - Date.parse(e.ts);
+      if (took > ms) hits.push({ seq: e.seq, ts: e.ts, task: e.task, actor: e.actor, text: `${Math.round(took / 3600e3)} h${endE ? "" : " so far"}`, group: groupOf(e, d.group), class: classOf(d, e) });
+    });
+    return hits;
+  }
   const re = d.kind === "regex" ? new RegExp(d.pattern ?? "", "i") : null;
   for (const e of events) {
     if (d.types && !d.types.includes(e.type)) continue;
     if (!match(e, d.where)) continue;
-    for (const v of pluck(e, d.field)) {
-      if (re) { if (typeof v === "string" && re.test(v)) { hits.push({ seq: e.seq, ts: e.ts, task: e.task, actor: e.actor, text: v.slice(0, 300), group: groupOf(e, d.group) }); break; } }
+    for (const v of values(e, d.field)) {
+      if (re) { if (typeof v === "string" && re.test(v)) { hits.push({ seq: e.seq, ts: e.ts, task: e.task, actor: e.actor, text: v.slice(0, 300), group: groupOf(e, d.group), class: classOf(d, e) }); break; } }
       else if (typeof v === "number") {
         const c = d.center ?? 0;
-        if (v >= c - (d.below ?? 60) && v <= c + (d.above ?? 60)) { hits.push({ seq: e.seq, ts: e.ts, task: e.task, actor: e.actor, text: `${Math.round(v)} s`, group: groupOf(e, d.group) }); break; }
+        if (v >= c - (d.below ?? 60) && v <= c + (d.above ?? 60)) { hits.push({ seq: e.seq, ts: e.ts, task: e.task, actor: e.actor, text: `${Math.round(v)} s`, group: groupOf(e, d.group), class: classOf(d, e) }); break; }
       }
     }
   }
@@ -78,7 +99,7 @@ export class Retros {
     const win = sliceWindow(events, from, to, cfg.workflow, cfg.source);
     const id = allocate(this.dir, "R", { existing: () => this.list().map((r) => r.id) });
     const classes: ClassResult[] = cfg.classes.map((d) => {
-      const hits = detect(d, win);
+      const hits = detect(d, win, Date.parse(to));
       const groups = [...new Set(hits.map((h) => h.group))];
       const found = groups.length >= (d.min_groups ?? 2);
       const ex: Hit[] = []; const seen = new Set<string>();

@@ -1,0 +1,109 @@
+# Studio's own retro signals (reads Studio's data/events.jsonl). Not a workflow's retro: the candidate list on
+# #/improve (Candidates) is these classes' hits, worked out from the log each time it is shown. What is kept apart is
+# only what the log cannot give back: the captain's dismissals (by class|group) and the captain's words
+# (data/retro/state.json). A class is a candidate always, once it repeats on min_groups groups within window_days, or
+# never (only counted). An isolated failure is never a candidate.
+workflow: studio
+source: studio
+window_days: 30          # how far back the candidate list looks
+triggers: []             # no automatic retro (a period retro is started by the captain)
+metrics:
+  - { id: notes, label: "Problems noted", count: { type: captain_note } }
+  - { id: incidents, label: "Rollbacks and incidents", count: { type: pr_incident } }
+  - { id: runs_failed, label: "Tasks failed", count: { type: run_failed } }
+  - { id: rooms_failed, label: "Review room rounds that did not finish", count: { type: room_round_failed } }
+classes:
+  - id: note
+    title: "A problem noted"
+    explain: "The captain wrote it down (with !, or told Firstmate)."
+    kind: regex
+    types: [captain_note]
+    field: data.note
+    pattern: ".+"
+    split: data.by
+    group: note
+    candidate: always
+  - id: pr
+    title: "A rollback or incident"
+    explain: "The captain named a rollback or an incident on a merged pull request."
+    kind: regex
+    types: [pr_incident]
+    field: data.kind
+    pattern: "^(rollback|incident)$"
+    split: data.kind
+    group: pr
+    candidate: always
+  - id: pr.partial-24h
+    title: "Partly live for over a day"
+    explain: "An environment ran the merge on some services but not all, for more than 24 hours."
+    kind: pair
+    types: [pr_live_partial]
+    until: [pr_live, pr_drift]
+    match: [data.pr, data.env]
+    hours: 24
+    field: data.env
+    group: pr
+    candidate: always
+  - id: pr.ship-undo
+    title: "A production mark taken back"
+    explain: "The captain marked a pull request as in production by hand, then took the mark back."
+    kind: regex
+    types: [pr_ship_undo]
+    field: data.pr
+    pattern: ".+"
+    group: pr
+    candidate: always
+  - id: pr.slow-live
+    title: "Slow from merge to production"
+    explain: "More than 48 hours from the merge to a production environment running it."
+    kind: pair
+    types: [pr_merged]
+    until: [pr_live]
+    until_where: { data.production: "true" }
+    match: [data.pr]
+    hours: 48
+    field: data.pr
+    group: pr
+    candidate: never
+  - id: pr.drift
+    title: "An environment stopped running a merge"
+    kind: regex
+    types: [pr_drift]
+    field: data.env
+    pattern: ".+"
+    group: pr
+    candidate: never
+  - id: run
+    title: "Tasks failing the same way"
+    explain: "The same failure code ended Tasks on 3 or more Tasks within 7 days. Older logs name it on run_failure."
+    kind: regex
+    types: [run_failed, run_failure]
+    field: data.failure|data.code
+    pattern: "^[\\w.-]+$"
+    split: data.failure|data.code
+    group: task
+    candidate: repeat
+    min_groups: 3
+    window_days: 7
+    count_only: ["^transient\\.", "^env\\.(login|quota|provider-unavailable)$"]
+  - id: room
+    title: "Review room rounds stopping the same way"
+    explain: "Rounds in 3 or more review rooms within 7 days ended the same way."
+    kind: regex
+    types: [room_round_failed]
+    field: data.why
+    pattern: ".+"
+    split: data.why
+    group: room
+    candidate: repeat
+    min_groups: 3
+    window_days: 7
+    count_only: ["^(cancelled|interrupted|provider)$"]
+  - id: room-translate
+    title: "A review room translation failed"
+    kind: regex
+    types: [room_translate_failed]
+    field: data.lang
+    pattern: ".+"
+    group: room
+    candidate: never

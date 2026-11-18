@@ -52,6 +52,10 @@ import { clipStore, kokoroSpeaker, localSynth, MAX_POINT, readClip, roomClip } f
 import { isRoomPoint } from "../voice/points";
 import { langOf, type Mix } from "../voice/runs";
 import { installExplainer } from "./review-explain";
+import { signal } from "../retro-signals";
+/** Why a tutor turn did not end done, as a short code for the retro (from Studio's own words for the ending, else "failed"). */
+export const turnWhy = (error: unknown): string => { const e = String(error ?? "");
+  return /^Studio refused the lesson/.test(e) ? "lesson-refused" : /tutor ended without an answer/.test(e) ? "no-answer" : /no result within|timed? ?out/i.test(e) ? "timeout" : /cancel/i.test(e) ? "cancelled" : "failed"; };
 
 /** The room's skills, pinned like a node's skills: the exact text by sha256; a changed text refuses the turn. */
 export const ROOM_SKILLS = [
@@ -1556,7 +1560,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       else Object.assign(turn, { status: "done", error: null });
     } catch (e: any) { Object.assign(turn, { status: "failed", error: String(e?.message ?? e).slice(0, 500) }); }
     try { turn.claims = ground(turn.answer, await citeCheck(room, s)); } catch { turn.claims = ground(turn.answer, () => false); }
-    turn.ended = new Date().toISOString(); save(k, room); stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
+    turn.ended = new Date().toISOString(); save(k, room);
+    // the retro's signal: a turn that did not end done, by why (a code Studio words, never the error's text)
+    if (turn.status !== "done") signal(engine.deps.log, "room_round_failed", { room: k.id, run: s.run.id, why: turnWhy(turn.error) }, { task: s.run.id });
+    stat(k, { turns: room.turns.filter((t) => t.status === "done" && !t.studio).length, check: checkOf(room), independence: turn.independence ?? null, tutor: { provider: turn.provider, model: turn.model } });
     const q = room.check.questions;
     engine.record(x, "review-room-turn", { head: s.head, data: { schema: 1, ...(turn.auto ? { auto: true, autoFrom: turn.autoFrom ?? "paste" } : {}), card: k.id, subject: subjectRecord(k, s, room), turn: turn.n, action: turn.action, regenerate: turn.regenOf ? { of: turn.regenOf, provider: turn.picked?.provider ?? turn.provider, model: turn.picked?.model ?? turn.model, by: "captain" } : null, job: turn.job, ...(turn.jobs ? { jobs: turn.jobs } : {}), ...(turn.gaps ? { gaps: turn.gaps } : {}), ...(turn.followUpError ? { followUpError: turn.followUpError } : {}), ...(turn.action === "teach" ? { rounds: turn.jobs?.length ?? 1, complete: !!turn.complete, ...(turn.stopped ? { stopped: turn.stopped } : {}) } : {}), status: turn.status, provider: turn.provider, model: turn.model, effort: turn.effort, independence: turn.independence ?? null, cost: turn.cost, confirm,
       skills: sk.map((k) => ({ id: k.id, sha256: k.sha256 })), round: turn.round, board: room.board.filter((b) => b.turn === turn.n).length, images: room.board.filter((b) => b.turn === turn.n && ["image", "screenshot", "chart"].includes(b.type)).map((b) => ({ id: b.id, kind: b.kind, sha256: b.sha256 ?? null })), sources: room.sources.filter((x) => x.turn === turn.n).length,
@@ -1617,6 +1624,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           for (const x of chunk) { const got = (Array.isArray(parsed?.bodies) ? parsed.bodies : []).find((y: any) => Number(y?.n) === x.n && Number(y?.m) === x.m), b = bj.status === "done" ? keepBody(x.body, got?.body) : null, sc = room.translations?.[lang]?.[String(x.n)]?.scenes?.[x.m];
             if (b && sc) { sc.body = b; bodies.kept++; } } } catch {} } }
     room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost, ...(bodies.asked ? { bodies } : {}) }; save(k, room);
+    if (error) signal(engine.deps.log, "room_translate_failed", { room: k.id, lang }, { task: s.run.id });
     engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost, ...(bodies.asked ? { bodies } : {}), status: room.translating.status } } as any);
   }
   /** What a paste of this pull request starts, from the one place both the paste box and the start read it: auto-teach as the

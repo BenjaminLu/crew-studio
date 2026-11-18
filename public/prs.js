@@ -309,7 +309,8 @@ function shipRow(r, i) {
     h("span", { class: "tid" }, String(i + 1)),
     h("span", { class: "pw-pr", role: "cell" },
       h("button", { class: "pw-x pw-unw", "data-prs-drop": r.id, title: T("Stop following this merged pull request", "不再追蹤這個已合併 PR"), "aria-label": T(`Remove ${r.id} from the list`, `從清單移除 ${r.id}`), onclick: () => { PW.checked.delete(r.id); act("/api/prs/unwatch", { pr: r.id }, T(`${r.id} removed from the list`, `${r.id} 已從清單移除`)); } }, icon("x")),
-      h("span", { class: "pw-pid" }, pmark(r.project), extLink(ghPr(r.id), short(r.id, null), { title: r.id }), r.single ? h("span", { class: "badge" }, T("single", "單獨")) : null), h("small", { class: "pw-title" }, r.title)),
+      h("span", { class: "pw-pid" }, pmark(r.project), extLink(ghPr(r.id), short(r.id, null), { title: r.id }), r.single ? h("span", { class: "badge" }, T("single", "單獨")) : null,
+        h("button", { class: "btn ghost icon pw-rowmenu", "data-prs-ship-menu": r.id, "aria-expanded": "false", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), title: T("Go-live timeline, rollback or incident", "上線時間軸、回滾／事故"), onclick: (e) => { e.stopPropagation(); shipMenu(e.currentTarget, r); } }, icon("more"))), h("small", { class: "pw-title" }, r.title)),
     h("span", { class: "pw-next", role: "cell" }, h("b", { class: `t-${n.tone}`, "data-prs-ship-next": "" }, n.next), h("small", {}, n.waits),
       r.ship.manual ? h("span", { class: "pw-shipby" }, h("span", { class: "badge human", "data-prs-manual": r.id, title: new Date(r.ship.manual.at).toLocaleString() }, T(`Marked by hand · ${day(r.ship.manual.at)}`, `手動標記 · ${day(r.ship.manual.at)}`)),
         h("button", { class: "btn sm", "data-prs-undo-live": r.id, onclick: () => act("/api/prs/ship/undo", { pr: r.id }, T(`${r.id} is back in Merged, not live`, `${r.id} 已回到「已合併未上線」`)) }, T("Undo", "撤銷")))
@@ -321,6 +322,51 @@ function shipRow(r, i) {
     h("span", { class: "pw-revs", role: "cell", "data-prs-ops": r.id }, r.ops?.length ? opBadges(r.ops) : h("span", { class: "faint" }, "—")),
     // an environment read from several manifests: each service on a full-width line under the row
     r.envs.some((e) => e.pods) ? h("div", { class: "pw-podrow", role: "cell" }, ...r.envs.filter((e) => e.pods).map((e, _, all) => podsLine(e, { inline: true, label: all.length > 1 }))) : null);
+}
+// a merged row's actions: its way to production (from Studio's event log) and the captain's rollback or incident note
+function shipMenu(anchor, r) {
+  let close = () => {};
+  const item = (k, ic, en, tw, f) => h("button", { class: "btn ghost", "data-prs-action": k, onclick: () => { close(); f(); } }, icon(ic), T(en, tw));
+  const m = h("div", { class: "pop pw-menu", role: "group", "aria-label": T(`Actions for ${r.id}`, `${r.id} 的動作`), "data-prs-menu": r.id },
+    h("div", { class: "tgt" }, r.id),
+    item("timeline", "activity", "Go-live timeline", "上線時間軸", () => timelineModal(r)),
+    item("incident", "alert", "Rollback / incident…", "回滾／事故…", () => incidentModal(r)));
+  close = openPop(anchor, m) || close;
+}
+// merge → each environment, as Studio wrote it down at the time (data/events.jsonl): the merge at GitHub's time, then each
+// environment's change, the captain's marks and incidents, each with the time since the merge
+const TL = { pr_merged: ["ok", "Merged", "合併"], pr_live: ["ok", "Live", "上線"], pr_live_partial: ["warn", "Partly live", "部分上線"], pr_drift: ["bad", "No longer runs it", "不再執行這個版本"],
+  pr_ship_mark: ["human", "Marked in production by hand", "手動標記已上線"], pr_ship_undo: ["human", "Mark taken back", "撤回上線標記"], pr_incident: ["bad", "Incident", "事故"] };
+function timelineItem(e, mergedAt) {
+  const [tone, en, tw] = TL[e.type] || ["", e.type, e.type], since = mergedAt && e.type !== "pr_merged" ? Date.parse(e.ts) - Date.parse(mergedAt) : null;
+  const what = e.type === "pr_incident" && e.kind === "rollback" ? T("Rollback", "回滾") : T(en, tw);
+  const detail = e.type === "pr_live_partial" && e.pods ? T(`${e.pods.on} of ${e.pods.on + e.pods.off} services`, `${e.pods.on + e.pods.off} 個服務中 ${e.pods.on} 個`) : e.type === "pr_live" && e.tag ? shortTag(e.tag) : "";
+  return h("li", { class: `pw-tl-i t-${tone}`, "data-prs-tl": e.type, "data-env": e.env || "" },
+    h("span", { class: "pw-tl-dot", "aria-hidden": "true" }),
+    h("div", { class: "pw-tl-b" }, h("div", { class: "pw-tl-h" }, h("b", {}, what), e.env ? h("span", { class: "badge" }, e.env) : null, detail ? h("span", { class: "faint mono" }, detail) : null),
+      e.note ? h("div", { class: "pw-tl-note" }, `“${e.note}”`) : null,
+      h("div", { class: "faint pw-small" }, new Date(e.ts).toLocaleString(), since != null ? T(` · ${span(since)} after the merge`, ` · 合併後 ${span(since)}`) : "")));
+}
+async function timelineModal(r) {
+  const list = h("ol", { class: "pw-tl", "data-prs-timeline": r.id }, h("li", { class: "faint" }, T("Reading…", "讀取中…")));
+  pwModal(T(`Going live: ${r.id}`, `上線過程：${r.id}`), [h("p", { class: "muted pw-dtitle" }, r.title || "", " · ", extLink(ghPr(r.id), T("on GitHub", "在 GitHub 上看"))), list,
+    h("p", { class: "faint pw-small" }, T("What Studio saw on each refresh, written down at the time: an environment is partly live while one of its services still runs an older tag.", "Studio 每次刷新看到的變化，當下記錄：某個環境還有服務跑舊 tag 時算「部分上線」。"))], { id: "timeline" });
+  let j; try { j = await (await fetch(`/api/prs/timeline?pr=${encodeURIComponent(r.id)}`)).json(); } catch { j = null; }
+  if (!list.isConnected) return;
+  const evs = j?.events || [], merged = evs.find((e) => e.type === "pr_merged")?.ts || r.mergedAt;
+  list.replaceChildren(...(evs.length ? evs.map((e) => timelineItem(e, merged)) : [h("li", { class: "faint", "data-prs-tl-empty": "" }, T("Nothing written down yet: Studio starts recording at the next refresh.", "還沒有紀錄：Studio 會從下一次刷新開始記錄。"))]));
+}
+function incidentModal(r) {
+  let kind = "rollback";
+  const seg = h("div", { class: "seg", role: "group", "aria-label": T("What happened", "發生什麼事") }, [["rollback", "Rollback", "回滾"], ["incident", "Incident", "事故"]].map(([k, en, tw]) =>
+    h("button", { type: "button", "aria-pressed": String(k === kind), "data-prs-incident-kind": k, onclick: (e) => { kind = k; seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget))); } }, h("span", {}, T(en, tw)))));
+  const line = h("input", { type: "text", class: "pw-incident-line", maxlength: 500, autofocus: true, "data-prs-incident-note": "", "aria-label": T("One line: what happened", "一句話：發生什麼事"), placeholder: T("e.g. rolled back: checkout errors after deploy", "例如：上線後結帳出錯，已回滾"),
+    onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); save(); } } });
+  const save = async () => { const note = line.value.trim(); if (!note) return line.focus();
+    try { await postJ("/api/prs/incident", { pr: r.id, kind, note }); close(); flash(kind === "rollback" ? T(`Rollback noted on ${r.id}: it goes to the retro`, `已記下 ${r.id} 的回滾：會進 retro`) : T(`Incident noted on ${r.id}: it goes to the retro`, `已記下 ${r.id} 的事故：會進 retro`)); } catch (e) { flash(e.message); } };
+  const close = pwModal(T(`Rollback or incident: ${r.id}`, `回滾／事故：${r.id}`), [h("p", { class: "muted" }, T("Kept as your words for the retro; nothing is sent anywhere.", "以你的原話留給 retro；不會送到任何地方。")), seg, line,
+    foot(h("span", { class: "x-grow" }), h("button", { class: "btn", onclick: () => close() }, T("Cancel", "取消")), h("button", { class: "btn primary", "data-prs-incident-save": "", onclick: save }, T("Save", "儲存")))], { id: "incident" });
+  line.focus();
 }
 // ---------- the release brief ----------
 function opText(o, P) {
