@@ -1698,13 +1698,16 @@ export class Engine {
     try { c = this.cards.create({ run: r.id, node: node?.id ?? "", visit: node ? r.nodes[node.id].visits : 0, kind: "failure", title: { en: b.title, "zh-TW": b.zhTitle }, sections: { en: sec(b.en), "zh-TW": sec(b.zh) }, body: b.body,
       options: b.options, confirmDoor: false, door: null, links: f.log.href ? [{ label: "Open the log", href: f.log.href }] : [], detail: null, captainOnly: true, workflow: r.workflow, runTitle: r.title, ledger: null, ste: null, failure: f }); }
     catch (e: any) { this.emit(r, "log", `failure card could not be raised: ${String(e?.message ?? e).slice(0, 200)}`); }
-    // the retro's signal: a run that ended failed, once per ending (a card raised again for the same ending, e.g. a
-    // refreshed failure, writes nothing more), by its typed code; the message stays in the run's own log
-    const ending = r.endedAt ?? "", owed = (r.status === "failed" || ended) && r.ctx._retroFailed !== ending;
-    if (owed) r.ctx._retroFailed = ending;
     r.failureCard = c?.id ?? null; this.commit(r, `failure ${f.class}: ${f.code}`);
     this.emit(r, "failure", `${f.class} · ${f.code}: ${f.message.slice(0, 200)}`, { node: node?.id ?? null, card: c?.id ?? null, class: f.class, code: f.code });
-    if (owed) signal(this.deps.log, "run_failed", { task: r.id, ...(node ? { node: node.id } : {}), failure: f.code, cls: f.class }, { task: r.id });
+    // the retro's signal: a run that ended failed, by its typed code (the message stays in the run's own log), once per
+    // ending: a card raised again for the same ending (a refreshed failure) writes nothing more. What was written is read
+    // back from Studio's log itself, never kept on the run (its ctx is part of the continuation pin)
+    if (r.status === "failed" || ended) {
+      const ending = r.endedAt ?? "";
+      let seen = false; try { seen = this.deps.log.poll().some((e) => e.type === "run_failed" && e.task === r.id && e.data?.ending === ending); } catch {}
+      if (!seen) signal(this.deps.log, "run_failed", { task: r.id, ...(node ? { node: node.id } : {}), failure: f.code, cls: f.class, ending }, { task: r.id });
+    }
     return c;
   }
   /** Send an agent's question to Firstmate: true when it was sent (the question then waits on the run, no card). */

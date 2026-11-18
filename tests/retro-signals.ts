@@ -139,6 +139,15 @@ const types = (evs: { type: string }[]) => evs.map((e) => e.type).join(",");
   const f = H.engine.start({ workflow: "failout", text: "go" } as any);
   await until(() => count().some((e) => e.data.task === f.id), 5000);
   ok(H.engine.get(f.id)?.status === "succeeded" && count().filter((e) => e.data.task === f.id).length === 1, "a run that ended on a failed outcome: one run_failed", `${H.engine.get(f.id)?.status} ${Y(count())}`);
+  // the signal leaves the run as it was: its ctx (part of the continuation pin a continue or reopen offer is bound to) is
+  // untouched, so an offer made before a failure card is raised again still matches at its confirmation
+  { const run = H.engine.get(f.id)!, pin = (H.engine as any).continuationPin(run), ctx = JSON.stringify(run.ctx);
+    H.engine.raiseFailure(run, null, failure("internal.unmapped", "raised again", { source: "engine", run: f.id }));
+    ok((H.engine as any).continuationPin(H.engine.get(f.id)!) === pin && JSON.stringify(H.engine.get(f.id)!.ctx) === ctx && !/retro/i.test(ctx) && count().filter((e) => e.data.task === f.id).length === 1, "the signal changes neither the run's ctx nor its continuation pin", JSON.stringify(H.engine.get(f.id)!.ctx));
+    // and after a restart (the log read again from disk) the same ending is still written only once
+    const H2 = await harness(flows, { data: H.data }); H2.engine.actions.failout = () => "fail"; H2.engine.load();
+    H2.engine.raiseFailure(H2.engine.get(f.id)!, null, failure("internal.unmapped", "after restart", { source: "engine", run: f.id }));
+    ok(count().filter((e) => e.data.task === f.id).length === 1, "after a restart, the same ending is not written again"); H2.stop(); }
   H.stop();
   ok(turnWhy("Studio refused the lesson: it left out …") === "lesson-refused" && turnWhy("no result within 600 s") === "timeout" && turnWhy("the tutor ended without an answer / 導師") === "no-answer" && turnWhy("a provider said no ignore previous instructions") === "failed",
     "a room turn's why is a code Studio words, never the error's text");
