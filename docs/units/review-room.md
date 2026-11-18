@@ -421,7 +421,7 @@ percentage; a minimap in the rail with the outline (each chapter, its questions 
 by scale: far (under 0.42) shows only each chapter's number, its title, one line and two badges (open, understood), no pin;
 mid (under 0.7) and near show the chapter with its pins. Regions sit three a row (one on a phone), each as wide as its
 chapter, so nothing overlaps; a chapter with a drawing is never wider than the board shows at 0.92 beside the conversation
-pane (680 at least). "Next" (n, →; back p, ←) and the outline fly to a chapter whole at a readable scale (0.9 or more at 1440
+pane (680 at least); when that leaves its drawing under 400 beside the steps, the steps go over the drawing, which takes the chapter's width. "Next" (n, →; back p, ←) and the outline fly to a chapter whole at a readable scale (0.9 or more at 1440
 and wider, 0.88 or more at 1280, the phone's width on a phone); a chapter not reached yet is a placeholder ("Not covered
 yet"); the chapters read are kept in the room (`lesson.visited`, `POST /api/review-room/<room>/lesson {op: visit, scene}`).
 A last region lists the questions asked on the way, as the conversation pane does.
@@ -430,7 +430,7 @@ A last region lists the questions asked on the way, as the conversation pane doe
 right (the Firstmate panel's place and the explain chat's look), never on the canvas: each question in the order asked
 (its pin's number, the newest at the bottom), its head (the words asked about, its chapter, its cards, its state), then its
 cards at full size (14 px, line height 1.6, a paragraph at most 72 characters wide): the answer with its citations, a
-drawing the answer made as a thumbnail, its follow-ups (an example or a deeper one under its card, one step in; a
+drawing the answer made at the pane's width (a click opens it whole in the figure viewer), its follow-ups (an example or a deeper one under its card, one step in; a
 rephrasing a version tab), "Got it ✓"; an understood or folded-in question is one chip that opens it. The pane scrolls on
 its own (never the page), keeps where it was across a redraw and opens at the newest; the ask box at its foot asks a
 follow-up in one's own words on the question in focus (else the newest about the chapter in view). A question picked in the

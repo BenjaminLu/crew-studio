@@ -1791,7 +1791,7 @@ addEventListener("keydown", (e) => {
 // the board, built with the room's own helpers (public/review-board.js)
 const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody });
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody, figViewer });
 const onList = () => S.route?.name === "room" && !S.route.arg;
 /** the list read again. Only the rows are drawn again when they are there (public/list-tools.js ltItems): the search box stays the
  *  same element, a composition in it unbroken */

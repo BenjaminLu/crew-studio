@@ -13,7 +13,7 @@
 window.crewReviewBoard = (D) => {
 const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody } = D;
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, figViewer, sceneBody } = D;
 /** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
  *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
 const isLesson = (x) => !!(x?.chapter && x.t?.action === "teach" && x.t.status === "done");
@@ -26,7 +26,7 @@ const B = { cam: new Map(), lock: new Map(), cur: new Map(), visited: new Map(),
 const phone = () => innerWidth <= 760;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const LOD = (s) => (s < 0.42 ? "far" : s < 0.7 ? "mid" : "near");
-const CHIP = { deeper: ["Deeper ↓", "更深 ↓"], example: ["Example →", "例子 →"], rephrase: ["Say it another way", "換個說法"], why: ["Why", "為什麼"], code: ["Show the code", "看程式碼"], free: ["Ask", "問"] };
+const CHIP = { deeper: ["Deeper ↓", "更深 ↓"], example: ["Example ↓", "例子 ↓"], rephrase: ["Say it another way", "換個說法"], why: ["Why", "為什麼"], code: ["Show the code", "看程式碼"], free: ["Ask", "問"] };
 const chipName = (c) => T(...(CHIP[c] || [c, c]));
 /** the popover's chips, as the prototype words them (我不懂這句 asks for another way and marks the question 還沒懂) */
 const POP = [["deeper", "More detail", "詳細一點"], ["example", "An example", "舉個例子"], ["why", "Why this way", "為什麼這樣做"], ["code", "Show the code", "看程式碼"], ["rephrase", "I don't get this", "我不懂這句"]];
@@ -78,7 +78,7 @@ function sentences(card, x, p, m, kind, ctx) {
 }
 /** the numbered pins on a place: one per question asked there, coloured by its state */
 function pinsOf(card, ctx, key) {
-  return ctx.threads.filter((t) => t.key === key).map((t) => h("button", { type: "button", class: `rb-pin ${pinCls(card, t)}`, "data-pin": t.n, "data-pin-for": key, tabindex: -1, "aria-label": T(`Question ${t.n}`, `問題 ${t.n}`), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n); } }, String(t.n)));
+  return ctx.threads.filter((t) => t.key === key).map((t) => h("button", { type: "button", class: `rb-pin ${pinCls(card, t)}`, "data-pin": t.n, "data-pin-for": key, tabindex: -1, "aria-label": T(`Question ${t.n}`, `問題 ${t.n}`), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n, true); } }, String(t.n)));
 }
 const pinCls = (card, t) => (t.merged && !B.before.has(card) ? "mg" : t.state === "resolved" ? "done" : confusedOf(t) ? "q" : "a");
 /** a drawing's parts made places: a node, an edge's chip, a transition (its chip and its row), a transaction's field, a
@@ -145,15 +145,18 @@ function regionEl(card, r, x, j, nth, ctx) {
   const byId = (id) => (id ? r.board.find((b) => b.id === id) : null), stepPic = (p) => byId(p?.picture) || byId(boardCite(p)), own = cur != null ? stepPic(x.points[cur]) : null;
   const pic0 = !illustrated(x) ? null : own || x.pic || x.points.map(stepPic).find(Boolean) || null;
   const codes = isCode(pic0) ? [pic0] : [], pic = !pic0 ? null : isCode(pic0) ? fallbackVisual(r, x) : pic0, focus = cur != null && pic === pic0 ? focusOf(x.points[cur]) : [], SW = stepsW(x);
+  // a narrow board (the chapter capped by regionMax, its drawing's slot beside the steps under 400): the steps over the drawing,
+  // the drawing the chapter's whole width, never smaller than it was beside a wider board
+  const stacked = !phone() && W < widthOf(x) && W - SW - 64 < 400;
   // one figure per chapter: a step may cite another chapter's drawing, and a figure's question places name its own chapter
   let fig = null; if (pic) { const fk = `${card}/${x.key}/${pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${pic.id}`) ?? 0}/${W}/${focus.join(",")}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
-    fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: W - SW - 64, h: 620 }); if (!pic.synth) decorate(fig, x, pic, ctx); else fig.setAttribute("data-figure-studio", "");  if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); }
+    fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: stacked ? W - 40 : W - SW - 64, h: 620 }); if (!pic.synth) decorate(fig, x, pic, ctx); else fig.setAttribute("data-figure-studio", "");  if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); }
     if (focus.length) { fig.setAttribute("data-zoom-focus", focus.join(",")); queueMicrotask(zoomFocus); } else fig.removeAttribute("data-zoom-focus"); }
   const illus = fig ? h("div", { class: "rb-illus", "data-illustration-of": cur != null ? cur + 1 : "all" }, fig, stepDetail(x, cur), codeRefs(card, r, codes)) : null;
   const gist = plain(x.points[0]?.text || x.title || "");
   return h("section", { class: `rb-region${seen ? "" : " unvisited"}${ths.length ? " hasq" : ""}${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-report-section": key, "data-chapter": ch, "data-turn": x.turn, "data-open": open, "data-done": done, id: `rp-${card}-${key}`, "aria-label": `${String(j + 1).padStart(2, "0")} ${chapterName(ch)}` },
     h("div", { class: "rb-rtitle" }, h("b", {}, String(j + 1).padStart(2, "0")), h("span", {}, chapterName(ch)), ths.length ? h("button", { type: "button", class: "rb-cnt", "data-region-questions": key, title: T("Read them in the conversation", "在問答欄裡看"), onclick: (e) => { e.stopPropagation(); showConv(card, key); } }, T(`${ths.length} question${ths.length === 1 ? "" : "s"}`, `${ths.length} 個問題`), open ? h("i", {}, T(` · ${open} not understood`, ` · 未解 ${open}`)) : null) : null),
-    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, sceneBody(card, x), absorbed), illus),
+    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? stacked ? " stacked" : "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, sceneBody(card, x), absorbed), illus),
       // far away: only the chapter's number, its title, one line and its questions
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, String(j + 1).padStart(2, "0")), h("div", { class: "rb-mt" }, chapterName(ch)), h("div", { class: "rb-mg", "data-map-gist": "" }, gist),
         h("div", { class: "rb-mq" }, h("span", { class: "rb-badge q", "data-map-open": open }, T(`${open} not understood`, `未解 ${open}`)), h("span", { class: "rb-badge ok", "data-map-done": done }, T(`${done} understood`, `懂了 ${done}`)))),
@@ -282,16 +285,21 @@ function cardEl(card, r, t, nd, ctx) {
     : h("button", { type: "button", class: "rb-btn ok", "data-resolve": t.n, onclick: (e) => { e.stopPropagation(); B.peek.delete(`${card}/${t.n}`); if (B.focus.get(card)?.n === t.n) unfocus(card); lessonOp(card, { op: "resolve", n: t.n }); } }, T("Got it ✓", "懂了 ✓")));
   if (root && (t.state === "resolved" || t.merged) && B.peek.has(`${card}/${t.n}`)) acts.push(h("button", { type: "button", class: "rb-btn", "data-fold": t.n, onclick: (e) => { e.stopPropagation(); B.peek.delete(`${card}/${t.n}`); rerender(); } }, T("Fold", "收起")));
   // the drawings and pictures this answer made (board_draw, a figure), with Studio's own renderers
-  const figs = turn && turn.status === "done" ? (r.board || []).filter((b) => b.turn === turn.n).map((it) => { try { return reportFigure(card, r, it, { narrow: true, w: 260, h: 520 }); } catch { return null; } }) : [];
+  // the drawings and pictures this answer made (board_draw, a figure), with Studio's own renderers, at the pane's width; a click (or
+  // "View drawing") opens one whole in the room's figure viewer (review-room.js figViewer): it is not on the board
+  const paneW = Math.max(240, (window.crewRoomPane?.width("board") || 320) - 70);
+  const figs = turn && turn.status === "done" ? (r.board || []).filter((b) => b.turn === turn.n).map((it) => { try { const f = reportFigure(card, r, it, { narrow: true, w: paneW, h: 900 });
+    return h("div", { class: "rb-cfig", "data-card-figure": it.id, title: T("Open this drawing whole", "打開整張圖"), onclick: (e) => { if (e.target.closest("button,a,[data-cite]")) return; e.stopPropagation(); figViewer(card, it); } }, f,
+      h("button", { type: "button", class: "rb-btn", "data-card-fig-view": it.id, onclick: (e) => { e.stopPropagation(); figViewer(card, it); } }, T("View drawing", "檢視圖"))); } catch { return null; } }).filter(Boolean) : [];
   const paid = turn && turn.model ? h("span", { class: "rb-paid", "data-paid-note": "", title: T("A paid round", "付費一回合") },
     turn.follow ? T(`follow-up ${turn.follow} started without asking · paid · ${turn.model}`, `已追問 ${turn.follow} 次 · 付費 · ${turn.model}`) : T(`paid · ${turn.model}`, `付費 · ${turn.model}`)) : null;
-  return h("article", { class: `rb-card${root ? " root" : ""}${confusedOf(t) ? " q" : ""}${nd.versions.length > 1 ? " stack" : ""}${focus ? " lit" : ""}`, "data-group": t.key, "data-tcard": `${t.n}:${nd.id}`, "data-thread": t.n, "data-tnode": nd.id, "data-parent": nd.parent ?? "", "data-rel": nd.rel, "data-chip": nd.chip },
+  return h("article", { class: `rb-card${root ? " root" : ""}${confusedOf(t) ? " q" : ""}${nd.versions.length > 1 ? " rb-versions" : ""}${focus ? " lit" : ""}`, "data-group": t.key, "data-tcard": `${t.n}:${nd.id}`, "data-thread": t.n, "data-tnode": nd.id, "data-parent": nd.parent ?? "", "data-rel": nd.rel, "data-chip": nd.chip },
     h("div", { class: "rb-ch" }, h("span", { class: `rb-pin ${pinCls(card, t)}` }, String(t.n)), h("span", { class: "rb-cq", title: label }, label),
       nd.versions.length > 1 ? h("span", { class: "rb-tabs", role: "group", "aria-label": T("Versions", "版本") }, nd.versions.map((v, i) => h("button", { type: "button", "data-version-tab": i, "aria-pressed": String(i === vi), onclick: (e) => { e.stopPropagation(); B.ver.set(vk, i); rerender(); } }, String(i + 1))), h("em", {}, `/${nd.versions.length}`)) : null,
       root ? h("button", { type: "button", class: "rb-x", "data-focus-thread": t.n, title: T("Show it on the board (Esc returns)", "在白板上看（Esc 返回）"), "aria-label": T(`Show question ${t.n} on the board`, `在白板上看問題 ${t.n}`), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n); } }, "⤢") : null),
     root ? h("q", { class: "rb-anchor", title: t.anchor.text }, t.anchor.text) : null,
     nd.versions.length > 1 && vi > 0 ? h("div", { class: "rb-alttag" }, T(`Said another way (${vi + 1}/${nd.versions.length})`, `換個說法（${vi + 1}/${nd.versions.length}）`)) : null,
-    h("div", { class: "rb-cbody" }, body, figs.length ? h("div", { class: "rb-cfigs", "data-card-figures": figs.length, title: T("Show its chapter on the board", "在白板上看它的章節"), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n); } }, figs) : null), acts.length || paid ? h("div", { class: "rb-acts" }, acts, paid) : null);
+    h("div", { class: "rb-cbody" }, body, figs.length ? h("div", { class: "rb-cfigs", "data-card-figures": figs.length }, figs) : null), acts.length || paid ? h("div", { class: "rb-acts" }, acts, paid) : null);
 }
 const popName = (c) => { const x = POP.find((y) => y[0] === c); return x ? T(x[1], x[2]) : chipName(c); };
 /** a code card: what the place cites, read through Studio's citation viewer (free; a saved room from its snapshot) */
@@ -361,7 +369,7 @@ function convPane(card, r, ctx, sheet) {
     onclick: (e) => { const t = e.target; if (t.closest("button,a,summary,input,textarea,select,pre,label,[data-cite]") || String(getSelection() || "")) return;
       const c = t.closest(".rb-card[data-thread]:not([data-pending])"); if (c) focusThread(card, Number(c.dataset.thread)); } },
     phone() ? h("button", { type: "button", class: "rb-sheetx", "aria-label": T("Close", "關閉"), onclick: () => { B.sheet.delete(card); rerender(); } }, "×") : null,
-    h("header", { class: "rb-convhead" }, h("h3", {}, T("Questions and answers", "問答")), h("p", { class: "rb-hint" }, T("Click any sentence, a box, line or transition of a drawing, or a row, and ask right there. Click a question here to see its place on the board.", "點任何一句話、圖上的框、線或轉換，或一列欄位，就在那裡問。點這裡的問題會在白板上找到它的位置。"))),
+    h("header", { class: "rb-convhead" }, h("h3", {}, T("Questions and answers", "問答")), list.length ? null : h("p", { class: "rb-hint" }, T("Click any sentence, a box, line or transition of a drawing, or a row, and ask right there. Click a question here to see its place on the board.", "點任何一句話、圖上的框、線或轉換，或一列欄位，就在那裡問。點這裡的問題會在白板上找到它的位置。"))),
     h("div", { class: "rb-convlist", "data-conv-list": card, onscroll: (e) => { const el = e.currentTarget; B.paneScroll.set(card, { top: el.scrollTop, bottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 4 }); } },
       list.length || p ? h("ol", { class: "rb-nlist", "data-notes-list": "side" }, list.map((t) => convThread(card, r, t, ctx, R)),
         p && p.n == null ? h("li", { class: "rb-thread new", "data-conv-thread": "new", "data-conv-scene": p.anchor?.scene || "" }, h("div", { class: "rb-tcards" }, pendingCard(card, r, p, p.key, null, ctx))) : null)

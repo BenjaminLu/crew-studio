@@ -111,7 +111,7 @@ ins.rb-abs { text-decoration: none; background: var(--rr-ok-soft); color: var(--
 /* a question's cards */
 .rb-card { width: 300px; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-left: 3px solid var(--rr-marker); border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.6; box-shadow: 0 1px 2px rgba(0,0,0,.05); user-select: text; -webkit-user-select: text; cursor: auto; }
 .rb-card.q { border-left-color: var(--rr-inf-ink); }
-.rb-card.stack { box-shadow: 6px 6px 0 -1px var(--surface), 6px 6px 0 0 var(--border-strong); }
+.rb-card.rb-versions { box-shadow: 6px 6px 0 -1px var(--surface), 6px 6px 0 0 var(--border-strong); }
 .rb-card.pending { border-style: dashed; border-left-style: solid; background: var(--surface-2); }
 .rb-ch { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
 .rb-ch .rb-pin { margin: 0; vertical-align: middle; }
@@ -196,10 +196,10 @@ svg .rb-ann.lit > :is(rect, path, .rr-chip-bg, .rr-box) { stroke: var(--rr-marke
 .rb-conv .rb-anchor { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12.5px; }
 .rb-conv .rb-cbody p { max-width: 72ch; margin: 0 0 8px; } .rb-conv .rb-cbody p:last-child { margin-bottom: 0; }
 .rb-conv .rb-cbody .rr-pre { font-size: 12px; max-height: 320px; overflow: auto; }
-/* a drawing an answer made: a thumbnail; a click shows its chapter on the board */
-.rb-conv .rb-cfigs { cursor: zoom-in; }
-.rb-conv .rb-cfigs .rp-fig { max-height: 220px; overflow: hidden; }
-.rb-conv .rb-cfigs .rp-fig * { pointer-events: none; }
+/* a drawing an answer made: whole at the pane's width; a click (or View drawing) opens it in the room's figure viewer */
+.rb-conv .rb-card { display: block; }
+.rb-cfig { display: grid; gap: 4px; justify-items: start; cursor: zoom-in; }
+.rb-cfig > .rp-fig { width: 100%; box-sizing: border-box; }
 .rb-convask { padding: 10px 10px 12px 14px; }
 .rb-convto { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rb-convask .rx-row .grow { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -367,6 +367,9 @@ body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
    illustrations"); on a phone the illustration on top, the steps under it */
 .rb-split { display: grid; grid-template-columns: minmax(0, var(--steps, 380px)) minmax(0, 1fr); gap: 24px; align-items: start; }
 .rb-split.solo { grid-template-columns: minmax(0, 1fr); }
+/* a narrow board: the steps over the drawing, the drawing the chapter's whole width (review-board.js regionEl, stacked) */
+.rb-split.stacked { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.rb-split.stacked > .rb-illus { position: static; }
 .rb-split > .rp-card { min-width: 0; }
 /* the camera may frame a chapter at 0.88: its subtitle stays 12.5px or more on screen */
 .rb-split > .rp-card .rp-sub { font-size: 14.5px; }

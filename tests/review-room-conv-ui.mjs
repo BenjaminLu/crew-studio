@@ -132,6 +132,45 @@ try {
     await ctx.close();
   }
 
+  // ---------- a card with versions (say it another way) and a drawing its answer made: whole in the pane; the drawing opens whole ----------
+  {
+    const { ctx, p } = await open(1440);
+    await p.click('[data-board-notes] [data-tchip="2"]'); await settle(p, 400);
+    const st = await p.evaluate((sel) => { const l = document.querySelector(sel).getBoundingClientRect(), c = document.querySelector('[data-board-notes] [data-tcard="2:n1"]'), cr = c.getBoundingClientRect();
+      const btns = [...c.querySelectorAll(".rb-acts button")].map((b) => b.getBoundingClientRect()), head = c.querySelector(".rb-ch").getBoundingClientRect(), fig = c.querySelector('[data-card-figure="B5-1"] .rp-fig'), svg = fig?.querySelector("svg")?.getBoundingClientRect();
+      return { display: getComputedStyle(c).display, inPane: cr.left >= l.left - 1 && cr.right <= l.right + 1, btns: btns.length, btnsIn: btns.every((b) => b.left >= cr.left && b.right <= cr.right + 1), head: Math.round(head.height), tabs: c.querySelectorAll("[data-version-tab]").length,
+        fig: svg ? Math.round(svg.width) : 0, whole: !!fig && fig.scrollHeight <= fig.clientHeight + 1 && fig.scrollWidth <= fig.clientWidth + 1 }; }, LIST);
+    ok(st.display === "block" && st.inPane && st.btns >= 4 && st.btnsIn && st.head < 40 && st.tabs === 2, "a card with versions reads as one block in the pane: its head on one line, its version tabs, every button inside it", JSON.stringify(st));
+    ok(st.fig >= 200 && st.whole, "a drawing an answer made shows whole at the pane's width", JSON.stringify(st));
+    await p.click('[data-board-notes] [data-card-figure="B5-1"] .rp-fig', { timeout: 3000 }).catch(() => {}); await settle(p, 300);
+    const v = await p.evaluate(() => { const d = document.querySelector('[data-fig-viewer="B5-1"]'); return { open: !!d, svg: !!d?.querySelector("svg") }; });
+    await p.keyboard.press("Escape"); await settle(p, 200);
+    ok(v.open && v.svg && !(await p.$("[data-fig-viewer]")), "a click on that drawing opens it whole in the room's figure viewer; Escape closes it", JSON.stringify(v));
+    await ctx.close();
+  }
+
+  // ---------- a sentence's pin opens the pane on its question: on a desktop with the pane closed, on a narrow window, on a phone ----------
+  for (const width of [1440, 1000, 390]) {
+    const { ctx, p } = await open(width);
+    if (width <= 760 && await p.$(".rb-rail.open")) { await p.keyboard.press("Escape"); await settle(p, 300); }
+    if (width > 1180) { await p.click("[data-notes-toggle]"); await settle(p, 300); }
+    const closed = await p.evaluate(() => { const n = document.querySelector("[data-board-notes]"); return !n || !n.getClientRects().length || (n.getBoundingClientRect().top >= innerHeight - 1) || !n.closest(".rb-view") || getComputedStyle(n).transform !== "none" && !n.classList.contains("open"); });
+    await p.evaluate(() => document.querySelector('[data-board-vp] .rb-s .rb-pin[data-pin-for="what/t1/sentence#p0.s0"]').click()); await settle(p, 600);
+    const o = await p.evaluate((sel) => { const l = document.querySelector(sel), lr = l?.getBoundingClientRect(), e = l?.querySelector('[data-conv-thread="5"]'), er = e?.getBoundingClientRect();
+      return { pane: !!lr && lr.width > 200 && lr.height > 100 && lr.left < innerWidth && lr.top < innerHeight, entry: !!er && er.top >= lr.top - 1 && er.top < lr.bottom, lit: !!e?.classList.contains("lit") }; }, LIST);
+    ok(closed && o.pane && o.entry && o.lit, `${width}: a sentence's pin opens the closed conversation on its question`, JSON.stringify({ closed, o }));
+    await ctx.close();
+  }
+
+  // ---------- 1280: a chapter's drawing is never smaller on screen than beside the follow-up column (main: 337 to 368 px) ----------
+  {
+    const { ctx, p } = await open(1280), sizes = [];
+    for (const key of ["t1-2", "t1-6", "t1-7", "t1-8"]) { await p.click(`[data-board-rail] [data-outline="${key}"]`); await settle(p, 300);
+      sizes.push(await p.evaluate((k) => { const s = document.querySelector(`[data-region="${k}"] .rb-illus .rp-figbody svg`) || document.querySelector(`[data-region="${k}"] .rb-illus .rp-fig`); return { key: k, w: s ? Math.round(s.getBoundingClientRect().width) : 0 }; }, key)); }
+    ok(sizes.every((x) => x.w >= 368), "1280: every chapter's drawing is 368 px or wider on screen (as wide as beside the old follow-up column, or wider)", JSON.stringify(sizes));
+    await ctx.close();
+  }
+
   // ---------- zh-TW and dark: the same pane ----------
   {
     const { ctx, p } = await open(1440, { lang: "zh-TW", dark: true });
