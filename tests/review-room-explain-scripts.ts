@@ -341,32 +341,18 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
   ok(pk.status(slow.id, 1).state === "ready" && X.view(id).runs.find((x: any) => x.n === nE)?.status === "stopped", "the prepare went on in the background and finished for the version; the stopped run stays stopped");
   pk.ensure = ensure0 as any;
 
-  // "don't ask again" with a pick in the follow-up: the consent is for the offer with the decision in force, so the next follow-up
-  // goes without asking (the pre-decision hash would never match again)
+  // a question is the room tutor's own: it runs no script, so a new, undecided version of the skill that made the page asks
+  // nothing about scripts, prepares nothing, and the captain's consent for questions holds
   const from = X.view(id).versions.filter((x: any) => x.skill.id === dep.id).at(-1)!;
   const dF = dirs["dep-kit"]; writeFileSync(join(dF, "scripts", "use-py.py"), "print('v2')\n"); rmSync(join(dF, "requirements.txt")); E.skillLibrary().importFolder(dF, "captain");
-  const o6: any = X.offer(id, null, "ask", from.n), nF = n0();
-  ok(o6.kind === "ask" && o6.decide?.state === "pending" && o6.skill.v === 2, "a follow-up on a new, undecided version asks for the pick", JSON.stringify({ d: o6.decide?.state, v: o6.skill }));
-  script.push([["explain_answer", { answer: "Because of the lock.", cites: [], updated: false, summary: "lock" }]]);
-  await X.ask(id, { question: "Why this lock?", selection: null, version: from.n, confirm: o6.hash, consent: true, skillDecision: "text-only" }, "captain"); const runF = await waitRun(nF);
-  const o7: any = X.offer(id, null, "ask", from.n);
-  ok(runF?.status === "done" && o7.decide?.state === "text-only" && o7.hash !== o6.hash && X.view(id).consent?.plan === o7.hash, "the consent given with the pick is stored for the offer after the decision", JSON.stringify({ s: runF?.status, e: runF?.error, consent: X.view(id).consent, o6: o6.hash, o7: o7.hash }));
-  const nG = n0(); script.push([["explain_answer", { answer: "Still the lock.", cites: [], updated: false, summary: "lock again" }]]);
-  await X.ask(id, { question: "And again?", selection: null, version: from.n }, "captain"); const runG = await waitRun(nG);
-  ok(runG?.status === "done" && runG.auto === true, "the next follow-up goes without asking", JSON.stringify({ s: runG?.status, auto: runG?.auto, e: runG?.error }));
-  // the same with Approve with scripts: the run prepares the version, and the prepared env changes the plan's interpreters;
-  // the consent moves with it, so the next follow-up still goes without asking
-  writeFileSync(join(dF, "requirements.txt"), fx.requirements);
-  writeFileSync(join(dF, "scripts", "use-py.py"), "import sys\nimport fixture_py\nprint(fixture_py.shout('v3'))\n"); E.skillLibrary().importFolder(dF, "captain");
-  const o8: any = X.offer(id, null, "ask", from.n), nH = n0();
-  ok(o8.decide?.state === "pending" && o8.skill.v === 3, "v3 is undecided", JSON.stringify({ d: o8.decide?.state, v: o8.skill }));
-  script.push([["explain_answer", { answer: "Approved.", cites: [], updated: false, summary: "approved" }]]);
-  await X.ask(id, { question: "Approve it?", selection: null, version: from.n, confirm: o8.hash, consent: true, skillDecision: "scripts" }, "captain"); const runH = await waitRun(nH, 240000);
-  const o9: any = X.offer(id, null, "ask", from.n);
-  ok(runH?.status === "done" && runH.prepare?.state === "done" && o9.decide?.state === "approved" && X.view(id).consent?.plan === o9.hash, "after the prepare, the consent given with Approve is for the offer with the prepared env", JSON.stringify({ s: runH?.status, e: runH?.error, p: runH?.prepare, consent: X.view(id).consent, o9: o9.hash, i: o9.scripts?.interpreters }));
-  const nI = n0(); script.push([["explain_answer", { answer: "Still approved.", cites: [], updated: false, summary: "approved again" }]]);
-  await X.ask(id, { question: "And now?", selection: null, version: from.n }, "captain"); const runI = await waitRun(nI);
-  ok(runI?.status === "done" && runI.auto === true, "the next follow-up after an approval and its prepare goes without asking", JSON.stringify({ s: runI?.status, auto: runI?.auto, e: runI?.error }));
+  const o6: any = X.offer(id, null, "ask", from.n), nF = n0(), pq = prompts.length;
+  ok(o6.kind === "ask" && o6.decide === null && o6.scripts === null, "a question on a page whose skill has a new, undecided version asks nothing about scripts", JSON.stringify({ d: o6.decide, s: o6.scripts }));
+  script.push([["explain_answer", { answer: "Because of the lock.", cites: [] }]]);
+  await X.ask(id, { question: "Why this lock?", version: from.n, confirm: o6.hash, consent: true }, "captain"); const runF = await waitRun(nF);
+  ok(runF?.status === "done" && !runF.prepare && !runF.decided && !(prompts[pq]?.tools ?? []).includes("skill_run") && X.view(id).consent?.plan === o6.hash, "it runs with no prepare, no decision and no skill_run; the consent is for its offer", JSON.stringify({ s: runF?.status, p: runF?.prepare, d: runF?.decided }));
+  const nG = n0(); script.push([["explain_answer", { answer: "Still the lock.", cites: [] }]]);
+  await X.ask(id, { question: "And again?", version: from.n }, "captain"); const runG = await waitRun(nG);
+  ok(runG?.status === "done" && runG.auto === true, "the next question goes without asking", JSON.stringify({ s: runG?.status, auto: runG?.auto, e: runG?.error }));
 }
 
 // ---------- the built-in baton, exactly as pinned: its scripts approved in advance (the captain's decision), recorded once ----------
