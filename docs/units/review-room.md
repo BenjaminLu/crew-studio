@@ -70,8 +70,10 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   arrowhead 120ms), 180ms apart, their labels written in (clip-path, 400ms); a scene's title gets a highlighter (450ms); a
   chart's bars grow (600ms); a check's mark is drawn (250ms); a new point slides in. A step of a diagram draws only the part
   it adds, a redraw draws nothing again, and with reduced motion the final picture shows at once. One beat a point: the
-  picture's step, the point and the caption move together; a point stays max(2.6 s, 170 ms a character), then the next
-  one follows. Studio lays a flowchart out left to right or top down, whichever reads larger in the box. The caption
+  picture's step, the point and the caption move together; a point stays its reading time, then the next one follows:
+  170 ms a CJK character (Han, kana, Hangul and their punctuation), 60 ms any other letter, digit or mark (English at
+  about 200 words a minute), spaces free, each run of a mixed point by its own script, never under 2.6 s.
+  Studio lays a flowchart out left to right or top down, whichever reads larger in the box. The caption
   is a paper strip.
 - **On a phone** (390×844): the room is still one screen: the board (its answers and its questions as sheets from the
   bottom, its first open on the answers), the play bar on it (the caption, a point back and on, play, replay), and in place
@@ -1126,7 +1128,8 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     the next step …"; review-room-board-only-ui (each item, each failing where the stage was).
 13. No voice; voice questions: playback is captions only, at reading pace, with no voice menu and no speech or audio
     request; a room with old voice data loads; push to talk on-device only, the transcript shown before it is sent.
-    — review-room-ui "the play bar has no voice menu …", "playback steps through the points at reading pace …", "the
+    — review-room-ui "the play bar has no voice menu …", "playback steps through the points at reading pace …", "the reading pace is
+    script-aware …", "the
     mic is offered only after …", "holding the mic fills the question …", "without on-device recognition the mic stays
     off …", "once the captain leaves a room, its poll and its playback no longer redraw …", "leaving the room stops its
     playback and its mic at once", "what

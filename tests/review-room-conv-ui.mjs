@@ -36,7 +36,7 @@ async function open(width, o = {}) {
   const phone = width <= 760, lang = o.lang || "en";
   const ctx = await browser.newContext({ viewport: { width, height: phone ? 844 : 900 }, colorScheme: o.dark ? "dark" : "light", reducedMotion: "reduce", hasTouch: phone && width < 600 });
   await ctx.addInitScript((lg) => { try { if (!sessionStorage.getItem("seeded")) { localStorage.setItem("crew.lang", lg); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); sessionStorage.setItem("seeded", "1"); } } catch {}
-    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak: () => {}, cancel: () => {} } }); window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined; }, lang);
+    window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined; }, lang);
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await ctx.route(/\/api\/remote\/me$/, (r) => r.fulfill({ json: { kind: "desktop", device: null } }));
   const room = boardRoom(lang);
