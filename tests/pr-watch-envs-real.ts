@@ -4,8 +4,9 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // <service>/overlays/<prefix>-<environment>/ folders, service and image names unlike the repositories', one repository
 // deployed as three services, every tag shape (version-sha, branch-sha, bare sha, version-only), and who builds an image
 // told by the commit in its tag, the repository's git tags and its CI config (Drone, GitHub Actions), together; proofs
-// that disagree are a pick. Then live: every service's manifest must run a merge, and a version-only tag resolves
-// through the repository's git tags.
+// that disagree are a pick. Then live: a merge is live when any service's manifest runs it (each service's status and
+// tag shown), unknown when none does and one cannot be read, and a version-only tag resolves through the repository's
+// git tags.
 //   bun tests/pr-watch-envs-real.ts
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,6 +53,14 @@ const J = (v: unknown) => JSON.stringify(v);
   const pr = E.propose(["acme/shop-monorepo"], [], [], files, { owner: () => [{ repo: "acme/shop-monorepo", strength: "strong", signals: [{ kind: "commit", sha: "abcdef0" }] }], tagOk: () => true });
   const g0 = pr.groups[0];
   ok(pr.groups.length === 1 && g0.state === "ok" && g0.candidates.length === 1 && g0.candidates[0].detect.kind === "files" && R.filesOf(g0.candidates[0].detect).length === 2 && g0.candidates[0].evidence.more?.length === 1, "a repository deployed as two services: one candidate reading both manifests", J(pr));
+  const evs = [g0.candidates[0].evidence, ...(g0.candidates[0].evidence.more ?? [])];
+  ok(J(evs.map((e) => [e.service, e.image, e.tag])) === J([["storefront", "registry.example/acme/go-shop", "1.2.3-abcdef0"], ["checkout-server", "registry.example/acme/go-shop", "1.2.3-abcdef0"]]), "each manifest of it says its service and the image:tag it runs, in the order of the detect's files", J(evs));
+  ok(J(evs.map((e) => e.path)) === J(R.filesOf(g0.candidates[0].detect).map((f) => f.path)), "the rows line up with the detect's files (the dialog saves the ticked ones by position)");
+  ok(E.serviceOf("deploy/storefront/overlays/cluster-prod/flux-patch.yaml") === "storefront" && E.serviceOf("apps/web-app/overlays/stg/deployment.yaml") === "web-app" && E.serviceOf("legacy/stg/web-app.yaml") === "web-app" && E.serviceOf("charts/shop/values-production.yaml") === "shop",
+    "a manifest's service: its file name unless that is a layout word or an environment, else the deepest folder that is neither");
+  // several manifests: live when any runs it; none: unknown when one cannot be read, else off
+  ok(R.anyOn([false, true, false]) === true && R.anyOn([true, null]) === true && R.anyOn([false, null]) === null && R.anyOn([false, false]) === false && R.anyOn([null]) === null && R.anyOn([true]) === true,
+    "any manifest running the commit is enough; else one unread is unknown; else off");
 }
 
 // ---------- the module ----------
@@ -106,18 +115,38 @@ try {
   ok(tb.over && tb.reads === 5 && tb.notes.some((n: any) => /stopped after 5 reads/.test(n.en)), "a tight budget stops the search and says where", J(tb.notes));
   tight.stop();
 
-  // Accept, then live: a merge is in production when every service's manifest runs it; a version-only tag resolves
+  // Accept, then live: a merge is in production when any service's manifest runs it; a version-only tag resolves
   const picks = v.groups.filter((g: any) => g.state === "ok").map((g: any) => ({ repo: g.repo, env: g.env, detect: g.candidates[0].detect }));
   const pA = D.more("northwind/shop-monorepo", 7, "Order book cache", ME, { merged: true }), pB = D.more("northwind/weather-api", 3, "Faster quotes", ME, { merged: true });
   D.contains[L.mono[0]] = [D.merge(pA)]; D.contains[sha("weather-v2.4.1")] = [D.merge(pB)];
   const acc = await call("/api/prs/envs/accept", { picks, production: { production: true }, config: { repository: L.cfg, ref: "", path: "deploy" }, base: W.view().settings });
   ok(acc.status === 200 && W.state.envConfig?.path === "deploy", "Accept saves, the folder remembered", J(acc.body).slice(0, 200));
   const merged = async (id: string) => { const at = W.snapshot.at; await call("/api/prs/refresh", {}); await until(() => W.snapshot.at !== at && !W.view().refreshing, 15000); return W.view().merged.find((r: any) => r.id === id); };
-  const a1 = await merged("northwind/shop-monorepo#7");
-  ok(a1?.envs.find((e: any) => e.name === "production")?.on === false && a1.tab === "merged", "two of three services run the merge, profile-service does not yet: not live", J(a1?.envs));
-  D.files[`${L.cfg}/deploy/profile-service/overlays/cluster-prod/flux-patch.yaml`] = D.files[`${L.cfg}/deploy/checkout-server/overlays/cluster-prod/flux-patch.yaml`];
-  const a2 = await merged("northwind/shop-monorepo#7");
-  ok(a2?.envs.find((e: any) => e.name === "production")?.on === true && a2.tab === "live", "all three run it: live", J(a2?.envs));
+  // only storefront was rolled out with the merge; checkout-server and profile-service still run an older tag
+  const pD = D.more("northwind/shop-monorepo", 8, "Ledger export", ME, { merged: true });
+  const a1 = await merged("northwind/shop-monorepo#7"), prodOf = (r: any) => r?.envs.find((e: any) => e.name === "production");
+  const pods = (r: any) => Object.fromEntries((prodOf(r)?.pods ?? []).map((x: any) => [x.service, [x.on, x.tag]]));
+  ok(prodOf(a1)?.on === true && a1.tab === "live", "one service of three (storefront) runs the merge, the others an older tag: live", J(a1?.envs));
+  ok(J(pods(a1)) === J({ "checkout-server": [false, `0.9.11-${L.mono[1].slice(0, 7)}`], "profile-service": [false, `0.9.11-${L.mono[1].slice(0, 7)}`], storefront: [true, `0.9.12-${L.mono[0].slice(0, 7)}`] }),
+    "each service's status and the tag it runs are on the row", J(prodOf(a1)?.pods));
+  const d1 = W.view().merged.find((r: any) => r.id === "northwind/shop-monorepo#8");
+  ok(prodOf(d1)?.on === false && d1.tab === "merged" && Object.values(pods(d1)).every((x: any) => x[0] === false), "a merge no service runs: off, waiting", J(d1?.envs));
+  // one service's tag names no commit and no git tag: none runs the merge and one cannot be read, so unknown, never off
+  const profile = `${L.cfg}/deploy/profile-service/overlays/cluster-prod/flux-patch.yaml`, was = D.files[profile];
+  D.files[profile] = was.replace(/go-shop:\S+/, "go-shop:latest");
+  const d2 = await merged("northwind/shop-monorepo#8"), a2 = W.view().merged.find((r: any) => r.id === "northwind/shop-monorepo#7");
+  ok(prodOf(d2)?.on === null && d2.tab === "merged" && J(pods(d2)["profile-service"]) === J([null, "latest"]), "none runs it and one service cannot be read: unknown, not off", J(d2?.envs));
+  ok(prodOf(a2)?.on === true && a2.tab === "live", "one service that cannot be read does not undo another that runs the merge", J(a2?.envs));
+  D.files[profile] = was;
+  // the release brief for #8 after storefront rolled out a newer tag carrying it (the list not refreshed since): no line
+  // moves storefront back to the older tag that carries #8; the services still on the old tag move to it
+  const carry = sha("mono-carry"), ahead = sha("mono-newer"), store = `${L.cfg}/deploy/storefront/overlays/cluster-prod/flux-patch.yaml`, storeWas = D.files[store];
+  D.tags["northwind/shop-monorepo"] = [{ name: "0.9.13", sha: carry }]; D.contains[carry] = [D.merge(pD)]; D.contains[ahead] = [D.merge(pD), carry];
+  D.files[store] = storeWas.replace(/go-shop:0\.9\.12-[0-9a-f]+/, `go-shop:0.9.14-${ahead.slice(0, 7)}`);
+  const br = await call("/api/prs/brief", { prs: ["northwind/shop-monorepo#8"] }), bl = br.body.batches?.[0]?.units?.[0]?.lines ?? [], by = (svc: string) => bl.find((l: any) => l.service === svc);
+  ok(br.status === 200 && by("storefront")?.already === true && !by("storefront")?.newTag && by("storefront")?.oldTag === `0.9.14-${ahead.slice(0, 7)}`, "a service already on a newer tag carrying the batch gets no change line (no move back to 0.9.13)", J(bl));
+  ok(["checkout-server", "profile-service"].every((s) => by(s)?.newTag === "0.9.13" && by(s)?.oldTag === `0.9.11-${L.mono[1].slice(0, 7)}` && !by(s)?.already), "the services still on the old tag move to the tag that carries it", J(bl));
+  D.files[store] = storeWas; delete D.tags["northwind/shop-monorepo"];
   const b1 = W.view().merged.find((r: any) => r.id === "northwind/weather-api#3");
   ok(b1?.envs.find((e: any) => e.name === "production")?.on === true && gh.calls.some((c) => c.path.startsWith("/repos/northwind/weather-api/tags")), "a version-only tag (2.4.1) is resolved through the git tag v2.4.1 to the commit that contains the merge", J(b1?.envs));
   // a tag that names no commit and no git tag (latest): the environment reads "not read", never off, with at most three

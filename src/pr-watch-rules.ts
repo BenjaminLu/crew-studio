@@ -449,11 +449,20 @@ export function nextStep(p: StepInput): Step {
 /** "deployed" is never a setting: Studio uses it for a repository's own GitHub environments when none are set (the
  *  environment's latest successful deployment contains the head). */
 export type EnvDetect = { kind: "deployed"; environment: string } | { kind: "deployment"; environment: string } | { kind: "check"; name: string } | { kind: "branch"; branch: string; environment?: string } | { kind: "file"; repository: string; path: string; template: string; ref?: string }
-  /** several manifests, one per service a repository is deployed as: the environment has a commit when every one runs it */
+  /** several manifests, one per service a repository is deployed as: the environment has a commit when any one runs it (anyOn) */
   | { kind: "files"; files: EnvFile[] };
 export type EnvFile = { repository: string; path: string; template: string; ref?: string };
 /** The manifests a detect reads (none for the kinds that read no file). */
 export const filesOf = (d: EnvDetect): EnvFile[] => d.kind === "file" ? [{ repository: d.repository, path: d.path, template: d.template, ...(d.ref ? { ref: d.ref } : {}) }] : d.kind === "files" ? d.files : [];
+/** One manifest of a several-service detect as a refresh read it: its service (the folder it is under), the tag it runs
+ *  (null: not read) and whether that tag's commit contains the commit asked about (null: not read). */
+export type EnvPod = { service: string; repository: string; path: string; tag: string | null; on: boolean | null };
+/**
+ * Several manifests of one repository in one environment (a repository deployed as several services): the environment
+ * has a commit when ANY of them runs it, since a release often rolls out one service and leaves the others on an older
+ * tag of the same repository. None runs it: unknown when one could not be read, else off.
+ */
+export const anyOn = (ons: (boolean | null)[]): boolean | null => ons.includes(true) ? true : ons.includes(null) ? null : false;
 /** One repository's own way to detect an environment (a GitOps file per service, a GitHub environment named differently). */
 export type EnvEach = { repo: string; detect: EnvDetect };
 /** One named environment. `detect`, when set, applies to every repository (or to `repos` when it names some); `each`

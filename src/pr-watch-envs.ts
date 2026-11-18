@@ -54,6 +54,19 @@ export function envOfPath(path: string, repos: string[] = []): Known | null {
   return null;
 }
 
+// folder and file names that say how a manifest is laid out, never which service it is
+const LAYOUT = /^(?:overlays?|bases?|apps?|applications?|services?|svc|deploy(?:ments?)?|k8s|kube|kubernetes|manifests?|helm|charts?|values|envs?|environments?|clusters?|releases?|templates?|kustomize|gitops|flux|argo(?:cd)?|workloads?|kustomization|flux-patch|patch(?:es)?|helm-?release|statefulset|daemonset|cronjob|image|images|index|main|config)$/i;
+/** The service a manifest is for, as its path says it: its file name when that is not a layout word (deployment.yaml,
+ *  kustomization.yaml, values.yaml) or an environment, else the deepest folder that is neither (deploy/storefront/
+ *  overlays/cluster-prod/flux-patch.yaml is storefront); the file name as a last resort. */
+export function serviceOf(path: string): string {
+  const segs = String(path ?? "").split("/").filter(Boolean), file = (segs.pop() ?? "").replace(/\.(ya?ml|json)$/i, "");
+  const plain = (x: string) => !!x && !LAYOUT.test(x) && !envOfPath(x);
+  if (plain(file)) return file.slice(0, 60);
+  for (let i = segs.length - 1; i >= 0; i--) if (plain(segs[i])) return segs[i].slice(0, 60);
+  return (file || String(path ?? "")).slice(0, 60);
+}
+
 /** How well an image reference (registry/path/name, no tag) names a repository: "strong" when its name or a path part
  *  is the repository's name (ignoring - _ . and case), "weak" when one holds the other (4 characters at least). */
 export function imageMatch(image: string, repo: string): "strong" | "weak" | null {
@@ -189,11 +202,14 @@ export function publishedImages(path: string, text: string, repo?: string): { im
 // ---------- the proposal ----------
 /** One piece of evidence: a manifest line (with what tied that very line's image and tag to the repository, and the
  *  other repositories the same line is proposed or already set for) or a deployment. */
-type Ev = { path: string | null; line: number | null; text: string; tw?: string; url: string | null; signals?: Signal[]; alsoFor?: string[]; setFor?: string[] };
+type Ev = { path: string | null; line: number | null; text: string; tw?: string; url: string | null; signals?: Signal[]; alsoFor?: string[]; setFor?: string[];
+  /** a manifest line's service (serviceOf), and the image and tag it runs now */
+  service?: string; image?: string; tag?: string };
 export type Candidate = { id: string; source: "deployment" | "file"; detect: R.EnvDetect; strength: "strong" | "weak"; problem: Finding["problem"];
   /** what Studio saw: a deployment's ref and commit (text, and tw in Traditional Chinese), or the manifest line; and
-   *  where to see it on GitHub. `more`: the other manifests of a repository deployed as several services. `signals`:
-   *  what tied the image to the repository */
+   *  where to see it on GitHub. `more`: the other manifests of a repository deployed as several services, in the order
+   *  of the detect's `files` (the captain ticks each one; only those ticked are saved). `signals`: what tied the image
+   *  to the repository */
   evidence: Ev & { more?: Ev[] } };
 export type Group = { id: string; repo: string; env: string; candidates: Candidate[];
   /** ok: one strong usable candidate and nothing set yet (ticked); pick: the captain chooses; set: the settings already detect it this way */
@@ -213,8 +229,9 @@ export const MAX_FILES = 30;
  * The review table: each watched repository × environment, from its GitHub deployments and the config repository's
  * manifests. An image is tied to a repository by `match` (src/pr-watch.ts checks the tag's commit and the repository's
  * version tags; without it, by name). Every manifest a repository's image is proven to run in for one environment (a
- * repository deployed as several services) makes one candidate together: that environment has a merge when every one
- * of them runs it. A weak or unusable line is a candidate of its own, never ticked.
+ * repository deployed as several services) makes one candidate together, each manifest a row of its own that the captain
+ * ticks or not (only the ticked ones are saved): that environment has a merge when any ticked one runs it (R.anyOn). A
+ * weak or unusable line is a candidate of its own, never ticked.
  */
 export function propose(repos: string[], existing: R.EnvSetting[], deployments: DeploymentSeen[], files: FileSeen[], match: Match = byName(repos)): Proposal {
   const groups = new Map<string, Group>(), names = new Map<string, Known>(), skipped: Proposal["skipped"] = [];
@@ -253,7 +270,7 @@ export function propose(repos: string[], existing: R.EnvSetting[], deployments: 
   const lineOwners = new Map<string, string[]>();
   for (const { list } of hits.values()) for (const h of list) { const k = `${h.f.path}#${h.x.line}`; lineOwners.set(k, [...new Set([...(lineOwners.get(k) ?? []), h.owner.repo])]); }
   const evOf = (h: Hit): Ev => { const also = (lineOwners.get(`${h.f.path}#${h.x.line}`) ?? []).filter((r) => !R.sameRepo(r, h.owner.repo));
-    return { path: h.f.path, line: h.x.line, text: h.x.text, url: blobUrl(h.f.repository, h.f.ref, h.f.path, h.x.line), signals: sigOf(h.owner, h.x.tag), ...(also.length ? { alsoFor: also } : {}) }; };
+    return { path: h.f.path, line: h.x.line, text: h.x.text, url: blobUrl(h.f.repository, h.f.ref, h.f.path, h.x.line), signals: sigOf(h.owner, h.x.tag), service: serviceOf(h.f.path), image: h.x.image, tag: h.x.tag, ...(also.length ? { alsoFor: also } : {}) }; };
   for (const { g, list } of hits.values()) {
     const sure = list.filter((h) => h.owner.strength === "strong" && !h.problem).slice(0, MAX_FILES);
     if (sure.length) { const fs = sure.map(fileOf), [first, ...rest] = sure.map(evOf);

@@ -279,7 +279,8 @@ export function addDeployConfig(D: ReturnType<typeof fixtureData>, cfg = "northw
  * repositories' names, one repository deployed as three services, and every tag shape: version-sha, branch-sha, a bare
  * sha and version-only. Who builds what is told by commits, git tags and CI configs (Drone, GitHub Actions), as GitHub
  * would; a sidecar image nobody watched builds; and one image two kinds of proof disagree about.
- *   northwind/shop-monorepo  → go-shop (storefront, checkout-server, profile-service), proven by the commit in its tag
+ *   northwind/shop-monorepo  → go-shop (storefront, checkout-server, profile-service), proven by the commit in its tag;
+ *                              storefront on a newer tag than the other two (one service rolled out)
  *   northwind/shop-router    → shop-aggregator, proven by its GitHub Actions build-push tags
  *   northwind/weather-api         → weatherd, version-only 2.4.1, proven by its git tag v2.4.1 and its Drone config
  *   northwind/orders         → orders-server (tag v3.0.0-<sha>), proven by the commit
@@ -297,7 +298,8 @@ export function addRealLayout(D: ReturnType<typeof fixtureData>, cfg = "northwin
   Object.assign(D.files, {
     // a second line naming the same image (a migration init container): Studio reads the first, this one is left out
     [ov("storefront", "cluster-prod")]: fp("go-shop", `0.9.12-${mono[0].slice(0, 7)}`) + `      initContainers:\n        - name: migrate\n          image: ${R}/go-shop:migrate-latest\n`,
-    [ov("checkout-server", "cluster-prod")]: fp("go-shop", `0.9.12-${mono[0].slice(0, 7)}`),
+    // a release rolled out one service: storefront runs the newest tag, checkout-server and profile-service an older one
+    [ov("checkout-server", "cluster-prod")]: fp("go-shop", `0.9.11-${mono[1].slice(0, 7)}`),
     [ov("profile-service", "cluster-prod")]: fp("go-shop", `0.9.11-${mono[1].slice(0, 7)}`),
     [ov("aggregator", "cluster-prod")]: fp("shop-aggregator", `main-${router.slice(0, 8)}`),
     [ov("weatherd", "cluster-prod")]: fp("weatherd", "2.4.1"),

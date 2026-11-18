@@ -5,7 +5,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // in, the keyboard kept in the dialog, ② the scan, ③ the matrix (a row per repository, a column per environment; sure,
 // pick, not found; repositories with nothing found listed greyed; the summary and legend), Accept held until every pick is
 // made with a link to the first, one Accept that saves, writes nothing to GitHub and closes with a toast, the settings'
-// cards per environment, Advanced, a failed search clearing the table, re-discovery folding what is set, and screenshots
+// cards per environment, Advanced, a failed search clearing the table, re-discovery folding what is set, a manifest per
+// service ticked one by one (only the ticked saved), each service's status on a live row and its tag on the settings card, and screenshots
 // at 1440 and 390, light and dark (no sideways scroll, evidence not clipped), in tests/out/pr-watch/.
 //   bun tests/pr-watch-envs-ui.mjs          (PLAYWRIGHT_MODULE may point at a playwright install)
 import { spawn } from 'node:child_process';
@@ -73,7 +74,10 @@ try {
     && (await C('northwind/checkout-api|production').innerText()).includes('apps/checkout-api/overlays/prod/deployment.yaml:6'), 'checkout-api production: a green chip, ticked, the manifest path and line under it');
   ok(await C('northwind/checkout-api|production').locator(`a[href="https://github.com/${cfg}/blob/main/apps/checkout-api/overlays/prod/deployment.yaml#L6"]`).count() === 1, 'the evidence links the line on GitHub');
   ok(await p.locator('[data-prs-discover-cell="northwind/web-app|dev"] .pw-chip.none').count() === 1, 'an environment a repository lacks: a grey not found');
-  ok(await C('northwind/web-app|staging').getAttribute('data-state') === 'ok' && /2 services: live when every one runs it/.test(await C('northwind/web-app|staging').innerText()) && await C('northwind/web-app|staging').locator('a.pw-path').count() === 2, 'web-app staging: its image in two manifests, one ticked cell reading both', await C('northwind/web-app|staging').innerText());
+  const wst = C('northwind/web-app|staging'), wfiles = wst.locator('[data-prs-discover-file]');
+  ok(await wst.getAttribute('data-state') === 'ok' && /2 services: live when any ticked one runs it/.test(await wst.innerText()) && await wst.locator('a.pw-path').count() === 2 && await wfiles.count() === 2 && await wfiles.nth(0).isChecked() && await wfiles.nth(1).isChecked(),
+    'web-app staging: its image in two manifests, a row and a tick each, both ticked', await wst.innerText());
+  ok(J(await wst.locator('[data-prs-discover-pod]').evaluateAll((es) => es.map((e) => [e.querySelector('b').textContent, e.dataset.prsDiscoverPod, /^web-app:[0-9a-f]{9}$/.test(e.querySelector('[data-prs-discover-runs]')?.textContent || '')]))) === J([['web-app (apps)', 'apps/web-app/overlays/stg/deployment.yaml', true], ['web-app (legacy)', 'legacy/stg/web-app.yaml', true]]), 'each row: the service (two of the same name told apart by the folder they differ in), the file and the image:tag it runs now', await wst.innerText());
   ok(/commit [0-9a-f]{12} is in the repository/.test(await C('northwind/web-app|production').locator('[data-prs-discover-signals]').innerText()), 'the cell says what tied the image to the repository', await C('northwind/web-app|production').innerText());
   const ledger = C('northwind/ledger|production');
   ok(await ledger.locator('[data-prs-discover-pick]:disabled').count() === 1 && /does not end in a commit/.test(await ledger.innerText()) && /only resembles/.test(await ledger.innerText()), 'ledger: the tag with no commit cannot be picked; the look-alike is marked weak');
@@ -85,6 +89,12 @@ try {
   ok(!/\bnull\b/.test(await p.locator('[data-prs-discover]').innerText()) && !(await p.locator('[data-prs-discover]').innerText()).includes('production [production]'), 'no empty part shows as text, no doubled badge');
   ok(await p.evaluate(() => { const f = document.querySelector('[data-prs-dialog="discover"] .pw-mf'); return getComputedStyle(f).position === 'sticky'; }), 'the footer with Accept stays in view');
   await p.screenshot({ path: join(shots, 'envs-discover-1440-light.png') });
+  // nothing ticked in a several-service cell: said in the cell, and Accept no longer counts that repository's cell
+  await wfiles.nth(0).uncheck(); await wfiles.nth(1).uncheck();
+  ok(await wst.locator('[data-prs-discover-none]').count() === 1 && /No manifest ticked: this environment is left out/.test(await wst.innerText()) && !/live when any ticked one runs it/.test(await wst.innerText()), 'every manifest unticked: the cell says the environment is left out', await wst.innerText());
+  await wfiles.nth(0).check();
+  ok(await wst.locator('[data-prs-discover-none]').count() === 0 && await wfiles.nth(0).isChecked() && !(await wfiles.nth(1).isChecked()), 'ticking one again takes the notice away, the other stays unticked');
+  // only one of web-app's staging manifests ticked: only that one is saved
   await C('northwind/checkout-api|staging').locator('[data-prs-discover-pick]').nth(1).check();
   await C('northwind/ledger|production').locator('[data-prs-discover-skip]').check();
   ok(!(await p.locator('[data-prs-discover-accept]').isDisabled()) && (await p.locator('[data-prs-discover-accept]').innerText()) === 'Accept 2 repositories' && await p.locator('[data-prs-discover-left]').isHidden(), 'every pick made: Accept names the repositories it saves', await p.locator('[data-prs-discover-accept]').innerText());
@@ -94,6 +104,8 @@ try {
   const s = (await api('/api/prs')).body, prodEnv = s.settings.environments.find((e) => e.name === 'production');
   ok(prodEnv?.production && prodEnv.each.map((x) => x.repo).join() === 'northwind/checkout-api,northwind/web-app' && s.envConfig?.repository === cfg, 'one production covering checkout-api and web-app, and the config repository, saved', JSON.stringify(s.settings.environments));
   ok(!writes().length, 'accepting wrote nothing to GitHub');
+  const wstSaved = s.settings.environments.find((e) => e.name === 'staging')?.each?.find((x) => x.repo === 'northwind/web-app')?.detect;
+  ok(wstSaved?.kind === 'file' && wstSaved.path === 'apps/web-app/overlays/stg/deployment.yaml', 'web-app staging saved with the ticked manifest only', JSON.stringify(wstSaved));
 
   // the settings: a card per environment, each repository and its source
   await settings();
@@ -138,6 +150,30 @@ try {
     await o.p.screenshot({ path: join(shots, `envs-discover-${w}-${theme}-${lang}.png`), fullPage: w === 390 });
     await o.ctx.close();
   }
+  // checkout-api deployed as two services in production, the worker still on an older tag: #23 is live (its merge is in
+  // the api's tag), the row shows each service and the one behind, and the settings card each service's tag
+  { const prodPath = 'apps/checkout-api/overlays/prod/deployment.yaml', workerPath = 'apps/checkout-worker/overlays/prod/deployment.yaml', old = 'v1.3.0-0a1b2c3d4e5f';
+    gh.data.files[`${cfg}/${workerPath}`] = `spec:\n  template:\n    spec:\n      containers:\n        - name: app\n          image: registry.example/checkout-api:${old}\n`;
+    const cur = (await api('/api/prs')).body.settings, envs = structuredClone(cur.environments), pe = envs.find((e) => e.name === 'production'), x = pe.each.find((y) => y.repo === 'northwind/checkout-api');
+    x.detect = { kind: 'files', files: [{ repository: cfg, path: prodPath, template: x.detect.template }, { repository: cfg, path: workerPath, template: x.detect.template }] };
+    ok((await api('/api/prs/settings', { settings: { ...cur, environments: envs }, base: cur })).status === 200, 'checkout-api production set to two manifests');
+    const at = (await api('/api/prs')).body.refreshedAt; await api('/api/prs/refresh', {});
+    for (let i = 0; i < 150; i++) { const v = (await api('/api/prs')).body; if (v.refreshedAt !== at && !v.refreshing) break; await new Promise((r) => setTimeout(r, 100)); }
+    const o = await open(1440, 'light'); await o.p.goto(`${base}/#/prs`); await o.p.waitForSelector('[data-prs-page]:not([data-loading])');
+    await o.p.click('[data-prs-tab="live"]'); await o.p.waitForSelector('[data-prs-ship="live"]');
+    const row = o.p.locator('[data-prs-merged="northwind/checkout-api#23"]'), line = row.locator('[data-prs-pods="production"]');
+    ok(await line.count() === 1 && /^checkout-api ✓ v1\.4\.0-[0-9a-f]{7}$/m.test(await line.innerText()) && (await line.innerText()).includes('checkout-worker ✗ v1.3.0-0a1b2c3') && !(await line.innerText()).includes('production:') && /^older tag: checkout-worker$/.test(await row.locator('[data-prs-pods-behind]').innerText())
+      && await line.locator('[data-prs-pod="checkout-worker"]').getAttribute('title') === `production · checkout-worker ✗ ${old}`,
+      'a merge one service runs is live; the row shows each service with its tag and, muted, the one still on an older tag', await row.innerText());
+    const faint = await o.p.locator('.faint').first().evaluate((e) => getComputedStyle(e).color), colour = (sel) => line.locator(sel).first().evaluate((e) => getComputedStyle(e).color);
+    ok(await colour('[data-prs-pods-behind]') === faint && await colour('.pw-pod-ok') !== faint && await colour('[data-prs-pod="checkout-worker"] .faint') === faint, 'the hint and ✗ are muted, ✓ is coloured');
+    ok(await line.evaluate((e) => { const pods = [...e.querySelectorAll('.pw-pod')], cell = e.closest('.pw-podrow').getBoundingClientRect(), pr = e.closest('[data-prs-merged]').querySelector('.pw-pr').getBoundingClientRect();
+      return pods.every((p) => p.getBoundingClientRect().height < 20 && p.scrollWidth <= p.clientWidth + 1) && Math.abs(cell.left - pr.left) < 2 && cell.width > 600; }), 'each service on one unclipped line, in a full-width line under the row', await line.evaluate((e) => e.closest('.pw-podrow').getBoundingClientRect().width));
+    await o.p.screenshot({ path: join(shots, 'envs-pods-live-1440-light.png'), fullPage: true });
+    await o.p.click('[data-prs-settings]'); await o.p.waitForSelector('[data-prs-envsum="production"]');
+    const pc = await o.p.locator('[data-prs-envsum="production"]').innerText();
+    ok(pc.includes(`checkout-worker · ${cfg} · ${workerPath} · ${old}`) && /checkout-api · .* · v1\.4\.0-[0-9a-f]{12}/.test(pc), 'the settings card lists each service with the tag it runs', pc);
+    await o.ctx.close(); }
   ok(!gh.unknown.length, 'every GitHub request was one the fixture knows', JSON.stringify(gh.unknown));
 } catch (e) { ok(false, 'the suite ran to its end', String(e?.stack || e)); }
 finally { await browser?.close().catch(() => {}); app.kill(); gh.stop(); }
