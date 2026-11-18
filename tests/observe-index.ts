@@ -7,7 +7,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { suite } from "./rt-harness";
-import { SERVER_INSTRUCTIONS, IRON_RULES, READING_RULES, OBSERVE_RULES, OBSERVE_KINDS } from "../src/observe/instructions";
+import { SERVER_INSTRUCTIONS, IRON_RULES, READING_RULES, OBSERVE_RULES, OBSERVE_KINDS, KINDS_LINE } from "../src/observe/instructions";
+import { nativeFreshText } from "../src/host/main";
 import { firstmateSkill, studioIndex } from "../src/observe/guide";
 import { kinds } from "../src/observe/registry";
 import { STUDIO_TOOLS } from "../src/observe/catalog";
@@ -25,6 +26,9 @@ const rules = [...IRON_RULES, ...READING_RULES, ...OBSERVE_RULES];
 ok(rules.every((r) => SERVER_INSTRUCTIONS.includes(r) && skill.includes(r)), "every rule is in the server instructions and in the skill, word for word");
 ok(J(OBSERVE_KINDS) === J(kinds()) && kinds().every((k) => SERVER_INSTRUCTIONS.includes(k) && skill.includes("`" + k + "`")), "the kinds the instructions name are the registry's, and the skill lists each", J([OBSERVE_KINDS, kinds()]));
 ok(Buffer.byteLength(SERVER_INSTRUCTIONS) <= 4096, "the instructions stay within 4 KB", String(Buffer.byteLength(SERVER_INSTRUCTIONS)));
+const seed = nativeFreshText("/ws");
+ok([...READING_RULES, ...OBSERVE_RULES, KINDS_LINE].every((r) => seed.includes(r)) && /do not guess/.test(seed), "the fresh primary's seed (all Codex sees) carries every reading and read-tool rule from the same source", "");
+ok(/Report status only from the turn's live status line or studio_work_status, never from memory/.test(seed) && /Proposing is not approval/.test(seed), "and keeps its behavioural rules");
 ok(STUDIO_TOOLS.every((t) => skill.includes("`" + t.name + "`")), "the skill names every tool in the index");
 
 // studio_manual {}: the manual's index page, its page list, and the same index as data
