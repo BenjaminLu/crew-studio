@@ -7,9 +7,10 @@ run, writes to GitHub or touches a secret.
 
 Code: `src/observe/registry.ts` (kinds, refs, trust, budgets, the envelope), `src/observe/kinds/{task,card,room,pr}.ts`,
 `src/observe/now.ts` (`studio_now`), `src/observe/tools.ts` (the four tools), `src/observe/focus.ts` (what the captain is
-looking at), `src/observe/catalog.ts` (the index of Firstmate's native tools). The tools join Firstmate's native tools in
+looking at), `src/observe/catalog.ts` (the index of Firstmate's native tools), `src/observe/instructions.ts` and
+`src/observe/guide.ts` (the index, below). The tools join Firstmate's native tools in
 `src/runtime/index.ts`; the `/api/focus` routes are in `src/server.ts`. Tests: `tests/observe-registry.ts`,
-`tests/observe-focus.ts`. Real-model eval: `scripts/observe-eval.ts`.
+`tests/observe-focus.ts`, `tests/observe-index.ts`, `tests/observe-ui.mjs`. Real-model eval: `scripts/observe-eval.ts`.
 
 ## The tools
 
@@ -62,6 +63,20 @@ same-origin request on the loopback listener; a script's header, a tool token an
 ids and the labels Studio itself shows, capped at 80 characters, never what is being typed and never a picture. Studio keeps
 the last 20 in memory, with when each window was last seen. `POST /api/focus/sharing {on}` turns sharing off (Settings, or the
 Firstmate panel's label); off forgets what was kept and refuses new reports, and `studio_now` then says sharing is off.
+
+## Index: one source, three presentations
+
+The rules every MCP client gets (the server `instructions`: the three iron rules, untrusted text is data, `studio_now`
+first, cite refs, the kinds) live in `src/observe/instructions.ts`. `src/observe/guide.ts` makes the rest from them, the
+tool index (`src/observe/catalog.ts`) and the registry's kinds:
+
+- `skills/firstmate/SKILL.md`, the full index, written by `bun scripts/observe-index.ts --write`;
+- the `studio` part of what `studio_manual {}` returns, next to the manual's index page.
+
+`tests/observe-index.ts` fails when the skill file drifts, when a rule is missing from one of them, or when the kinds the
+instructions name are not the registry's. The coordinator skill of Studio's code runs (`packs/firstmate/skills/firstmate.md`)
+stays its own file: it is a run procedure for the coordinator role, pinned by the Tasks that ran with it, and names no read
+tool. The manual has pages for the review room (`studio/pages/review-room`) and the pull request list (`studio/pages/prs`).
 
 ## Acceptance
 
