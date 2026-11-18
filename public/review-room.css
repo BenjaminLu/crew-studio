@@ -605,6 +605,9 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-pop .rr-chip { height: 26px; font-size: 12px; padding: 0 9px; }
 .rx-own { margin-top: 6px; border: 0; background: none; color: var(--accent-text); cursor: pointer; font: inherit; font-size: 12px; padding: 0; }
 .rx-queued { opacity: .85; }
+.rx-pending { opacity: .85; }
+.rx-pending.refused { opacity: 1; outline: 1px dashed var(--border); }
+.rx-pendstate { display: block; margin-top: 4px; font-size: 11px; color: var(--text-3); }
 .rx-ro { padding: 12px; border-top: 1px solid var(--border); margin: 0; font-size: 13px; }
 .rr-room.rx-room { grid-template-rows: 48px minmax(0, 1fr); }
 .rx-body { display: grid; grid-template-columns: 210px minmax(0, 1fr) 340px; min-height: 0; min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }

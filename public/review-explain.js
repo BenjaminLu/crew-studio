@@ -13,7 +13,7 @@
 // and opens in a tab of its own (a fresh capability, framed exactly as here).
 (() => {
 const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), sel: new Map(), draft: new Map(), caps: new Map(),
-  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), returnTo: null, more: new Set(), madeOpen: new Set() };
+  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set() };
 const enc = encodeURIComponent;
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -51,7 +51,7 @@ const whyOf = (r) => { const f = WHY[r.why]; return { text: f ? f(r) : r.status 
 
 async function load(id) {
   if (X.loading.has(id)) return; X.loading.add(id); const was = state(id)?.running;
-  try { X.st.set(id, await api(base(id))); X.err.delete(id); } catch (e) { X.err.set(id, bi(e.message)); }
+  try { X.st.set(id, await api(base(id))); X.err.delete(id); settled(id); } catch (e) { X.err.set(id, bi(e.message)); }
   finally { X.loading.delete(id); ended(id, was); flushQueue(id); refresh(id); schedule(id); }
 }
 function schedule(id) { clearTimeout(X.poll.get(id)); X.poll.delete(id); if (state(id)?.running != null && onRoom(id)) X.poll.set(id, setTimeout(() => load(id), 2500)); }
@@ -477,6 +477,14 @@ function syncAsk(r, st) {
   ta.disabled = m === "closed" || m === "none";
   ta.placeholder = m === "queue" ? T("Ask now: it is sent once the output is ready", "現在就可以問：產出好了就送出") : m === "none" ? T("Generate an output first", "先產生一份產出") : T("Ask about this explanation…", "問這份說明…");
 }
+/** the question being sent (X.pend): shown in the chat at once, before the server answers. Sending, then Starting (a confirmed
+ *  follow-up is admitted first: a model Studio verifies again can take a minute), waiting for the paid confirmation, or refused
+ *  with why and Retry. The server's run takes its place: when /ask answers, or when a push or poll brings that run first. */
+const PEND_STARTING_MS = 400;
+/** the run that is this question, once the server has it: an ask run newer than the pending one began after, with its text */
+const pendRun = (id, st) => { const p = X.pend.get(id); return p && st ? st.runs.find((x) => x.kind === "ask" && x.n > p.after && x.question === p.q) || null : null; };
+function settled(id) { const p = X.pend.get(id); if (p && (p.phase === "sending" || p.phase === "starting") && pendRun(id, state(id))) { clearTimeout(p.timer); X.pend.delete(id); } }
+const pendInView = () => requestAnimationFrame(() => document.querySelector("[data-explain-pending]")?.scrollIntoView({ block: "nearest" }));
 /** Ask in room id: its own state, version, selection and draft, only while that room is the one shown and explained by a skill
  *  (a question never goes to another room's /ask, whatever was drawn last). The paid confirmation comes back as an offer. */
 async function send(id, q, confirm, consent, decision) {
@@ -484,15 +492,29 @@ async function send(id, q, confirm, consent, decision) {
   const text = String(q ?? X.draft.get(id) ?? "").trim(); if (!text) return; const m = askMode(r, state(id));
   if (L.full) exitFull(); // the follow-up's confirmation and its answer are in the chat
   // the first output is still being made: the question waits for it (sent when the run ends with a version)
-  if (m === "queue") { X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
-  if (m !== "ask") return;
-  const v = shownVersion(id); X.posting.add(`${id}/ask`); X.ask = null; refresh(id);
-  const s = X.sel.get(id);
-  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, selection: s ? { ...s, version: v.n } : null, ...(confirm ? { confirm, consent: !!consent } : {}), ...(decision ? { skillDecision: decision } : {}) })); X.draft.delete(id); X.sel.delete(id); X.boxing = null;
-    const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; schedule(id); }
-  catch (e) { if (e.code === "confirm_required" && e.offer) { X.ask = { id, q: text, offer: e.offer }; want = "[data-explain-askok]"; } else X.err.set(id, bi(e.message)); }
-  finally { X.posting.delete(`${id}/ask`); refresh(id); }
+  if (m === "queue") { if (X.pend.get(id)?.q === text) unpend(id, true); X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
+  if (m !== "ask" || X.posting.has(`${id}/ask`)) return;
+  const v = shownVersion(id), s = X.sel.get(id), st0 = state(id); X.posting.add(`${id}/ask`); X.ask = null;
+  // the question is in the chat now and out of the ask box (Cancel or a refusal gives it back: nothing is lost)
+  clearTimeout(X.pend.get(id)?.timer);
+  const p = { q: text, sel: s || null, v: v.n, phase: "sending", why: null, after: st0?.runs.at(-1)?.n ?? 0, timer: null }; X.pend.set(id, p);
+  p.timer = setTimeout(() => { if (X.pend.get(id) === p && p.phase === "sending") { p.phase = "starting"; refresh(id); } }, PEND_STARTING_MS);
+  X.draft.delete(id); const ta0 = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta0) ta0.value = "";
+  refresh(id); pendInView();
+  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, selection: s ? { ...s, version: v.n } : null, ...(confirm ? { confirm, consent: !!consent } : {}), ...(decision ? { skillDecision: decision } : {}) })); X.sel.delete(id); X.boxing = null;
+    clearTimeout(p.timer); if (X.pend.get(id) === p) X.pend.delete(id); schedule(id); }
+  catch (e) { clearTimeout(p.timer); const mine = X.pend.get(id) === p;
+    if (e.code === "confirm_required" && e.offer) { X.ask = { id, q: text, offer: e.offer }; if (mine) p.phase = "confirm"; want = "[data-explain-askok]"; }
+    else if (mine) { p.phase = "refused"; p.why = bi(e.message); } else X.err.set(id, bi(e.message)); }
+  finally { X.posting.delete(`${id}/ask`); refresh(id); if (X.pend.get(id) === p && p.phase === "refused") pendInView(); }
 }
+/** the pending question set aside: back into the ask box when the box is empty (Cancel on the confirmation, or on a refusal) */
+function unpend(id, drop) { const p = X.pend.get(id); if (!p) return; clearTimeout(p.timer); X.pend.delete(id);
+  if (!drop && !X.draft.get(id)) { X.draft.set(id, p.q); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta && !ta.value) ta.value = p.q; } }
+/** Retry a refused question: the same text and the same boxed region (or frame), while the version it was about is shown; another
+ *  version shown since, the region is not on it: the question goes about the whole output shown (the About line says so) */
+function retry(id) { const p = X.pend.get(id); if (!p || p.phase !== "refused") return;
+  if (p.sel && shownVersion(id)?.n === p.v) X.sel.set(id, p.sel); else { if (p.sel) p.sel = null; X.sel.delete(id); } send(id, p.q); }
 function chat(r, st) {
   const id = r.card.id;
   if (readOnly()) return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st), h("p", { class: "rx-ro faint", "data-explain-readonly": "" }, T("Read only here: ask and run the skill on the Mac.", "這裡只能看：在 Mac 上追問和執行 skill。")));
@@ -515,6 +537,8 @@ function scope(r, st) {
     s?.text ? h("small", { class: "faint rx-seltext", "data-explain-seltext": "" }, `“${s.text.slice(0, 140)}${s.text.length > 140 ? "…" : ""}”`) : null);
 }
 const clearSel = (id) => { X.sel.delete(id); refresh(id); };
+/** what a question was about, as the chat shows it: the paused frame or the boxed region's last heading */
+const thumb = (sel) => (sel ? h("span", { class: "rx-thumb" }, sel.time != null ? `⏸ ${ts(sel.time)}` : `▭ ${sel.headings?.slice(-1)[0] || T("boxed region", "框選的區域")}`) : null);
 function msgs(r, st) {
   const id = r.card.id, a = X.ask && X.ask.id === id ? X.ask : null, out = [];
   out.push(h("div", { class: "rx-m sys" }, T("Follow-up: type a question, or box a region of the output first.", "追問：直接打字問，或先在產出上框一塊再問。")));
@@ -525,7 +549,7 @@ function msgs(r, st) {
       else { const w = whyOf(run); out.push(h("div", { class: `rx-m ${run.status === "stopped" ? "warn" : "err"}`, "data-explain-run": run.n, "data-status": run.status }, h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), h("b", {}, run.skill.name), " ", w.text, spent ? h("small", { class: "faint" }, ` · ${spent}`) : null)); }
       continue; }
     const sel = run.selection;
-    out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, sel ? h("span", { class: "rx-thumb" }, sel.time != null ? `⏸ ${ts(sel.time)}` : `▭ ${sel.headings?.slice(-1)[0] || T("boxed region", "框選的區域")}`) : null, run.question));
+    out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, thumb(sel), run.question));
     out.push(h("div", { class: `rx-m ${run.status === "done" || run.status === "running" ? "ai" : run.status === "stopped" ? "warn" : "err"}`, "data-explain-answer": run.n, "data-status": run.status },
       run.status === "running" ? [h("span", { class: "faint" }, T("Working on it…", "處理中…")), ...(run.progress || []).slice(-3).map((p) => { if (p.script) { const s = scriptLine(p.script); return h("div", { class: `rx-callrow ${s.cls}` }, h("span", { class: "d" }, s.mark), " ", s.body); } return h("div", { class: "faint" }, `· ${p.text}`); }),
         readOnly() ? null : h("div", {}, h("button", { type: "button", class: "btn sm", "data-explain-stop": "", onclick: () => stop(id) }, T("Stop", "停止")))]
@@ -538,6 +562,14 @@ function msgs(r, st) {
   const q = X.queue.get(id);
   if (q) out.push(h("div", { class: "rx-m me rx-queued", "data-explain-queued": "" }, h("span", { class: "rx-thumb" }, T("waits for the output", "等產出好了再問")), q,
     h("button", { type: "button", class: "rx-x", "aria-label": T("Do not ask it", "不問了"), onclick: () => { X.queue.delete(id); refresh(id); } }, "✕")));
+  // the question being sent, until the server's run (above) is it
+  const p = X.pend.get(id);
+  if (p && !pendRun(id, st)) { const PH = { sending: T("Sending…", "送出中…"), starting: T("Starting…", "開始中…"), confirm: T("Waits for your confirmation", "等你確認"), refused: T("Not asked", "沒有送出") };
+    out.push(h("div", { class: `rx-m me rx-pending${p.phase === "refused" ? " refused" : ""}`, "data-explain-pending": p.phase, "aria-busy": p.phase === "sending" || p.phase === "starting" ? "true" : null }, thumb(p.sel), p.q,
+      h("small", { class: "rx-pendstate", role: "status", "data-explain-pendstate": "" }, PH[p.phase])));
+    if (p.phase === "refused") out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), p.why,
+      h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", "data-explain-pendx": "", onclick: () => { unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Back to the ask box", "放回輸入框")),
+        h("button", { type: "button", class: "btn sm primary", "data-explain-retry": "", disabled: askMode(r, st) === "ask" ? null : true, title: askMode(r, st) === "ask" ? "" : T("Wait for the skill to finish", "等 skill 做完"), onclick: () => retry(id) }, T("Retry", "重試"))))); }
   if (a) out.push(h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid follow-up", "確認付費追問") },
     h("p", {}, T(`This follow-up is a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"} with ${a.offer.skill.name}.`, `這個追問會用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 和 ${a.offer.skill.name} 付費執行。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
     scriptSummary(a.offer.scripts),
@@ -545,11 +577,12 @@ function msgs(r, st) {
     h("label", {}, h("input", { type: "checkbox", "data-explain-consent": "", onchange: (e) => { if (e.target.checked) X.consent.add(id); else X.consent.delete(id); } }),
       a.offer.scripts?.run ? T(` Ask the next follow-ups here on this plan without confirming each, their scripts included (sandboxed${a.offer.scripts.network ? ", with network" : ""})`, ` 之後在這裡用同樣的設定追問時不用再確認，包括執行它的腳本（在沙盒裡${a.offer.scripts.network ? "、可以連網" : ""}）`)
         : T(" Ask the next follow-ups here on this plan without confirming each", " 之後在這裡用同樣的設定追問時不用再確認")),
-    h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; refresh(id); focusLater("[data-explain-q]"); } }, T("Cancel", "取消")),
+    h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; if (X.pend.get(id)?.phase === "confirm") unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Cancel", "取消")),
       a.offer.decide?.state === "pending"
         ? [h("button", { type: "button", class: "btn sm", "data-explain-askok": "text-only", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id), "text-only") }, T("Text only, then ask", "只當文字並追問")),
           h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "scripts", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id), "scripts") }, T("Approve with scripts and ask", "核准（含 script）並追問"))]
         : h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並追問")))));
+
   const err = X.err.get(id); if (err) out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), err));
   return h("div", { class: "rx-msgs", "data-x-msgs": "" }, out);
 }

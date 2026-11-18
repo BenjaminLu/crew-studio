@@ -932,7 +932,14 @@ The room can be presented by one of the captain's own skills instead of the tuto
   `explain_answer {answer, cites, updated, summary}`. The answer shows as text with its citations as chips; when the skill
   changed the output the chat says "The output is now vN". The first follow-up asks for its confirmation in the chat, with
   "ask the next ones on this plan without confirming each" (kept per room, bound to the offer's hash; a new model, skill
-  version or limit asks again).
+  version or limit asks again). `POST …/explain/ask` answers only once the run is admitted (a model verified again can take
+  a minute), so the question shows in the chat the moment Ask is pressed, with what it is about (`[data-explain-pending]`):
+  "Sending…" / 送出中…, then "Starting…" / 開始中…, "Waits for your confirmation" while the paid confirmation is open (Cancel
+  puts it back in the ask box). The server's run takes its place, whether `/ask` answers first or a push or poll brings the
+  run first (an ask run newer than the last one known, with the same text): never twice. Refused, it stays with why
+  (`[data-explain-error]`), Retry (the same text and region; once another version is shown, about the whole of it, since the
+  region was on the other; off while the skill works) and "Back to the ask box". The pending question lives in the
+  page only: a reload before the server answers does not show it.
 - **Box a region to ask.** The frame is cross-origin, so Studio cannot screenshot it: "Box a region to ask" lays a drawing
   overlay over the output (Enter boxes what is in view, from the keyboard); the box stays drawn, with quick questions beside
   it, until the question is sent or cleared (✕ on the "About" line or the popover, Esc); the rectangle goes to the frame's helper by `postMessage`, which answers with what lies there,
