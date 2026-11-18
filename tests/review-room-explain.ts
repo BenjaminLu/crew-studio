@@ -57,6 +57,8 @@ const scripted = (pid: string, model: string) => ({ id: pid, model, sandboxFree:
       if (stopped) break;
       if (name === "msg") { yield { type: "delta", text: args } as any; yield { type: "message", text: args } as any; continue; }
       // a round that works until it is stopped (or its time runs out)
+      // a round the provider ends with an error (an output cap, a CLI failure)
+      if (name === "fail") { yield { type: "turnEnd", status: "error", code: args.code, message: args.message } as any; return; }
       if (name === "hang") { await new Promise<void>((res) => { stop = res; release = res; }); continue; }
       const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json(); results.push([name, j]);
       yield { type: "toolStart", id: name, name, args } as any; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) } as any; }
@@ -196,6 +198,27 @@ const capRun = await waitRun(X.view(id).runs.at(-1).n);
 const writes = results.filter(([n]) => n === "out_write").slice(-4).map(([, j]) => j);
 ok(capRun.status === "done" && /full/.test(writes[0]?.error) && writes[1]?.ok && /full/.test(writes[2]?.error) && writes[3]?.ok, "a text write past the output folder's cap is refused, as a picture's is", JSON.stringify(writes));
 delete process.env.CREW_REVIEW_EXPLAIN_OUT_BYTES;
+// ---------- a reply cut at the model's output limit: not a provider failure; the next round writes in parts ----------
+const CUT = { code: "outputLimit", message: "The model's reply exceeded the 300-token output limit; write large files in several smaller writes. / 模型的回覆超過 300 token 的輸出上限；大檔案請分幾次寫入。" };
+ok(prompts.at(-1)!.system.includes("out_write with append: true") && /Never one giant\s+write/.test(prompts.at(-1)!.system), "the explainer's frame says to write a big file in parts");
+script.push([["out_write", { path: "parts.html", content: "<p>one</p>" }], ["fail", CUT]],
+  [["out_write", { path: "parts.html", content: "<p>two</p>", append: true }], ["out_write", { path: "sub/new.html", content: "<p>new</p>", append: true }], ["out_write", { path: "../x.html", content: "x", append: true }],
+   ["out_read", { path: "parts.html" }], ["out_read", { path: "sub/new.html" }], ["explain_done", { entry: "parts.html", summary: "in parts" }]]);
+await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
+const cutRun = await waitRun(X.view(id).runs.at(-1).n);
+ok(cutRun.status === "done" && cutRun.rounds.length === 2 && cutRun.rounds[0].status === "failed" && !cutRun.why, "one round cut at the output limit does not end the run: the next round finishes it", JSON.stringify(cutRun));
+ok(/cut at the model's output limit/.test(prompts.at(-1)!.text) && /out_write with append: true/.test(prompts.at(-1)!.text) && !/cut at the model's output limit/.test(prompts.at(-2)!.text), "the next round is told its last reply was cut and to write in parts", prompts.at(-1)!.text.slice(0, 600));
+{ const r = results.slice(-6); const reads = r.filter(([n]) => n === "out_read").map(([, j]) => j?.text);
+  ok(/1\t<p>one<\/p><p>two<\/p>/.test(reads[0] ?? "") && /<p>new<\/p>/.test(reads[1] ?? "") && /not allowed/.test(JSON.stringify(r.find(([n, j]) => n === "out_write" && j?.error)?.[1] ?? "")),
+    "out_write with append: true adds to the end of a file, creates a missing one, and stays inside the output folder", JSON.stringify(r)); }
+script.push([["out_write", { path: "a1.html", content: "1" }], ["fail", CUT]], [["out_write", { path: "a2.html", content: "2" }], ["fail", CUT]], [["explain_done", { entry: "a1.html", summary: "never reached" }]]);
+await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
+const cut2 = await waitRun(X.view(id).runs.at(-1).n); script.length = 0;
+ok(cut2.status === "failed" && cut2.why === "outputLimit" && cut2.rounds.length === 2 && cut2.cut === 2 && cut2.error === CUT.message, "two rounds in a row cut at the output limit stop the run, with its own why", JSON.stringify(cut2));
+script.push([["fail", { code: "cliError", message: "The Claude CLI reported an error; readiness was invalidated. Reason: exit 1" }]]);
+await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
+const cliRun = await waitRun(X.view(id).runs.at(-1).n);
+ok(cliRun.status === "failed" && cliRun.why === "provider" && cliRun.rounds.length === 1 && /Reason: exit 1/.test(cliRun.error), "a CLI error still ends the run as a provider failure, its reason kept", JSON.stringify(cliRun));
 e = await refused(() => X.setSettings({ limitMin: 0 })); ok(e?.code === "bad_request", "the safety limit is a number of minutes, at least one");
 ok(X.setSettings({ limitMin: 45 }).limitMin === 45 && X.offer(id, lib.id, "generate").limitMin === 45, "the safety limit is the captain's setting, and the offer names it");
 // a fraction of a minute through the environment (tests only): the round that hangs is stopped by the limit

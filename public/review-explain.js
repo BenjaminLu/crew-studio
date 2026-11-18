@@ -41,10 +41,12 @@ const KIND = { html: ["HTML page", "HTML 頁"], markdown: ["Markdown", "Markdown
 /** why a run stopped or failed, in the captain's words (the server's code; its English detail only where it adds something) */
 const WHY = { captain: () => T("You stopped it.", "你按了停止。"), cancelled: () => T("It was cancelled.", "已取消。"), limit: (r) => T(`It ran past the safety limit of ${r.limitMin} min, so Studio stopped it.`, `超過 ${r.limitMin} 分鐘的安全時限，Studio 停下了它。`),
   interrupted: () => T("Studio stopped while it ran.", "執行到一半時 Studio 停止了。"), closed: () => T("The room stopped taking paid runs: its card was answered or its pull request closed.", "這間審查室不再接受付費執行：卡片已回覆，或 PR 已關閉。"),
-  admission: () => T("A round could not be admitted.", "有一輪無法開始。"), provider: () => T("The model's provider refused or failed.", "模型供應商拒絕或失敗。"), stalled: (r) => r.stalled ? T(`The output did not change for ${r.stalled} rounds in a row, so Studio stopped it.`, `產出連續 ${r.stalled} 輪都沒有變，Studio 停下了它。`) : T("The output stopped changing, so Studio stopped it.", "產出不再變化，Studio 停下了它。"),
+  admission: () => T("A round could not be admitted.", "有一輪無法開始。"), provider: () => T("The model's provider reported an error.", "模型供應商回報錯誤。"), outputLimit: () => T("The model's reply hit its output limit twice in a row, so Studio stopped it.", "模型的回覆連續兩次碰到輸出上限，Studio 停下了它。"), stalled: (r) => r.stalled ? T(`The output did not change for ${r.stalled} rounds in a row, so Studio stopped it.`, `產出連續 ${r.stalled} 輪都沒有變，Studio 停下了它。`) : T("The output stopped changing, so Studio stopped it.", "產出不再變化，Studio 停下了它。"),
   entry: () => T("The skill named an output file that is not there.", "skill 說的產出檔案不存在。"), error: () => T("It could not run.", "無法執行。"), start: () => T("It could not start.", "無法開始。") };
-const DETAIL = new Set(["admission", "provider", "error", "start", "entry"]);
-const whyOf = (r) => { const f = WHY[r.why]; return { text: f ? f(r) : r.status === "stopped" ? T("It was stopped.", "已停止。") : T("It did not finish.", "沒有完成。"), detail: !f || DETAIL.has(r.why) ? bi(r.error || r.stop || "") : "" }; };
+const DETAIL = new Set(["admission", "provider", "outputLimit", "error", "start", "entry"]);
+// a provider's message repeats the headline before its reason: only the reason is shown ("Reason: …" / "原因：…")
+const detailOf = (r) => { const d = bi(r.error || r.stop || ""), m = r.why === "provider" ? /(?:Reason: |原因：)[\s\S]*$/.exec(d) : null; return m ? m[0] : d; };
+const whyOf = (r) => { const f = WHY[r.why]; return { text: f ? f(r) : r.status === "stopped" ? T("It was stopped.", "已停止。") : T("It did not finish.", "沒有完成。"), detail: !f || DETAIL.has(r.why) ? detailOf(r) : "" }; };
 
 async function load(id) {
   if (X.loading.has(id)) return; X.loading.add(id); const was = state(id)?.running;
