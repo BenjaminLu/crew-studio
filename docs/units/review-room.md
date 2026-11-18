@@ -761,6 +761,23 @@ the destination and the shape, decided before any DNS lookup:
 
 ## Explain with your own skill
 
+- **The room is the skill's page and its questions** (no whiteboard). The page has one line over the output: the version
+  menu (each version's head and cost), what the shown version was made from, Generate again, Full screen, New tab and the
+  isolation tag. A new head's run keeps the version shown, with one progress strip above it. There is no Board | Output
+  switch, no region to box, no play bar, dock or transcript drawer, and the header has no language switch for the board
+  (the page's language is the skill's) and no Save to Library (P2 moves the Library to the page's versions).
+- **Questions are the room's own**: the right-hand chat is answered by the room's tutor (the header's tutor pill: this
+  room's pick, Studio's default, or Automatic), on Studio's question frame (`QA_FRAME`, its own seat `review-room-qa`), not
+  the skill. It reads the version shown as `materials/version/page.txt` (its visible text and the context it embeds, fenced
+  as untrusted) and `version/files/`, the change's materials, and the room's last answers. Its tools read and answer only:
+  no output folder, no skill files, no script. An answer is kept on its run with the version it was about (`run.from`); it
+  never makes a version and is never anchored to a region. Switching versions keeps the conversation; the next question is
+  about the version then shown. The first question is confirmed (paid, on the tutor's model), with "don't ask again" for the
+  same tutor.
+- **A room from before** keeps its whiteboard on disk, untouched. The page says in one line how many whiteboard turns it has
+  and offers its record as a file (`GET /api/review-room/<room>/export`: the room's JSON exactly as kept); a Library snapshot
+  of a board is offered as its JSON too. A room once set to the tutor is explained with the default skill like any other.
+
 The room can be presented by one of the captain's own skills instead of the tutor's board (`src/domain/review-explain.ts`,
 `public/review-explain.js`). Quality first: a skill's run is not one model round.
 
