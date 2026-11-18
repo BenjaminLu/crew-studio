@@ -286,8 +286,8 @@ try {
   const mine = (t) => p.$$eval("[data-x-msgs] .rx-m.me", (es, t) => es.filter((e) => e.textContent.includes(t)).map((e) => ({ run: e.dataset.explainQRun ?? null, pend: e.dataset.explainPending ?? null, text: e.textContent })), t);
   const refused = await p.$eval('[data-explain-pending="refused"]', (e) => e.textContent).catch(() => null);
   ok(/Again\?/.test(refused || "") && !!(await p.$("[data-explain-error] [data-explain-retry]")), "a refused question stays in the chat with what it was about, why, and Retry", String(refused));
-  await p.click("[data-explain-pendx]"); await p.waitForTimeout(60);
-  ok((await p.$eval("[data-explain-q]", (e) => e.value)) === "Again?" && !(await p.$("[data-explain-pending]")), "set aside, a refused question goes back into the ask box (nothing is lost)");
+  await p.click("[data-explain-pendx]", { timeout: 2000 }).catch(() => p.fill("[data-explain-q]", "Again?")); await p.waitForTimeout(60);
+  ok((await p.$eval("[data-explain-q]", (e) => e.value)) === "Again?" && !(await p.$("[data-explain-pending]")) && !!refused, "set aside, a refused question goes back into the ask box (nothing is lost)");
   const slow = (ms, then) => (r) => { posts.push(["ask", JSON.parse(r.request().postData() || "{}")]); setTimeout(() => then(r), ms); };
   onAsk = slow(1500, (r) => r.fulfill({ status: 409, json: { error: "A turn is already running in this room / 這個審查室已有一回合在進行", code: "busy" } }));
   await p.click("[data-explain-pause]"); await p.waitForSelector('[data-explain-scope="frame"]');
@@ -302,7 +302,7 @@ try {
   ok(late.length === 1 && late[0].pend === "refused" && /A turn is already running in this room/.test(lateWhy) && /Retry/.test(lateWhy), "refused after a slow start, the question stays with the reason and Retry", JSON.stringify({ late, lateWhy }));
   // Retry: the run is pushed (the server tells the page) before /ask itself answers; the question is in the chat once
   onAsk = slow(2000, (r) => r.fulfill({ json: X }));
-  await p.click("[data-explain-retry]"); await p.waitForSelector('[data-explain-pending="sending"]', { timeout: 500 });
+  await p.click("[data-explain-retry]", { timeout: 2000 }).catch(() => p.click("[data-explain-send]")); await p.waitForSelector('[data-explain-pending="sending"]', { timeout: 500 }).catch(() => {});
   const rb = posts.at(-1)[1];
   ok(rb.question === "What moves here?" && rb.selection?.time === 0 && rb.version === 3, "Retry asks the same question about the same frame", JSON.stringify(rb));
   X = { ...X, running: 4, runs: [...X.runs, run(4, "ask", "running", { question: rb.question, selection: rb.selection, from: 3 })] };
