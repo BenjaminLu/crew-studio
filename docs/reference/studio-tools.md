@@ -23,7 +23,7 @@ Resources: `studio://{kind}/{id}` reads as `studio_get` does (`resources/read`).
 
 ## `studio_now`
 
-What the captain is looking at and what needs them now: the page, item and dialog in each Studio window (with how long ago; over 10 minutes it is "last seen"), the cards waiting for the captain (most urgent first), the work running with its progress and cost, and what changed in the last hour. Call it first, then studio_get or studio_find; cite the refs you use (task:R-162, card:SC-248, room:PR-0123456789ab-1645, pr:owner/repo#1645, skill:baton@v2).
+What the captain is looking at and what needs them now: the page, item and dialog in each Studio window (with how long ago; over 10 minutes it is "last seen"), the cards waiting for the captain (most urgent first; depth full adds what each asks and its options), the work running with its progress and cost, and what changed in the last hour. Call it first, then studio_get or studio_find; cite the refs you use (task:R-162, card:SC-248, room:PR-0123456789ab-1645, pr:owner/repo#1645, skill:baton@v2). To read several cards or Tasks, call studio_list for that kind once rather than studio_get on each.
 
 Under an external CLI grant: What needs the captain now, within this grant: the cards waiting for them (most urgent first), the work running with its progress and cost, and what changed in the last hour. Call it first, then studio_get or studio_find; cite the refs you use.
 
@@ -130,7 +130,7 @@ Example:
 | Kind | Ref | Board page | Grantable | Fields (studio / captain / untrusted) |
 | --- | --- | --- | --- | --- |
 | `task` | `task:R-162` | `#/run/:id` | yes | 38 / 4 / 4 |
-| `card` | `card:SC-248` | `#/inbox/:id` | yes | 24 / 2 / 1 |
+| `card` | `card:SC-248` | `#/inbox/:id` | yes | 24 / 2 / 3 |
 | `room` | `room:PR-0123456789ab-1645` | `#/room/:id` | yes | 69 / 5 / 9 |
 | `pr` | `pr:owner/repo#1645` | `#/prs` | yes | 28 / 0 / 4 |
 | `workflow` | `workflow:code-firstmate` | `#/workflow/:id` | yes | 19 / 1 / 5 |
