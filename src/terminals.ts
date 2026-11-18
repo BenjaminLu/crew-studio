@@ -278,6 +278,8 @@ export class Terminals {
   }
   list(desktop = true): TermView[] { return [...this.terms.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt)).map((t) => this.view(t, desktop)); }
   get(id: string) { return this.terms.get(id) ?? null; }
+  /** The last screen drawn for each terminal, by its size and output (Terminals.tail). */
+  private screens = new Map<string, { key: string; rows: string[] }>();
   /** The last `n` non-empty lines of a terminal's screen as plain text, the remote-control link and secrets removed: what
    *  studio_logs gives Firstmate when the captain asks for a terminal's output (src/observe/kinds/terminal.ts).
    *  1. The known link and secrets go from the raw output first, matched through escapes, wraps and box borders (SecretWindow).
@@ -287,13 +289,18 @@ export class Terminals {
    *  4. No control or bidi character is left in what comes back. */
   async tail(id: string, n: number): Promise<string[] | null> {
     const t = this.terms.get(id); if (!t) return null;
-    const raw = t.redactor.scrub(new TextDecoder().decode(t.ring.bytes()).slice(-SCREEN_INPUT_MAX));
-    const screen = await readScreen(raw, t.cols, t.rows);
-    const rows = screen.lines, lines = rows.map((l) => redactText(l));
+    // the size and output as they are now: the terminal may be resized while the screen is drawn
+    const cols = t.cols, rows0 = t.rows, bytes = t.ring.bytes();
+    // one drawing per output: studio_logs asks again with fewer lines when an answer is over its size budget
+    const key = `${cols}x${rows0}:${bytes.length}:${t.lastOutAt}`, hit = this.screens.get(id);
+    let rows: string[];
+    if (hit && hit.key === key) rows = hit.rows;
+    else { if (this.screens.size > 64) this.screens.clear(); const raw = t.redactor.scrub(new TextDecoder().decode(bytes).slice(-SCREEN_INPUT_MAX)); rows = (await readScreen(raw, cols, rows0)).lines; this.screens.set(id, { key, rows }); }
+    const lines = rows.map((l) => redactText(l));
     const edgeR = (l: string) => l.replace(/[\s│|║┃]+$/, ""), edgeL = (l: string) => l.replace(/^[\s│|║┃]+/, "");
     for (let k = 0; k + 1 < rows.length; k++) {
       if (!rows[k].trim() || !rows[k + 1].trim()) continue;
-      const atWidth = [...rows[k].trimEnd()].length >= t.cols - 1 - (rows[k].match(/[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/g)?.length ?? 0);
+      const atWidth = [...rows[k].trimEnd()].length >= cols - 1 - (rows[k].match(/[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/g)?.length ?? 0);
       const atBorder = /\S ?[│|║┃]\s*$/.test(rows[k]) && !/\s{2,}[│|║┃]\s*$/.test(rows[k]);
       if (spansSecret(rows[k], rows[k + 1], atWidth) || spansSecret(edgeR(rows[k]), edgeL(rows[k + 1]), atBorder)) lines[k] = lines[k + 1] = REDACTED;
     }

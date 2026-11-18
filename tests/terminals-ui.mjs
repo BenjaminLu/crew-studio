@@ -30,7 +30,7 @@ const launch = async (pg) => { await menu(pg); await pg.locator("[data-term-menu
 
 // the vendored copies are the pinned packages, byte for byte
 {
-  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).devDependencies;
+  const pj = JSON.parse(readFileSync(join(root, "package.json"), "utf8")), pkg = { ...pj.devDependencies, ...pj.dependencies };
   ok(pkg["@xterm/xterm"] === "6.0.0" && pkg["@xterm/addon-fit"] === "0.11.0" && pkg["@xterm/addon-unicode11"] === "0.9.0", "xterm.js, its fit addon and its Unicode 11 addon are pinned exactly");
   const same = (a, b) => readFileSync(join(root, a)).equals(readFileSync(join(root, b)));
   ok(same("public/vendor/xterm-6.0.0.min.js", "node_modules/@xterm/xterm/lib/xterm.js") && same("public/vendor/xterm-6.0.0.css", "node_modules/@xterm/xterm/css/xterm.css")

@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Terminals } from "../src/terminals";
-import { readScreen } from "../src/terminal-screen";
+import { clampCounts, drawScreen, readScreen, SCREEN_TIMEOUT_MS } from "../src/terminal-screen";
 import { redactText } from "../src/secure";
 
 let pass = 0, fail = 0; const ok = (c: unknown, n: string, x = "") => { c ? pass++ : fail++; console.log(`  ${c ? "ok  " : "FAIL"}  ${n}${c ? "" : `  ${x.slice(0, 600)}`}`); };
@@ -61,9 +61,31 @@ try {
   ok(!leaks(r.lines).length && !/AKIAABCD/.test(r.lines.join("")), "a token glued to the word before it (xxxghp_…) is removed", JSON.stringify(r.lines));
   ok(redactText(`xxx${TOK}`) === "xxx[credential removed]" && redactText("task-1234567890abcdefghij") === "task-1234567890abcdefghij", "redactText: glued prefixed tokens go, a long word ending in sk- stays");
 
+  // ---------- one drawing per output ----------
+  { const f = join(d, "once"); writeFileSync(f, "one\r\ntwo\r\n");
+    const v = await svc.create({ project: "p", command: `cat '${f}'; sleep 5`, cols: 80, rows: 24 } as any); await until(async () => ((await svc.tail(v.id, 10)) ?? []).includes("two"), 5000);
+    const k1 = (svc as any).screens.get(v.id)?.key, a = await svc.tail(v.id, 2), b = await svc.tail(v.id, 1), k2 = (svc as any).screens.get(v.id)?.key;
+    ok(k1 && k1 === k2 && JSON.stringify(a) === JSON.stringify(["one", "two"]) && JSON.stringify(b) === JSON.stringify(["two"]), "a tail asked again with fewer lines reuses the screen drawn for this output", `${k1} ${k2} ${JSON.stringify([a, b])}`);
+    try { svc.kill(v.id); } catch {} }
+
   // ---------- a shell after clear ----------
   r = await shown("H", `${E}[H${E}[2J${Array.from({ length: 82 }, (_, i) => `line ${i + 1}`).join("\r\n")}\r\n`, { n: 200 });
   ok(r.lines.length === 82 && r.lines[0] === "line 1" && r.lines.at(-1) === "line 82", "H: a shell after clear gives every line asked for (the scrollback too)", `${r.lines.length} ${JSON.stringify(r.lines.slice(0, 3))}`);
+
+  // ---------- a costly output never holds Studio's event loop ----------
+  // each sequence repeated to 64 kB, at a small and the largest terminal: the server keeps answering (a 10 ms timer never
+  // waits 200 ms), and the read ends within the worker's timeout with a bounded result
+  const stall = async (f: () => Promise<unknown>) => { let worst = 0, last = performance.now(); const t = setInterval(() => { const now = performance.now(); worst = Math.max(worst, now - last - 10); last = now; }, 10);
+    const t0 = performance.now(); const out = await f(); const ms = performance.now() - t0; clearInterval(t); return { out, ms, worst }; };
+  const costly: [string, string][] = [["insert lines ESC[9999L", `${E}[9999L`], ["delete lines ESC[9999M", `${E}[9999M`], ["scroll up ESC[9999S", `${E}[9999S`], ["repeat x ESC[65535b", `x${E}[65535b`], ["2J and H alternating", `${E}[2J${E}[H`], ["alternate screen on and off", `${E}[?1049h${E}[?1049l`]];
+  for (const [name, seq] of costly) for (const [cols, rows] of [[100, 30], [500, 200]]) {
+    const payload = seq.repeat(Math.ceil(64_000 / seq.length)).slice(0, 64_000);
+    const r = await stall(() => readScreen(payload, cols, rows)); const sc = r.out as any;
+    ok(r.worst < 200 && r.ms < SCREEN_TIMEOUT_MS + 700 && sc.lines.length <= 1300 && (sc.plain || sc.lines.join("").length <= (1000 + rows) * cols * 2), `${name} ×64 kB at ${cols}×${rows}: the event loop waited at most ${r.worst.toFixed(0)} ms, the read took ${r.ms.toFixed(0)} ms${sc.plain ? " (plain text after the timeout)" : ""}`, `${r.worst} ${r.ms} ${sc.lines.length}`);
+  }
+  ok(clampCounts(`${E}[9999L${E}[1;9999H${E}[65535b${E}[?1049h${E}[38;2;255;0;0m${E}[2J`, 100, 30) === `${E}[100L${E}[1;100H${E}[3000b${E}[?1049h${E}[38;2;255;0;0m${E}[2J`, "counts are clamped to the screen (repeat to its cells); modes, colours and clears stay as they are");
+  { const r = await readScreen("hello\r\nworld\r\n", 80, 24, { timeoutMs: 0 }); ok(r.plain === true && r.lines.includes("hello") && r.lines.includes("world"), "past the timeout: the plain text of the output comes back", JSON.stringify(r)); }
+  { const a = await drawScreen(`${E}[?1049h${E}[2;3Hdrawn here`, 40, 6); ok(a.alternate && a.lines[1] === "  drawn here", "drawScreen (the worker's job) draws the same screen in this thread"); }
 
   // ---------- bounded cost ----------
   const big: [string, string, number, number][] = [["E1 ESC[2J ×16k", `${E}[2J`.repeat(16_000), 500, 200], ["E2 ESC[J ×21k", `${E}[J`.repeat(21_000), 500, 200],
