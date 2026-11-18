@@ -779,3 +779,9 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
   .rr-figview-bar > b { flex: 1 0 100%; }
   .rr-figview-tools { flex-wrap: wrap; }
 }
+/* a big drawing's preview opens the viewer on a click; a long transition list folds */
+.rr-preview { cursor: zoom-in; }
+.rp-translist > summary { cursor: pointer; color: var(--rr-marker); font-size: 13px; margin: 6px 0; }
+.rr-bigbar { margin: 6px 0; }
+.rr-bigbar .rr-figview-btn { display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px; border: 1px solid var(--rr-marker); border-radius: 8px; background: var(--rr-paper); color: var(--rr-marker); font: 600 13px var(--f-sans, inherit); cursor: pointer; }
+.rr-bigbar .rr-figview-btn:hover { background: var(--rr-new-soft); }

@@ -586,6 +586,13 @@ function txView(tx) {
 }
 /** every transition as a numbered row: from → to, what it writes (its transaction, when the tutor read one), the code it rests on */
 function transitionRows(card, it, sel, pick, lab) {
+  // a long list (more than 16, the old cap) folds under one line, opened with a click, as a sequence's step list does
+  const n = (it.transitions || []).length, key = `${card}/${it.id}/trans`;
+  if (n > 16) return h("details", { class: "rp-translist", "data-trans-list": it.id, open: RR.fold.has(key), ontoggle: (e) => { const was = RR.fold.has(key); if (e.target.open) RR.fold.add(key); else RR.fold.delete(key); if (was !== e.target.open) rerender(); } },
+    h("summary", {}, T(`Every transition (${n})`, `每一個轉換（${n}）`)), transitionList(card, it, sel, pick, lab));
+  return transitionList(card, it, sel, pick, lab);
+}
+function transitionList(card, it, sel, pick, lab) {
   return h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
     h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
     h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
@@ -798,7 +805,7 @@ function langToggle(r) {
     const missing = missingIn(r, l).length, some = (r.turns || []).some((t) => t.status === "done" && !t.studio && turnIn(r, t, l));
     // a room that takes no turn shows only what it has: a language with at least one answer in it (the rest as written)
     const can = !missing || (r.open && !r.snapshot && !r.offer?.error) || ((r.snapshot || !r.open) && some);
-    return h("button", { type: "button", class: "rr-lang", "data-lang-pick": l, "aria-pressed": String(cur === l), disabled: !can || r.running != null, title: missing ? (can ? T("Not translated yet: a small paid round", "還沒翻譯：一次小的付費回合") : T("Not in this language", "沒有這個語言的版本")) : "", onclick: () => switchLang(r, l) }, label); }));
+    return h("button", { type: "button", class: "rr-lang", "data-lang-pick": l, "aria-pressed": String(cur === l), disabled: !can || r.running != null, title: missing ? (can ? T("Not translated yet: paid (the confirmation says how many jobs)", "還沒翻譯：付費（確認時會說要幾個工作）") : T("Not in this language", "沒有這個語言的版本")) : "", onclick: () => switchLang(r, l) }, label); }));
 }
 // ---------- the scenes: each answer is one or more, a picture beside the tutor's points, played point by point ----------
 const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"], reviews: ["Digest reviews", "整理審查意見"], since: ["What changed since last time", "上次之後改了什麼"], reviewers: ["What reviewers asked", "審查者問了什麼"] };
@@ -957,7 +964,7 @@ function mdBody(card, text, cites) {
 }
 function sceneBody(card, sc) {
   if (!sc?.body || sc.skip || sc.quiz) return null; const key = `${card}/${sc.key}/body`, open = RR.fold.has(key), cjk = (sc.body.match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length, words = sc.body.split(/\s+/).filter(Boolean).length;
-  const size = cjk > words ? T(`${cjk} characters`, `${cjk} 字`) : T(`${words} words`, `${words} 個英文詞`);
+  const size = cjk > words ? T(`${cjk} characters`, `${cjk} 字`) : T(`${words} words`, `${words} 詞（英文）`);
   return h("details", { class: "rr-sbody", "data-scene-body": sc.key, open,
     ontoggle: (e) => { const was = RR.fold.has(key); if (e.target.open) RR.fold.add(key); else RR.fold.delete(key); if (was !== e.target.open) rerender(); } },
     h("summary", { "data-scene-body-toggle": "" }, h("b", {}, T("The full explanation", "完整說明")), h("span", { class: "faint" }, ` · ${size}${sc.bodyUntranslated ? T(" · not translated yet: as written", " · 還沒翻譯：照原文") : ""}`)),
@@ -1306,8 +1313,10 @@ function figViewer(card, it) {
   const pane = h("div", { class: "rr-figview-pane", "data-fig-pane": "" }, fig, seqList(r ? figIn(r, it) : it, true));
   const zoomLbl = h("span", { class: "rr-figview-z", "data-fig-zoom": "" }, "100%");
   const set = (nz) => { z = Math.max(0.2, Math.min(3, nz)); if (svg) { svg.style.width = `${Math.round(W * z)}px`; svg.style.height = "auto"; } zoomLbl.textContent = `${Math.round(z * 100)}%`; };
-  const close = () => { el.remove(); removeEventListener("keydown", key, true); try { (document.querySelector(`[data-fig-view="${CSS.escape(it.id)}"]`) || back)?.focus?.({ preventScroll: true }); } catch {} };
-  const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } else if ((e.key === "+" || e.key === "=") && !e.metaKey) set(z * 1.25); else if (e.key === "-" && !e.metaKey) set(z / 1.25); };
+  const close = () => { el.remove(); removeEventListener("keydown", key, true); removeEventListener("pointerup", up); removeEventListener("hashchange", close); try { (document.querySelector(`[data-fig-view="${CSS.escape(it.id)}"]`) || back)?.focus?.({ preventScroll: true }); } catch {} };
+  const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === "Tab") { const f = [...el.querySelectorAll("button, summary, a[href], [tabindex]:not([tabindex='-1'])")].filter((x) => !x.disabled && x.getClientRects().length); if (!f.length) return;
+      const i = f.indexOf(document.activeElement); if (e.shiftKey ? i <= 0 : i === f.length - 1 || i < 0) { e.preventDefault(); (e.shiftKey ? f[f.length - 1] : f[0]).focus(); } } else if ((e.key === "+" || e.key === "=") && !e.metaKey) set(z * 1.25); else if (e.key === "-" && !e.metaKey) set(z / 1.25); };
   const btn = (label, attr, f, aria) => h("button", { type: "button", class: "rr-mini", [attr]: "", "aria-label": aria || label, onclick: f }, label);
   const closeBtn = btn(T("Close", "關閉"), "data-fig-close", close);
   const el = h("div", { class: "rr-figview", role: "dialog", "aria-modal": "true", "aria-label": itemTitle(it), "data-fig-viewer": it.id },
@@ -1317,7 +1326,7 @@ function figViewer(card, it) {
   // a drag on the paper pans (a click on a connector or a row still picks it)
   let drag = null; pane.addEventListener("pointerdown", (e) => { if (e.button !== 0 || e.target.closest("button, a, summary, [data-transition-row]")) return; drag = { x: e.clientX, y: e.clientY, l: pane.scrollLeft, t: pane.scrollTop }; });
   pane.addEventListener("pointermove", (e) => { if (!drag) return; pane.scrollLeft = drag.l - (e.clientX - drag.x); pane.scrollTop = drag.t - (e.clientY - drag.y); });
-  addEventListener("pointerup", () => (drag = null)); pane.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); set(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
+  const up = () => (drag = null); addEventListener("pointerup", up); addEventListener("hashchange", close); pane.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); set(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
   if (svg) { svg.classList.add("rr-figview-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); }
   document.body.append(el); set(1); addEventListener("keydown", key, true); closeBtn.focus({ preventScroll: true });
   return el;
@@ -1330,8 +1339,14 @@ function reportFigure(card, r, it, box) {
   // never blown up: at most a little over the size it was laid out at
   for (const sg of [body, ...(body.querySelectorAll ? body.querySelectorAll("svg") : [])]) if (sg?.tagName === "svg" && sg.viewBox?.baseVal?.width) sg.style.maxWidth = `${Math.round(sg.viewBox.baseVal.width * 1.15)}px`;
   const big = !!box && box.w < 2000 && isBig(card, it, box.w);
-  return h("figure", { class: `rp-fig rp-fig-${v.type}${big ? " rr-bigprev" : ""}`, "data-report-figure": v.id, "data-figure-type": v.type, ...(big ? { "data-big-figure": "" } : {}) }, h("div", { class: "rp-figbody" }, body),
-    h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v), big ? viewBtn(card, it) : null), big ? seqList(v) : null);
+  // a big drawing: "View drawing" right under the preview (above any list the figure carries), and a click on the preview's
+  // paper opens it too (a connector or a box keeps its own click)
+  let bar = null; if (big) { const sg = body.matches?.("svg") ? body : body.querySelector("svg"); bar = h("div", { class: "rr-bigbar", "data-big-figure": it.id }, viewBtn(card, it));
+    if (sg) { sg.classList.add("rr-preview"); sg.addEventListener("click", (e) => { if (e.target.closest(".rr-pickable, [data-edge-hit], [data-akey], [data-transition-pick], [data-elabel], [data-node]")) return; e.stopPropagation(); figViewer(card, it); }); }
+    if (sg && sg !== body && sg.parentElement) { sg.after(bar); bar = null; } }
+  const fig = h("figure", { class: `rp-fig rp-fig-${v.type}${big ? " rr-bigprev" : ""}`, "data-report-figure": v.id, "data-figure-type": v.type, ...(big ? { "data-big-figure": "" } : {}) }, h("div", { class: "rp-figbody" }, body), bar,
+    h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)), big ? seqList(v) : null);
+  return fig;
 }
 /** a lesson kept without some of its chapters (the tutor left them out after Studio's follow-ups): said so, naming them */
 function gapsNote(r, t) {
@@ -1513,7 +1528,9 @@ function promptBar(r) {
         h("button", { type: "button", class: "btn", "data-existing-again": "", onclick: () => askTurn(card, conf.action, conf.text, true) }, T("Explain again (paid)", "重新講一次（付費）")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf?.action === "translate" ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-translate-confirm": conf.lang, "aria-label": T("Confirm the translation", "確認翻譯") },
-      h("p", {}, T(`Translate this room's explanation (~US$${r.translate?.estimate ?? "?"}): one small paid round on ${offer?.provider} · ${offer?.model ?? "default model"}. Text only: no code is read; citations, the board and its pictures stay as they are. Asked once for this room; switching back costs nothing.`, `翻譯這間房間的解說（約 US$${r.translate?.estimate ?? "?"}）：在 ${offer?.provider} · ${offer?.model ?? "預設模型"} 上一次小的付費回合。只翻文字：不讀程式碼；引用、白板和圖都不變。這間房間只問一次；切回原文不用錢。`)),
+      (() => { const jobs = offer?.translate?.jobs ?? r.translate?.jobs ?? 1, est = offer?.translate?.estimate ?? r.translate?.estimate ?? "?";
+        return h("p", { "data-translate-jobs": jobs }, T(`Translate this room's explanation (~US$${est}): ${jobs === 1 ? "one small paid round" : `${jobs} paid jobs (the titles and points, then the scenes' full explanations in ${jobs - 1})`} on ${offer?.provider} · ${offer?.model ?? "default model"}. Text only: no code is read; citations, the board and its pictures stay as they are. Asked again only when a translation needs more jobs than this; switching back costs nothing.`,
+          `翻譯這間房間的解說（約 US$${est}）：在 ${offer?.provider} · ${offer?.model ?? "預設模型"} 上${jobs === 1 ? "一次小的付費回合" : ` ${jobs} 個付費工作（標題和要點一個，完整說明 ${jobs - 1} 個）`}。只翻文字：不讀程式碼；引用、白板和圖都不變。之後的翻譯要更多工作時才會再問；切回原文不用錢。`)); })(),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-translate-start": "", disabled: RR.posting.has(card), onclick: () => startTranslate(r, conf.lang, offer?.translate?.hash, true) }, T("Translate", "翻譯")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); RR.lang.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },

@@ -122,14 +122,17 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   scene this turn showed, so a long explanation is sent in several tool calls rather than one giant reply. Every prompt tells
   the tutor so ("FULL EXPLANATIONS", in Studio's frame: the pinned skills are unchanged): the mechanism, why it is built this
   way, the edge cases, before and after, each claim cited, the way a trusted engineer hands it in. The board shows a body
-  under the scene's points, an answer's and a lesson chapter's alike, folded to one line ("The full explanation · n words", or n characters for Chinese text,
+  under the scene's points, an answer's and a lesson chapter's alike, folded to one line ("The full explanation · n words", or n characters for Chinese text; 「n 詞（英文）」 for an English body in a Chinese room,
   `data-scene-body`) and opened with a click, kept open across redraws; it is rendered as a small markdown (headings, lists,
   fenced code, paragraphs, **bold**, `code`, citations as chips), every word through text nodes. The next turn's prompt (an
   understanding check's too) carries the last six turns' scene bodies (3000 characters a scene, 8000 a turn). A translation
   never sends a body with the titles and points (so a long body can never make them fail): once those are kept, the bodies
   go in jobs of their own, in chunks of at most 12 000 characters (`BODY_CHUNK`, `bodyChunks`; a longer body alone), each kept
   only when it came back whole with every citation (`keepBody`); a chunk that fails leaves its bodies as written, marked "not
-  translated yet" (`translating.bodies`: asked, kept, the jobs; their cost joins the translation's). A turn shows at most 120 scenes and draws at most 400 board items and 40 `figure_svg` tries
+  translated yet" (`translating.bodies`: asked, kept, the jobs; their cost joins the translation's, unknown when any job's is).
+  At most 8 body jobs a translation (`BODY_JOBS`; the bodies past them stay as written). Each job is paid: the confirmation
+  names how many (one for the titles and points, one a chunk: `translate.jobs`), the estimate is a fifth of a turn a job, and
+  a later translation that needs more jobs than the captain confirmed asks again. A turn shows at most 120 scenes and draws at most 400 board items and 40 `figure_svg` tries
   (`SCENE_LIMITS.scenes`, `TURN_LIMITS`): bounds against a runaway tutor across a lesson's rounds, not sizes to aim for. The
   final answer is still the transcript. An older answer (no scenes) is split on the page, sentence by sentence, into points of at most 120 (a
   CJK character counting two), each citation staying with its sentence; its markdown tables become a `table` picture and
@@ -507,11 +510,13 @@ of at most 1200 characters), 16 actors and 80 steps, 48 nodes and 96 edges, 8 re
 more than 12 states lays its states out in rows, in the order they are reached, each row read the other way from the last
 (`STATE_ROW`); an architecture of more than 8 layers puts its layers in bands one under the other (`ARCH_BAND`); a drawing
 within the old caps is laid out exactly as before. Regions keep their usual size: a drawing that would read at under three
-quarters of its drawn size in its column (`isBig`) is a preview there, with "View drawing" (檢視圖, `data-fig-view`) under it,
-and a sequence of more than 16 steps lists every step (`data-seq-list`, as a lifecycle lists its transitions). "View
+quarters of its drawn size in its column (`isBig`) is a preview there, with "View drawing" (檢視圖, `data-fig-view`) right
+under it (above any list the figure carries, so it is in view when the board flies there), and a click on the preview's
+paper opens it too; a sequence of more than 16 steps lists every step (`data-seq-list`) and a lifecycle of more than 16
+transitions folds its list under one line (`data-trans-list`), both opened with a click. "View
 drawing" opens the drawing over the room, full screen on any width, at its own scale (vector, `data-fig-viewer`): panned
-by scrolling or dragging, zoomed by −, +, Fit and 1:1 (or ctrl + wheel), closed by Escape or Close, the focus back on the
-button. The camera never goes under its 0.1 floor, Fit all included. The connector router skips a pair of connectors whose
+by scrolling or dragging, zoomed by −, +, Fit and 1:1 (or ctrl + wheel), closed by Escape, Close or a change of route, the focus back on the
+button and kept inside the viewer while it is open (Tab cycles its controls). The camera never goes under its 0.1 floor, Fit all included. The connector router skips a pair of connectors whose
 boxes are apart (the same verdict, so a 96-connector architecture lays out in a moment, not minutes) and takes one
 refinement pass instead of two past 40 connectors.
 

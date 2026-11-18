@@ -265,6 +265,8 @@ export function explainErrors(list: unknown, keys: string[] | null): string[] {
 /** a translation's bodies go in chunks of at most this many characters (a body longer than it alone), each its own job, so
  *  no single reply has to carry them all */
 export const BODY_CHUNK = 12000;
+/** at most this many body jobs a translation (each one paid): bodies past them stay as written, marked not translated */
+export const BODY_JOBS = 8;
 export function bodyChunks<T extends { body: string }>(items: T[], budget: number): T[][] {
   const out: T[][] = []; let cur: T[] = [], size = 0;
   for (const x of items) { if (cur.length && size + x.body.length > budget) { out.push(cur); cur = []; size = 0; } cur.push(x); size += x.body.length; }
@@ -380,7 +382,7 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   /** the explanation in another language, per turn (a translation turn on the tutor's model: text only, citations kept) */
   translations?: Record<string, Record<string, Translation>>;
   /** the captain confirmed translating this room's explanation (once per room, for this tutor) */
-  translateOk?: { hash: string; at: string };
+  translateOk?: { hash: string; at: string; base?: string; jobs?: number };
   /** the last translation turn: its language, how it went and what was left untranslated */
   translating?: { lang: string; status: "running" | "done" | "failed"; at: string; ended?: string | null; error?: string | null; dropped?: number[]; job?: string | null; cost?: any;
     /** the scenes' bodies, translated in jobs of their own after the titles and points: how many were asked, how many kept */
@@ -1565,7 +1567,11 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const translateUnits = (turns: Turn[], room?: Room) => turns.map((t) => ({ n: t.n, scenes: (t.scenes ?? []).map((sc) => ({ title: sc.title, points: sc.points.map((p) => p.text), ...(sc.points.some((p) => p.detail) ? { details: sc.points.map((p) => p.detail ?? "") } : {}) })),
     claims: (t.claims ?? []).filter((c) => ["claim", "aside", "heading"].includes(c.kind)).map((c) => c.text), answer: t.answer,
     ...(room ? { figures: Object.fromEntries(room.board.filter((b) => b.turn === t.n && figureTexts(b).length).map((b) => [b.id, figureTexts(b)])) } : {}) }));
-  /** roughly what a translation costs: a fifth of a turn of this room, at least a cent (shown with ~) */
+  /** the bodies a translation of these turns sends, in their chunks (at most BODY_JOBS), and its paid jobs: one for the titles
+   *  and points, one a chunk */
+  const bodyItems = (turns: Turn[]) => turns.flatMap((t) => (t.scenes ?? []).map((sc, m) => ({ n: t.n, m, body: sc.skip ? "" : sc.body ?? "" })).filter((x) => x.body));
+  const translateJobs = (room: Room | null, lang?: string) => room ? 1 + Math.min(BODY_JOBS, Math.max(0, ...(lang ? [lang] : [...ROOM_LANGS]).map((l) => bodyChunks(bodyItems(untranslated(room, l)), BODY_CHUNK).length))) : 1;
+  /** roughly what a translation costs: a fifth of a turn of this room a job, at least a cent (shown with ~) */
   const translateEstimate = (room: Room | null) => { const c = (room?.turns ?? []).filter((t) => !t.studio && typeof t.cost?.usd === "number").map((t) => t.cost.usd); return c.length ? Math.max(0.01, Math.round(c.reduce((a, b) => a + b, 0) / c.length * 0.2 * 100) / 100) : null; };
   async function runTranslate(k: Key, room: Room, lang: string, turns: Turn[], s: S, provider: any, sk: ReturnType<typeof skills>, adm: { x: any; aux: boolean; system: string; rules: any; admissionReceipt: unknown; receipt: (r: any) => unknown }) {
     const units = translateUnits(turns, room), round = `room-${k.id}-tr-${lang}-${Date.now().toString(36)}`;
@@ -1596,8 +1602,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     // the scenes' bodies, after the titles and points are kept and never able to fail them: in jobs of their own, a chunk of
     // bodies each (BODY_CHUNK characters), each body kept only whole (keepBody); a chunk that fails leaves its bodies as written
     let cost = job?.cost ?? null; const bodies = { asked: 0, kept: 0, jobs: [] as string[] };
-    if (!error) { const items = turns.flatMap((t) => room.translations?.[lang]?.[String(t.n)] ? (t.scenes ?? []).map((sc, m) => ({ n: t.n, m, body: sc.skip ? "" : sc.body ?? "" })).filter((x) => x.body) : []);
-      for (const chunk of bodyChunks(items, BODY_CHUNK)) { if (!engine.owns(adm.x) || !k.open() || engine.abortOf(s.run).signal.aborted) break; bodies.asked += chunk.length;
+    if (!error) { const items = bodyItems(turns.filter((t) => room.translations?.[lang]?.[String(t.n)]));
+      for (const chunk of bodyChunks(items, BODY_CHUNK).slice(0, BODY_JOBS)) { if (!engine.owns(adm.x) || !k.open() || engine.abortOf(s.run).signal.aborted) break; bodies.asked += chunk.length;
         const btext = ["TRANSLATION ONLY. Do not read code, do not call any tool, do not explain anything new.",
           `Translate each scene body below (markdown) into ${LANGS[lang] ?? lang}, whole: keep its structure (headings, lists, code blocks), every citation token exactly as written and in the same sentence, code, paths, names and numbers as they are.`,
           "Reply with JSON only: {\"bodies\": [{\"n\": <n>, \"m\": <m>, \"body\": \"…\"}]}, one for each body given.", "", JSON.stringify({ bodies: chunk })].join("\n");
@@ -1605,7 +1611,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
             ref: s.run.id, admissionReceipt: adm.admissionReceipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal, owns: () => engine.owns(adm.x) && k.open(), ...(adm.aux ? { auxOwner: adm.x } : {}),
             project: s.run.params?.project || null, rules: adm.rules, maxTools: 0, timeoutMs: roundTimeoutMs(), sandbox: { writes: [], reads: [], allow: [] },
             record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, `${round}-b${bodies.jobs.length + 1}`), header: { run: s.run.id, node: s.node.id, round: `${round}-b${bodies.jobs.length + 1}`, head: s.head, base: s.base, card: k.id, subject: subjectRecord(k, s, room), translate: lang, bodies: chunk.map((x) => `${x.n}/${x.m}`), role: "review-room-tutor", skills: sk.map((x) => `${x.id}@sha256:${x.sha256}`) } } } as any);
-          bodies.jobs.push(bj.id); cost = cost && bj.cost ? sumCost(cost, bj.cost) : cost ?? bj.cost ?? null;
+          // a cost Studio does not know (the first job's, or this one's) makes the total unknown, never a part shown as the whole
+          bodies.jobs.push(bj.id); cost = sumCost(cost ?? {}, bj.cost);
           const mm = /\{[\s\S]*\}/.exec(String(bj.answer ?? "")); let parsed: any = null; try { parsed = mm ? JSON.parse(mm[0]) : null; } catch {}
           for (const x of chunk) { const got = (Array.isArray(parsed?.bodies) ? parsed.bodies : []).find((y: any) => Number(y?.n) === x.n && Number(y?.m) === x.m), b = bj.status === "done" ? keepBody(x.body, got?.body) : null, sc = room.translations?.[lang]?.[String(x.n)]?.scenes?.[x.m];
             if (b && sc) { sc.body = b; bodies.kept++; } } } catch {} } }
@@ -2010,7 +2017,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     autoTeach: { on: r?.autoTeach ?? settings().autoTeach, room: r?.autoTeach ?? null, global: settings().autoTeach, skipped: (r?.autoTaught ?? []).filter((x) => x.head === (r?.pr?.head ?? r?.head) && x.skipped).map((x) => x.skipped).at(-1) ?? null },
     tutors: [],
     library: r?.library && library().get(r.library.artifact) ? { artifact: r.library.artifact, versions: r.library.versions, current: r.library.sig === contentSig(r) } : null,
-    translate: open && r ? { estimate: translateEstimate(r), confirmed: !!r.translateOk, pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
+    translate: open && r ? { estimate: (() => { const e = translateEstimate(r); return e == null ? null : Math.round(e * translateJobs(r) * 100) / 100; })(), jobs: translateJobs(r), confirmed: !!r.translateOk && (r.translateOk.jobs ?? 1) >= translateJobs(r), pending: Object.fromEntries(ROOM_LANGS.map((l) => [l, untranslated(r, l).map((t) => t.n)])) } : null });
   /** a running turn's progress, read back from its round record (written as the tutor works, so it survives a reload or a
    *  restart): what it said last and how many tools it used; its scenes and pictures are already on the room */
   const progressOf = (k: Key, r: Room | null) => { const t = r?.turns.filter((x) => !x.studio && (x.status === "running" || (x.status !== "done" && !x.answer))).at(-1); if (!t || !k.run || r!.turns.at(-1) !== t && r!.turns.slice(r!.turns.indexOf(t) + 1).some((x) => !x.studio)) return null;
@@ -2236,12 +2243,14 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       try { await engine.deps.refreshUsable?.(); } catch {}
       const offer = offerOf(k); if ("error" in offer) throw refuse(offer.error!, offer.code ?? "no_tutor");
       const tutor = tutorFor(k, s); if (tutor.pick.provider !== offer.provider || (tutor.pick.model ?? null) !== (offer.model ?? null)) throw refuse("The room's tutor changed: confirm again / 審查室的導師變了：請再確認一次", "confirm_required", { offer });
-      const hash = sha(`${offer.hash}:translate`).slice(0, 16), estimate = translateEstimate(room0);
-      if (room0!.translateOk?.hash !== hash && a.confirm !== hash) throw refuse(`Translating this room's explanation is a small paid round on ${offer.provider} ${offer.model ?? "(default model)"} (~${estimate ?? "?"}): confirm it once / 翻譯這間房間的解說是一次小的付費回合（約 ${estimate ?? "?"}），請確認一次`, "confirm_required", { offer: { ...offer, translate: { hash, estimate, lang } } });
+      // the paid jobs it takes (titles and points, then the bodies in chunks): asked again when more than the captain confirmed
+      const jobs = translateJobs(room0, lang), base = sha(`${offer.hash}:translate`).slice(0, 16), hash = jobs > 1 ? sha(`${base}:${jobs}`).slice(0, 16) : base, est0 = translateEstimate(room0), estimate = est0 == null ? null : Math.round(est0 * jobs * 100) / 100;
+      const agreed = !!room0!.translateOk && (room0!.translateOk.base ?? room0!.translateOk.hash) === base && (room0!.translateOk.jobs ?? 1) >= jobs;
+      if (!agreed && a.confirm !== hash) throw refuse(`Translating this room's explanation is ${jobs === 1 ? "one small paid round" : `${jobs} paid jobs (the titles and points, then the scenes' full explanations in ${jobs - 1})`} on ${offer.provider} ${offer.model ?? "(default model)"} (~${estimate ?? "?"}): confirm it / 翻譯這間房間的解說${jobs === 1 ? "是一次小的付費回合" : `要 ${jobs} 個付費工作（標題和要點一個，完整說明 ${jobs - 1} 個）`}（約 ${estimate ?? "?"}），請確認`, "confirm_required", { offer: { ...offer, translate: { hash, estimate, lang, jobs } } });
       const { x, held, provider, sk, system, rules, admissionReceipt, receipt } = await admit(k, s, tutor);
       if (live.has(k.id) || explainer.running(k.id)) { held?.release(); throw refuse("A turn, a translation or a skill's run is already running in this room / 這個審查室已有執行在進行", "busy"); }
       const room = load(k); if (!room || !untranslated(room, lang).length) { held?.release(); throw refuse("The room was started over while the translation was being admitted / 審查室在翻譯開始前被清空了", "reset"); }
-      room.translateOk = { hash, at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
+      room.translateOk = { hash, base, jobs: Math.max(jobs, agreed ? room.translateOk?.jobs ?? 1 : 1), at: new Date().toISOString() }; room.translating = { lang, status: "running", at: new Date().toISOString() }; save(k, room);
       live.set(k.id, -2); notify(k);
       void runTranslate(k, room, lang, untranslated(room, lang), s, provider, sk, { x, aux: !!held, system, rules, admissionReceipt, receipt }).catch(() => {}).finally(() => { held?.release(); live.delete(k.id); notify(k); autoSave(self, k); });
       return this.view(k.id);

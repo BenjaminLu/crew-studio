@@ -121,7 +121,9 @@ try {
     ok(/stopped after 5 rounds: a round failed \(the vendor went away\)/.test(note?.text || "") && note.err, "a lesson ended by a failed round says so, with the error, in red", JSON.stringify(note));
     const { ctx: c2, p: p2 } = await open(1440, { room: failed, lang: "zh-TW" }); await fly(p2, "t2");
     const zh = await p2.evaluate(() => document.querySelector("[data-lesson-stopped]")?.textContent || "");
-    ok(/5 回合後停止：有一回合失敗（the vendor went away）/.test(zh), "and in Chinese", zh); await c2.close();
+    ok(/5 回合後停止：有一回合失敗（the vendor went away）/.test(zh), "and in Chinese", zh);
+    await fly(p2, "t1"); const zcount = await p2.evaluate(() => document.querySelector('[data-region="t1"] [data-scene-body-toggle]')?.textContent || "");
+    ok(/ · \d+ 詞（英文）$/.test(zcount), "a Chinese room counts an English body in words, saying so", zcount); await c2.close();
     await ctx.close(); }
   // ---------- drawings far larger than the old caps: a readable preview in a region of the usual size, its drawing on screen
   //            when the board flies there, and "View drawing" opens it at its own scale, its labels legible ----------
@@ -131,12 +133,22 @@ try {
     ok(seq && seq.w <= 1000 && seq.onScreen && seq.view === "View drawing" && seq.steps === 80, `${tag}: an answer's 16-actor, 80-step sequence is a preview in a card of the usual width, on screen, with “View drawing” and every step listed`, JSON.stringify(seq));
     ok(sv && sv.steps === 80 && sv.shown >= 8 && sv.median >= 11 && sv.focus && sv.zoom === "100%" && sv.list === 80, `${tag}: “View drawing” opens the sequence at its own size: labels on screen at 11px or more, every step listed, the focus on Close`, JSON.stringify(sv));
     await p.screenshot({ path: join(shots, `sequence-view-${tag}-1440.png`) });
+    for (let i = 0; i < 9; i++) await p.keyboard.press("Tab");
+    const trapped = await p.evaluate(() => !!document.activeElement?.closest("[data-fig-viewer]"));
+    ok(trapped, `${tag}: Tab stays inside the viewer while it is open`, String(trapped));
     await p.keyboard.press("Escape"); await p.waitForTimeout(150); const gone = await p.evaluate(() => !document.querySelector("[data-fig-viewer]") && !!document.activeElement?.hasAttribute("data-fig-view"));
     ok(gone, `${tag}: Escape closes the viewer and gives the focus back to “View drawing”`, String(gone));
     await fly(p, "t2-2"); const ar = await region(p, "t2-2"); await p.screenshot({ path: join(shots, `arch-${tag}-1440.png`) }); await openView(p, "t2-2"); const av = await viewer(p);
     ok(ar && ar.w <= 900 && ar.onScreen && ar.view && av && av.nodes === 48 && av.vbw < 3200 && av.shown >= 8 && av.median >= 11, `${tag}: a 48-node, 96-edge architecture: its layers in bands (not one row), a preview on screen in its region, legible in the viewer`, JSON.stringify({ ar, av }));
     await p.screenshot({ path: join(shots, `arch-view-${tag}-1440.png`) }); await p.keyboard.press("Escape");
-    await fly(p, "t2-3"); const st = await region(p, "t2-3"); await p.screenshot({ path: join(shots, `states-${tag}-1440.png`) }); await openView(p, "t2-3"); const stv = await viewer(p);
+    await fly(p, "t2-3"); const st = await region(p, "t2-3"); await p.screenshot({ path: join(shots, `states-${tag}-1440.png`) });
+    const btn = await p.evaluate(() => { const b = document.querySelector('[data-region="t2-3"] [data-fig-view]'), vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), r = b?.getBoundingClientRect(), list = document.querySelector('[data-region="t2-3"] [data-trans-list]');
+      return { inView: !!r && r.width > 0 && r.top >= vp.top && r.bottom <= vp.bottom && r.left >= vp.left && r.right <= vp.right, folded: !!list && !list.open, above: !!r && !!list && r.bottom <= list.getBoundingClientRect().top + 1 }; });
+    ok(btn.inView && btn.folded && btn.above, `${tag}: flying to the lifecycle shows “View drawing” right under its preview, in view, above its transition list (folded past 16 rows)`, JSON.stringify(btn));
+    await p.evaluate(() => { const sg = document.querySelector('[data-region="t2-3"] svg.rr-preview'), r = sg.getBoundingClientRect(); sg.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: r.left + 4, clientY: r.top + 4 })); }); await p.waitForTimeout(250);
+    const byClick = await p.evaluate(() => document.querySelector("[data-fig-viewer]")?.getAttribute("data-fig-viewer") || null); await p.keyboard.press("Escape"); await p.waitForTimeout(150);
+    ok(byClick === "B2-2", `${tag}: a click on the preview opens the viewer too`, String(byClick));
+    await openView(p, "t2-3"); const stv = await viewer(p);
     const rows = await p.evaluate(() => document.querySelectorAll('[data-region="t2-3"] [data-transition-row]').length);
     ok(st && st.w <= 900 && st.onScreen && st.view && stv && stv.nodes === 40 && stv.vbw < 3200 && stv.shown >= 8 && stv.median >= 11 && rows === 80, `${tag}: a 40-state, 80-transition lifecycle: its states in rows (not one row thousands wide), on screen in its region, every transition listed, legible in the viewer`, JSON.stringify({ st, stv, rows }));
     await p.screenshot({ path: join(shots, `states-view-${tag}-1440.png`) }); await p.keyboard.press("Escape");
@@ -145,6 +157,9 @@ try {
     await p.screenshot({ path: join(shots, `fit-all-${tag}-1440.png`) });
     const wide = await p.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     ok(wide <= 0, `${tag}: the page itself never scrolls sideways`, String(wide));
+    await fly(p, "t1"); await openView(p, "t1"); await p.evaluate(() => { location.hash = "#/rooms"; }); await p.waitForTimeout(300);
+    const left = await p.evaluate(() => !document.querySelector("[data-fig-viewer]"));
+    ok(left, `${tag}: leaving the room closes the viewer`, String(left));
     await ctx.close(); }
   // ---------- narrow screens: the big drawing is a preview whose “View drawing” opens it full screen at its own scale ----------
   for (const width of [760, 390]) {
