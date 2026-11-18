@@ -37,7 +37,33 @@ export type Sources = {
   /** what the captain is looking at (src/observe/focus.ts) */
   focus?: FocusStore | null;
   now?: () => number;
+  /** Studio's own event log (data/events.jsonl, src/rawlog.ts StudioLog): studio_events, a pull request's go-live timeline */
+  log?: { poll(): LogEvent[] } | null;
+  /** the data folder: the retro's captain notes (src/retro-signals.ts RetroStore), which captain_note events name */
+  dataDir?: string | null;
+  /** the skill library (src/skills.ts), the /api/skills route's own library() */
+  skills?: () => any;
+  /** script skills' approvals and prepare state (src/skillpkg SkillPackages status) */
+  packages?: () => any;
+  /** the Projects page's own reads (src/project-overview.ts sidebar() and page(id)) */
+  projects?: () => { sidebar(): any; page(id: string): any } | null;
+  /** the crew's approved team (src/domain/crew.ts CrewStore current()) */
+  crew?: () => any;
+  /** the web terminals (src/terminals.ts): list() is the /api/terminals route's; tail(id, n) the last lines of one's screen */
+  terminals?: () => { list(desktop?: boolean): any[]; tail?(id: string, lines: number): string[] | null } | null;
+  /** the artifact library (src/artifacts.ts ArtifactStore): view() is the /api/artifacts route's own shaping */
+  artifacts?: () => any;
+  /** Doctor's rows (src/doctor.ts diagnose: the /api/doctor route's items) */
+  doctor?: () => any[] | null;
+  /** the non-secret settings: language, chat provider, which keys are present (never a key), sharing, phone driving */
+  settings?: () => Record<string, unknown> | null;
+  /** introduced LAN peers and paired phones (src/lan/relay.ts, src/remote/pairing.ts) */
+  peers?: () => { lan: any[]; phones: any[] } | null;
 };
+/** One line of Studio's event log (src/rawlog.ts RawEv). */
+export type LogEvent = { seq: number; ts: string; type: string; task: string | null; actor: string; pr: number | null; summary: any; data: any; workflow?: string };
+/** What a call may see beyond the default: a terminal's screen, only when the captain asked for it in this turn. */
+export type CallCtx = { captainAskedTail?: boolean };
 export type KindDef = {
   kind: string;
   /** the board route of one entity (`:id` stands for its id) and of the kind's list */
@@ -58,20 +84,68 @@ export type KindDef = {
   search?: (s: Sources, query: string) => Entity[];
   /** an id is this kind's (studio_get refuses one that is not, with the kind's own format) */
   idPattern: RegExp; idExample: string;
+  /** other board pages (route names) that show this kind, besides its own route and list (the coverage test reads them) */
+  pages?: string[];
+  /** the id as the board's route writes it, when that differs from the ref's (skill:baton@v2 is #/skills/baton@2) */
+  routeId?: (id: string) => string;
+  /** studio_logs for this kind: what it did and how far it is, oldest first, after `since` (a cursor it gave, or a time).
+   *  `cursor` is where the next call goes on. Absent: studio_logs refuses this kind, naming the ones it reads. */
+  logs?: (s: Sources, id: string, o: { tail: number; since: string | null; ctx: CallCtx }) => { data: Record<string, unknown>; cursor: string | null; updatedAt?: string | null } | null;
+  /** what a log's cursor is: a time (ISO 8601) or a sequence (seq:N); `since` must be the same kind */
+  logCursor?: "time" | "seq";
+  /** every field studio_logs emits for this kind, declared as `fields` are */
+  logFields?: FieldDecl[];
 };
+/** Kinds no external CLI grant may ever reach (the grant list and focus are no kind, and never reachable either). */
+export const NEVER_GRANTABLE = ["settings", "grant", "peer", "terminal", "focus"] as const;
+/** Board pages that are no entity's but a read tool's: the board and the Firstmate panel (studio_now), the activity log, one
+ *  event and the retro (studio_events), the roadmap (a static page: the manual). The coverage test reads these too. */
+export const TOOL_PAGES: Record<string, string> = { board: "studio_now", firstmate: "studio_now", activity: "studio_events", event: "studio_events", retro: "studio_events", roadmap: "studio_manual" };
+
+/** studio_logs' and studio_events' `since`: a cursor they gave ("seq:42"), or a time (ISO 8601). */
+export function sinceOf(since: string | null): { seq: number | null; at: number | null } {
+  if (!since) return { seq: null, at: null };
+  const m = /^seq:(\d{1,12})$/.exec(since); if (m) return { seq: Number(m[1]), at: null };
+  const t = Date.parse(since); return Number.isFinite(t) && /^\d{4}-\d\d-\d\d/.test(since) ? { seq: null, at: t } : { seq: null, at: null };
+}
+export const seqCursor = (n: number) => `seq:${n}`;
+/** One page of a log whose entries carry a time (a Task's steps and events, a room's rounds), cursor by time. After `since`:
+ *  the oldest `tail` entries, and any more at the last one's very millisecond, so the cursor (the last entry's time) never
+ *  skips one; without `since`: the newest `tail`. An entry that changes later (a step that ends) comes again with its new time. */
+export function timePage<T>(entries: T[], at: (x: T) => string | null | undefined, sinceAt: number | null, tail: number): { page: T[]; cursor: string | null; more: boolean } {
+  const t = (x: T) => { const n = Date.parse(String(at(x) ?? "")); return Number.isFinite(n) ? n : 0; };
+  const sorted = entries.map((x, i) => ({ x, n: t(x), i })).sort((a, b) => a.n - b.n || a.i - b.i);
+  const after = sinceAt === null ? sorted : sorted.filter((e) => e.n > sinceAt);
+  let page = sinceAt === null ? after.slice(-tail) : after.slice(0, tail);
+  if (sinceAt !== null && page.length) { const last = page.at(-1)!.n; let k = page.length; while (k < after.length && after[k].n === last) k++; page = after.slice(0, k); }
+  const lastN = page.length ? page.at(-1)!.n : null;
+  return { page: page.map((e) => e.x), cursor: lastN !== null ? new Date(lastN).toISOString() : sinceAt !== null ? new Date(sinceAt).toISOString() : null, more: sinceAt !== null && page.length < after.length };
+}
+/** One page of a log by sequence (a pull request's events): after `since`, the oldest `tail`; else the newest. The cursor is
+ *  the last entry shown, so the next call starts right after it. */
+export function seqPage<T extends { seq: number }>(entries: T[], sinceSeq: number | null, tail: number): { page: T[]; cursor: string | null; more: boolean } {
+  const after = sinceSeq === null ? entries : entries.filter((e) => e.seq > sinceSeq), page = sinceSeq === null ? after.slice(-tail) : after.slice(0, tail);
+  return { page, cursor: page.length ? seqCursor(page.at(-1)!.seq) : sinceSeq !== null ? seqCursor(sinceSeq) : null, more: sinceSeq !== null && page.length < after.length };
+}
 
 const KINDS = new Map<string, KindDef>();
-/** Register a kind. Its fields are checked here: a kind that emits a path twice, or an unknown trust, never registers. */
+const checkFields = (kind: string, fields: FieldDecl[]) => {
+  const seen = new Set<string>();
+  for (const f of fields) {
+    if (!["studio", "captain", "untrusted"].includes(f.trust)) throw new Error(`observe: ${kind}.${f.path} has no trust level`);
+    if (seen.has(f.path)) throw new Error(`observe: ${kind}.${f.path} is declared twice`);
+    if (f.trust === "untrusted" && !f.source) throw new Error(`observe: ${kind}.${f.path} is untrusted and names no source`);
+    seen.add(f.path);
+  }
+};
+/** Register a kind. Its fields are checked here: a kind that emits a path twice, or an unknown trust, never registers; nor
+ *  does a kind on the never-grantable list that says a grant may see it. */
 export function registerKind(def: KindDef): KindDef {
   if (!/^[a-z][a-z-]{1,20}$/.test(def.kind)) throw new Error(`observe: kind ${def.kind} is not a short lower-case name`);
   if (KINDS.has(def.kind)) throw new Error(`observe: kind ${def.kind} is registered twice`);
-  const seen = new Set<string>();
-  for (const f of def.fields) {
-    if (!["studio", "captain", "untrusted"].includes(f.trust)) throw new Error(`observe: ${def.kind}.${f.path} has no trust level`);
-    if (seen.has(f.path)) throw new Error(`observe: ${def.kind}.${f.path} is declared twice`);
-    if (f.trust === "untrusted" && !f.source) throw new Error(`observe: ${def.kind}.${f.path} is untrusted and names no source`);
-    seen.add(f.path);
-  }
+  if (def.grantable && (NEVER_GRANTABLE as readonly string[]).includes(def.kind)) throw new Error(`observe: ${def.kind} may never be grantable`);
+  checkFields(def.kind, def.fields); checkFields(def.kind, def.logFields ?? []);
+  if (!!def.logs !== !!def.logFields) throw new Error(`observe: ${def.kind} has logs without logFields, or the reverse`);
   KINDS.set(def.kind, def); return def;
 }
 /** The registered kinds, in registration order (the tools' kind enum, the index, the manual). */
@@ -87,7 +161,7 @@ export function parseRef(ref: unknown): { kind: string; id: string } | null {
   const m = /^studio:\/\/([a-z][a-z-]{1,20})\/(.+)$/.exec(s) ?? /^([a-z][a-z-]{1,20}):(?!\/\/)(.+)$/.exec(s);
   return m ? { kind: m[1], id: m[2] } : null;
 }
-export const routeOf = (def: KindDef, id: string) => def.route.replace(":id", encodeURIComponent(id).replace(/%2F/g, "/").replace(/%23/g, "%23"));
+export const routeOf = (def: KindDef, id: string) => def.route.replace(":id", encodeURIComponent(def.routeId ? def.routeId(id) : id).replace(/%2F/g, "/").replace(/%23/g, "%23"));
 
 // ---------- shaping: declared fields only, untrusted wrapped, withheld dropped ----------
 const norm = (path: string[]) => path.join(".").replace(/\.\[\]/g, "[]");

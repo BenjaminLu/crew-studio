@@ -1,16 +1,18 @@
-# What Firstmate can see: Studio's read tools (P1)
+# What Firstmate can see: Studio's read tools (P1, P2)
 
 Firstmate used to see Studio through one tool, `studio_work_status` (the newest 50 Tasks), and the live status line on each
 captain turn. It could not read a review room, the pull request list, a card's choices, or what the captain was looking at.
-P1 gives it four read tools over one registry of entity kinds. Every one is read only: none answers a card, starts a paid
+P1 gave it four read tools over one registry of entity kinds; P2 adds `studio_logs` and `studio_events` and a kind for
+every other board page. Every one is read only: none answers a card, starts a paid
 run, writes to GitHub or touches a secret.
 
-Code: `src/observe/registry.ts` (kinds, refs, trust, budgets, the envelope), `src/observe/kinds/{task,card,room,pr}.ts`,
+Code: `src/observe/registry.ts` (kinds, refs, trust, budgets, the envelope), `src/observe/kinds/*.ts` (one file per kind),
+`src/observe/events.ts` (`studio_events`),
 `src/observe/now.ts` (`studio_now`), `src/observe/tools.ts` (the four tools), `src/observe/focus.ts` (what the captain is
 looking at), `src/observe/catalog.ts` (the index of Firstmate's native tools), `src/observe/instructions.ts` and
 `src/observe/guide.ts` (the index, below). The tools join Firstmate's native tools in
 `src/runtime/index.ts`; the `/api/focus` routes are in `src/server.ts`. Tests: `tests/observe-registry.ts`,
-`tests/observe-focus.ts`, `tests/observe-index.ts`, `tests/observe-ui.mjs`. Real-model eval: `scripts/observe-eval.ts`.
+`tests/observe-kinds.ts`, `tests/observe-focus.ts`, `tests/observe-index.ts`, `tests/observe-ui.mjs`. Real-model eval: `scripts/observe-eval.ts`.
 
 ## The tools
 
@@ -20,8 +22,10 @@ looking at), `src/observe/catalog.ts` (the index of Firstmate's native tools), `
 | `studio_find {query, kinds?}` | refs whose id or Studio/captain words match, each with a `resource_link` (`studio://kind/id`) |
 | `studio_list {kind, filter?, cursor?, depth?}` | one kind's entities with each one's summary, paged |
 | `studio_get {ref, depth?}` | one entity |
+| `studio_logs {ref, tail?, since?}` | a Task's steps and events, a room's tutor rounds and Explain-with runs (cost, why each stopped), a pull request's go-live timeline, a terminal's state; oldest first, with a cursor |
+| `studio_events {since?, kinds?, ref?}` | Studio's event log (`data/events.jsonl`) read on with a cursor: the pull form of a subscription |
 
-The same four, with the same names and input schemas, reach Claude (its MCP helper, `src/mcp.ts`, over Studio's private
+The same six, with the same names and input schemas, reach Claude (its MCP helper, `src/mcp.ts`, over Studio's private
 socket) and Codex (dynamic tools). Claude's list also carries each tool's `outputSchema` and `annotations`
 (`readOnlyHint: true`); its results come as `structuredContent` with the same JSON as text, the trust note as `_meta`.
 `studio_work_status` stays, as the task kind's listing in its older shape (`src/observe/kinds/task.ts workStatus`). The live
@@ -37,7 +41,40 @@ tools comes from `src/observe/catalog.ts`.
 | `room` | `room:PR-<hash>-1645` | `#/room/<id>` | `reviewRoom.list / view(id, false) / explain.view` (the room page's own reads; never opens the room, never reads GitHub) |
 | `pr` | `pr:owner/repo#1645` | `#/prs` | the pull request list's `view()` (the last snapshot) |
 
-`tests/observe-registry.ts` keeps a list of the board's routes no kind covers yet; it shrinks each phase.
+| `workflow` | `workflow:code-firstmate` | `#/workflow/<id>` | `WorkflowDefs.list()` (the rows `GET /api/wf` returns); an imported package's words untrusted |
+| `project` | `project:harbor-app` | `#/project/<id>` | the Projects page's `sidebar()` and `page(id)` (`src/project-overview.ts`) |
+| `skill` | `skill:baton@v2` | `#/skills/<id>@<n>` | `Skills.library()` (`GET /api/skills`) and, for a script skill, `SkillPackages.status`: the captain's decision and the prepared environment |
+| `crew` | `crew:worker` | `#/crew` | the approved team (`CrewStore.current()`, `teamBody`) |
+| `terminal` | `terminal:T-…` | `#/terminals` | `Terminals.list()`, state only (never the screen, never the question it shows) |
+| `artifact` | `artifact:<id>` | `#/artifact/<id>` | `ArtifactStore.view()` (`GET /api/artifacts`) |
+| `doc` | `doc:<id>` | `#/doc/<id>` | `docRows` (`GET /api/docs`); at depth full the latest text, untrusted |
+| `doctor` | `doctor:<item>` | `#/doctor` | Doctor's rows (`diagnose`), home paths as `~` |
+| `settings` | `settings:studio` | `#/settings` | the non-secret settings only: chat provider, which keys are present, sharing, phone driving |
+| `peer` | `peer:lan-…`, `peer:phone-…` | `#/lan` | LAN peers and paired phones, redacted: never a key, an address or what a peer calls itself |
+
+Every board route is a kind's (its page, its list or one of the pages it names in `pages`) or a read tool's (`TOOL_PAGES`:
+the board and the Firstmate panel are `studio_now`'s, the activity log, an event and the retro `studio_events'`, the roadmap
+the manual's). `tests/observe-registry.ts` fails on a route that is neither: there is no pending list any more.
+`settings`, `peer` and `terminal` are never grantable (`NEVER_GRANTABLE`, with the grant list and focus, which are no kind);
+the registry refuses a never-grantable kind that says otherwise.
+
+## Logs and events
+
+`studio_logs` reads a kind's `logs` (declared with `logFields`, trust as for `fields`). A terminal's log is its state; the last
+lines of its screen come only when the captain's own message in this turn names a terminal and its output
+(`captainAskedForScreen`, read from the captain's words, never from the tool's arguments); never on a card, a wake, another
+question or for a grant. The screen and the question it shows come as untrusted. A page is one timeline (a Task's steps and events, a
+room's rounds, runs and events) cut by time: after `since` the oldest `tail` entries, the cursor the last one shown (a
+time; a pull request's log is by sequence, `seq:N`), so no entry is skipped; a page that would pass 4 KB is asked again with
+fewer entries rather than cut.
+
+`studio_events` reads Studio's event log oldest first after `since` (the `nextCursor` of the last call, `seq:N`, or a time);
+with no `since` it reads the latest. Each event names the refs it is about (`refsOf`), so `ref` and `kinds` follow some. The
+retro's signals (`run_failed`, `room_round_failed`, `pr_*`, `captain_note`) carry codes and refs at Studio's trust; a
+`captain_note` brings the note's text at captain trust and the page text selected with it as untrusted. Studio's audit lines
+(a grant issued or revoked, a skill imported: checked ids only) keep their summary; a grant's use or refusal names what the
+caller sent, so it is untrusted like any other line's summary comes as untrusted and none of its data. A withheld
+Task's events show none of their untrusted parts.
 
 ## The envelope
 
@@ -80,7 +117,9 @@ tool. The manual has pages for the review room (`studio/pages/review-room`) and 
 
 ## Acceptance
 
-`tests/observe-registry.ts` checks the tools return the facts for the spec's questions 1-4 and 9-13. The real-model eval
+`tests/observe-registry.ts` checks the tools return the facts for the spec's questions 1-4 and 9-13, `tests/observe-kinds.ts`
+questions 5-7 (a skill version's approval and environment, the terminal waiting for input, the last Explain-with run's cost
+and why it stopped). The real-model eval
 asks questions 1-4 through the real MCP helper and measures each answer:
 
     bun scripts/observe-eval.ts --dry-run                  # no model: each question's tool path and sizes
