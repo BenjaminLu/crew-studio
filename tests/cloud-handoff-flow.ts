@@ -123,13 +123,11 @@ try {
   ok(tb.status === 200 && tb.body.red === true && classes === "other-branches,pull-requests", "the take-back flags the other branch and the pull request (red)", JSON.stringify(tb.body).slice(0, 400));
   const pc = records(id).find((e: any) => e.record === "cloud-handoff-postcheck"), head = records(id).find((e: any) => e.record === "cloud-handoff-head");
   ok(pc?.verdict === "fail" && head?.data?.cloudHead === cloudHead && head.seq < pc.seq, "the ledger: the cloud head Studio took, then the failed post checks", JSON.stringify(pc?.data));
-  await until(() => E.get(id)!.nodes.build.state !== "running" || status(id) === "failed", 60000);
+  // the edge checks run after the build step ends and before the review request starts: wait for the review request, then read them
+  await until(() => (E.get(id)!.nodes["pr-open"]?.visits ?? 0) > 0 || ["failed", "succeeded"].includes(status(id)), 90000);
   const after = E.get(id)!, edgeChecks = E.ledger(id).filter((e: any) => e.head === cloudHead && e.edge && ["firstmate/scope", "firstmate/lints", "firstmate/file-size-cap", "firstmate/covering-suites", "firstmate/fixture-modules"].includes(e.check));
-  ok(after.nodes.build.outcome === "adopted" && after.ctx.head === cloudHead && must(after.ctx.worktree, ["rev-parse", "HEAD"]) === cloudHead, "the worktree is at the cloud head and the build step ends adopted", `${after.nodes.build.state} ${after.nodes.build.outcome} ${after.ctx.head}`);
-  if (edgeChecks.length !== 5) console.log(JSON.stringify(E.events(id).slice(-25).map((e: any) => [e.type, e.summary ?? e.cause])), JSON.stringify(E.ledger(id).filter((e: any) => e.seq > (pc?.seq ?? 0)).map((e: any) => [e.check, e.record, e.verdict, e.edge, String(e.head).slice(0,8), e.node])), cloudHead);
-  ok(edgeChecks.length === 5 && edgeChecks.every((e: any) => e.verdict === "pass" || e.verdict === "not-applicable"), "the build node's checks ran again on the cloud head before the workflow went on (not skipped)", JSON.stringify(edgeChecks.map((e: any) => [e.check, e.verdict, e.edge])));
-  await until(() => (E.get(id)!.nodes["pr-open"]?.visits ?? 0) > 0 || ["failed", "succeeded"].includes(status(id)), 30000);
-  ok((E.get(id)!.nodes["pr-open"]?.visits ?? 0) > 0, "then the workflow goes on to the review request");
+  ok(after.nodes.build.outcome === "adopted" && must(after.ctx.worktree, ["rev-parse", "HEAD"]) === cloudHead, "the worktree is at the cloud head and the build step ends adopted", `${after.nodes.build.state} ${after.nodes.build.outcome} ${after.ctx.head}`);
+  ok((after.nodes["pr-open"]?.visits ?? 0) > 0 && edgeChecks.length === 5 && edgeChecks.every((e: any) => e.verdict === "pass" || e.verdict === "not-applicable"), "the build node's checks ran again on the cloud head (OS sandbox) before the workflow went on to the review request", JSON.stringify(edgeChecks.map((e: any) => [e.check, e.verdict, e.edge])));
   E.cancel(id, "captain", "test done"); await until(() => !E.busy(id), 30000);
 
   // ---------- a Claude-Session trailer stops the take-back; discard goes on from the base (acceptance 5, 6) ----------
