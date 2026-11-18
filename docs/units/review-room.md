@@ -764,6 +764,28 @@ the destination and the shape, decided before any DNS lookup:
 The room can be presented by one of the captain's own skills instead of the tutor's board (`src/domain/review-explain.ts`,
 `public/review-explain.js`). Quality first: a skill's run is not one model round.
 
+- **baton is the default** (`src/domain/review-baton.ts`, `packs/core/skills/studio-baton/`). Studio ships upstream baton byte for
+  byte as a built-in library skill, with a subset of diagram-design's guidance beside it (credit and licenses in its
+  NOTICE.md and THIRD_PARTY_NOTICES.md), pinned by both of the library's hashes and each script's sha256, OpenCC's lockfile
+  included. It has its own library id, `studio-baton` (shown "baton (built in)"), so a baton the captain imported from a skills
+  home stays the captain's `baton`, picked per room and confirmed like any skill, and the room's default never resolves to it. A room the captain never picked for is explained with the Studio-wide `defaultSkill` (`review-room-explain.json`,
+  `studio-baton` unless set; null is the tutor's board; `CREW_REVIEW_EXPLAIN_DEFAULT_SKILL` sets it for a test, "" the tutor), and
+  picking the tutor in a room keeps it on the board. baton runs with Studio's adapter, pinned with it: the room's
+  materials are its record (never git, gh or a session transcript), the compaction is reconstructed from the pull
+  request's record, diagram-design is read from the skill's folder, and its render, verify and snapshot scripts run through
+  `skill_run`. A directory room's materials are the directory's files at its commit.
+- **Opening a room starts it** (the captain's decision): when `autoRun` is on (default) and the room is explained with the
+  default skill, opening it (`POST …/explain/auto`, sent once per room and head by the page; never from a paired phone)
+  starts that skill's generation for the room's head without a paid confirmation, on the room tutor's model and the skill's
+  default instructions. Only the built-in baton exactly as pinned starts by itself: another default skill, or a changed baton
+  (the captain's own copy), shows Generate and its confirmation (`why: unpinned`). The pinned baton's scripts are approved in
+  advance: one signed decision bound to both pinned hashes, `via: builtin-pin`, recorded when Studio starts, when the captain
+  picks baton or when a room starts it (never by a read). Once per head: a run Studio started or tried to start for this head (`autoTried`, `run.head`, `run.opened`), whatever
+  its end, means a reload, a second tab or a revisit starts nothing more, and a failure is never retried by itself; the stage
+  shows why and "Try again" (`{retry: true}`) starts it once more. A new head starts a new version on the next opening; the
+  older version stays on the stage while it is made, with one progress strip above it (model, who pays, head, Stop); each
+  version in the menu says the head it explains and what it cost. A room explained by a skill never starts the tutor's lesson by itself.
+
 - **The picker** (`[data-explain-picker]`, "Explain with" / 解釋用, at the right end of the header of every room that is not a Library
   snapshot; hidden at 760px and narrower, where a paired phone reads only):
   Studio's tutor (the default: the board as above, unchanged) or any skill in Studio's skill library (the Skills page; a skill
