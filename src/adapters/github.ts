@@ -274,7 +274,7 @@ export class GitHubPrAdapter implements PrAdapter {
     const known=this.communityPins.get(pin?.repository+'@'+pin?.head);if(!known||JSON.stringify(known)!==JSON.stringify(pin)||typeof path!=='string'||path.length>300||path.split('/').some(p=>p==='..'||p==='.'||!p)||!/^((\.github|docs)\/)?(pull_request_template\.md|PULL_REQUEST_TEMPLATE(\/[A-Za-z0-9_.-]+\.md)?|CONTRIBUTING\.md|ISSUE_TEMPLATE(\.[Mm][Dd]|\/[A-Za-z0-9_.-]+\.(md|ya?ml))?|AGENTS\.md)$/i.test(path))throw new Error('Community content target is not allowlisted');
     return this.communityRequest(pin.source,`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${pin.head}`,signal);
   }
-  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "issue" | "closed-issues" | "open-pulls" | "pull-files", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
+  async remoteRead(kind: "pull" | "ref" | "base" | "repository" | "protection" | "policy" | "checks" | "statuses" | "reviews" | "inline-comments" | "issue-comments" | "issues" | "issue" | "closed-issues" | "open-pulls" | "pull-files" | "updated-pulls", target: string, page = 1, signal?: AbortSignal, approvedHeadOrFresh?: string | boolean, fresh=false): Promise<any> {
     const approvedHead = typeof approvedHeadOrFresh === "string" ? approvedHeadOrFresh : undefined;
     if (typeof approvedHeadOrFresh === "boolean") fresh = approvedHeadOrFresh;
     signal?.throwIfAborted();
@@ -293,6 +293,8 @@ export class GitHubPrAdapter implements PrAdapter {
     // what triage checks before investigating (read only): the recently closed issues (one page) and the open pull requests
     else if (kind === "closed-issues" && target === this.grant.repository && page === 1) suffix = `/issues?state=closed&sort=updated&direction=desc&per_page=50&page=1`;
     else if (kind === "open-pulls" && target === this.grant.repository) suffix = `/pulls?state=open&per_page=30&page=${page}`;
+    // a cloud hand-off's take-back (src/domain/cloud-handoff.ts): the pull requests most recently updated, any state, one page
+    else if (kind === "updated-pulls" && target === this.grant.repository && page === 1) suffix = `/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`;
     else if (kind === "ref" && ref(target) && this.branchAllowed(target, approvedHead) && page === 1) suffix = `/git/ref/heads/${encodeURIComponent(target)}`;
     else if (kind === "protection" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection`;
     else if (kind === "policy" && target === this.grant.base && page === 1) suffix = `/branches/${encodeURIComponent(target)}/protection/required_status_checks`;
@@ -545,6 +547,40 @@ export class GitHubPrAdapter implements PrAdapter {
       await command(["push", "--porcelain", `--force-with-lease=refs/heads/${o.branch}:${expected ?? ""}`, "--", this.grant.pushUrl, `${o.head}:refs/heads/${o.branch}`]);
     } catch (e: any) { retainClient = !!e.retainClient; throw e; }
     finally { if (!retainClient) rmSync(dir, { recursive: true, force: true }); }
+  }
+  /** A cloud hand-off branch (src/domain/cloud-handoff.ts): inside the grant's branch prefix, under handoff/. */
+  isHandoffBranch(branch: string) { return typeof branch === "string" && ref(branch) && branch.startsWith(this.grant.branchPrefix + "handoff/") && /^handoff\/R-[0-9]+-[1-9][0-9]*$/.test(branch.slice(this.grant.branchPrefix.length)); }
+  /** Push a local commit to a new cloud hand-off branch (the lease: the branch does not exist yet, or already holds this head). */
+  async pushHandoff(branch: string, head: string, signal?: AbortSignal) {
+    validateGitHubGrant(this.grant);
+    if (!this.isHandoffBranch(branch) || !sha.test(head)) throw new Error("not a cloud hand-off branch or head");
+    if (!localGit(this.grant.localPath, ["cat-file", "-e", `${head}^{commit}`]).ok) throw new Error("hand-off head is not a local commit");
+    return this.locked(branch, () => this.push({ repo: this.grant.localPath, branch, head } as OpenRequest, null, signal));
+  }
+  /** Every branch head of the granted repository, read with git ls-remote over the grant's push URL (read only). */
+  async remoteHeads(signal?: AbortSignal): Promise<Record<string, string>> {
+    validateGitHubGrant(this.grant); signal?.throwIfAborted();
+    const dir = mkdtempSync(join(tmpdir(), "crew-remote-heads-")); let retain = false;
+    try {
+      localMust(dir, ["init", "--bare", "-q", "."]); this.credential(); const env = publicationEnv(this.gitAuth());
+      const out = await ownedGit(gitArgv(["-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "ls-remote", "--heads", "--", this.grant.pushUrl]), dir, env, this.timeoutMs, signal);
+      const heads: Record<string, string> = {};
+      for (const line of out ? out.split("\n") : []) { const m = /^([a-f0-9]{40})\trefs\/heads\/(.+)$/.exec(line); if (!m || !ref(m[2])) throw new Error("invalid remote branch listing"); heads[m[2]] = m[1]; }
+      if (Object.keys(heads).length > 5000) throw new Error("remote branch listing exceeds limit");
+      return heads;
+    } catch (e: any) { retain = !!e.retainClient; throw e; } finally { if (!retain) rmSync(dir, { recursive: true, force: true }); }
+  }
+  /** Fetch a cloud hand-off branch into the project's object database (no ref is written there); its head must be `expected`. */
+  async importHandoff(branch: string, expected: string, signal?: AbortSignal) {
+    if (!this.isHandoffBranch(branch) || !sha.test(expected)) throw new Error("invalid hand-off import"); signal?.throwIfAborted();
+    const dir = mkdtempSync(join(tmpdir(), "crew-remote-handoff-")); let retain = false;
+    try {
+      localMust(dir, ["init", "--bare", "-q", "."]); const objects = localMust(this.grant.localPath, ["rev-parse", "--path-format=absolute", "--git-path", "objects"]); if (/[\r\n]/.test(objects)) throw new Error("invalid object path");
+      this.credential(); const env = publicationEnv({ ...this.gitAuth(), GIT_OBJECT_DIRECTORY: objects });
+      await ownedGit(gitArgv(["-c", "protocol.file.allow=" + (this.grant.mode === "simulator" ? "always" : "never"), "fetch", "--no-tags", "--", this.grant.pushUrl, `+refs/heads/${branch}:refs/crew/handoff`]), dir, env, this.timeoutMs, signal);
+      const head = await ownedGit(gitArgv(["rev-parse", "refs/crew/handoff"]), dir, env, this.timeoutMs, signal);
+      if (head !== expected) throw new Error("hand-off branch moved during import"); return head;
+    } catch (e: any) { retain = !!e.retainClient; throw e; } finally { if (!retain) rmSync(dir, { recursive: true, force: true }); }
   }
   private async locked<T>(branch: string, f: () => Promise<T>) { if (this.active.has(branch)) throw new Error("GitHub publication already in progress for this branch"); this.active.add(branch); try { return await f(); } finally { this.active.delete(branch); } }
   async open(o: OpenRequest, runDir: string, signal?: AbortSignal, assertOwner?: () => void): Promise<ReviewRequest> {

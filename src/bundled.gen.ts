@@ -275,136 +275,137 @@ import b271 from "../docs/units/chat-attachments.md" with { type: "file" };
 import b272 from "../docs/units/check-runtime.md" with { type: "file" };
 import b273 from "../docs/units/claude-native-capability.md" with { type: "file" };
 import b274 from "../docs/units/cli-mcp-grant.md" with { type: "file" };
-import b275 from "../docs/units/code-firstmate-smoke.md" with { type: "file" };
-import b276 from "../docs/units/codex-auth-timestamp.md" with { type: "file" };
-import b277 from "../docs/units/codex-independent-login.md" with { type: "file" };
-import b278 from "../docs/units/codex-login-welcome.md" with { type: "file" };
-import b279 from "../docs/units/codex-toolchain.md" with { type: "file" };
-import b280 from "../docs/units/coffee-local-render-jobs.md" with { type: "file" };
-import b281 from "../docs/units/coffee-staffing-recovery.md" with { type: "file" };
-import b282 from "../docs/units/compare-transcripts.md" with { type: "file" };
-import b283 from "../docs/units/crew-studio-agents.md" with { type: "file" };
-import b284 from "../docs/units/default-workflow-catalog.md" with { type: "file" };
-import b285 from "../docs/units/first-workflow-tutorial.md" with { type: "file" };
-import b286 from "../docs/units/firstmate-general-cli.md" with { type: "file" };
-import b287 from "../docs/units/firstmate-generated-media.md" with { type: "file" };
-import b288 from "../docs/units/firstmate-project-registration.md" with { type: "file" };
-import b289 from "../docs/units/firstmate-staffing.md" with { type: "file" };
-import b290 from "../docs/units/fix-backbone-nav-r2.md" with { type: "file" };
-import b291 from "../docs/units/fix-backbone-nav-r3.md" with { type: "file" };
-import b292 from "../docs/units/fix-backbone-nav.md" with { type: "file" };
-import b293 from "../docs/units/fix-legacy-a1-credentials.md" with { type: "file" };
-import b294 from "../docs/units/fix-legacy-c-privacy.md" with { type: "file" };
-import b295 from "../docs/units/fix-migrate-r2.md" with { type: "file" };
-import b296 from "../docs/units/fix-migrate-stream.md" with { type: "file" };
-import b297 from "../docs/units/fix-record-smoke-r2.md" with { type: "file" };
-import b298 from "../docs/units/fix-round-record-r1.md" with { type: "file" };
-import b299 from "../docs/units/fix-round-sandbox-cli.md" with { type: "file" };
-import b300 from "../docs/units/fix-round-sandbox-r1.md" with { type: "file" };
-import b301 from "../docs/units/fix-runtime-authority.md" with { type: "file" };
-import b302 from "../docs/units/fix-runtime-contract.md" with { type: "file" };
-import b303 from "../docs/units/fix-runtime-durability.md" with { type: "file" };
-import b304 from "../docs/units/fix-runtime-followups.md" with { type: "file" };
-import b305 from "../docs/units/fix-runtime-generic.md" with { type: "file" };
-import b306 from "../docs/units/fix-runtime-ids.md" with { type: "file" };
-import b307 from "../docs/units/fix-runtime-lifetime.md" with { type: "file" };
-import b308 from "../docs/units/fix-runtime-r2.md" with { type: "file" };
-import b309 from "../docs/units/fix-runtime-sandbox.md" with { type: "file" };
-import b310 from "../docs/units/fix-runtime-tests.md" with { type: "file" };
-import b311 from "../docs/units/fix-runtime-ui-stream.md" with { type: "file" };
-import b312 from "../docs/units/fix-sandbox-repo-r2.md" with { type: "file" };
-import b313 from "../docs/units/fix-sandbox-repo.md" with { type: "file" };
-import b314 from "../docs/units/fix-sandbox-worktrees-r2.md" with { type: "file" };
-import b315 from "../docs/units/fix-sb-nav-leftovers.md" with { type: "file" };
-import b316 from "../docs/units/fix-smoke-r1.md" with { type: "file" };
-import b317 from "../docs/units/fix-worktrees-r1.md" with { type: "file" };
-import b318 from "../docs/units/github-foundation.md" with { type: "file" };
-import b319 from "../docs/units/github-review-workflow.md" with { type: "file" };
-import b320 from "../docs/units/graph-simple-view.md" with { type: "file" };
-import b321 from "../docs/units/graph-tidy.md" with { type: "file" };
-import b322 from "../docs/units/image-refine-context.md" with { type: "file" };
-import b323 from "../docs/units/inbox-live.md" with { type: "file" };
-import b324 from "../docs/units/inbox-studio-cards.md" with { type: "file" };
-import b325 from "../docs/units/intent-merge-card.md" with { type: "file" };
-import b326 from "../docs/units/issue-eval.md" with { type: "file" };
-import b327 from "../docs/units/lan-relay.md" with { type: "file" };
-import b328 from "../docs/units/list-tools.md" with { type: "file" };
-import b329 from "../docs/units/local-coffee-e2e.md" with { type: "file" };
-import b330 from "../docs/units/local-project-add.md" with { type: "file" };
-import b331 from "../docs/units/locators.md" with { type: "file" };
-import b332 from "../docs/units/login-status-r6.md" with { type: "file" };
-import b333 from "../docs/units/login-status-r7.md" with { type: "file" };
-import b334 from "../docs/units/login-status-r8.md" with { type: "file" };
-import b335 from "../docs/units/login-status-warn.md" with { type: "file" };
-import b336 from "../docs/units/migrate-r3.md" with { type: "file" };
-import b337 from "../docs/units/native-backbone-board-responsiveness.md" with { type: "file" };
-import b338 from "../docs/units/native-backbone-integration.md" with { type: "file" };
-import b339 from "../docs/units/native-coffee-board-integration.md" with { type: "file" };
-import b340 from "../docs/units/native-coffee-hyperframes.md" with { type: "file" };
-import b341 from "../docs/units/native-coffee-image.md" with { type: "file" };
-import b342 from "../docs/units/native-coffee-kit.md" with { type: "file" };
-import b343 from "../docs/units/native-coffee-real-integration.md" with { type: "file" };
-import b344 from "../docs/units/native-coffee-skills.md" with { type: "file" };
-import b345 from "../docs/units/native-pack-queue-integration.md" with { type: "file" };
-import b346 from "../docs/units/native-queue-vendor-policy.md" with { type: "file" };
-import b347 from "../docs/units/native-standalone.md" with { type: "file" };
-import b348 from "../docs/units/native-tool-errors.md" with { type: "file" };
-import b349 from "../docs/units/non-code-followups.md" with { type: "file" };
-import b350 from "../docs/units/non-code-workflows.md" with { type: "file" };
-import b351 from "../docs/units/observe.md" with { type: "file" };
-import b352 from "../docs/units/onboarding-coffee-journey.md" with { type: "file" };
-import b353 from "../docs/units/one-live-stream.md" with { type: "file" };
-import b354 from "../docs/units/open-browser.md" with { type: "file" };
-import b355 from "../docs/units/pack-genesis-interview-card.md" with { type: "file" };
-import b356 from "../docs/units/pack-genesis-interview-verification.md" with { type: "file" };
-import b357 from "../docs/units/pack-genesis-native.md" with { type: "file" };
-import b358 from "../docs/units/pr-watch.md" with { type: "file" };
-import b359 from "../docs/units/projects.md" with { type: "file" };
-import b360 from "../docs/units/public-attribution-privacy.md" with { type: "file" };
-import b361 from "../docs/units/redaction-rules-r2.md" with { type: "file" };
-import b362 from "../docs/units/redaction-rules.md" with { type: "file" };
-import b363 from "../docs/units/remote-ci-reconcile.md" with { type: "file" };
-import b364 from "../docs/units/remote-ci-run-end-fixture.md" with { type: "file" };
-import b365 from "../docs/units/remote-gates-merge.md" with { type: "file" };
-import b366 from "../docs/units/review-depth-followups.md" with { type: "file" };
-import b367 from "../docs/units/review-modes.md" with { type: "file" };
-import b368 from "../docs/units/review-room.md" with { type: "file" };
-import b369 from "../docs/units/reviewer-depth.md" with { type: "file" };
-import b370 from "../docs/units/round-record.md" with { type: "file" };
-import b371 from "../docs/units/round-sandbox.md" with { type: "file" };
-import b372 from "../docs/units/run-end-and-remove.md" with { type: "file" };
-import b373 from "../docs/units/run-graph-navigation.md" with { type: "file" };
-import b374 from "../docs/units/sandbox-repo.md" with { type: "file" };
-import b375 from "../docs/units/secrets-migrate-r5.md" with { type: "file" };
-import b376 from "../docs/units/secrets-redaction-r3.md" with { type: "file" };
-import b377 from "../docs/units/secrets-redaction-r4.md" with { type: "file" };
-import b378 from "../docs/units/secrets-v1-model.md" with { type: "file" };
-import b379 from "../docs/units/server-lifetime.md" with { type: "file" };
-import b380 from "../docs/units/shared-github-poller.md" with { type: "file" };
-import b381 from "../docs/units/shared-media-library.md" with { type: "file" };
-import b382 from "../docs/units/sidebar-workflow-create.md" with { type: "file" };
-import b383 from "../docs/units/skill-packages.md" with { type: "file" };
-import b384 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
-import b385 from "../docs/units/startup-firstmate.md" with { type: "file" };
-import b386 from "../docs/units/startup-recursion.md" with { type: "file" };
-import b387 from "../docs/units/takeover-codex.md" with { type: "file" };
-import b388 from "../docs/units/takeover.md" with { type: "file" };
-import b389 from "../docs/units/task-round.md" with { type: "file" };
-import b390 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
-import b391 from "../docs/units/transcripts-attempts.md" with { type: "file" };
-import b392 from "../docs/units/transcripts.md" with { type: "file" };
-import b393 from "../docs/units/ui-test-waits.md" with { type: "file" };
-import b394 from "../docs/units/visual-sandbox.md" with { type: "file" };
-import b395 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
-import b396 from "../docs/units/web-terminal.md" with { type: "file" };
-import b397 from "../docs/units/workflow-definition-export.md" with { type: "file" };
-import b398 from "../docs/units/workflow-overview.md" with { type: "file" };
-import b399 from "../docs/units/workflow-packages.md" with { type: "file" };
-import b400 from "../docs/units/workflow-rename.md" with { type: "file" };
-import b401 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
-import b402 from "../docs/units/worktrees.md" with { type: "file" };
-import b403 from "../docs/v2-spec.md" with { type: "file" };
-import b404 from "../docs/w29-local-sandbox.md" with { type: "file" };
+import b275 from "../docs/units/cloud-handoff.md" with { type: "file" };
+import b276 from "../docs/units/code-firstmate-smoke.md" with { type: "file" };
+import b277 from "../docs/units/codex-auth-timestamp.md" with { type: "file" };
+import b278 from "../docs/units/codex-independent-login.md" with { type: "file" };
+import b279 from "../docs/units/codex-login-welcome.md" with { type: "file" };
+import b280 from "../docs/units/codex-toolchain.md" with { type: "file" };
+import b281 from "../docs/units/coffee-local-render-jobs.md" with { type: "file" };
+import b282 from "../docs/units/coffee-staffing-recovery.md" with { type: "file" };
+import b283 from "../docs/units/compare-transcripts.md" with { type: "file" };
+import b284 from "../docs/units/crew-studio-agents.md" with { type: "file" };
+import b285 from "../docs/units/default-workflow-catalog.md" with { type: "file" };
+import b286 from "../docs/units/first-workflow-tutorial.md" with { type: "file" };
+import b287 from "../docs/units/firstmate-general-cli.md" with { type: "file" };
+import b288 from "../docs/units/firstmate-generated-media.md" with { type: "file" };
+import b289 from "../docs/units/firstmate-project-registration.md" with { type: "file" };
+import b290 from "../docs/units/firstmate-staffing.md" with { type: "file" };
+import b291 from "../docs/units/fix-backbone-nav-r2.md" with { type: "file" };
+import b292 from "../docs/units/fix-backbone-nav-r3.md" with { type: "file" };
+import b293 from "../docs/units/fix-backbone-nav.md" with { type: "file" };
+import b294 from "../docs/units/fix-legacy-a1-credentials.md" with { type: "file" };
+import b295 from "../docs/units/fix-legacy-c-privacy.md" with { type: "file" };
+import b296 from "../docs/units/fix-migrate-r2.md" with { type: "file" };
+import b297 from "../docs/units/fix-migrate-stream.md" with { type: "file" };
+import b298 from "../docs/units/fix-record-smoke-r2.md" with { type: "file" };
+import b299 from "../docs/units/fix-round-record-r1.md" with { type: "file" };
+import b300 from "../docs/units/fix-round-sandbox-cli.md" with { type: "file" };
+import b301 from "../docs/units/fix-round-sandbox-r1.md" with { type: "file" };
+import b302 from "../docs/units/fix-runtime-authority.md" with { type: "file" };
+import b303 from "../docs/units/fix-runtime-contract.md" with { type: "file" };
+import b304 from "../docs/units/fix-runtime-durability.md" with { type: "file" };
+import b305 from "../docs/units/fix-runtime-followups.md" with { type: "file" };
+import b306 from "../docs/units/fix-runtime-generic.md" with { type: "file" };
+import b307 from "../docs/units/fix-runtime-ids.md" with { type: "file" };
+import b308 from "../docs/units/fix-runtime-lifetime.md" with { type: "file" };
+import b309 from "../docs/units/fix-runtime-r2.md" with { type: "file" };
+import b310 from "../docs/units/fix-runtime-sandbox.md" with { type: "file" };
+import b311 from "../docs/units/fix-runtime-tests.md" with { type: "file" };
+import b312 from "../docs/units/fix-runtime-ui-stream.md" with { type: "file" };
+import b313 from "../docs/units/fix-sandbox-repo-r2.md" with { type: "file" };
+import b314 from "../docs/units/fix-sandbox-repo.md" with { type: "file" };
+import b315 from "../docs/units/fix-sandbox-worktrees-r2.md" with { type: "file" };
+import b316 from "../docs/units/fix-sb-nav-leftovers.md" with { type: "file" };
+import b317 from "../docs/units/fix-smoke-r1.md" with { type: "file" };
+import b318 from "../docs/units/fix-worktrees-r1.md" with { type: "file" };
+import b319 from "../docs/units/github-foundation.md" with { type: "file" };
+import b320 from "../docs/units/github-review-workflow.md" with { type: "file" };
+import b321 from "../docs/units/graph-simple-view.md" with { type: "file" };
+import b322 from "../docs/units/graph-tidy.md" with { type: "file" };
+import b323 from "../docs/units/image-refine-context.md" with { type: "file" };
+import b324 from "../docs/units/inbox-live.md" with { type: "file" };
+import b325 from "../docs/units/inbox-studio-cards.md" with { type: "file" };
+import b326 from "../docs/units/intent-merge-card.md" with { type: "file" };
+import b327 from "../docs/units/issue-eval.md" with { type: "file" };
+import b328 from "../docs/units/lan-relay.md" with { type: "file" };
+import b329 from "../docs/units/list-tools.md" with { type: "file" };
+import b330 from "../docs/units/local-coffee-e2e.md" with { type: "file" };
+import b331 from "../docs/units/local-project-add.md" with { type: "file" };
+import b332 from "../docs/units/locators.md" with { type: "file" };
+import b333 from "../docs/units/login-status-r6.md" with { type: "file" };
+import b334 from "../docs/units/login-status-r7.md" with { type: "file" };
+import b335 from "../docs/units/login-status-r8.md" with { type: "file" };
+import b336 from "../docs/units/login-status-warn.md" with { type: "file" };
+import b337 from "../docs/units/migrate-r3.md" with { type: "file" };
+import b338 from "../docs/units/native-backbone-board-responsiveness.md" with { type: "file" };
+import b339 from "../docs/units/native-backbone-integration.md" with { type: "file" };
+import b340 from "../docs/units/native-coffee-board-integration.md" with { type: "file" };
+import b341 from "../docs/units/native-coffee-hyperframes.md" with { type: "file" };
+import b342 from "../docs/units/native-coffee-image.md" with { type: "file" };
+import b343 from "../docs/units/native-coffee-kit.md" with { type: "file" };
+import b344 from "../docs/units/native-coffee-real-integration.md" with { type: "file" };
+import b345 from "../docs/units/native-coffee-skills.md" with { type: "file" };
+import b346 from "../docs/units/native-pack-queue-integration.md" with { type: "file" };
+import b347 from "../docs/units/native-queue-vendor-policy.md" with { type: "file" };
+import b348 from "../docs/units/native-standalone.md" with { type: "file" };
+import b349 from "../docs/units/native-tool-errors.md" with { type: "file" };
+import b350 from "../docs/units/non-code-followups.md" with { type: "file" };
+import b351 from "../docs/units/non-code-workflows.md" with { type: "file" };
+import b352 from "../docs/units/observe.md" with { type: "file" };
+import b353 from "../docs/units/onboarding-coffee-journey.md" with { type: "file" };
+import b354 from "../docs/units/one-live-stream.md" with { type: "file" };
+import b355 from "../docs/units/open-browser.md" with { type: "file" };
+import b356 from "../docs/units/pack-genesis-interview-card.md" with { type: "file" };
+import b357 from "../docs/units/pack-genesis-interview-verification.md" with { type: "file" };
+import b358 from "../docs/units/pack-genesis-native.md" with { type: "file" };
+import b359 from "../docs/units/pr-watch.md" with { type: "file" };
+import b360 from "../docs/units/projects.md" with { type: "file" };
+import b361 from "../docs/units/public-attribution-privacy.md" with { type: "file" };
+import b362 from "../docs/units/redaction-rules-r2.md" with { type: "file" };
+import b363 from "../docs/units/redaction-rules.md" with { type: "file" };
+import b364 from "../docs/units/remote-ci-reconcile.md" with { type: "file" };
+import b365 from "../docs/units/remote-ci-run-end-fixture.md" with { type: "file" };
+import b366 from "../docs/units/remote-gates-merge.md" with { type: "file" };
+import b367 from "../docs/units/review-depth-followups.md" with { type: "file" };
+import b368 from "../docs/units/review-modes.md" with { type: "file" };
+import b369 from "../docs/units/review-room.md" with { type: "file" };
+import b370 from "../docs/units/reviewer-depth.md" with { type: "file" };
+import b371 from "../docs/units/round-record.md" with { type: "file" };
+import b372 from "../docs/units/round-sandbox.md" with { type: "file" };
+import b373 from "../docs/units/run-end-and-remove.md" with { type: "file" };
+import b374 from "../docs/units/run-graph-navigation.md" with { type: "file" };
+import b375 from "../docs/units/sandbox-repo.md" with { type: "file" };
+import b376 from "../docs/units/secrets-migrate-r5.md" with { type: "file" };
+import b377 from "../docs/units/secrets-redaction-r3.md" with { type: "file" };
+import b378 from "../docs/units/secrets-redaction-r4.md" with { type: "file" };
+import b379 from "../docs/units/secrets-v1-model.md" with { type: "file" };
+import b380 from "../docs/units/server-lifetime.md" with { type: "file" };
+import b381 from "../docs/units/shared-github-poller.md" with { type: "file" };
+import b382 from "../docs/units/shared-media-library.md" with { type: "file" };
+import b383 from "../docs/units/sidebar-workflow-create.md" with { type: "file" };
+import b384 from "../docs/units/skill-packages.md" with { type: "file" };
+import b385 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
+import b386 from "../docs/units/startup-firstmate.md" with { type: "file" };
+import b387 from "../docs/units/startup-recursion.md" with { type: "file" };
+import b388 from "../docs/units/takeover-codex.md" with { type: "file" };
+import b389 from "../docs/units/takeover.md" with { type: "file" };
+import b390 from "../docs/units/task-round.md" with { type: "file" };
+import b391 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
+import b392 from "../docs/units/transcripts-attempts.md" with { type: "file" };
+import b393 from "../docs/units/transcripts.md" with { type: "file" };
+import b394 from "../docs/units/ui-test-waits.md" with { type: "file" };
+import b395 from "../docs/units/visual-sandbox.md" with { type: "file" };
+import b396 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
+import b397 from "../docs/units/web-terminal.md" with { type: "file" };
+import b398 from "../docs/units/workflow-definition-export.md" with { type: "file" };
+import b399 from "../docs/units/workflow-overview.md" with { type: "file" };
+import b400 from "../docs/units/workflow-packages.md" with { type: "file" };
+import b401 from "../docs/units/workflow-rename.md" with { type: "file" };
+import b402 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
+import b403 from "../docs/units/worktrees.md" with { type: "file" };
+import b404 from "../docs/v2-spec.md" with { type: "file" };
+import b405 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -682,134 +683,135 @@ export const BUNDLED: Record<string, string> = {
   "docs/units/check-runtime.md": b272,
   "docs/units/claude-native-capability.md": b273,
   "docs/units/cli-mcp-grant.md": b274,
-  "docs/units/code-firstmate-smoke.md": b275,
-  "docs/units/codex-auth-timestamp.md": b276,
-  "docs/units/codex-independent-login.md": b277,
-  "docs/units/codex-login-welcome.md": b278,
-  "docs/units/codex-toolchain.md": b279,
-  "docs/units/coffee-local-render-jobs.md": b280,
-  "docs/units/coffee-staffing-recovery.md": b281,
-  "docs/units/compare-transcripts.md": b282,
-  "docs/units/crew-studio-agents.md": b283,
-  "docs/units/default-workflow-catalog.md": b284,
-  "docs/units/first-workflow-tutorial.md": b285,
-  "docs/units/firstmate-general-cli.md": b286,
-  "docs/units/firstmate-generated-media.md": b287,
-  "docs/units/firstmate-project-registration.md": b288,
-  "docs/units/firstmate-staffing.md": b289,
-  "docs/units/fix-backbone-nav-r2.md": b290,
-  "docs/units/fix-backbone-nav-r3.md": b291,
-  "docs/units/fix-backbone-nav.md": b292,
-  "docs/units/fix-legacy-a1-credentials.md": b293,
-  "docs/units/fix-legacy-c-privacy.md": b294,
-  "docs/units/fix-migrate-r2.md": b295,
-  "docs/units/fix-migrate-stream.md": b296,
-  "docs/units/fix-record-smoke-r2.md": b297,
-  "docs/units/fix-round-record-r1.md": b298,
-  "docs/units/fix-round-sandbox-cli.md": b299,
-  "docs/units/fix-round-sandbox-r1.md": b300,
-  "docs/units/fix-runtime-authority.md": b301,
-  "docs/units/fix-runtime-contract.md": b302,
-  "docs/units/fix-runtime-durability.md": b303,
-  "docs/units/fix-runtime-followups.md": b304,
-  "docs/units/fix-runtime-generic.md": b305,
-  "docs/units/fix-runtime-ids.md": b306,
-  "docs/units/fix-runtime-lifetime.md": b307,
-  "docs/units/fix-runtime-r2.md": b308,
-  "docs/units/fix-runtime-sandbox.md": b309,
-  "docs/units/fix-runtime-tests.md": b310,
-  "docs/units/fix-runtime-ui-stream.md": b311,
-  "docs/units/fix-sandbox-repo-r2.md": b312,
-  "docs/units/fix-sandbox-repo.md": b313,
-  "docs/units/fix-sandbox-worktrees-r2.md": b314,
-  "docs/units/fix-sb-nav-leftovers.md": b315,
-  "docs/units/fix-smoke-r1.md": b316,
-  "docs/units/fix-worktrees-r1.md": b317,
-  "docs/units/github-foundation.md": b318,
-  "docs/units/github-review-workflow.md": b319,
-  "docs/units/graph-simple-view.md": b320,
-  "docs/units/graph-tidy.md": b321,
-  "docs/units/image-refine-context.md": b322,
-  "docs/units/inbox-live.md": b323,
-  "docs/units/inbox-studio-cards.md": b324,
-  "docs/units/intent-merge-card.md": b325,
-  "docs/units/issue-eval.md": b326,
-  "docs/units/lan-relay.md": b327,
-  "docs/units/list-tools.md": b328,
-  "docs/units/local-coffee-e2e.md": b329,
-  "docs/units/local-project-add.md": b330,
-  "docs/units/locators.md": b331,
-  "docs/units/login-status-r6.md": b332,
-  "docs/units/login-status-r7.md": b333,
-  "docs/units/login-status-r8.md": b334,
-  "docs/units/login-status-warn.md": b335,
-  "docs/units/migrate-r3.md": b336,
-  "docs/units/native-backbone-board-responsiveness.md": b337,
-  "docs/units/native-backbone-integration.md": b338,
-  "docs/units/native-coffee-board-integration.md": b339,
-  "docs/units/native-coffee-hyperframes.md": b340,
-  "docs/units/native-coffee-image.md": b341,
-  "docs/units/native-coffee-kit.md": b342,
-  "docs/units/native-coffee-real-integration.md": b343,
-  "docs/units/native-coffee-skills.md": b344,
-  "docs/units/native-pack-queue-integration.md": b345,
-  "docs/units/native-queue-vendor-policy.md": b346,
-  "docs/units/native-standalone.md": b347,
-  "docs/units/native-tool-errors.md": b348,
-  "docs/units/non-code-followups.md": b349,
-  "docs/units/non-code-workflows.md": b350,
-  "docs/units/observe.md": b351,
-  "docs/units/onboarding-coffee-journey.md": b352,
-  "docs/units/one-live-stream.md": b353,
-  "docs/units/open-browser.md": b354,
-  "docs/units/pack-genesis-interview-card.md": b355,
-  "docs/units/pack-genesis-interview-verification.md": b356,
-  "docs/units/pack-genesis-native.md": b357,
-  "docs/units/pr-watch.md": b358,
-  "docs/units/projects.md": b359,
-  "docs/units/public-attribution-privacy.md": b360,
-  "docs/units/redaction-rules-r2.md": b361,
-  "docs/units/redaction-rules.md": b362,
-  "docs/units/remote-ci-reconcile.md": b363,
-  "docs/units/remote-ci-run-end-fixture.md": b364,
-  "docs/units/remote-gates-merge.md": b365,
-  "docs/units/review-depth-followups.md": b366,
-  "docs/units/review-modes.md": b367,
-  "docs/units/review-room.md": b368,
-  "docs/units/reviewer-depth.md": b369,
-  "docs/units/round-record.md": b370,
-  "docs/units/round-sandbox.md": b371,
-  "docs/units/run-end-and-remove.md": b372,
-  "docs/units/run-graph-navigation.md": b373,
-  "docs/units/sandbox-repo.md": b374,
-  "docs/units/secrets-migrate-r5.md": b375,
-  "docs/units/secrets-redaction-r3.md": b376,
-  "docs/units/secrets-redaction-r4.md": b377,
-  "docs/units/secrets-v1-model.md": b378,
-  "docs/units/server-lifetime.md": b379,
-  "docs/units/shared-github-poller.md": b380,
-  "docs/units/shared-media-library.md": b381,
-  "docs/units/sidebar-workflow-create.md": b382,
-  "docs/units/skill-packages.md": b383,
-  "docs/units/spec-scope-bootstrap.md": b384,
-  "docs/units/startup-firstmate.md": b385,
-  "docs/units/startup-recursion.md": b386,
-  "docs/units/takeover-codex.md": b387,
-  "docs/units/takeover.md": b388,
-  "docs/units/task-round.md": b389,
-  "docs/units/transcripts-attempts-followups.md": b390,
-  "docs/units/transcripts-attempts.md": b391,
-  "docs/units/transcripts.md": b392,
-  "docs/units/ui-test-waits.md": b393,
-  "docs/units/visual-sandbox.md": b394,
-  "docs/units/web-open-task-reopen.md": b395,
-  "docs/units/web-terminal.md": b396,
-  "docs/units/workflow-definition-export.md": b397,
-  "docs/units/workflow-overview.md": b398,
-  "docs/units/workflow-packages.md": b399,
-  "docs/units/workflow-rename.md": b400,
-  "docs/units/workflow-semantic-comparison.md": b401,
-  "docs/units/worktrees.md": b402,
-  "docs/v2-spec.md": b403,
-  "docs/w29-local-sandbox.md": b404,
+  "docs/units/cloud-handoff.md": b275,
+  "docs/units/code-firstmate-smoke.md": b276,
+  "docs/units/codex-auth-timestamp.md": b277,
+  "docs/units/codex-independent-login.md": b278,
+  "docs/units/codex-login-welcome.md": b279,
+  "docs/units/codex-toolchain.md": b280,
+  "docs/units/coffee-local-render-jobs.md": b281,
+  "docs/units/coffee-staffing-recovery.md": b282,
+  "docs/units/compare-transcripts.md": b283,
+  "docs/units/crew-studio-agents.md": b284,
+  "docs/units/default-workflow-catalog.md": b285,
+  "docs/units/first-workflow-tutorial.md": b286,
+  "docs/units/firstmate-general-cli.md": b287,
+  "docs/units/firstmate-generated-media.md": b288,
+  "docs/units/firstmate-project-registration.md": b289,
+  "docs/units/firstmate-staffing.md": b290,
+  "docs/units/fix-backbone-nav-r2.md": b291,
+  "docs/units/fix-backbone-nav-r3.md": b292,
+  "docs/units/fix-backbone-nav.md": b293,
+  "docs/units/fix-legacy-a1-credentials.md": b294,
+  "docs/units/fix-legacy-c-privacy.md": b295,
+  "docs/units/fix-migrate-r2.md": b296,
+  "docs/units/fix-migrate-stream.md": b297,
+  "docs/units/fix-record-smoke-r2.md": b298,
+  "docs/units/fix-round-record-r1.md": b299,
+  "docs/units/fix-round-sandbox-cli.md": b300,
+  "docs/units/fix-round-sandbox-r1.md": b301,
+  "docs/units/fix-runtime-authority.md": b302,
+  "docs/units/fix-runtime-contract.md": b303,
+  "docs/units/fix-runtime-durability.md": b304,
+  "docs/units/fix-runtime-followups.md": b305,
+  "docs/units/fix-runtime-generic.md": b306,
+  "docs/units/fix-runtime-ids.md": b307,
+  "docs/units/fix-runtime-lifetime.md": b308,
+  "docs/units/fix-runtime-r2.md": b309,
+  "docs/units/fix-runtime-sandbox.md": b310,
+  "docs/units/fix-runtime-tests.md": b311,
+  "docs/units/fix-runtime-ui-stream.md": b312,
+  "docs/units/fix-sandbox-repo-r2.md": b313,
+  "docs/units/fix-sandbox-repo.md": b314,
+  "docs/units/fix-sandbox-worktrees-r2.md": b315,
+  "docs/units/fix-sb-nav-leftovers.md": b316,
+  "docs/units/fix-smoke-r1.md": b317,
+  "docs/units/fix-worktrees-r1.md": b318,
+  "docs/units/github-foundation.md": b319,
+  "docs/units/github-review-workflow.md": b320,
+  "docs/units/graph-simple-view.md": b321,
+  "docs/units/graph-tidy.md": b322,
+  "docs/units/image-refine-context.md": b323,
+  "docs/units/inbox-live.md": b324,
+  "docs/units/inbox-studio-cards.md": b325,
+  "docs/units/intent-merge-card.md": b326,
+  "docs/units/issue-eval.md": b327,
+  "docs/units/lan-relay.md": b328,
+  "docs/units/list-tools.md": b329,
+  "docs/units/local-coffee-e2e.md": b330,
+  "docs/units/local-project-add.md": b331,
+  "docs/units/locators.md": b332,
+  "docs/units/login-status-r6.md": b333,
+  "docs/units/login-status-r7.md": b334,
+  "docs/units/login-status-r8.md": b335,
+  "docs/units/login-status-warn.md": b336,
+  "docs/units/migrate-r3.md": b337,
+  "docs/units/native-backbone-board-responsiveness.md": b338,
+  "docs/units/native-backbone-integration.md": b339,
+  "docs/units/native-coffee-board-integration.md": b340,
+  "docs/units/native-coffee-hyperframes.md": b341,
+  "docs/units/native-coffee-image.md": b342,
+  "docs/units/native-coffee-kit.md": b343,
+  "docs/units/native-coffee-real-integration.md": b344,
+  "docs/units/native-coffee-skills.md": b345,
+  "docs/units/native-pack-queue-integration.md": b346,
+  "docs/units/native-queue-vendor-policy.md": b347,
+  "docs/units/native-standalone.md": b348,
+  "docs/units/native-tool-errors.md": b349,
+  "docs/units/non-code-followups.md": b350,
+  "docs/units/non-code-workflows.md": b351,
+  "docs/units/observe.md": b352,
+  "docs/units/onboarding-coffee-journey.md": b353,
+  "docs/units/one-live-stream.md": b354,
+  "docs/units/open-browser.md": b355,
+  "docs/units/pack-genesis-interview-card.md": b356,
+  "docs/units/pack-genesis-interview-verification.md": b357,
+  "docs/units/pack-genesis-native.md": b358,
+  "docs/units/pr-watch.md": b359,
+  "docs/units/projects.md": b360,
+  "docs/units/public-attribution-privacy.md": b361,
+  "docs/units/redaction-rules-r2.md": b362,
+  "docs/units/redaction-rules.md": b363,
+  "docs/units/remote-ci-reconcile.md": b364,
+  "docs/units/remote-ci-run-end-fixture.md": b365,
+  "docs/units/remote-gates-merge.md": b366,
+  "docs/units/review-depth-followups.md": b367,
+  "docs/units/review-modes.md": b368,
+  "docs/units/review-room.md": b369,
+  "docs/units/reviewer-depth.md": b370,
+  "docs/units/round-record.md": b371,
+  "docs/units/round-sandbox.md": b372,
+  "docs/units/run-end-and-remove.md": b373,
+  "docs/units/run-graph-navigation.md": b374,
+  "docs/units/sandbox-repo.md": b375,
+  "docs/units/secrets-migrate-r5.md": b376,
+  "docs/units/secrets-redaction-r3.md": b377,
+  "docs/units/secrets-redaction-r4.md": b378,
+  "docs/units/secrets-v1-model.md": b379,
+  "docs/units/server-lifetime.md": b380,
+  "docs/units/shared-github-poller.md": b381,
+  "docs/units/shared-media-library.md": b382,
+  "docs/units/sidebar-workflow-create.md": b383,
+  "docs/units/skill-packages.md": b384,
+  "docs/units/spec-scope-bootstrap.md": b385,
+  "docs/units/startup-firstmate.md": b386,
+  "docs/units/startup-recursion.md": b387,
+  "docs/units/takeover-codex.md": b388,
+  "docs/units/takeover.md": b389,
+  "docs/units/task-round.md": b390,
+  "docs/units/transcripts-attempts-followups.md": b391,
+  "docs/units/transcripts-attempts.md": b392,
+  "docs/units/transcripts.md": b393,
+  "docs/units/ui-test-waits.md": b394,
+  "docs/units/visual-sandbox.md": b395,
+  "docs/units/web-open-task-reopen.md": b396,
+  "docs/units/web-terminal.md": b397,
+  "docs/units/workflow-definition-export.md": b398,
+  "docs/units/workflow-overview.md": b399,
+  "docs/units/workflow-packages.md": b400,
+  "docs/units/workflow-rename.md": b401,
+  "docs/units/workflow-semantic-comparison.md": b402,
+  "docs/units/worktrees.md": b403,
+  "docs/v2-spec.md": b404,
+  "docs/w29-local-sandbox.md": b405,
 };

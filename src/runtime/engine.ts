@@ -48,6 +48,8 @@ import { clampTitle, deriveTitle } from "../task-title";
 import { appendLines, readLog, repairTail, syncDir, writeAtomic, type LogRead } from "./durable-log";
 import { ACT, homeless, FailureError, FailureRefusal, changedInputs, codeOf, failure, failureActions, failureCardBody, fromError, inputsHash, parseParamEdit, rescopeRefusal, retryRefusal, type Failure, type FailureCode, type InputSnapshot } from "./failures";
 
+/** The round outcome a cloud hand-off interrupts with (never routed: the agent kind turns it into an external wait). */
+const CLOUD_HANDOFF = "\u0000cloud-handoff";
 export type NState = "pending" | "running" | "passed" | "failed" | "error" | "skipped" | "superseded";
 /** stepEffort: the node's own reasoning effort when the node names no provider (Strongest / Fast in the Steps view, an
  *  effort-only override in the graph editor): the provider selection applies it to whatever it picks when that model takes it */
@@ -853,7 +855,7 @@ export class Engine {
       return void this.track(r, `routing after ${id}`, this.route(r, node, "cap"));
     }
     for (const s of r.steps) if (s.node === id && (s.state === "passed" || s.state === "failed")) s.state = "superseded";
-    rn.visits++; rn.state = "running"; rn.cause = rn.visits > 1 ? `visit ${rn.visits}` : "token"; rn.startedAt = now(); rn.endedAt = null; rn.error = null; rn.outcome = null; rn.waiting = null; rn.data.externalCompletion = null; rn.data.externalHookReport = null;
+    rn.visits++; rn.state = "running"; rn.cause = rn.visits > 1 ? `visit ${rn.visits}` : "token"; rn.startedAt = now(); rn.endedAt = null; rn.error = null; rn.outcome = null; rn.waiting = null; rn.data.externalCompletion = null; rn.data.externalHookReport = null; rn.data.cloudHandoffPending = null;
     const x = this.x(r, node, rn);
     let pk: AgentPick | null = null;
     try { pk = node.kind === "agent" ? x.pick() : null; } catch (error) { if (!(error instanceof QueueRefusal) && !(error instanceof ProviderRefusal)) throw error; }
@@ -1375,6 +1377,8 @@ export class Engine {
     return reconciled;
   }
   /** Set by the code domain: read an ended Task's pull request on GitHub and reconcile a merge it finds (src/domain/code.ts). */
+  /** Set by the code domain: a Task's cloud hand-off (src/domain/cloud-handoff.ts), its view, preview, fire, reconcile, take-back and discard. */
+  cloudHandoff: import("../domain/cloud-handoff").CloudHandoffApi | null = null;
   reconcileFromGitHub?: (id: string) => Promise<{ state: "merged" | "not-merged" | "skipped"; reason?: string; reconciled?: Record<string, any> }>;
   /** Set by the code domain: whether an ended Task is one reconcileFromGitHub reads (the run page offers the check then). */
   reconcilable?: (r: Run) => boolean;
@@ -1418,6 +1422,18 @@ export class Engine {
     if (rn.state === "running" && rn.job && node.kind === "agent") { rn.swap = p; this.commit(r, "swap requested"); this.emit(r, "swap_requested", `${node.label}: switching to ${p.provider}${p.model ? ` · ${p.model}` : ""}`, { node: nodeId, ...p }); this.deps.agents.cancel(rn.job); }
     else { rn.agent = p; this.commit(r, "agent set"); this.emit(r, "agent_set", `${node.label}: next visit runs on ${p.provider}${p.model ? ` · ${p.model}` : ""}`, { node: nodeId, ...p }); }
     return r;
+  }
+  /** The captain hands a live agent round to a cloud agent (src/domain/cloud-handoff.ts): the round's job is stopped and the
+   *  node waits on the given external descriptor instead of finishing. Only the same visit of a node whose round is running
+   *  now; false when that round already ended (its result then stands, and the caller says so). */
+  requestCloudHandoff(id: string, nodeId: string, visit: number, descriptor: { version: 1; handler: string; [k: string]: any }, note: string): boolean {
+    const r = this.runs.get(id); if (!r || TERMINAL.includes(r.status)) return false;
+    const node = r.def.nodes.find((n) => n.id === nodeId), rn = r.nodes[nodeId];
+    if (!node || node.kind !== "agent" || !rn || rn.state !== "running" || rn.waiting || rn.visits !== visit || !rn.job || rn.swap) return false;
+    const job = this.deps.agents.jobs.get(rn.job); if (!job || job.status !== "running") return false;
+    rn.data.cloudHandoffPending = { visit, descriptor, note }; this.commit(r, "cloud hand-off requested");
+    this.emit(r, "cloud_handoff_requested", `${node.label}: round ${visit} stopped and handed to a cloud agent`, { node: nodeId });
+    this.deps.agents.cancel(rn.job); return true;
   }
   /** The captain answered a Studio card (exactly once). The answer is signed into the ledger. */
   /** Cards whose node is still raising them (its STE checks): an answer waits for this, never polls. */
@@ -2103,7 +2119,10 @@ export class Engine {
     this.kinds.agent = {
       async start(x: X) {
         x.rn.data.stoppedBeforeAgent = false;
-        try { const outcome = await self.runAgent(x); return { outcome, ...(x.rn.data.stoppedBeforeAgent ? { stopped: true } : {}) } as any; }
+        try { const outcome = await self.runAgent(x);
+          // the captain handed this round to a cloud agent (src/domain/cloud-handoff.ts): the interrupted round becomes an external wait
+          if (outcome === CLOUD_HANDOFF) { const p = x.rn.data.cloudHandoffPending; x.rn.data.cloudHandoffPending = null; return { wait: true, external: p.descriptor, note: p.note ?? "handed off to a cloud agent" }; }
+          return { outcome, ...(x.rn.data.stoppedBeforeAgent ? { stopped: true } : {}) } as any; }
         catch (e: any) { if (!(e instanceof QueueRefusal) && !(e instanceof ProviderRefusal) || x.cancelled()) throw e; return self.queueCapability(x, e.message, e); }
       },
       async answer(x: X, c: SCard) {
@@ -2190,7 +2209,7 @@ export class Engine {
       try { this.skillRounds.set(x, await skillGate(this, x)); } catch (e: any) { if (typeof e?.outcome === "string") { x.rn.data.stoppedBeforeAgent = true; x.rn.note = `stopped before the agent: ${e.message}`; this.emit(x.run, "round_blocked", `${x.node.label}: ${e.message}`, { node: x.node.id }); return e.outcome; } throw e; }
       try { await mode.begin?.(x); begun = true; } catch (e: any) { if (typeof e?.outcome === "string") { x.rn.data.stoppedBeforeAgent = true; x.rn.note = `stopped before the agent: ${e.message}`; this.emit(x.run, "round_blocked", `${x.node.label}: ${e.message}`, { node: x.node.id }); return e.outcome; } throw e; }
       if (!this.owns(x) || hashInput(x.pick()) !== preparedPick) throw new QueueRefusal("round owner or provider choice changed before provider launch");
-      const out = await this.agentTurns(x, mode, modeName!, preparedProvider, preparedPick); how = out === "timeout" ? "timeout" : "done"; return out;
+      const out = await this.agentTurns(x, mode, modeName!, preparedProvider, preparedPick); how = out === "timeout" ? "timeout" : out === CLOUD_HANDOFF ? "cancelled" : "done"; return out;
     } catch (e: any) { how = x.cancelled() || /cancelled/.test(String(e?.message)) ? "cancelled" : "failed"; throw e; }
     finally { if (begun) try { await mode.end?.(x, how); } catch (e: any) { x.log(`round end: ${e?.message ?? e}`); } release(); }
   }
@@ -2226,6 +2245,8 @@ export class Engine {
         sandbox: roundBox, onStart: (jid: string) => { x.rn.job = jid; x.save(); this.emit(x.run, "agent_started", `${x.node.label}: ${prov.id} · ${prov.model}`, { node: x.node.id, job: jid, provider: prov.id, model: prov.model }); } } as any);
       x.rn.data = { ...x.rn.data, jobs: [...(x.rn.data.jobs ?? []), { id: job.id, round: x.visit, hop, provider: job.provider, model: job.model, status: job.status, cost: job.cost, tools: job.tools, error: job.error, operatingRules: job.operatingRules?.hash ?? null }] };
       if (x.cancelled()) throw new Error("cancelled");
+      // a round the captain handed to a cloud agent: its uncommitted work is kept aside like any stopped round (mode.end)
+      if (job.status === "cancelled" && x.rn.data.cloudHandoffPending?.visit === x.visit) { x.rn.data = { ...x.rn.data, handoff: null }; return CLOUD_HANDOFF; }
       if (job.status === "cancelled" && x.rn.swap) {
         const to = x.rn.swap; x.rn.swap = null;
         const hdir = join(this.deps.dataDir, "handoff", x.run.id); mkdirSync(hdir, { recursive: true });

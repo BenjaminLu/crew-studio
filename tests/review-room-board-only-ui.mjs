@@ -4,7 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // its lesson button, an answer's pictures and points played one at a time, a check graded on the spot, a turn being
 // written (a lesson too) with its progress, a failed turn, an answer's versions and "Regenerate with…", the answer that
 // waits behind "the answer is ready", the questions for the prompt, the cost, the "not translated yet" note, the captions,
-// playback and voice in a bar floating on the board, a rail listing every answer that flies the camera there, full screen
+// playback in a bar floating on the board, a rail listing every answer that flies the camera there, full screen
 // for every scene. There is no stage. The room's routes are answered by the test: nothing paid runs.
 //                                                                                  node tests/review-room-board-only-ui.mjs
 import { spawn } from "node:child_process";
@@ -226,8 +226,8 @@ try {
     await tap(p, '[data-region="t1"] [data-visual-pick="B1-7"]'); await tap(p, '[data-region="t1"] [data-shot-toggle="before"]'); const shot = await p.$eval('[data-region="t1"] [data-visual] [data-shot-img]', (e) => e.dataset.shotImg).catch(() => null);
     ok(code?.length === 3 && diff?.length === 3 && chart === "diffstat" && /B1-9\.png$/.test(img || "") && shot === "before", "on the board the answer shows its chart, its generated picture and its screenshots; its code and its diff are links under the picture (the citation panel)", JSON.stringify({ code: code?.length, diff: diff?.length, chart, img, shot }));
     // played from the floating bar: the points not reached yet are dimmed, the picture follows the point, the caption reads it
-    const bar = await p.evaluate(() => { const b = document.querySelector('[data-board] [data-playbar]'); return b && { play: !!b.querySelector("[data-play]"), replay: !!b.querySelector("[data-replay]"), voice: !!b.querySelector("[data-voice]"), caption: !!b.querySelector("[data-caption]"), next: !!b.querySelector("[data-point-next]"), scene: b.querySelector("[data-scene-pos]")?.dataset.scenePos }; });
-    ok(bar && bar.play && bar.replay && bar.voice && bar.caption && bar.next && bar.scene === "2/3", "the captions, playback (a point back and on, play, replay, the scene) and the voice picker float on the board", JSON.stringify(bar));
+    const bar = await p.evaluate(() => { const b = document.querySelector('[data-board] [data-playbar]'); return b && { play: !!b.querySelector("[data-play]"), replay: !!b.querySelector("[data-replay]"), voice: !!document.querySelector("[data-voice], .rr-voice") || !!b.querySelector("select"), caption: !!b.querySelector("[data-caption]"), next: !!b.querySelector("[data-point-next]"), scene: b.querySelector("[data-scene-pos]")?.dataset.scenePos }; });
+    ok(bar && bar.play && bar.replay && !bar.voice && bar.caption && bar.next && bar.scene === "2/3", "the captions and playback (a point back and on, play, replay, the scene) float on the board, with no voice picker", JSON.stringify(bar));
     await tap(p, "[data-playbar] [data-replay]"); await tap(p, "[data-playbar] [data-play]");
     const r1 = await p.evaluate(() => { const r = document.querySelector('[data-region="t1"]'); if (!r) return {}; return { shown: r.querySelectorAll(".rr-point:not(.later)").length, later: r.querySelectorAll(".rr-point.later").length, visual: r.querySelector("[data-visual]").dataset.visual, nodes: [...r.querySelectorAll("[data-visual] [data-node]")].map((n) => n.dataset.node), caption: document.querySelector("[data-playbar] [data-caption-text]")?.textContent ?? "" }; });
     await tap(p, "[data-playbar] [data-point-next]");
@@ -306,9 +306,9 @@ try {
     const { ctx: c2, p: p2 } = await open(1280, room);
     await tap(p2, '[data-outline="t1"]'); await p2.waitForTimeout(250);
     const fit = await p2.evaluate(() => { const bar = document.querySelector("[data-playbar]"); if (!bar) return null; const b = bar.getBoundingClientRect(), notes = !!document.querySelector("[data-board-notes]");
-      const els = [...bar.querySelectorAll(".rr-ibtn, .rr-mini, select")], rs = els.map((e) => e.getBoundingClientRect()), name = (e) => (e.dataset.voice != null ? "voice" : Object.keys(e.dataset)[0] || e.className);
-      // each control whole, inside the bar, wide enough to use (the voice list at least 120px), none over another
-      const out = els.filter((e, k) => { const r = rs[k]; return r.right > b.right + 1 || r.left < b.left - 1 || r.bottom > b.bottom + 1 || (e.tagName === "SELECT" && r.width < 120)
+      const els = [...bar.querySelectorAll(".rr-ibtn, .rr-mini")], rs = els.map((e) => e.getBoundingClientRect()), name = (e) => Object.keys(e.dataset)[0] || e.className;
+      // each control whole, inside the bar, none over another
+      const out = els.filter((e, k) => { const r = rs[k]; return r.right > b.right + 1 || r.left < b.left - 1 || r.bottom > b.bottom + 1
         || rs.some((o, m) => m !== k && r.left < o.right - 1 && r.right > o.left + 1 && r.top < o.bottom - 1 && r.bottom > o.top + 1); }).map(name);
       return { notes, out, w: Math.round(b.width) }; });
     ok(fit && fit.notes && !fit.out.length, "at 1280 with the questions panel open, every play bar control fits inside the bar, whole and apart (none cut off or squeezed)", JSON.stringify(fit));
@@ -359,7 +359,7 @@ try {
       "the question waits for its confirmation in a card in the conversation pane, under that answer, then goes as a board question anchored to the selected words", JSON.stringify({ pend, sent: S.posts.at(-1) }));
     // the caption's words too: their scene is the one the play bar reads
     await tap(p, "[data-playbar] [data-replay]"); await p.waitForTimeout(150); await tap(p, "[data-playbar] [data-play]"); await p.waitForTimeout(100);
-    // paused where it is (the voice stub reads fast), then the first word the caption shows
+    // paused where it is, then the first word the caption shows
     await p.evaluate(() => document.querySelector('[data-playbar] [data-play][aria-pressed="true"]')?.click()); await p.waitForTimeout(150);
     const word = await p.$eval("[data-playbar] [data-caption-text]", (e) => e.textContent.trim().split(/\s+/)[0] || "").catch(() => "");
     const cap = await selectIn(p, "[data-playbar] [data-caption-text]", word); await p.waitForTimeout(350); const cb = await selBtn(p);

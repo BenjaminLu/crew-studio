@@ -41,16 +41,11 @@ import { localUnrestricted } from "../local-execution";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 import { DOCS_HOSTS, docsHosts, ILLUSTRATION_CONCEPTS, ILLUSTRATION_LAYOUTS, WEB_CALLS_PER_TURN, illustrationPrompt, proxiedWeb, queryRefusal, resultUrls, urlRefusal, type WebBackend, type WebContext } from "../review-web";
 import { addUsage, type AgentTool } from "../agent";
-import { keys } from "../keys";
-import { openScopedProxy, type ProxyAuthority } from "../egress-client";
 import type { Engine, AgentPick } from "../runtime/engine";
 import type { SCard } from "../runtime/cards";
 import { PROVIDERS as CREW_PROVIDERS } from "./crew";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { parseLocator, type Finding, type Locator } from "../runtime/locator";
-import { clipStore, kokoroSpeaker, localSynth, MAX_POINT, readClip, roomClip } from "../voice/kokoro";
-import { isRoomPoint } from "../voice/points";
-import { langOf, type Mix } from "../voice/runs";
 import { installExplainer } from "./review-explain";
 import { signal } from "../retro-signals";
 /** Why a tutor turn did not end done, as a short code for the retro (from Studio's own words for the ending, else "failed"). */
@@ -562,14 +557,6 @@ export function ground(text: string, ok: (kind: string, value: string) => boolea
 
 const refuse = (message: string, code: string, extra: Record<string, any> = {}) => Object.assign(new Error(message), { code, ...extra });
 
-/** Spoken narration from the tutor's own vendor (production: OpenAI's speech endpoint with the configured key, through
- *  Studio's egress proxy; tests stub it). Narration never goes to another vendor than the tutor's. */
-export type Speaker = (text: string, signal: AbortSignal) => Promise<{ bytes: Buffer; model: string; voice: string }>;
-/** the vendors whose tutor can speak with their own neural voice, and how */
-const SPEECH_VENDORS: Record<string, string> = { codex: "openai", openai: "openai" };
-const TTS_MODEL = "gpt-4o-mini-tts", TTS_VOICE = "alloy";
-/** a claim as narration: citations, markup and list marks out */
-export const narration = (t: string) => String(t ?? "").replace(CITE, "").replace(/\[(inference|inferred|speculative|direct|supported)\]/gi, "").replace(/\*\*|`|^#+\s*/gm, "").replace(/^\s*([-*+]|\d+\.)\s+/gm, "").replace(/\s+/g, " ").trim();
 /** the tutor's seat: it runs with its own pinned instructions (staffing's auxiliary seats) on the reviewer role's approved member,
  *  or, adaptive, on another usable member Studio chose for independence from the author (the receipt names the member used) */
 export const TUTOR_SEAT = "review-room-tutor", TUTOR_ROLE = "reviewer";
@@ -595,9 +582,7 @@ const untrusted = (t: unknown, max: number) => glyph(cleanText(t, max));
 const login = (u: any) => { const l = String(u?.login ?? ""); return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(\[bot\])?$/.test(l) ? l : "someone"; };
 const ghUrl = (u: unknown, repository: string) => { const t = String(u ?? ""); return t.toLowerCase().startsWith(`https://github.com/${repository.toLowerCase()}/`) && !/[\s"<>]/.test(t) ? t.slice(0, 300) : null; };
 
-export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: WebBackend | ((check: (url: string) => string | null) => WebBackend); illustrate?: Illustrator; speak?: Speaker;
-  /** this Mac's local voice for a room language and mix mode (production: Kokoro through src/voice; tests stub it) */
-  localSpeak?: (lang: "zh" | "en", mix: Mix) => Speaker;
+export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: WebBackend | ((check: (url: string) => string | null) => WebBackend); illustrate?: Illustrator;
   /** the registered projects (a pull request is read only for a project connected to GitHub with that repository) */
   projects?: Projects;
   /** the GitHub adapter of a connected project (production: its grant's adapter, verified; tests: the simulator's) */
@@ -608,9 +593,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   dirRemote?: (repository: string) => string;
   /** the captain's GitHub token for a private repository's directory (production: `gh auth token`; tests stub it) */
   ghToken?: () => string | null }) {
-  const live = new Map<string, number>(), speaking = new Map<string, Promise<any>>();
-  /** where rooms keep their folders: Studio's data folder and the Tasks' folders (the local voice deletes clips only there) */
-  const clipRoots = () => [o.dataDir, dirname(engine.rdir("R-0"))];
+  const live = new Map<string, number>();
   // the seat staffing admits: the reviewer's approved member, with exactly these pinned texts as its instructions
   engine.deps.auxiliarySeats = { ...(engine.deps.auxiliarySeats ?? {}), [TUTOR_SEAT]: { role: TUTOR_ROLE, pins: ROOM_SKILLS.map((k) => k.sha256), adaptive: true } };
   /** The tutor's seat: the reviewer's member (its own read-only role and skill), on a different model from the maker. */
@@ -663,7 +646,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const settings = (): { autoTeach: boolean; tutor: { provider: string; model: string } | null } => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8"));
     const t = j?.tutor && typeof j.tutor.provider === "string" && typeof j.tutor.model === "string" ? { provider: j.tutor.provider, model: j.tutor.model } : null;
     return { autoTeach: j?.autoTeach !== false, tutor: t }; } catch { return { autoTeach: true, tutor: null }; } };
-  /** rooms started over: their old object (held by a background job: a picture, a voice, a Library save) is never written back */
+  /** rooms started over: their old object (held by a background job: a picture, a Library save) is never written back */
   const startedOver = new WeakSet<Room>(), resetGen = new Map<string, number>();
   const save = (k: Key, r: Room) => { if (startedOver.has(r)) return; r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
   /** a turn left running by a Studio that stopped reads interrupted (its round record keeps what it did) */
@@ -870,8 +853,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
       const t = want ? pickedTutor(s.run, want) : tutorFor(k, s), p = t.pick, effort = p.effort ?? null, c = want ? null : choiceOf(load(k));
-      const vendor = SPEECH_VENDORS[p.provider], voice = vendor && (o.speak || keys().openai) ? { vendor, model: TTS_MODEL, voice: TTS_VOICE } : null;
-      return { provider: p.provider, model: p.model ?? null, effort, paid: true, voice, picked: want ? "regenerate" : c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label }, warning: t.warning ?? null,
+      return { provider: p.provider, model: p.model ?? null, effort, paid: true, picked: want ? "regenerate" : c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label }, warning: t.warning ?? null,
         hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}),
           // a picked model that turned held, unverified or unreported since the offer is confirmed again, its warning said
           ...(t.warning ? { warning: t.warning.en } : {}) })).slice(0, 16) }; }
@@ -1714,9 +1696,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const room = load(k); if (!room || !room.turns.some((t) => t.status === "done")) throw refuse("Nothing to save yet: the room has no finished scene / 還沒有可以存的場景", "empty");
     const view: any = api.view(k.id), dir = mkdtempSync(join(tmpdir(), "crew-room-snap-")), assets = join(dir, "assets"); mkdirSync(assets, { recursive: true });
     try {
-      // pictures and narration from the room's own folder; the app's screenshots from the Task's captures
+      // pictures from the room's own folder; the app's screenshots from the Task's captures
       const names = new Map<string, string>();
-      try { for (const n of readdirSync(k.dir)) if (/^(B\d+-\d+\.png|voice-t\d+-[0-9a-f]{12}\.mp3)$/.test(n)) { copyFileSync(join(k.dir, n), join(assets, n)); names.set(`/api/review-room/${k.id}/${n.endsWith(".png") ? "image" : "audio"}/${n}`, n); } } catch {}
+      try { for (const n of readdirSync(k.dir)) if (/^B\d+-\d+\.png$/.test(n)) { copyFileSync(join(k.dir, n), join(assets, n)); names.set(`/api/review-room/${k.id}/image/${n}`, n); } } catch {}
       const shot = (u: unknown) => { const m = typeof u === "string" ? CAPTURE_PATH.exec(u) : null; if (!m) return u; const from = join(engine.rdir(m[1]), "captures", m[2], m[3], m[4]), name = `cap-${sha(u as string).slice(0, 16)}.png`;
         try { if (!names.has(u as string)) { copyFileSync(from, join(assets, name)); names.set(u as string, name); } return `asset:${name}`; } catch { return null; } };
       const board = (view.board ?? []).map((b: any) => b.type === "image" && b.src ? { ...b, src: names.has(b.src) ? `asset:${names.get(b.src)}` : null } : b.type === "screenshot" ? { ...b, pages: (b.pages ?? []).map((p: any) => ({ ...p, before: shot(p.before), after: shot(p.after) })) } : b);
@@ -1981,22 +1963,6 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const markRead = (k: Key) => { const r = load(k); if (r && unread(r)) { r.read = new Date().toISOString(); save(k, r); notify(k); } };
   const notify = (k: Key, turn?: number) => { try { if (k.card) engine.deps.send("scard", { id: k.id, run: k.run, status: engine.cards.get(k.id)?.status }); engine.deps.send("review-room", { card: k.id, run: k.run, turn: turn ?? null }); } catch {} };
 
-  /** one scene's narration by its vendor: generated once, then served from the room's folder */
-  async function speakScene(k: Key, s: S, t: Turn, vendor: string, lang?: string) {
-    const tr = lang && lang !== t.lang ? load(k)?.translations?.[lang]?.[String(t.n)] : null;
-    const text = (tr ? (tr.scenes.length ? tr.scenes.flatMap((x) => x.points) : tr.claims) : t.scenes?.length ? t.scenes.flatMap((x) => x.points.map((p) => p.text)) : (t.claims ?? []).filter((x) => x.kind === "claim" || x.kind === "aside").map((x) => x.text)).map((x) => narration(x)).filter(Boolean).join("\n").slice(0, 4000); if (!text) throw refuse("This scene has nothing to say", "not_found");
-    const name = `voice-t${t.n}-${sha(text).slice(0, 12)}.mp3`, f = join(k.dir, name), src = `/api/review-room/${k.id}/audio/${name}`;
-    if (existsSync(f)) return { src, cached: true, vendor, model: TTS_MODEL };
-    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 90_000), born = resetGen.get(k.id) ?? 0;
-    try { const say = o.speak ?? openaiSpeaker(() => engine.deps.agents.egress); const out = await say(text, ac.signal); const bytes = Buffer.from(out.bytes);
-      if ((resetGen.get(k.id) ?? 0) !== born) throw refuse("The room was started over", "reset");
-      if (bytes.length < 64 || bytes.length > 20_000_000) throw new Error("the voice came back empty or too large");
-      mkdirSync(k.dir, { recursive: true }); writeFileSync(f, bytes);
-      const run = engine.get(s.run.id), node = run?.def.nodes.find((n: any) => n.id === s.node.id);
-      if (run && node) engine.record(engine.x(run, node, run.nodes[node.id]), "review-room-voice", { head: s.head, data: { schema: 1, card: k.id, turn: t.n, vendor, model: out.model, voice: out.voice, chars: text.length, sha256: createHash("sha256").update(bytes).digest("hex") } } as any);
-      return { src, cached: false, vendor, model: out.model }; }
-    finally { clearTimeout(timer); }
-  }
   /** a directory room's title: the directory (or the repository's root) and where it is */
   const dirTitle = (r: Room | null) => { const d = r?.dir, where = d ? `${d.repository}${d.path ? `/${d.path}` : ""}` : r?.subject?.repository ?? "";
     return { en: `Directory ${where} @ ${d?.ref ?? ""}`, "zh-TW": `目錄 ${where} @ ${d?.ref ?? ""}` }; };
@@ -2278,7 +2244,6 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       const at = new Date().toISOString(), arch = join(dirname(k.file), ".archive", `${k.id}-${at.replace(/[:.]/g, "-")}`), moved: string[] = [];
       mkdirSync(arch, { recursive: true });
       if (existsSync(k.file)) { renameSync(k.file, join(arch, "room.json")); moved.push("room"); }
-      clipStore(o.dataDir, clipRoots()).dropDir(k.dir); // the local voice's clips are deleted, never archived
       if (existsSync(k.dir)) { renameSync(k.dir, join(arch, "images")); moved.push("images"); }
       if (room) startedOver.add(room); cache.delete(k.file); resetGen.set(k.id, (resetGen.get(k.id) ?? 0) + 1); statMemo.clear(); saving.delete(k.id); refreshing.delete(k.id);
       // a pull request's room is its file: a fresh one now, from the pull request as Studio last read it (its link to the Library kept)
@@ -2313,7 +2278,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       return { ...snap, artifact: aid, n: v.n, versions: vs.map((x) => ({ n: x.n, at: x.createdAt, summary: x.summary })), project: a.project, integrity: store.verify(aid, v.n) };
     },
     libraryAsset(aid: string, n: number, name: string) {
-      if (!LIB_ID.test(aid) || !/^(B\d+-\d+\.png|cap-[0-9a-f]{16}\.png|voice-t\d+-[0-9a-f]{12}\.mp3)$/.test(name)) throw refuse("No such file", "not_found");
+      if (!LIB_ID.test(aid) || !/^(B\d+-\d+\.png|cap-[0-9a-f]{16}\.png)$/.test(name)) throw refuse("No such file", "not_found");
       const f = library().file(aid, n, `assets/${name}`); if (!f) throw refuse("No such file", "not_found"); return readFileSync(f); },
     /** What a citation points at, for the room's links: the diff hunks, the ledger entry, the commit, the source, the board excerpt or a reviewer's note. */
     async cite(id: string, ref: unknown) {
@@ -2384,56 +2349,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     findings(id: string, all = false) { const k = keyOf(id); return threadFindings(load(k)?.lesson, all); },
     /** a generated illustration's PNG, from the room's own folder */
     image(id: string, name: string) { const k = keyOf(id); if (!/^B\d+-\d+\.png$/.test(name)) throw refuse("No such image", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such image", "not_found"); return readFileSync(f); },
-    /** A scene's narration in the tutor vendor's own neural voice (paid; the captain turned the voice on): generated once,
-     *  cached in the room's folder, served from it. Only when the tutor's vendor speaks; never another vendor. */
-    async speech(id: string, scene: unknown, lang?: unknown) {
-      const k = keyOf(id); if (!k.open()) throw refuse("The merge card is answered: the room no longer speaks / 合併卡已回覆，審查室不再朗讀", "closed");
-      const s = subjectOf(k), room = load(k), m = /^t([1-9]\d{0,3})$/.exec(String(scene ?? "")), t = m ? room?.turns.find((x) => x.n === Number(m[1])) : null;
-      if (!t || t.status !== "done") throw refuse("No finished scene to narrate", "not_found");
-      if (!s.run || !s.node) throw noHost();
-      // the vendor that answered this scene, as recorded; it must still be the seat's vendor, or nothing is sent anywhere
-      // the room's tutor now (the captain's pick, else Studio's): a pick that cannot run now speaks to no vendor
-      let nowTutor: Tutor | null = null; try { nowTutor = tutorFor(k, s); } catch {}
-      const vendor = SPEECH_VENDORS[t.provider], now = nowTutor ? SPEECH_VENDORS[nowTutor.pick.provider] : undefined;
-      if (!vendor) throw refuse(`This scene's tutor (${t.provider}) has no voice of its own; use this Mac's voice`, "no_voice");
-      if (now !== vendor) throw refuse("The tutor's vendor changed since this scene: its narration is not sent to another vendor", "no_voice");
-      const key = `${k.id}/${t.n}`, running = speaking.get(`${key}/${(ROOM_LANGS as readonly string[]).includes(String(lang)) ? String(lang) : ""}`); if (running) return running;
-      const l = (ROOM_LANGS as readonly string[]).includes(String(lang)) ? String(lang) : undefined;
-      const job = speakScene(k, s, t, vendor, l); speaking.set(`${key}/${l ?? ""}`, job); try { return await job; } finally { speaking.delete(`${key}/${l ?? ""}`); }
-    },
-    /** a narration file, from the room's own folder */
-    audio(id: string, name: string) { const k = keyOf(id); if (!/^voice-t\d+-[0-9a-f]{12}\.mp3$/.test(name)) throw refuse("No such audio", "not_found"); const f = join(k.dir, name); if (!existsSync(f)) throw refuse("No such audio", "not_found"); return readFileSync(f); },
-    /** One point in this Mac's local neural voice (src/voice): free and on-device, so any tutor's room may use it, read-only
-     *  rooms too. The page sends the point as it shows it; only the room's own words are spoken (src/voice/points.ts);
-     *  the clip is made once and kept in the room's folder, within the clips' bounds. */
-    async localVoice(id: string, text: unknown, lang?: unknown, mix?: unknown, signal?: AbortSignal) {
-      const k = keyOf(id), raw = String(text ?? "");
-      if (raw.length > MAX_POINT) throw refuse(`A point to speak is at most ${MAX_POINT} characters`, "too_long");
-      const t = narration(raw); if (!t) throw refuse("Nothing to say", "not_found");
-      if (!isRoomPoint(load(k), t, narration)) throw refuse("That is not a point of this room", "not_a_point");
-      const mode = mix === "same" ? "same" : "switch", l = langOf(lang), born = resetGen.get(k.id) ?? 0;
-      const out = await roomClip(k.dir, t, { lang: l, mode, store: clipStore(o.dataDir, clipRoots()), signal, generation: born, alive: () => (resetGen.get(k.id) ?? 0) === born,
-        speaker: async (s, sig) => (o.localSpeak ? o.localSpeak(l, mode) : kokoroSpeaker(await localSynth(), { lang: l, mode }))(s, sig) });
-      return { src: `/api/review-room/${k.id}/voice/${out.name}`, cached: out.cached, engine: "kokoro" };
-    },
-    localVoiceAudio(id: string, name: string) { const k = keyOf(id), b = readClip(k.dir, name, clipStore(o.dataDir, clipRoots())); if (!b) throw refuse("No such audio", "not_found"); return b; },
     /** tests: wait for a room's running turn and its background pictures */
     async settle(id: string, ms = 30000) { const t = Date.now(); while ((live.has(id) || pendingImages.size || refreshing.size || saving.size) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 30)); return !live.has(id) && !pendingImages.size; },
   });
-}
-
-/** OpenAI's speech endpoint with the key Studio keeps, through the egress proxy with a one-host credential. */
-function openaiSpeaker(egress: () => ProxyAuthority | null): Speaker {
-  return async (text, signal) => {
-    const key = keys().openai; if (!key) throw new Error("no OpenAI API key is configured");
-    const e = egress(); if (!e) throw new Error("Studio's egress proxy is not running");
-    const lease = await openScopedProxy(e, ["api.openai.com"]);
-    try { const r = await fetch("https://api.openai.com/v1/audio/speech", { method: "POST", proxy: lease.url, signal, headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-        body: JSON.stringify({ model: TTS_MODEL, voice: TTS_VOICE, input: text, response_format: "mp3" }) } as any);
-      if (!r.ok) throw new Error(`the voice was refused (HTTP ${r.status})`);
-      return { bytes: Buffer.from(await r.arrayBuffer()), model: TTS_MODEL, voice: TTS_VOICE }; }
-    finally { lease.close(); }
-  };
 }
 
 /** a source's address kept as an address only when it parses as http(s) (normalised); anything else is plain text */
