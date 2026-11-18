@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// The Remote Control link the Mac's page shows (src/terminals.ts learnLink, SHOWN_LINK): the first link of a Remote Control
-// link's shape the Claude terminal prints once Remote Control is on. A program in the terminal printing another claude.ai
+// The Remote Control link the Mac's page shows (src/terminals.ts pageLink, bannerLink, SHOWN_LINK): the link on the Claude
+// CLI's own Remote Control banner, once Remote Control is on (the flag at start, or /remote-control sent). A program in the terminal printing another claude.ai
 // or claude.com code link later (a phishing link, a link with a redirect parameter or another path) never replaces it; it
 // is only hidden. And a link wrapped inside a box drawn with heavy, double or full-width bars is learned and hidden whole,
 // with the box's borders kept where the program drew them.
@@ -19,7 +19,7 @@ const code = "https://claude.ai/code/", REAL = code + "ses" + "sion_01REALREALRE
 const ODD = "https://claude.com/code/x-phish?next=https://evil.example/login", PATHY = code + "rc-OTHER123/../login";
 writeFileSync(join(bin, "claude"), `#!/bin/sh
 case "$1" in --help) echo "  --remote-control  start remote"; exit 0;; esac
-printf 'Remote Control active: ${REAL}\\r\\n'
+printf '/remote-control is active \\302\\267 Continue here, on your phone, or at ${REAL}\\r\\n'
 sleep 1
 printf 'tool output: open ${FAKE} to continue\\r\\n'
 sleep 1
@@ -39,6 +39,35 @@ try {
   const tail = ((await svc.tail(v.id, 20)) ?? []).join("\n");
   ok(!tail.includes("ATTACKER") && !tail.includes("REALREAL") && !tail.includes("evil.example"), "every one of them is still hidden from studio_logs", tail);
   try { svc.kill(v.id); } catch {}
+
+  // which link the page takes, and when (review round 7): only the one on the Claude CLI's own banner, once Remote Control
+  // is on; a new banner replaces it; a disconnect or the process ending clears it. Each case its own stand-in CLI.
+  const BANNER = (u: string) => `/remote-control is active \u00b7 Continue here, on your phone, or at ${u}`; // Claude Code 2.1.327's wording
+  const P = (x: string) => `printf '%s\\r\\n' '${x}'`;
+  const race = async (name: string, script: string, spec: Record<string, unknown>, want: string | null, o: { help?: string; wait?: number } = {}) => {
+    const b2 = join(d, `bin-${name.replace(/\W/g, "")}`); mkdirSync(b2, { recursive: true });
+    writeFileSync(join(b2, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "${o.help ?? "  --remote-control  start remote"}"; exit 0;; esac\n${script}\nsleep 30\n`); chmodSync(join(b2, "claude"), 0o755);
+    const s2 = new Terminals({ dataDir: join(d, `data-${name.replace(/\W/g, "")}`), projects: () => [{ id: "p", name: "P", path: pr }], transcripts: false, shell: "/bin/sh", env: { PATH: `${b2}:/usr/bin:/bin`, HOME: d }, idleMs: 300 } as any);
+    const t = await s2.create({ project: "p", preset: "claude", ...spec } as any);
+    const at = () => (s2.list(true) as any[]).find((x) => x.id === t.id)?.remote?.url ?? null;
+    if (want) await until(() => at() === want, o.wait ?? 8000); else await sleep(o.wait ?? 3000);
+    const got = at(); try { s2.kill(t.id); } catch {}
+    ok(got === want, name, `page shows ${got}`); return { s2, id: t.id };
+  };
+  await race("the banner's link, not one a program prints after it", `${P(BANNER(REAL))}\nsleep 1\n${P("tool output: open " + FAKE)}`, {}, REAL);
+  await race("not a link printed before the banner (resumed history, a MOTD)", `${P("history: " + FAKE)}\nsleep 1\n${P(BANNER(REAL))}`, {}, REAL);
+  await race("with Remote Control off, no link is shown at all", `${P(BANNER(FAKE))}`, { remoteControl: false }, null);
+  await race("slash mode: nothing before Studio sends /remote-control, then the banner's link", `${P("history: " + FAKE)}\n${P(BANNER(FAKE))}\nsleep 1\nprintf '> '\nread x\n${P(BANNER(REAL))}`, {}, REAL, { help: "no flag here", wait: 9000 });
+  await race("Remote Control off and on: the new banner's link replaces the old", `${P(BANNER(REAL))}\nsleep 1\n${P("Remote Control disconnected.")}\n${P(BANNER(FAKE))}`, {}, FAKE);
+  await race("a disconnect clears the link", `${P(BANNER(REAL))}\nsleep 1\n${P("Remote Control disconnected: this terminal is moving to another conversation.")}`, {}, null, { wait: 3500 });
+  { const r = await race("the shorter banner other versions print", `${P("Remote Control active: " + REAL)}`, {}, REAL); void r; }
+  { // the process ends: the link goes
+    const b3 = join(d, "bin-exit"); mkdirSync(b3, { recursive: true });
+    writeFileSync(join(b3, "claude"), `#!/bin/sh\ncase "$1" in --help) echo "  --remote-control  start remote"; exit 0;; esac\n${P(BANNER(REAL))}\nsleep 2\n`); chmodSync(join(b3, "claude"), 0o755);
+    const s3 = new Terminals({ dataDir: join(d, "data-exit"), projects: () => [{ id: "p", name: "P", path: pr }], transcripts: false, shell: "/bin/sh", env: { PATH: `${b3}:/usr/bin:/bin`, HOME: d }, idleMs: 300 } as any);
+    const t = await s3.create({ project: "p", preset: "claude" } as any); const at = () => (s3.list(true) as any[]).find((x) => x.id === t.id)?.remote?.url ?? null;
+    const before = await until(() => at() === REAL, 6000); await until(() => s3.get(t.id)?.running === false, 8000);
+    ok(before && at() === null, "when the Claude CLI ends, the page shows no link", String(at())); }
 
   // a link wrapped inside a box drawn with heavy, double or full-width bars
   const E = "\x1b", L = code + "rc-01QRSTUVWXYZABCDEFGHIJKLMNOP";

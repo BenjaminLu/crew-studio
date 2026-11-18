@@ -182,6 +182,29 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
   }
   return null;
 }
+// The Claude CLI's own Remote Control banner, as Claude Code 2.1.327 writes it (its bridge_status message:
+// "/remote-control is active · Continue here, on your phone, or at <url>"), and the shorter forms other versions print
+// ("Remote Control active: <url>", "Remote Control enabled: <url>"). What ends it: "Remote Control disconnected …",
+// "Remote Control stopped: …", "Remote Control session expired.".
+const BANNER = /\/remote-control is active|Continue here, on your phone, or at|Remote Control (?:is )?(?:active|enabled|connected)\b/i;
+const BANNER_OFF = /Remote Control (?:disconnected|stopped|session expired|is off)\b/i;
+/** The link on the newest Remote Control banner the output shows (the banner's own line, or the next one or two when the
+ *  link wraps), or `off` when the newest banner news is that Remote Control ended; null when the output shows neither. */
+export function bannerLink(raw: string, cols: number, trailing = true): { url: string | null; off: boolean } | null {
+  const lines = linkLines(raw);
+  let b = -1, off = -1;
+  for (let i = 0; i < lines.length; i++) { if (BANNER.test(lines[i])) b = i; if (BANNER_OFF.test(lines[i])) off = i; }
+  if (off > b) return { url: null, off: true };
+  if (b < 0) return null;
+  const from = lines[b].search(BANNER);
+  for (let i = b; i < Math.min(lines.length, b + 3); i++) {
+    const m = [...lines[i].matchAll(REMOTE_URL)].find((x) => i > b || (x.index ?? 0) > from); if (!m) continue;
+    const { url, j } = linkFrom(lines, i, m, cols);
+    if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4))) return null;
+    return { url, off: false };
+  }
+  return null;
+}
 /** Every Remote Control link the output shows, each rejoined where it was wrapped (Terminals.tail learns them all). */
 export function findLinks(raw: string, cols: number): string[] {
   const lines = linkLines(raw), out: string[] = [];
@@ -221,7 +244,7 @@ function linkFrom(lines: string[], i: number, m: RegExpMatchArray, cols: number)
 /** A view of a terminal's output. mux: one of several terminals on one stream (GET /api/terminals/mux), each event naming its terminal. */
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string; mux?: boolean };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; dismissedAtShutdown?: boolean; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; dismissedAtShutdown?: boolean; beforeRemote?: Set<string>; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
   line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[];
   /** the transcript's file name in the record: kept for a terminal listed after a restart (it writes no more to it) */
   transcriptName: string | null; reviewing?: boolean };
@@ -336,7 +359,7 @@ export class Terminals {
     else { if (this.screens.size > 64) this.screens.clear(); const raw = t.redactor.scrub(new TextDecoder().decode(bytes).slice(-SCREEN_INPUT_MAX)); const sc = await readScreen(raw, cols, rows0); rows = sc.lines; plain = !!sc.plain; this.screens.set(id, { key, rows, plain }); }
     // a link the screen shows: a box whose rows a program placed with cursor moves (ratatui, Codex) joins its rows only
     // here, so the link is read from the drawn rows too, learned whole, and removed from them through the box's borders
-    for (const u of findLinks(rows.join("\n") + "\n", cols)) this.learnLink(t, u, false);
+    for (const u of findLinks(rows.join("\n") + "\n", cols)) this.learnLink(t, u);
     if (t.redactor.known) rows = t.redactor.scrub(rows.join("\n")).split("\n").map((l) => t.redactor.pieces(l));
     const lines = rows.map((l) => redactText(l));
     const edgeR = (l: string) => l.replace(/[\s│|║┃｜]+$/, ""), edgeL = (l: string) => l.replace(/^[\s│|║┃｜]+/, "");
@@ -412,17 +435,28 @@ export class Terminals {
   }
   /** The newest Remote Control link in the recent output; one still at the very end counts once the output pauses. */
   // the newest link is the one the page may show; every other link on the screen (boxes side by side) is learned too, to hide
-  private scanLink(t: Term, trailing: boolean) { const u = findLink(t.rawTail, t.cols, trailing); if (!u) return;
-    for (const o of findLinks(t.rawTail, t.cols)) if (o !== u && !o.startsWith(u) && !u.startsWith(o)) this.learnLink(t, o, false);
-    this.learnLink(t, u); }
+  private scanLink(t: Term, trailing: boolean) {
+    const u = findLink(t.rawTail, t.cols, trailing);
+    if (u) { for (const o of findLinks(t.rawTail, t.cols)) if (o !== u && !o.startsWith(u) && !u.startsWith(o)) this.learnLink(t, o); this.learnLink(t, u); }
+    this.pageLink(t, trailing);
+  }
+  /** The link the Mac's page shows (and its QR code): the one on the Claude CLI's own Remote Control banner, once Remote
+   *  Control is on in this terminal (the flag at start, or /remote-control sent). A link anywhere else (a program's output,
+   *  resumed history, a link printed before the banner) is only hidden. A new banner replaces it; "Remote Control
+   *  disconnected" and the process ending clear it. */
+  private pageLink(t: Term, trailing: boolean) {
+    if (!t.running || !t.remote?.enabled || (t.remote.mode === "slash" && !t.remote.sent)) return;
+    const b = bannerLink(t.rawTail, t.cols, trailing); if (!b) return;
+    const url = b.url && SHOWN_LINK.test(b.url) && !t.beforeRemote?.has(b.url) ? b.url : null;
+    if (url === t.remoteUrl || (!url && !b.off)) return;
+    t.remoteUrl = url; this.pushMeta(t); this.changed();
+  }
   /** A Remote Control link read from the terminal's output (its raw stream, or the screen Terminals.tail drew). */
-  private learnLink(t: Term, u: string, forPage = true) {
+  private learnLink(t: Term, u: string) {
     if (u === t.remoteUrl || t.seen.has(u)) return;
     // any terminal that prints a Remote Control link (a shell running claude, Remote Control turned on by hand): its link is
     // redacted from then on and a phone gets no more of its output; only the Claude preset shows the link on the Mac's page
     t.seen.add(u); t.linkSeen = true; t.redactor.know(u); if (t.ask) t.ask = this.scrubAsk(t, t.ask);
-    // the link the Mac's page shows: only one of the shape a Remote Control link has (a misread one is still redacted)
-    if (forPage && t.remote && !t.remoteUrl && SHOWN_LINK.test(u)) t.remoteUrl = u;
     this.writeTranscript(t, t.redactor.push("")); this.pushMeta(t); this.changed();
   }
   private phoneHidden(t: Term) { return !!t.remote?.enabled || t.linkSeen; }
@@ -451,7 +485,7 @@ export class Terminals {
     t.state = d.state; t.reason = d.reason; t.ask = d.ask ? this.scrubAsk(t, d.ask) : null;
     // an older Claude Code without the launch flag: /remote-control, once, when it first sits idle at its prompt
     if (t.running && t.remote?.enabled && t.remote.mode === "slash" && !t.remote.sent && d.state === "waiting" && d.reason === "prompt") {
-      t.remote.sent = true; try { t.proc.terminal.write("/remote-control"); setTimeout(() => { try { if (t.running) t.proc.terminal.write("\r"); } catch {} }, 200); } catch {}
+      t.remote.sent = true; t.beforeRemote = new Set(findLinks(t.rawTail, t.cols)); try { t.proc.terminal.write("/remote-control"); setTimeout(() => { try { if (t.running) t.proc.terminal.write("\r"); } catch {} }, 200); } catch {}
     }
     if (`${t.state}/${t.reason}/${t.ask}` !== before) { this.pushMeta(t); this.changed(); }
     if (t.running && d.state === "working") { clearTimeout(t.timer); t.timer = setTimeout(() => this.evaluate(t), Math.max(250, this.idleMs / 2)); }
@@ -467,7 +501,7 @@ export class Terminals {
   }
   private onExit(t: Term, code: number) {
     if (!t.running) return;
-    t.running = false; clearTimeout(t.timer); clearTimeout(t.killTimer);
+    t.running = false; clearTimeout(t.timer); clearTimeout(t.killTimer); t.remoteUrl = null;
     this.writeTranscript(t, t.redactor.push(t.decoder.decode()) + t.redactor.flush());
     const sig = t.proc?.signalCode ?? null;
     t.exitCode = sig ? null : (typeof code === "number" ? code : null); t.signal = sig; t.endedAt = new Date().toISOString();
