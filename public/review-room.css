@@ -25,8 +25,6 @@
   --rr-code-bg: rgba(232,235,241,.06); --rr-inf-bg: rgba(232,176,79,.18); --rr-inf-ink: #f0c46a; --rr-add: rgba(92,201,148,.18); --rr-del: rgba(255,138,128,.16);
   --rr-shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -14px rgba(0,0,0,.7); }
 /* the handwriting, only for the board's titles and picture labels: LXGW WenKai first in a Chinese room, Caveat first in English */
-.rr-hand { font-family: var(--rr-hand); font-weight: 400; }
-html:lang(en) .rr-hand { font-family: "Caveat", "LXGW WenKai TC", "Kaiti TC", cursive; }
 
 /* ---------- focus mode (app.js pageFocus: body[data-focus="room"]; the rail, the Firstmate sheet and the hidden button are
    every focus page's, in styles.css) ---------- */
@@ -50,171 +48,36 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-pill .add { color: var(--ok); } .rr-pill .del { color: var(--bad); }
 .rr-ic { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
-.rr-stitle { display: flex; align-items: baseline; gap: 12px; min-width: 0; margin: 0 0 8px; }
-.rr-kicker { flex: none; font-size: 12px; color: var(--rr-ink-2); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
-.rr-stitle h2 { margin: 0; font-size: clamp(22px, 2.3vw, 32px); line-height: 1.2; color: var(--rr-marker); min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; isolation: isolate; padding: 0 4px; }
 /* the highlighter under a scene's title: drawn once, when the scene first shows */
-.rr-stitle h2 .rr-hl { position: absolute; left: 0; right: 0; bottom: .12em; height: .42em; background: var(--rr-hl); border-radius: 3px; z-index: -1; transform-origin: left; }
-.rr-stitle h2 .rr-hl.rr-anim { animation: rr-scale .45s cubic-bezier(.2,.7,.2,1) .1s both; }
-.rr-scene { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 28px; min-height: 0; min-width: 0; }
-.rr-visual { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 6px; }
-.rr-visual > .rr-item { min-height: 0; min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: 4px; border: 0; padding: 0; margin: 0; background: none; }
-.rr-body { min-height: 0; min-width: 0; overflow: auto; }
-.rr-body.pic { display: grid; place-items: center; overflow: hidden; }
-.rr-body.pic > *, .rr-flow-wrap, .rr-chart-wrap { width: 100%; height: 100%; min-height: 0; min-width: 0; }
-.rr-flow-wrap, .rr-chart-wrap { display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; }
-.rr-flow, .rr-chart, .rr-keycard { width: 100%; height: 100%; display: block; }
-.rr-drawing { display: grid; place-items: center; min-height: 0; }
-.rr-vstrip { display: flex; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
-.rr-vchip { font: 12px var(--f-sans); padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; flex: 0 1 auto; }
-.rr-vchip.on { border-color: var(--accent); color: var(--accent-text); }
 
 /* a scene's points: the one being read marked, the ones not reached yet dimmed */
-.rr-points { min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
-.rr-pointlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.rr-point { position: relative; padding: 8px 12px 8px 14px; border-left: 3px solid var(--rr-paper-edge); border-radius: 0 10px 10px 0; color: var(--rr-ink-2); font-size: 15.5px; line-height: 1.55; transition: color .25s, background-color .25s, border-color .25s; }
-.rr-point.rr-enter { animation: rr-in .35s ease-out both; }
-.rr-point.now { color: var(--rr-ink); border-left-color: var(--rr-marker); background: var(--rr-new-soft); }
-.rr-point code { font: 13px var(--f-mono); background: var(--rr-cite-bg); padding: 0 4px; border-radius: 4px; }
-.rr-point.inference { border-left-style: dashed; }
-.rr-ptext { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.rr-point.code pre { max-height: 9em; overflow: hidden; }
-.rr-ppage { margin: 0; font-size: 12px; color: var(--rr-ink-2); }
+
 @keyframes rr-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-.rr-sceneq { padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); font-size: 13px; }
-.rr-sceneq ol { margin: 4px 0 0; padding-left: 18px; }
-
 /* the caption follows the point being read */
-.rr-caption { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 16px; border-radius: 12px; background: var(--rr-caption); color: var(--rr-ink); border: 1px solid var(--rr-paper-edge); font-size: 16px; line-height: 1.4; }
-.rr-who { flex: none; font-size: 11px; font-weight: 600; color: var(--rr-ink-2); padding-right: 12px; border-right: 1px solid var(--rr-paper-edge); }
-.rr-ctext { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.rr-ctext:empty::before { content: "\00a0"; }
 
 /* the play bar: point back, the dots, point forward, play, replay, the scene */
-.rr-playbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rr-ibtn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); display: grid; place-items: center; flex: none; padding: 0; cursor: pointer; }
-.rr-ibtn:disabled { opacity: .4; cursor: default; }
-.rr-ibtn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
-.rr-ibtn.primary .rr-ic { fill: currentColor; }
-.rr-dots { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; flex: 0 1 auto; }
-.rr-dot { border: 0; padding: 0 2px; background: none; height: 22px; display: grid; place-items: center; cursor: pointer; }
-.rr-dot i { display: block; width: 8px; height: 8px; border-radius: 99px; background: var(--border-strong); transition: width .25s, background-color .25s; }
-.rr-dot[aria-current="step"] i { width: 24px; background: var(--rr-marker); }
-.rr-scenenav { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
-.rr-mini { border: 0; background: none; color: var(--text-2); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 14px; }
-.rr-mini:disabled { opacity: .35; cursor: default; }
 
 /* the dock: quick actions, the question, the transcript; what needs a word opens above it */
-.rr-dock { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-sizing: border-box; }
-.rr-quick { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+
 .rr-chip { height: 36px; padding: 0 12px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; white-space: nowrap; cursor: pointer; flex: none; }
 .rr-chip.lead { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .rr-chip:disabled { opacity: .5; cursor: default; }
-.rr-askrow { flex: 1 1 auto; min-width: 140px; display: flex; align-items: center; gap: 6px; height: 40px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--border); padding: 0 4px 0 14px; box-sizing: border-box; }
-.rr-askin { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; height: 36px; color: var(--text); font: inherit; }
-.rr-mic, .rr-send { height: 32px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12px; padding: 0 10px; white-space: nowrap; cursor: pointer; }
-.rr-mic.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-.rr-send { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
-.rr-mic:disabled, .rr-send:disabled { opacity: .5; cursor: default; }
-.rr-dock-note { flex: 1; margin: 0 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rr-ro-note { display: none; margin: 0 8px; flex: 1; font-size: 13px; }
-.rr-pops { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); display: grid; justify-items: end; gap: 6px; z-index: 20; pointer-events: none; }
-.rr-pops > * { pointer-events: auto; max-width: min(720px, 100%); }
-.rr-pops > [data-heard] { pointer-events: none; }
-.rr-busy { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
-.rr-busy i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; animation: rr-pulse 1s ease-in-out infinite; }
+
 @keyframes rr-pulse { 50% { opacity: .3; } }
-@media (prefers-reduced-motion: reduce) { .rr-busy i { animation: none; } }
-.rr-pop { margin: 0; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-2); font-size: 13px; }
-.rr-pop.rr-err { color: var(--bad); }
-.rr-confirm { border-color: var(--accent); }
-.rr-confirm p { margin: 0 0 8px; }
 
 /* the transcript drawer and a citation: over the room, never pushing the board */
-.rr-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 40; }
-.rr-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(clamp(440px, 34vw, 600px), 92vw); z-index: 41; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-2); display: grid; grid-template-rows: auto minmax(0, 1fr); transition: transform .25s cubic-bezier(.2, .7, .2, 1), visibility .25s; }
-.rr-drawer[data-open="false"] { transform: translateX(100%); visibility: hidden; }
-.rr-drawer > header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
-.rr-drawer > header b { flex: 1; font-size: 14px; }
-.rr-drawer-body { overflow: auto; overscroll-behavior: contain; padding: 8px 18px 24px; overflow-wrap: anywhere; line-height: 1.6; }
-.rr-drawer h3 { font-size: 12px; color: var(--text-3); font-weight: 600; margin: 14px 0 6px; }
-@media (prefers-reduced-motion: reduce) { .rr-drawer { transition: none; } }
-.rr-cite-panel { position: fixed; right: 16px; bottom: 96px; width: min(560px, calc(100vw - 32px)); max-height: 60vh; overflow: auto; z-index: 45; border: 1px solid var(--accent); box-shadow: var(--shadow-2); }
-.rr-jump { background: transparent; border: 0; padding: 6px 8px; border-radius: 8px; text-align: left; cursor: pointer; color: var(--text); font: inherit; overflow-wrap: anywhere; width: 100%; }
-.rr-jump:hover { background: var(--surface-2); }
+
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 /* ---------- the board's pictures and excerpts ---------- */
-.rr-item { min-width: 0; }
-.rr-item-h { display: flex; flex-wrap: nowrap; gap: 6px; align-items: baseline; margin: 0; min-width: 0; overflow: hidden; font-size: 12px; color: var(--text-2); }
-.rr-item-h b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.rr-item-h code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.rr-pre > span { display: block; }
-.rr-pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--rr-code-bg); font: 12.5px/1.5 var(--f-mono); max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
-.rr-diff .add { background: var(--rr-add); }
-.rr-diff .del { background: var(--rr-del); }
-.rr-diff .hunk { color: var(--text-2); }
-.rr-code i { font-style: normal; color: var(--text-2); user-select: none; }
-.rr-code .hl { background: var(--accent-soft); }
-.rr-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-.rr-flow .rr-box { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; stroke-linejoin: round; }
-.rr-flow text { fill: var(--rr-ink); font-family: var(--rr-hand); font-size: 19px; }
-html:lang(en) .rr-flow text { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 21px; }
-.rr-flow .rr-edge { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; }
-.rr-flow .rr-edge.dashed { stroke-dasharray: 6 5; }
-.rr-flow .rr-ahead { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.rr-flow .rr-elabel { fill: var(--rr-ink-2); font-size: 16px; }
-.rr-flow .rr-new .rr-box { stroke: var(--rr-new); fill: var(--rr-new-soft); }
-.rr-flow .rr-edge.rr-new, .rr-flow .rr-ahead.rr-new { stroke: var(--rr-new); }
-.rr-flow .rr-newtag { fill: var(--rr-new); font-size: 15px; }
-.rr-keycard .rr-key-title { font-size: 34px; fill: var(--rr-marker); }
-.rr-keycard .rr-key-line { stroke: var(--rr-hl); stroke-width: 12; fill: none; stroke-linecap: round; }
-.rr-keycard .rr-sticky rect { fill: var(--rr-sticky); }
-.rr-keycard .rr-sticky-name { font-size: 22px; fill: var(--rr-sticky-ink); }
-.rr-keycard .rr-sticky-dir { font-size: 14px; fill: var(--rr-sticky-ink); opacity: .75; font-family: var(--f-mono); }
-.rr-turns { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
-.rr-inference { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; margin-right: 6px; border-radius: 6px; background: var(--rr-inf-bg); color: var(--rr-inf-ink); }
-.rr-tier { font-size: 11px; font-weight: 600; padding: 0 4px; border-radius: 4px; background: rgba(127,127,127,.14); }
-.rr-cite { font: 500 10.5px var(--f-mono); padding: 1px 7px; margin: 0 2px; border-radius: 99px; border: 0; background: var(--rr-cite-bg); color: var(--rr-cite-ink); cursor: pointer; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: 1px; }
-.rr-cite.bad { border-color: var(--bad, #c33); color: var(--bad, #c33); text-decoration: line-through; }
-.rr-basis { display: flex; flex-wrap: nowrap; gap: 4px; overflow: hidden; }
+
 .rr-err { color: var(--bad, #c33); }
-.rr-cost { display: block; font-size: 11px; margin: 0; }
-.rr-check, .rr-sources { margin: 0 0 10px; padding-left: 18px; }
-.rr-sources { list-style: none; padding-left: 0; }
-.rr-sources li { margin: 0 0 4px; overflow-wrap: anywhere; }
-.rr-mark.ok { color: var(--ok, #1d8a4a); }
-.rr-mark.miss { color: var(--bad, #c33); }
+
 /* pictures: screenshots (before / after), charts, generated illustrations; a click enlarges one */
-.rr-kind { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text, var(--accent)); white-space: nowrap; }
-.rr-kind.illustration { background: rgba(140,90,200,.16); color: var(--text); }
-.rr-shots { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 6px; min-height: 0; }
-.rr-fig { margin: 0; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; height: 100%; }
-.rr-fig img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; cursor: zoom-in; background: var(--rr-img-bg); }
-.rr-fig figcaption { font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
-.rr-toggle { display: flex; gap: 6px; }
-.rr-toggle [aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text, var(--accent)); font-weight: 600; }
-.rr-chart text { fill: var(--rr-ink); font: 12px var(--f-sans); }
-.rr-chart .rr-chart-l { font-family: var(--rr-hand); font-size: 15px; }
-html:lang(en) .rr-chart .rr-chart-l { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 17px; }
-.rr-chart .add, .rr-legend .add { fill: var(--rr-ok); background: var(--rr-ok); }
-.rr-chart .del, .rr-legend .del { fill: var(--rr-bad); background: var(--rr-bad); }
-.rr-chart .before, .rr-legend .before { fill: var(--border-strong); background: var(--border-strong); }
-.rr-chart .after, .rr-legend .after { fill: var(--accent); background: var(--accent); }
-.rr-legend { display: flex; gap: 12px; font-size: 12px; margin-top: 4px; }
-.rr-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-.rr-zoom { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.72); display: grid; place-items: center; padding: 16px; gap: 8px; grid-template-rows: auto 1fr; }
-.rr-zoom img { max-width: 100%; max-height: 82vh; border-radius: 8px; background: var(--rr-img-bg); }
-.rr-zoom .btn { justify-self: end; }
-.rr-ph { display: grid; place-items: center; min-height: 160px; padding: 16px; border: 2px dashed var(--border-strong); border-radius: 10px; color: var(--text-2); text-align: center; }
+
 /* someone else's words (a reviewer, a commit message), quoted as plain text: a gist, the original folded */
-.rr-quote-fold { margin: 4px 0 0; font-size: 13px; }
-.rr-quote-fold > summary { cursor: pointer; color: var(--text-2); display: flex; gap: 6px; min-width: 0; }
-.rr-quote-fold > summary .rr-gist { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rr-gist { font-style: italic; }
-.rr-quote { margin: 6px 0 0; padding: 4px 10px; border-left: 3px solid var(--border); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
-.rr-quote-fold[open] .rr-quote { max-height: 14em; overflow: auto; }
+
 /* the Review Room's home and a project's page: the pull request URL box */
 .rr-prbox { display: grid; gap: 8px; max-width: 720px; }
 .rr-prlabel { display: grid; gap: 4px; }
@@ -223,70 +86,39 @@ html:lang(en) .rr-chart .rr-chart-l { font-family: "Caveat", "LXGW WenKai TC", c
 @media (max-width: 560px) { .rr-prbox .btn { min-height: 44px; } }
 
 /* a narrower window: the dock's quick actions give way to the question */
-@media (max-width: 1100px) { .rr-room { padding: 10px 14px; } .rr-quick { overflow-x: auto; scrollbar-width: none; max-width: 46%; } .rr-pill { max-width: 180px; } }
+@media (max-width: 1100px) { .rr-room { padding: 10px 14px; }  .rr-pill { max-width: 180px; } }
 
 /* a table on the board (the tutor's, or one from an older answer): text cells */
-.rr-table { border-collapse: collapse; font-size: 14px; margin: auto; max-width: 100%; }
-.rr-table th, .rr-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; overflow-wrap: anywhere; }
-.rr-table th { background: var(--surface-2); font-weight: 600; }
-.rr-body.text:has(> .rr-table) { display: grid; place-items: center; }
+
 /* the transcript: the tutor's full answer, folded */
-.rr-answer { margin: 4px 8px 8px; font-size: 14px; line-height: 1.6; }
-.rr-answer summary { cursor: pointer; color: var(--text-2); }
-.rr-answer p { margin: 8px 0; }
-.rr-ans-table { white-space: pre-wrap; font: 12px/1.5 var(--f-mono); }
+
 /* the check on the board: big option buttons; right and wrong by colour and by a drawn mark */
-.rr-quiz { width: 100%; height: 100%; display: grid; align-content: center; gap: 10px; min-height: 0; overflow: auto; }
-.rr-quiz-q { margin: 0 0 4px; font-size: clamp(20px, 1.8vw, 26px); color: var(--rr-ink); line-height: 1.35; overflow-wrap: anywhere; }
-.rr-opts { display: grid; gap: 8px; }
-.rr-opt { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; gap: 10px; text-align: left; border: 1.5px solid var(--rr-paper-edge); background: var(--rr-paper); color: var(--rr-ink); border-radius: 12px; padding: 10px 12px; min-height: 48px; font: inherit; font-size: 15px; cursor: pointer; transition: border-color .2s, background-color .2s, transform .12s; }
-.rr-opt:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
-.rr-opt:disabled { cursor: default; }
-.rr-optk { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid currentColor; display: grid; place-items: center; font-weight: 700; font-size: 13px; color: var(--text-2); }
-.rr-optt { overflow-wrap: anywhere; }
-.rr-opt.right { border-color: var(--rr-ok); background: var(--rr-ok-soft); } .rr-opt.right .rr-optk { color: var(--rr-ok); }
-.rr-opt.wrong { border-color: var(--bad); background: var(--bad-soft); } .rr-opt.wrong .rr-optk { color: var(--bad); }
-.rr-mk { width: 22px; height: 22px; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.rr-mk.ok { stroke: var(--rr-ok); } .rr-mk.miss { stroke: var(--bad); }
-.rr-verdict { font-size: 14px; border-radius: 10px; padding: 8px 12px; background: var(--surface-2); }
-.rr-verdict.ok { background: var(--ok-soft); } .rr-verdict.miss { background: var(--bad-soft); }
-.rr-quiz-help { margin: 0; font-size: 15px; color: var(--text-2); }
-@media (prefers-reduced-motion: reduce) { .rr-opt { transition: none; } }
+
+ 
+ 
+
+ 
+
+ 
 
 /* ---------- motion: one timeline, only what is new moves (a picture's new parts, a new point, a new title) ----------
    nodes are drawn by the pen (stroke-dashoffset, 450ms), edges 350ms then their arrowhead 120ms, 180ms apart; labels are
    written left to right (clip-path, 400ms); the highlighter 450ms; bars 600ms; a check mark 250ms. Reduced motion: the
    final picture at once. */
-.rr-pen { stroke-dasharray: 1; animation: rr-pen var(--d, .45s) cubic-bezier(.3,.6,.2,1) var(--dl, 0s) both; }
-.rr-write { animation: rr-write var(--d, .4s) ease-out var(--dl, 0s) both; }
-.rr-grow { transform-box: fill-box; transform-origin: left; animation: rr-scale var(--d, .6s) cubic-bezier(.2,.7,.2,1) var(--dl, 0s) both; }
-.rr-fade { animation: rr-fadein .3s ease var(--dl, 0s) both; }
-.rr-mk.rr-pen path { stroke-dasharray: 1; animation: rr-pen .25s ease-out .1s both; }
+
 @keyframes rr-pen { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 @keyframes rr-write { from { clip-path: inset(-30% 100% -30% 0); } to { clip-path: inset(-30% -4% -30% 0); } }
 @keyframes rr-scale { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes rr-fadein { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .rr-pen, .rr-write, .rr-grow, .rr-fade, .rr-mk.rr-pen path, .rr-point.rr-enter, .rr-stitle h2 .rr-hl.rr-anim, .rr-dot i, .rr-point { animation: none !important; transition: none !important; }
-}
 
 /* the welcome scene's call to action */
-.rr-cta { align-self: flex-start; margin-top: 6px; border: 0; border-radius: 12px; background: var(--rr-marker); color: var(--rr-paper); font: 400 20px/1.2 var(--rr-hand); padding: 10px 18px; box-shadow: 0 2px 0 rgba(0,0,0,.15); cursor: pointer; text-align: left; }
-html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 22px; }
-.rr-cta small { display: block; font: 500 11px var(--f-sans); opacity: .85; }
-.rr-cta:disabled { opacity: .5; cursor: default; }
-.rr-body.text { display: grid; align-content: center; }
-.rr-body.text .rr-pre { font-size: 14px; }
 
 /* the explanation's language (EN / 繁 / 简), the answers to one question and "Regenerate with…" */
-.rr-langs { display: inline-flex; flex: none; border: 1px solid var(--border); border-radius: 99px; padding: 2px; background: var(--surface); }
-.rr-lang { border: 0; background: none; border-radius: 99px; padding: 2px 10px; font-size: 12px; color: var(--text-2); min-height: 26px; cursor: pointer; }
-.rr-lang[aria-pressed="true"] { background: var(--text); color: var(--bg); font-weight: 600; }
-.rr-lang:disabled { opacity: .4; cursor: default; }
+
 .rr-vers { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
 .rr-ver { border: 1px solid var(--rr-paper-edge); background: var(--rr-paper); color: var(--rr-ink-2); border-radius: 99px; padding: 1px 8px; font-size: 11px; cursor: pointer; text-decoration: none; }
 .rr-ver[aria-pressed="true"], .rr-ver[aria-current="page"] { border-color: var(--rr-marker); color: var(--rr-marker); font-weight: 600; }
-.rr-regen { margin-left: 6px; font-size: 12px; color: var(--rr-marker); }
+
 .rr-regenlist { position: absolute; top: 52px; left: 24px; z-index: 15; display: grid; gap: 6px; padding: 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-2); max-width: min(560px, calc(100% - 48px)); }
 .rr-regenopt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; text-align: left; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 10px; padding: 8px 10px; cursor: pointer; font: inherit; font-size: 13px; }
 .rr-regenopt:disabled { opacity: .55; cursor: default; }
@@ -302,7 +134,7 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
 .rr-roomlist li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
 .rr-roomlist .rr-pill { height: 22px; line-height: 20px; }
 .rr-roomlist .rr-rowact { margin-left: auto; height: 26px; padding: 0 8px; font-size: 12px; }
-.rr-roomsearch { width: 100%; margin-top: 8px; }
+
 .rr-zone { margin-top: 16px; }
 .rr-zone h3 { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 15px; }
 .rr-zone summary { cursor: pointer; }
@@ -310,37 +142,10 @@ html:lang(en) .rr-cta { font-family: "Caveat", "LXGW WenKai TC", cursive; font-s
 .rr-zonecount { color: var(--text-2); font-weight: 400; }
 .rr-repo { margin-top: 8px; }
 .rr-repo h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-2); overflow-wrap: anywhere; }
-.rr-notes { margin: 6px 0; font-size: 13px; }
-.rr-notes > summary { cursor: pointer; font-weight: 600; }
-.rr-notelist { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 8px; }
-.rr-progress { font-size: 13px; }
-.rr-progress-said { margin: 4px 0 0; padding: 6px 10px; border-left: 3px solid var(--rr-paper-edge); color: var(--rr-ink-2); font-style: italic; }
 
 /* a changed item, before and after (one layout for every item) */
-.rr-itemfig .rr-ib path { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; }
-.rr-itemfig .rr-ib.fix path { stroke: var(--rr-new); fill: var(--rr-new-soft); stroke-width: 2.6; }
-.rr-itemfig .rr-ib.old path { stroke: var(--rr-bad); }
-.rr-itemfig .rr-ib.now path { stroke: var(--rr-ok); }
-.rr-itemfig text { fill: var(--rr-ink); font-family: var(--rr-hand); font-size: 17px; }
-html:lang(en) .rr-itemfig text { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 19px; }
-.rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); fill: var(--rr-ink-2); }
-.rr-itemfig .rr-ib-row { font: 600 12px var(--f-sans); fill: var(--rr-ink-2); }
-.rr-itemfig .rr-ia path { fill: none; stroke: var(--rr-ink); stroke-width: 2; stroke-linecap: round; }
-.rr-itemfig .rr-ia.new path { stroke: var(--rr-new); }
+
 /* one request, in order */
-.rr-seq .rr-actor rect { fill: var(--rr-paper); stroke: var(--rr-ink); stroke-width: 2; }
-.rr-seq .rr-actor-l { fill: var(--rr-ink); font-family: var(--rr-hand); font-size: 16px; }
-html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cursive; font-size: 18px; }
-.rr-seq .rr-lifeline { stroke: var(--rr-ink-2); stroke-dasharray: 4 5; }
-.rr-seq .rr-step-line { fill: none; stroke: var(--rr-ink); stroke-width: 1.8; }
-.rr-seq .rr-step.return .rr-step-line { stroke-dasharray: 6 4; }
-.rr-seq .rr-step-head { fill: var(--rr-ink); stroke: var(--rr-ink); stroke-width: 1.5; }
-.rr-seq .rr-step.async .rr-step-head { fill: none; }
-.rr-seq .rr-step-l { fill: var(--rr-ink); font: 12px var(--f-sans); }
-.rr-seq .rr-frame rect { fill: var(--rr-new-soft); stroke: var(--rr-marker); stroke-dasharray: 5 4; }
-.rr-seq .rr-frame-l { fill: var(--rr-marker); font: 600 11px var(--f-mono); }
-.rr-seq .rr-frame-else { stroke: var(--rr-marker); stroke-dasharray: 5 4; }
-.rr-flow .rr-cite-label { fill: var(--rr-cite-ink); text-decoration: underline; cursor: pointer; }
 
 /* ---------- a phone (390×844): the header in one line, a read-only dock (the transcript a tap away) ---------- */
 @media (max-width: 760px) {
@@ -348,21 +153,19 @@ html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cur
   .rr-head { gap: 6px; }
   .rr-back span, .rr-htitle span, .rr-pills .rr-pill:not([data-pr-state]), [data-room-check], [data-room-github], [data-room-save], [data-room-library], .rr-head .rr-back[href^="#/inbox"] { display: none; }
   .rr-htitle b { font-size: 14px; }
-  .rr-dock { border-radius: 12px; padding: 8px 10px; }
-  .rr-dock .rr-quick, .rr-dock .rr-askrow { display: none; }
-  .rr-ro-note { display: block; }
-  .rr-pops { display: none; }
-  .rr-opt { min-height: 44px; }
-  .rr-quiz-q { font-size: 19px; }
-  .rr-cta { font-size: 18px; }
+  
+  
+  
+  
+  
+  
+  
 }
 
 /* ---------- the lesson report (baton's packet, workflows/skills/baton): a teach answer read top to bottom ----------
    Sections are cards on the room's paper: a numbered heading in a display serif, the points as prose or as findings with
    a tone stripe, and Studio's drawing under them in a figure card. The report scrolls inside the room; the page does not. */
-.rr-report { --rp-serif: "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", Georgia, serif;
-  grid-row: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 18px 40px 6px;
-  color: var(--rr-ink); font-family: var(--f-sans); outline: none; }
+
 .rp-top { padding: 14px 0 16px; border-bottom: 2px solid var(--rr-ink); margin-bottom: 18px; max-width: 78rem; }
 .rp-eyebrow { font: 600 11px var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--rr-ink-2); margin-bottom: 8px; overflow-wrap: anywhere; }
 .rp-title { font-family: var(--rp-serif); font-size: clamp(22px, 2.6vw, 34px); font-weight: 600; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
@@ -389,32 +192,23 @@ html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cur
 /* the figure card: Studio's drawing at the size it was laid out for, never scaled past one and a half */
 .rp-fig { margin: 0; padding: 14px 16px 10px; display: grid; gap: 8px; min-width: 0; }
 .rp-figbody { overflow-x: auto; display: grid; justify-items: center; min-width: 0; }
-.rp-figbody > svg, .rp-figbody .rr-flow-wrap > svg { width: 100%; height: auto; max-height: 560px; }
-.rp-figbody .rr-flow-wrap { width: 100%; display: grid; gap: 8px; place-items: center; }
+.rp-figbody > svg { width: 100%; height: auto; max-height: 560px; }
+
 .rp-fig figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: var(--rr-ink-2); }
-.rp-fig figcaption .rr-basis { flex-wrap: wrap; }
+
 /* the report's drawings in the page's text faces (the board keeps its handwriting) */
-.rr-report .rr-flow text, .rr-report .rr-itemfig text, .rr-report .rr-seq .rr-actor-l { font-family: var(--f-sans); }
-.rr-report .rr-flow text { font-size: 16px; } .rr-report .rr-flow .rr-elabel { font: 13px var(--f-mono); }
-.rr-report .rr-itemfig text { font-size: 15px; } .rr-report .rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); }
+
+ 
+ 
 /* what talks to what: the change marked on the node, context dashed */
-.rr-arch .rr-m-new .rr-box, .rr-arch .rr-m-changed .rr-box { stroke: var(--rr-new); fill: var(--rr-new-soft); stroke-width: 2.6; }
-.rr-arch .rr-m-removed .rr-box { stroke: var(--rr-bad); stroke-dasharray: 6 5; }
-.rr-arch .rr-k-external .rr-box { stroke: var(--rr-ink-2); stroke-dasharray: 6 5; }
-.rr-arch .rr-mark-t { font: 600 11px var(--f-mono) !important; fill: var(--rr-new); }
-.rr-arch .rr-m-removed .rr-mark-t { fill: var(--rr-bad); }
+
 .rp-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; font-size: 12px; color: var(--rr-ink-2); }
 .rp-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .rp-legend .sw { width: 11px; height: 11px; border-radius: 2px; border: 2px solid var(--rr-new); background: var(--rr-new-soft); }
 .rp-legend .sw.removed { border-color: var(--rr-bad); border-style: dashed; background: none; }
 .rp-legend .sw.ctx { border-color: var(--rr-ink-2); border-style: dashed; background: none; }
 /* a decision: the option taken solid, the ones turned down dashed and dimmed */
-.rr-decfig .rr-ib.q path { fill: var(--rr-code-bg); stroke: var(--rr-ink-2); }
-.rr-decfig .rr-ib.gone path { stroke: var(--rr-ink-2); stroke-dasharray: 6 5; fill: none; }
-.rr-decfig .rr-ib.gone text { fill: var(--rr-ink-2); }
-.rr-decfig .rr-dlink { stroke: var(--rr-ink); stroke-width: 1.8; }
-.rr-decfig .rr-dlink.taken { stroke: var(--rr-new); stroke-width: 2.4; }
-.rr-decfig .rr-dlink.not { stroke: var(--rr-ink-2); stroke-dasharray: 5 5; }
+
 /* the lifecycle: every transition a numbered row; the one picked shows what it writes */
 .rp-smap { width: 100%; display: grid; gap: 10px; }
 .rp-trans { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; text-align: left; width: 100%; }
@@ -434,16 +228,13 @@ html:lang(en) .rr-seq .rr-actor-l { font-family: "Caveat", "LXGW WenKai TC", cur
   .rp-cost { margin-left: 0; }
 }
 /* the report's drawings are as tall as they are drawn (the board's are fitted to its box) */
-.rp-figbody .rr-flow-wrap, .rp-figbody .rr-flow, .rp-figbody svg { height: auto !important; }
-.rp-figbody .rr-flow-wrap { grid-template-rows: auto auto; }
-html .rr-report .rr-flow text, html .rr-report .rr-itemfig text, html .rr-report .rr-seq .rr-actor-l { font-family: var(--f-sans); }
-html .rr-report .rr-itemfig text { font-size: 15px; } html .rr-report .rr-itemfig .rr-ib-sub { font: 12px var(--f-mono); }
-html .rr-report .rr-flow text { font-size: 17px; } html .rr-report .rr-flow .rr-elabel { font: 13px var(--f-mono); }
-html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
-.rr-reset { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--border); }
-.rr-reset .rr-pop { position: static; }
+.rp-figbody svg { height: auto !important; }
+
+ 
+ 
+
 /* an edge's label masked by the paper: a line never runs through its words */
-.rr-flow .rr-elabel { paint-order: stroke; stroke: var(--rr-paper); stroke-width: 5px; stroke-linejoin: round; }
+
 .rp-rej { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; text-align: left; width: 100%; }
 
 /* ---------- figures in the room's semantic palette (workflows/skills/diagram-design style guide, mapped to the room's tokens):
@@ -456,45 +247,26 @@ html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
   --fig-accent: #f08a59; --fig-accent-tint: rgba(240,138,89,.14); --fig-ok: #8fbf86; --fig-ok-tint: rgba(143,191,134,.14); --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); --fig-seal: #d08a72; --fig-seal-tint: rgba(208,138,114,.14); --fig-link: #8eb0ff; } }
 :root[data-theme="dark"] { --fig-card: #262b36; --fig-card-2: #2e3442; --fig-ink: #ece6d6; --fig-muted: #b6bdcb; --fig-soft: #8e98ac; --fig-rule: rgba(245,245,245,.14); --fig-rule-strong: rgba(191,192,192,.3);
   --fig-accent: #f08a59; --fig-accent-tint: rgba(240,138,89,.14); --fig-ok: #8fbf86; --fig-ok-tint: rgba(143,191,134,.14); --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); --fig-seal: #d08a72; --fig-seal-tint: rgba(208,138,114,.14); --fig-link: #8eb0ff; }
-.rr-ortho .rr-box { fill: var(--fig-card); stroke: var(--fig-ink); stroke-width: 1.4; }
-.rr-ortho .rr-nlabel { fill: var(--fig-ink); font-family: var(--f-sans) !important; font-weight: 600; }
-.rr-ortho .rr-node.start .rr-box { stroke-width: 2.2; }
-.rr-ortho .rr-node.ok .rr-box { stroke: var(--fig-ok); fill: var(--fig-ok-tint); }
-.rr-ortho .rr-node.seal .rr-box { stroke: var(--fig-seal); fill: var(--fig-seal-tint); }
-.rr-ortho .rr-node.amber .rr-box { stroke: var(--fig-amber); fill: var(--fig-amber-tint); }
-.rr-ortho .rr-node.accent .rr-box { stroke: var(--fig-accent); fill: var(--fig-accent-tint); stroke-width: 2; }
-.rr-ortho .rr-node.muted .rr-box { stroke: var(--fig-soft); stroke-dasharray: 5 4; fill: var(--fig-card-2); }
-.rr-ortho .rr-node.muted .rr-nlabel { fill: var(--fig-muted); font-weight: 500; }
-.rr-ortho .rr-node.k-store .rr-box { fill: var(--fig-card-2); }
-.rr-ortho .rr-edge { fill: none; stroke: var(--fig-muted); stroke-width: 1.5; }
-.rr-ortho .rr-ahead { fill: var(--fig-muted); stroke: none; }
-.rr-ortho .rr-edge.back { stroke: var(--fig-amber); } .rr-ortho .rr-ahead.back { fill: var(--fig-amber); }
-.rr-ortho .rr-edge.tx { stroke: var(--fig-ink); }
-.rr-ortho .rr-edge.back.back { stroke: var(--fig-amber); } .rr-ortho .rr-ahead.back.back { fill: var(--fig-amber); }
-.rr-ortho .rr-elabel { fill: var(--fig-muted); font: 12px var(--f-mono) !important; paint-order: stroke; stroke: var(--rr-paper); stroke-width: 5px; stroke-linejoin: round; }
-.rr-ortho .rr-elabel.back { fill: var(--fig-amber); }
-.rr-ortho .rr-cite-label, .rr-ortho .rr-cite-label .rr-elabel { text-decoration: none; cursor: pointer; }
-.rr-ortho .rr-chip-bg { fill: var(--fig-card); stroke: var(--fig-rule-strong); stroke-width: 1.2; }
-.rr-ortho .rr-chip .rr-elabel { stroke: none; fill: var(--fig-ink); font: 12px var(--f-mono) !important; }
-.rr-ortho .rr-chip.back .rr-chip-bg { stroke: var(--fig-amber); } .rr-ortho .rr-chip.back .rr-elabel { fill: var(--fig-amber); }
-.rr-ortho .rr-chip.rr-cite-label .rr-chip-bg { stroke: var(--fig-link); } .rr-ortho .rr-chip.rr-cite-label .rr-elabel { fill: var(--fig-link); }
-.rr-ortho .rr-chip.rr-cite-label:hover .rr-chip-bg, .rr-ortho .rr-chip:focus-visible .rr-chip-bg { fill: var(--fig-accent-tint); }
-.rr-ortho .rr-chip.on .rr-chip-bg { stroke: var(--fig-accent); stroke-width: 2.2; fill: var(--fig-card); }
+
+ 
+
+ 
+
+ 
+ 
+
 .rp-txpanel { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--rr-paper-edge); border-radius: 8px; background: var(--fig-card); display: grid; gap: 8px; }
 .rp-txp-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; } .rp-txp-h .rp-tn { color: var(--fig-accent); font-weight: 700; }
 .rp-legend .rp-hint { color: var(--fig-soft); }
-.rr-ortho .rr-cyl-lip { stroke: var(--fig-ink); stroke-width: 1.4; }
-.rr-ortho .rr-node.muted .rr-cyl-lip { stroke: var(--fig-soft); }
-.rr-ortho [data-state-pick] { cursor: pointer; }
-.rr-ortho .rr-mark-t { font: 600 11px var(--f-mono) !important; fill: var(--fig-accent); }
-.rr-ortho .rr-m-new .rr-mark-t { fill: var(--fig-ok); } .rr-ortho .rr-m-removed .rr-mark-t { fill: var(--fig-seal); }
+
+ 
 .rp-legend .sw.start { border-color: var(--fig-ink); background: none; } .rp-legend .sw.ok { border-color: var(--fig-ok); background: var(--fig-ok-tint); }
 .rp-legend .sw.seal { border-color: var(--fig-seal); background: var(--fig-seal-tint); } .rp-legend .sw.back { border-color: var(--fig-amber); border-style: dashed; background: none; }
 .rp-legend .sw.accent { border-color: var(--fig-accent); background: var(--fig-accent-tint); }
 .rp-entity { margin: 0; font-size: 12.5px; color: var(--rr-ink-2); align-self: start; }
-.rr-seq .rr-step.call .rr-step-line { stroke: var(--fig-link); } .rr-seq .rr-step.call .rr-step-head { fill: var(--fig-link); stroke: var(--fig-link); }
-.rr-seq .rr-step.return .rr-step-line { stroke: var(--fig-muted); } .rr-seq .rr-step.return .rr-step-head { fill: var(--fig-muted); stroke: var(--fig-muted); }
-.rr-seq .rr-step.async .rr-step-line { stroke: var(--fig-amber); stroke-dasharray: 4 3; } .rr-seq .rr-step.async .rr-step-head { stroke: var(--fig-amber); }
+ 
+ 
+ 
 /* a transaction: the envelope solid, what is written outside it dashed and set apart */
 .rp-tx { display: grid; gap: 8px; margin: 6px 0; }
 .rp-tx-env { border: 2px solid var(--fig-accent); border-radius: 6px; padding: 8px 10px; background: var(--fig-accent-tint); }
@@ -515,28 +287,16 @@ html .rr-report .rr-seq .rr-actor-l { font-size: 14px; }
 .rp-errs { margin: 6px 0 0; padding-left: 1.1em; font-size: 12px; color: var(--fig-seal); }
 @media (max-width: 760px) { .rp-call-cols { grid-template-columns: minmax(0, 1fr); } }
 /* a figure the tutor drew: as Studio took it */
-.rr-figsvg { width: 100%; display: grid; gap: 10px; justify-items: center; }
-.rr-figsvg-svg { width: 100%; height: auto; } .rr-figsvg-svg text { font-family: var(--f-sans); }
-.rr-figsvg .rr-pickable { cursor: pointer; } .rr-figsvg .rr-pickable.on { stroke-width: 2.4; }
-.rp-figbody { justify-items: start; } .rp-figbody > .rr-flow-wrap, .rp-figbody > .rp-smap, .rp-figbody > .rr-figsvg { justify-items: center; }
-.rr-paste-offer { font-size: 12.5px; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--fig-amber); background: var(--fig-amber-tint); } .rr-auto-note { font-size: 12.5px; } .rr-auto-note label { display: inline-flex; gap: 4px; align-items: center; }
+
+ 
+ 
+.rp-figbody { justify-items: start; } .rp-figbody > .rp-smap { justify-items: center; }
+.rr-paste-offer { font-size: 12.5px; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--fig-amber); background: var(--fig-amber-tint); }  
 
 /* ---------- full screen (review-room.js FS; docs/units/review-room.md 41): only the board, the whole window. #view is what the
    Fullscreen API holds; body.rr-fs is the same layout while it is pending, when it is refused and on a phone ---------- */
-.rr-fs-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font: inherit; font-size: 12.5px; white-space: nowrap; flex: none; cursor: pointer; }
-.rr-fs-btn:hover { color: var(--text); background: var(--surface-2); }
-.rr-fs-btn:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
-.rr-fs-btn .rr-ic { width: 16px; height: 16px; }
-body.rr-fs .side, body.rr-fs .chat, body.rr-fs #chatFab, body.rr-fs .toast { display: none !important; }
-body.rr-fs #view { position: fixed; inset: 0; z-index: 70; background: var(--bg); overflow: hidden; }
+
 #view:fullscreen { background: var(--bg); }
-body.rr-fs .rr-room { display: block; height: 100%; max-width: none; margin: 0; padding: 0; }
-body.rr-fs .rr-room > :not(.rb-view, .rr-zoom, .rr-cite-panel) { display: none !important; }
-body.rr-fs .rr-room > .rb-view { height: 100%; box-sizing: border-box; padding: 10px 14px; }
-@media (max-width: 760px) {
-  .rr-fs-btn span { display: none; }
-  body.rr-fs .rr-room > .rb-view { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
-}
 
 /* the tutor picker: the header's tutor pill opens it; Studio's default on the room list */
 .rr-tutor { cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
@@ -545,7 +305,7 @@ body.rr-fs .rr-room > .rb-view { height: 100%; box-sizing: border-box; padding: 
 .rr-tutormenu > p { margin: 0; font-size: 12px; max-width: 60ch; }
 .rr-tutordefault { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .rr-tutordefault select { max-width: 100%; }
-.rr-confirmwarn { display: block; height: auto; line-height: 1.4; padding: 6px 10px; margin: 6px 0; white-space: normal; }
+
 .rr-othermodel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 13px; }
 .rr-othermodel .input { width: auto; min-width: 0; max-width: 100%; }
 .rr-othermodel input.input { flex: 1 1 180px; }
@@ -555,25 +315,10 @@ body.rr-fs .rr-room > .rb-view { height: 100%; box-sizing: border-box; padding: 
 
 /* steps and illustrations: a step's number picks it; the illustration zooms to what the step is about, the rest dimmed; a
    connector is a wide click target that opens what that step does and why */
-.rr-stepn { display: inline-grid; place-items: center; flex: none; width: 22px; height: 22px; padding: 0; margin: 0 8px 0 0; border: 1px solid var(--rr-paper-edge); border-radius: 50%;
-  background: var(--rr-paper); color: var(--rr-marker); font: 700 11.5px/1 var(--f-mono); cursor: pointer; vertical-align: 1px; }
-.rr-stepn:hover, .rr-stepn.on { background: var(--rr-marker); color: var(--rr-paper); border-color: var(--rr-marker); }
-.rr-stepn:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
-.rr-point.picked { color: var(--rr-ink); border-left-color: var(--rr-marker); background: var(--rr-new-soft); }
-.rr-stepdetail { margin: 0; padding: 6px 10px; border-left: 3px solid var(--rr-marker); border-radius: 0 8px 8px 0; background: var(--rr-new-soft); color: var(--rr-ink); font-size: 13.5px; line-height: 1.5; }
-.rr-stepdetail b { font: 700 11.5px var(--f-mono); color: var(--rr-marker); }
-svg.rr-zoomed :is(.rr-node, .rr-edge, .rr-ahead, .rr-chip, .rr-elabel, .rr-step, [data-node], [data-edge]):not(.rr-focus) { opacity: .28; transition: opacity .2s; }
-svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
-.rr-edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
-.rr-edge-hit:hover { stroke: var(--rr-new-soft); }
-.rr-visual { position: relative; }
-.rr-explain { position: absolute; top: 6px; right: 6px; z-index: 5; width: min(320px, calc(100% - 12px)); box-sizing: border-box; padding: 10px 12px; border-radius: 10px; background: var(--surface); color: var(--text);
-  border: 1px solid var(--border-strong); box-shadow: 0 10px 28px rgba(0,0,0,.18); font-size: 13px; line-height: 1.5; display: grid; gap: 6px; user-select: text; cursor: auto; }
-.rr-explain-x { position: absolute; top: 4px; right: 6px; border: 0; background: none; color: var(--text-3); font-size: 16px; cursor: pointer; }
-.rr-explain-body p { margin: 0 0 4px; } .rr-explain-h { padding-right: 18px; }
-.rr-explain-k { display: inline-block; font: 600 11px var(--f-mono); color: var(--rr-marker); text-transform: uppercase; letter-spacing: .02em; margin-right: 4px; }
-.rr-coderefs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; }
-.rr-coderefs-k { color: var(--rr-ink-2); font-weight: 600; }
+
+.rr-chip, [data-node] { opacity: .28; transition: opacity .2s; }
+
+ 
 
 /* ---------- "Explain with": the room presented by one of the captain's skills (public/review-explain.js) ---------- */
 .rx-pick { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; flex: none; margin-left: auto; }
@@ -607,13 +352,16 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-pending.refused { opacity: 1; outline: 1px dashed var(--border); }
 .rx-pendstate { display: block; margin-top: 4px; font-size: 11px; color: var(--text-3); }
 .rx-ro { padding: 12px; border-top: 1px solid var(--border); margin: 0; font-size: 13px; }
-.rr-room.rx-room { grid-template-rows: 48px minmax(0, 1fr); }
+/* the room: its header, a note when it has one (an old board, an error), then the explainer, which takes the rest */
+.rr-room.rx-room { display: flex; flex-direction: column; }
+.rr-room.rx-room > .rr-head { flex: none; min-height: 48px; }
+.rr-room.rx-room > .rr-oldboard, .rr-room.rx-room > .rr-err { flex: none; margin: 0; }
+.rr-room.rx-room > .rx-body { flex: 1; min-height: 0; }
 .rx-body { --rx-pane: clamp(320px, var(--rr-pane-explain, clamp(360px, 32vw, 560px)), 55%); position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--rx-pane); min-height: 0; min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
 /* the output's line (public/review-explain.js bar): the board / output switch (the board's own .rb-seg), the version menu's
    button and what the shown version was made from, on one line over the output; the versions open in a menu under it */
 .rx-line { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; min-width: 0; background: var(--surface); border-bottom: 1px solid var(--border); }
-.rx-line > .rx-seg { flex: none; }
-.rx-line > .rx-seg button { height: 26px; padding: 0 10px; }
+
 .rx-verbtn { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: 260px; }
 .rx-vername { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rx-vergen { flex: none; font-weight: 500; color: var(--accent-text, var(--accent)); }
@@ -639,11 +387,14 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-again { margin-top: 6px; }
 .rx-note { font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
 .rx-stage { position: relative; min-width: 0; min-height: 0; background: var(--surface-2); display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.rx-stagein { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.rx-stagein { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+/* the line's tools (Generate again, full screen, new tab, the isolation tag): at its right end, one row */
+.rx-linetools { flex: none; margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.rx-linetools .rr-chip { height: 28px; }
+.rx-linetools .rx-tag { margin-left: 2px; }
+@media (max-width: 640px) { .rx-linetools { margin-left: 0; flex-wrap: wrap; } .rx-tl { display: none; } }
 .rx-slot { min-height: 0; }
-.rx-tools { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--surface); flex-wrap: wrap; }
-.rx-tools .rr-chip { height: 30px; }
-.rx-tools .rr-chip.on { border-color: var(--accent); color: var(--accent-text); }
+
 .rx-tag { margin-left: auto; font: 500 11px var(--f-mono, ui-monospace, monospace); color: var(--text-3); }
 .rx-empty { display: grid; place-content: center; text-align: center; gap: 10px; padding: 24px; color: var(--text-2); }
 .rx-gen { display: grid; place-items: center; padding: 20px; overflow: auto; }
@@ -731,7 +482,7 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-thumb { display: block; margin-bottom: 4px; font: 11px var(--f-mono, ui-monospace, monospace); color: var(--text-3); }
 .rx-cites { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
 .rx-cite { display: inline-block; max-width: 100%; box-sizing: border-box; font: 500 11px/1.6 var(--f-mono, ui-monospace, monospace); border: 1px solid var(--border-strong); border-radius: 5px; padding: 0 6px; color: var(--accent-text); background: var(--surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rx-upd { margin-top: 6px; font-size: 12px; color: var(--ok, #1a7f37); }
+
 .rx-ask { border-top: 1px solid var(--border); padding: 10px; display: grid; gap: 6px; }
 .rx-ask textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; line-height: 1.5; border: 1px solid var(--border-strong); border-radius: 10px; padding: 8px 10px; resize: none; background: var(--surface); color: var(--text); }
 .rx-row { display: flex; gap: 6px; align-items: center; font-size: 12px; }
@@ -739,8 +490,7 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-row .rr-chip { height: 30px; }
 .rx-scope { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--text-3); }
 .rx-scope .rr-chip { height: 24px; padding: 0 8px; font-size: 12px; }
-.rx-quick { display: flex; flex-wrap: wrap; gap: 5px; flex-basis: 100%; }
-.rx-seltext { flex-basis: 100%; overflow-wrap: anywhere; }
+
 .rx-modalbg { position: fixed; inset: 0; background: rgba(15, 20, 30, .35); display: grid; place-items: center; z-index: 60; }
 .rx-modal { background: var(--surface); color: var(--text); border-radius: 14px; width: min(620px, 94vw); max-height: 90vh; overflow: auto; padding: 18px; box-shadow: 0 20px 50px rgba(0, 0, 0, .25); box-sizing: border-box; }
 .rx-modal h2 { margin: 0 0 4px; font-size: 17px; }
@@ -787,48 +537,32 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-genstrip b { font-weight: 600; }
 .rx-vfacts { flex: none; font: 500 11px var(--f-mono, ui-monospace, monospace); white-space: nowrap; }
 .rx-genstrip .rx-genstrip-fill { flex: 1; }
-.rx-stagein.gen { grid-template-rows: auto minmax(0, 1fr) auto; }
+.rx-stagein.gen { grid-template-rows: auto minmax(0, 1fr); }
 /* a link in Studio's toast (dark on light, light on dark) reads as part of it */
 .toast a[href] { color: inherit; text-decoration: underline; font-weight: 600; }
 /* a scene's full explanation (its body): under its points, folded to one line until the captain opens it; markdown as text */
-.rr-sbody { margin: 10px 0 0; border-top: 1px dashed var(--rr-paper-edge); padding-top: 8px; color: var(--rr-ink); }
-.rr-sbody > summary { cursor: pointer; font-size: 13px; color: var(--rr-marker); list-style-position: inside; }
-.rr-sbody-text { margin-top: 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
-.rr-sbody-text > p { margin: 0 0 10px; }
-.rr-sbody-text .rr-sbody-h { margin: 20px 0 8px; font-size: 16px; font-weight: 600; line-height: 1.35; color: var(--rr-ink); }
-.rr-sbody-text > .rr-sbody-h:first-child { margin-top: 4px; }
-.rr-sbody-text h5.rr-sbody-h { font-size: 14.5px; }
+
 /* the narration bar floats over the bottom of the board: an open body ends with room for it */
-.rr-sbody[open] .rr-sbody-text { padding-bottom: 110px; }
-.rr-sbody-text .rr-sbody-list { margin: 0 0 10px; padding-left: 20px; }
-.rr-sbody-text .rr-sbody-list li { margin: 2px 0; }
-.rr-sbody-text .rr-sbody-pre { margin: 0 0 10px; max-height: none; overflow-x: auto; white-space: pre; font-size: 12.5px; }
+
 /* a lesson that ended before its tutor said it is complete, for no fault (two rounds with nothing new, the ceiling, cancelled) */
-.rr-stopnote { margin: 6px 0; padding: 4px 8px; border-left: 3px solid var(--rr-sticky, #d9a400); background: var(--rr-inf-bg); color: var(--rr-inf-ink); font-size: 13px; border-radius: 0 6px 6px 0; }
+
 /* a drawing too large for its column: a preview, "View drawing" opens it at its own size; a sequence's steps listed */
-.rr-figview-btn { font-weight: 600; }
-.rr-bigbar { display: flex; justify-content: flex-end; }
+
 .rp-seqlist { margin: 6px 0 0; font-size: 13px; color: var(--rr-ink); }
 .rp-seqlist > summary { cursor: pointer; color: var(--rr-marker); }
 .rp-seqlist ol { margin: 6px 0 0; padding-left: 26px; max-height: 360px; overflow: auto; }
 .rp-seqlist li { margin: 1px 0; }
-.rr-figview { position: fixed; inset: 0; z-index: 1000; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--rr-paper); color: var(--rr-ink); }
-.rr-figview-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--rr-paper-edge); }
-.rr-figview-bar > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.rr-figview-tools { display: flex; align-items: center; gap: 6px; flex: none; }
-.rr-figview-z { min-width: 46px; text-align: center; font: 12px var(--f-mono); }
-.rr-figview-pane { overflow: auto; padding: 16px; cursor: grab; touch-action: pan-x pan-y; }
-.rr-figview-pane .rp-fig { margin: 0; max-width: none; overflow: visible; }
-.rr-figview-pane svg.rr-figview-svg { max-width: none !important; max-height: none !important; display: block; }
-.rr-figview-pane .rp-seqlist ol { max-height: none; }
-@media (max-width: 600px) {
-  .rr-figview-bar { flex-wrap: wrap; padding: 8px 10px; gap: 6px; }
-  .rr-figview-bar > b { flex: 1 0 100%; }
-  .rr-figview-tools { flex-wrap: wrap; }
-}
+
 /* a big drawing's preview opens the viewer on a click; a long transition list folds */
-.rr-preview { cursor: zoom-in; }
+
 .rp-translist > summary { cursor: pointer; color: var(--rr-marker); font-size: 13px; margin: 6px 0; }
-.rr-bigbar { margin: 6px 0; }
-.rr-bigbar .rr-figview-btn { display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px; border: 1px solid var(--rr-marker); border-radius: 8px; background: var(--rr-paper); color: var(--rr-marker); font: 600 13px var(--f-sans, inherit); cursor: pointer; }
-.rr-bigbar .rr-figview-btn:hover { background: var(--rr-new-soft); }
+
+/* a room from before: its whiteboard is kept on disk and offered as a file; one compact line over the room */
+.rr-oldboard { display: flex; gap: 10px; align-items: center; margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--surface); font-size: 13px; }
+.rr-oldboard > div { flex: 1; min-width: 0; }
+.rr-oldboard b { font-weight: 600; }
+.rr-oldboard p { margin: 2px 0 0; color: var(--text-2); }
+.rr-oldboard-ic { color: var(--accent); font-size: 16px; }
+.rr-oldboard .btn { flex: none; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
+.rr-oldboard .rr-ic { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+@media (max-width: 640px) { .rr-oldboard { flex-wrap: wrap; } .rr-oldboard .btn { width: 100%; justify-content: center; } }

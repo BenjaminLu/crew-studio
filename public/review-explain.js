@@ -16,6 +16,8 @@
 const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), sel: new Map(), draft: new Map(), caps: new Map(),
   posting: new Set(), autoPosted: new Set(), autoErr: new Map(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null };
 const enc = encodeURIComponent;
+/** Studio's built-in baton (src/domain/review-baton.ts BATON_PIN.id): the room's default skill */
+const BUILTIN = "studio-baton";
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const onRoom = (id) => S.route?.name === "room" && S.route.arg === id;
@@ -29,7 +31,7 @@ const money = (c) => (c && typeof c.usd === "number" ? `$${c.usd.toFixed(c.usd <
 const usd = (n) => (typeof n === "number" ? `$${n.toFixed(n < 1 ? 3 : 2)}` : null);
 const hhmm = (t) => String(t || "").slice(11, 16);
 const ts = (s) => { const t = Math.max(0, Math.floor(s || 0)); return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; };
-const skillName = (st, sid) => st?.skills?.find((s) => s.id === sid)?.name || sid;
+const skillName = (st, sid) => sid === BUILTIN ? T("baton (built in)", "baton（內建）") : st?.skills?.find((s) => s.id === sid)?.name || sid;
 const latest = (st) => st?.versions?.at(-1) || null;
 /** the version shown: the one picked in the version menu, else the newest of the selected skill, else the newest */
 const shownVersion = (id) => { const st = state(id); if (!st) return null; const n = X.shown.get(id), sid = st.selected?.id;
@@ -115,7 +117,8 @@ function refresh(id) {
   const pk = document.querySelector("[data-explain-picker]"); if (pk) pk.replaceWith(picker(r));
   focusLater();
 }
-const active = (id) => !!state(id)?.selected;
+// the room is always presented by a skill now (the board is gone): the explainer's view as soon as its state is read
+const active = (id) => !!state(id);
 function ensure(id) { if (!X.st.has(id) && !X.loading.has(id) && !X.err.has(id)) load(id); }
 
 // ---------- focus: a dialog takes it, keeps it (Tab), and gives it back when it closes ----------
@@ -135,14 +138,14 @@ addEventListener("keydown", (e) => {
   if (e.shiftKey && i <= 0) { e.preventDefault(); f.at(-1).focus(); } else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
 }, true);
 
-// ---------- the header's picker: the built-in tutor, or one of the captain's skills ----------
+// ---------- the header's picker: the built-in baton, or one of the captain's skills ----------
 function picker(r) {
   const id = r.card.id, st = state(id), sel = st?.selected;
   if (!st || r.snapshot) return null;
-  return h("span", { class: "rx-pick", "data-explain-picker": sel?.id || "tutor" },
+  return h("span", { class: "rx-pick", "data-explain-picker": sel?.id || "none" },
     h("span", { class: "faint" }, T("Explain with", "解釋用")),
     h("button", { type: "button", class: "rx-pickbtn", "aria-haspopup": "dialog", "data-explain-open": "", disabled: readOnly() ? true : null, onclick: () => { X.pick = id; X.returnTo = "[data-explain-open]"; render(); focusLater(); } },
-      sel ? skillName(st, sel.id) : T("Studio tutor", "Studio 導師"), " ▾"));
+      sel ? skillName(st, sel.id) : T("Pick a skill", "選一個 skill"), " ▾"));
 }
 /** what a skill makes, as far as this room knows: the kind of its outputs here */
 const outKind = (st, sid) => { const vs = st.versions.filter((v) => v.skill.id === sid); if (!vs.length) return null; const k = KIND[vs.at(-1).kind] || KIND.text;
@@ -151,20 +154,21 @@ function pickerDialog(r) {
   const id = r.card.id, st = state(id); if (X.pick !== id || !st) return null;
   const choose = async (sid) => {
     X.pick = null;
-    // the tutor, or a skill that already has an output here: switching is free
-    if (sid === null || st.versions.some((v) => v.skill.id === sid)) { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: sid })); X.shown.delete(id); } catch (e) { X.err.set(id, bi(e.message)); } closeDialog(); return; }
+    // a skill that already has an output here: switching is free
+    if (st.versions.some((v) => v.skill.id === sid)) { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: sid })); X.shown.delete(id); } catch (e) { X.err.set(id, bi(e.message)); } closeDialog(); return; }
     openConfirm(r, sid, "generate", "[data-explain-open]");
   };
   const cur = st.selected?.id ?? null, first = st.skills.find((s) => s.own)?.id ?? null;
-  const opt = (sid, name, desc, out, own) => h("button", { type: "button", class: `rx-opt${cur === sid ? " on" : ""}`, "data-explain-skill": sid ?? "tutor", "aria-pressed": String(cur === sid),
+  const opt = (sid, name, desc, out, own) => h("button", { type: "button", class: `rx-opt${cur === sid ? " on" : ""}`, "data-explain-skill": sid, "aria-pressed": String(cur === sid),
       "data-explain-autofocus": (cur === sid) ? "" : null, onclick: () => choose(sid) },
-    h("span", { class: "rx-optname" }, h("b", {}, name), sid ? h("span", { class: "faint" }, own ? T(" · your skill", " · 你的 skill") : T(" · Studio's library", " · Studio 技能庫")) : null), h("small", {}, desc), out ? h("span", { class: "rx-optout" }, out) : null);
-  const own = st.skills.filter((s) => s.own), lib = st.skills.filter((s) => !s.own), libOpen = X.more.has(id) || lib.some((s) => s.id === cur);
+    h("span", { class: "rx-optname" }, h("b", {}, name), h("span", { class: "faint" }, own ? T(" · your skill", " · 你的 skill") : sid === BUILTIN ? T(" · built in", " · 內建") : T(" · Studio's library", " · Studio 技能庫"))), h("small", {}, desc), out ? h("span", { class: "rx-optout" }, out) : null);
+  // Studio's built-in baton first (the room's default), then the captain's own skills, then the rest of Studio's library, folded
+  const builtin = st.skills.find((s) => s.id === BUILTIN), own = st.skills.filter((s) => s.own), lib = st.skills.filter((s) => !s.own && s.id !== BUILTIN), libOpen = X.more.has(id) || lib.some((s) => s.id === cur);
   return h("div", { class: "rx-modalbg", onclick: (e) => { if (e.target === e.currentTarget) closeDialog(); } },
     h("div", { class: "rx-modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "rx-pick-h", "data-explain-menu": "" },
       h("h2", { id: "rx-pick-h" }, T("Explain this change with", "用什麼解釋這個改動")),
-      h("p", { class: "rx-sub" }, T("Studio's tutor draws on the board step by step. One of your skills makes its own kind of output (an interactive page, Markdown, pictures, a video) and you keep asking about it.", "Studio 導師在白板上一步步畫。你的 skill 會做出它自己的產出（互動頁、Markdown、圖片、影片），做好後一樣可以追問。")),
-      opt(null, T("Studio tutor", "Studio 導師"), T("The board, as it is today: every sentence can be asked about.", "現在的白板：每句話都能點開問。"), T("whiteboard", "白板")),
+      h("p", { class: "rx-sub" }, T("A skill makes this room's page (an interactive page, Markdown, pictures, a video). Questions about it are answered by the room's tutor, in the chat.", "skill 負責做出這間審查室的頁面（互動頁、Markdown、圖片、影片）。對頁面的提問由審查室的導師在對話框回答。")),
+      builtin ? opt(builtin.id, skillName(st, builtin.id), T("Studio's default: one page with diagrams and the change's whole context, for you and your own agent.", "Studio 預設：一頁有圖、帶著這個改動完整脈絡的頁面，給你也給你自己的 agent。"), outKind(st, builtin.id), false) : null,
       own.length ? own.map((s) => opt(s.id, s.name, s.description || s.id, outKind(st, s.id), true))
         : h("p", { class: "faint", "data-explain-noskills": "" }, T("None of your own skills is in Studio yet: add one on the Skills page (for example from ~/.claude/skills).", "Studio 裡還沒有你自己的 skill：到技能頁加入（例如從 ~/.claude/skills）。")),
       lib.length ? h("details", { class: "rx-more", "data-explain-more": "", open: libOpen ? true : null, ontoggle: (e) => { if (e.target.open) X.more.add(id); else X.more.delete(id); } },
@@ -418,26 +422,11 @@ function focusIn(part) {
   const k = ["explainVersions", "explainAgain", "explainTutor", "explainOutput", "explainReuse"].find((x) => x in a.dataset);
   return k ? `[data-${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}]` : null;
 }
-/** the room's two ways, as one small switch: Studio tutor's board, or the skill's output */
-async function switchTo(id, sid) {
-  X.verMenu = null;
-  try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: sid })); if (sid === null) X.shown.delete(id); } catch (e) { X.err.set(id, bi(e.message)); }
-  render(); focusLater(sid === null ? "[data-explain-tutor]" : "[data-explain-output]");
-}
-function switcher(r) {
-  // on the board: only once there is an output to go back to (a skill with nothing made yet is a paid run, the picker's)
-  const id = r.card.id, st = state(id); if (!st || r.snapshot || (!active(id) && !st.versions.length)) return null;
-  const on = active(id), v = shownVersion(id);
-  return h("span", { class: "rb-seg rx-seg", role: "group", "aria-label": T("Show the board or the output", "顯示白板或產出頁"), "data-explain-switch": on ? "output" : "board" },
-    h("button", { type: "button", "data-explain-tutor": "", "aria-pressed": String(!on), title: T("Studio tutor's board", "Studio 導師的白板"), onclick: () => (on ? switchTo(id, null) : null) }, T("Board", "白板")),
-    h("button", { type: "button", "data-explain-output": "", "aria-pressed": String(on), title: v ? `${v.skill.name} v${v.n}` : "", onclick: () => (on ? null : switchTo(id, v.skill.id)) }, T("Output", "產出頁")));
-}
 /** the output's own line over the stage: the switch, the version menu (every version, a run in progress, Generate again) and
  *  what the shown version was made from; one line, so the output has the room's whole width */
 function bar(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate";
   return h("div", { class: "rx-line", "data-x-line": "" },
-    switcher(r),
     st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
         title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
       // a long skill name is cut, never the version, the count or "generating"
@@ -447,8 +436,19 @@ function bar(r, st) {
     cur && !gen && runOf(st, cur) ? h("span", { class: "rx-vfacts faint", "data-explain-vfacts": cur.n, title: whoPays(runOf(st, cur)) },
       [runOf(st, cur).head ? `head ${short(runOf(st, cur).head)}` : null, money(runOf(st, cur).cost), runOf(st, cur).model || null].filter(Boolean).join(" · ")) : null,
     cur && !gen ? autoNote(r, st) : null,
+    cur ? lineTools(r, st, cur) : null,
     // under the menu, a clear layer over the page (and the output's frame, which keeps its own clicks): a click there closes it
     X.verMenu === id ? [h("div", { class: "rx-verscrim", "data-explain-verscrim": "", onpointerdown: (e) => { e.preventDefault(); closeVerMenu(); } }), verMenu(r, st)] : null);
+}
+/** the line's own tools: Generate again, full screen, a tab of its own; Stop is on the progress while a run works */
+function lineTools(r, st, v) {
+  const id = r.card.id, run = liveRun(st), sid = st.selected?.id, page = v.kind === "html" || v.kind === "markdown" || v.kind === "text", media = v.kind === "video" || v.kind === "image";
+  return h("span", { class: "rx-linetools", "data-x-linetools": "" },
+    sid && !run && r.open && !readOnly() ? h("button", { type: "button", class: "rr-chip", "data-explain-regen": "", title: T("A new version of this page, with the skill's instructions (confirmed)", "用 skill 的指示產生這頁的新版本（要確認）"),
+      onclick: () => openConfirm(r, sid, "generate", "[data-explain-regen]", v.skill.id === sid && typeof v.prompt === "string" ? v.prompt : undefined) }, "↻ ", T("Generate again", "重新產生")) : null,
+    h("button", { type: "button", class: "rr-chip", "data-explain-full": "", title: T("Full screen (F)", "全螢幕（F）"), "aria-keyshortcuts": "F", onclick: () => enterFull(id, v) }, "⛶ ", h("span", { class: "rx-tl" }, T("Full screen", "全螢幕"))),
+    page ? h("button", { type: "button", class: "rr-chip", "data-explain-newtab": "", title: T("Opens this version alone in a new tab, isolated as here", "在新分頁單獨開這一版，一樣隔離"), onclick: () => openTab(id, v) }, "↗ ", h("span", { class: "rx-tl" }, T("New tab", "新分頁"))) : null,
+    h("span", { class: "rx-tag", "data-explain-isolation": "", title: media ? "" : T("The page runs in an isolated frame: no network, it cannot read Studio, storage kept by Studio in memory", "頁面在隔離框裡執行：不能連網、不能讀 Studio，儲存由 Studio 在記憶體代管") }, media ? T("Shown by Studio", "由 Studio 顯示") : T("Isolated", "隔離")));
 }
 /** on the line, with an older version shown: the generation Studio started for the new head did not finish (why, Try again) */
 function autoNote(r, st) {
@@ -500,6 +500,10 @@ function versionHead(r, st, v) {
 function stage(r, st) {
   const id = r.card.id, run = liveRun(st), v = shownVersion(id), sid = st.selected?.id, lastGen = [...st.runs].reverse().find((x) => x.kind === "generate" && x.skill.id === sid);
   if (run && run.kind === "generate" && !v) return progressCard(r, st, run);
+  // no skill for this room (Studio's default turned off): the picker is the way in
+  if (!sid && !v) return h("div", { class: "rx-empty", "data-x-stage": "", "data-explain-empty": "", "data-explain-noskill": "" },
+    h("p", {}, T("Pick the skill that explains this room.", "選一個 skill 來說明這間審查室。")),
+    r.open && !readOnly() ? h("button", { type: "button", class: "btn primary", "data-explain-again": "", onclick: () => { X.pick = id; X.returnTo = "[data-explain-again]"; render(); focusLater(); } }, T("Explain with…", "解釋用…")) : null);
   // "Starting" only while the page is starting it, or is about to (due, not sent yet): never a state nothing will end
   const starting = !run && (X.posting.has(`${id}/auto`) || (st.auto?.due && r.open && !readOnly() && !X.autoErr.has(id) && !X.autoPosted.has(`${id}@${st.auto.head}`)));
   if (!v && starting) return h("div", { class: "rx-gen", "data-x-stage": "", "data-explain-starting": "" }, h("div", { class: "rx-gencard", role: "status" },
@@ -517,22 +521,12 @@ function stage(r, st) {
         h("div", {}, h("b", {}, lastGen.status === "stopped" ? T(`${lastGen.skill.name} stopped`, `${lastGen.skill.name} 已停止`) : T(`${lastGen.skill.name} did not finish`, `${lastGen.skill.name} 沒有完成`)), h("p", {}, w.text), w.detail ? h("small", { class: "faint" }, w.detail) : null))
         : h("p", {}, T(`Nothing made with ${skillName(st, sid)} yet in this room.`, `這間審查室還沒有用 ${skillName(st, sid)} 產生過。`)),
       (bad && fa?.run === lastGen ? retryBtn() : null) ?? (r.open && !readOnly() ? h("button", { type: "button", class: "btn primary", "data-explain-again": "", onclick: () => openConfirm(r, sid, "generate", "[data-explain-again]") }, bad ? T("Try again", "再試一次") : T("Generate", "產生")) : null)); }
-  const media = v.kind === "video" || v.kind === "image", asking = run && run.kind === "ask";
-  const page = v.kind === "html" || v.kind === "markdown" || v.kind === "text";
   const gen = run && run.kind === "generate" ? run : null;
   return h("div", { class: `rx-stagein${gen ? " gen" : ""}`, "data-x-stage": "" },
     // a new version being made (a new head): the one shown stays, the progress is one strip above it, with Stop
     gen ? genStrip(r, st, gen) : null,
     // the layer with the output is placed over this slot (it is not part of the page's redraws)
-    h("div", { class: "rx-slot", "data-x-slot": `${id}/${v.n}` }),
-    h("div", { class: "rx-tools" },
-      h("button", { type: "button", class: "rr-chip", "data-explain-full": "", title: T("Full screen (F)", "全螢幕（F）"), "aria-keyshortcuts": "F", onclick: () => enterFull(id, v) }, "⛶ ", T("Full screen", "全螢幕")),
-      page ? h("button", { type: "button", class: "rr-chip", "data-explain-newtab": "", title: T("Opens this version alone in a new tab, isolated as here", "在新分頁單獨開這一版，一樣隔離"), onclick: () => openTab(id, v) }, "↗ ", T("Open in new tab", "在新分頁開啟")) : null,
-      readOnly() ? null : v.kind === "video" ? h("button", { type: "button", class: "rr-chip", "data-explain-pause": "", disabled: asking ? true : null, onclick: () => pauseAsk(id, v) }, "⏸ ", T("Pause here and ask", "停在這一格問"))
-        : h("button", { type: "button", class: `rr-chip${X.boxing === id ? " on" : ""}`, "data-explain-box": "", "aria-pressed": String(X.boxing === id), disabled: asking ? true : null, title: asking ? T("Wait for the answer", "等回答完成") : "",
-            onclick: () => { X.boxing = X.boxing === id ? null : id; refresh(id); if (X.boxing) requestAnimationFrame(() => document.querySelector("[data-explain-overlay]")?.focus()); } },
-          "▭ ", X.boxing === id ? T("Drag over the output, or press Enter for what is in view (Esc cancels)", "在產出上拖出一塊，或按 Enter 選目前看得到的（Esc 取消）") : T("Box a region to ask", "框一塊問")),
-      h("span", { class: "rx-tag", "data-explain-isolation": "" }, media ? T("Shown by Studio", "由 Studio 顯示") : T("Isolated frame · no network · cannot read Studio · storage kept by Studio in memory", "隔離框 · 不能連網 · 不能讀 Studio · 儲存由 Studio 代管"))));
+    h("div", { class: "rx-slot", "data-x-slot": `${id}/${v.n}` }));
 }
 function genStrip(r, st, run) {
   const id = r.card.id, ms = Date.now() - Date.parse(run.at), last = (run.progress || []).at(-1);
@@ -572,7 +566,7 @@ function progressCard(r, st, run) {
 }
 async function stop(id) { const was = state(id)?.running; X.posting.add(`${id}/stop`); refresh(id); try { X.st.set(id, await postJ(`${base(id)}/stop`, {})); ended(id, was); } catch (e) { X.err.set(id, bi(e.message)); } finally { X.posting.delete(`${id}/stop`); load(id); } }
 
-// ---------- the chat: follow-ups, about the whole output, a boxed region or a paused frame ----------
+// ---------- the chat: the room's own questions, answered by its tutor about the page shown; never a change to the page ----------
 /** what the ask box can do now: ask; wait for the first output (the question waits for it); wait for an answer; nothing */
 const askMode = (r, st) => { const id = r.card.id, v = shownVersion(id), run = liveRun(st);
   if (!r.open || r.snapshot || readOnly()) return "closed"; if (run?.kind === "ask") return "answering"; if (run?.kind === "generate" && !v) return "queue"; if (run) return "busy"; return v ? "ask" : "none"; };
@@ -598,14 +592,14 @@ async function send(id, q, confirm, consent, decision) {
   // the first output is still being made: the question waits for it (sent when the run ends with a version)
   if (m === "queue") { if (X.pend.get(id)?.q === text) unpend(id, true); X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
   if (m !== "ask" || X.posting.has(`${id}/ask`)) return;
-  const v = shownVersion(id), s = X.sel.get(id), st0 = state(id); X.posting.add(`${id}/ask`); X.ask = null;
+  const v = shownVersion(id), s = null, st0 = state(id); X.posting.add(`${id}/ask`); X.ask = null;
   // the question is in the chat now and out of the ask box (Cancel or a refusal gives it back: nothing is lost)
   clearTimeout(X.pend.get(id)?.timer);
   const p = { q: text, sel: s || null, v: v.n, phase: "sending", why: null, after: st0?.runs.at(-1)?.n ?? 0, timer: null }; X.pend.set(id, p);
   p.timer = setTimeout(() => { if (X.pend.get(id) === p && p.phase === "sending") { p.phase = "starting"; refresh(id); } }, PEND_STARTING_MS);
   X.draft.delete(id); const ta0 = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta0) ta0.value = "";
   refresh(id); pendInView();
-  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, selection: s ? { ...s, version: v.n } : null, ...(confirm ? { confirm, consent: !!consent } : {}), ...(decision ? { skillDecision: decision } : {}) })); X.sel.delete(id); X.boxing = null;
+  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, ...(confirm ? { confirm, consent: !!consent } : {}), ...(decision ? { skillDecision: decision } : {}) })); X.sel.delete(id); X.boxing = null;
     clearTimeout(p.timer); if (X.pend.get(id) === p) X.pend.delete(id); schedule(id); }
   catch (e) { clearTimeout(p.timer); const mine = X.pend.get(id) === p;
     if (e.code === "confirm_required" && e.offer) { X.ask = { id, q: text, offer: e.offer }; if (mine) p.phase = "confirm"; want = "[data-explain-askok]"; }
@@ -628,24 +622,21 @@ function chat(r, st) {
       scope(r, st), askRow(r, st)));
 }
 function askRow(r, st) {
-  const id = r.card.id, m = askMode(r, st), sk = shownSkill(id);
-  const why = m === "answering" ? T("Wait for the answer to this question", "等這個問題回答完") : m === "busy" ? T("Wait for the skill to finish", "等 skill 做完") : m === "none" ? T("Generate an output first", "先產生一份產出") : "";
-  return h("div", { class: "rx-row", "data-x-askrow": "" }, h("span", { class: "grow faint" }, why), h("span", { class: "faint" }, T("skill: ", "skill："), h("b", { "data-explain-skillname": sk?.id || "" }, sk?.name || "")),
+  const id = r.card.id, m = askMode(r, st), o = r.offer;
+  const why = m === "answering" ? T("Wait for the answer to this question", "等這個問題回答完") : m === "busy" ? T("Wait for the page to be made", "等頁面產生完") : m === "none" ? T("Generate an output first", "先產生一份產出") : "";
+  return h("div", { class: "rx-row", "data-x-askrow": "" }, h("span", { class: "grow faint" }, why), h("span", { class: "faint", "data-explain-answerer": "" }, T("answered by the room's tutor", "由審查室的導師回答"), o?.provider ? ` · ${o.provider} · ${o.model ?? T("default model", "預設模型")}` : ""),
     h("button", { type: "button", class: "rr-chip lead", "data-explain-send": "", disabled: (m === "ask" || m === "queue") && !X.posting.has(`${id}/ask`) ? null : true, title: why, onclick: () => send(id) }, m === "queue" ? T("Ask when ready", "好了再問") : T("Ask", "問")));
 }
 function scope(r, st) {
-  const id = r.card.id, s = X.sel.get(id), v = shownVersion(id);
-  return h("div", { class: "rx-scope", "data-x-scope": "" },
-    h("span", { "data-explain-scope": s ? (s.time != null ? "frame" : "region") : "all" }, s ? (s.time != null ? T(`About: the frame at ${ts(s.time)}`, `對象：停在 ${ts(s.time)} 的這一格`) : T(`About: the boxed region${s.headings?.length ? ` (${s.headings.slice(-2).join(" › ")})` : ""}`, `對象：框起來的這塊${s.headings?.length ? `（${s.headings.slice(-2).join(" › ")}）` : ""}`)) : T(`About: the whole output${v ? ` (v${v.n})` : ""}`, `對象：整份產出${v ? `（v${v.n}）` : ""}`),
-      s ? h("button", { type: "button", class: "rx-x", "data-explain-clear": "", "aria-label": T("Ask about the whole output instead", "改問整份產出"), onclick: () => clearSel(id) }, "✕") : null),
-    s?.text ? h("small", { class: "faint rx-seltext", "data-explain-seltext": "" }, `“${s.text.slice(0, 140)}${s.text.length > 140 ? "…" : ""}”`) : null);
+  const id = r.card.id, v = shownVersion(id);
+  return h("div", { class: "rx-scope", "data-x-scope": "" }, h("span", { "data-explain-scope": "page" }, v ? T(`About: the page shown (v${v.n})`, `對象：目前這一版頁面（v${v.n}）`) : T("About: the page, once it is made", "對象：頁面產生之後")));
 }
 const clearSel = (id) => { X.sel.delete(id); refresh(id); };
 /** what a question was about, as the chat shows it: the paused frame or the boxed region's last heading */
 const thumb = (sel) => (sel ? h("span", { class: "rx-thumb" }, sel.time != null ? `⏸ ${ts(sel.time)}` : `▭ ${sel.headings?.slice(-1)[0] || T("boxed region", "框選的區域")}`) : null);
 function msgs(r, st) {
   const id = r.card.id, a = X.ask && X.ask.id === id ? X.ask : null, out = [];
-  out.push(h("div", { class: "rx-m sys" }, T("Follow-up: type a question, or box a region of the output first.", "追問：直接打字問，或先在產出上框一塊再問。")));
+  out.push(h("div", { class: "rx-m sys" }, T("Ask about this page: the room's tutor answers here, from the page shown and the change's code. It never changes the page; Generate again does.", "問這一頁：審查室的導師在這裡回答，依據目前這一版頁面和改動的程式碼。它不會改頁面；要改頁面請按重新產生。")));
   for (const run of st.runs) {
     const spent = [run.ended ? fmtMin(Date.parse(run.ended) - Date.parse(run.at)) : null, money(run.cost)].filter(Boolean).join(" · ");
     if (run.kind === "generate") {
@@ -653,13 +644,12 @@ function msgs(r, st) {
       else { const w = whyOf(run); out.push(h("div", { class: `rx-m ${run.status === "stopped" ? "warn" : "err"}`, "data-explain-run": run.n, "data-status": run.status }, h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), h("b", {}, run.skill.name), " ", w.text, spent ? h("small", { class: "faint" }, ` · ${spent}`) : null)); }
       continue; }
     const sel = run.selection;
-    out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, thumb(sel), run.question));
+    out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, run.from ? h("span", { class: "rx-thumb", "data-explain-about": run.from }, T(`about v${run.from}`, `關於 v${run.from}`)) : null, run.question));
     out.push(h("div", { class: `rx-m ${run.status === "done" || run.status === "running" ? "ai" : run.status === "stopped" ? "warn" : "err"}`, "data-explain-answer": run.n, "data-status": run.status },
       run.status === "running" ? [h("span", { class: "faint" }, T("Working on it…", "處理中…")), ...(run.progress || []).slice(-3).map((p) => { if (p.script) { const s = scriptLine(p.script); return h("div", { class: `rx-callrow ${s.cls}` }, h("span", { class: "d" }, s.mark), " ", s.body); } return h("div", { class: "faint" }, `· ${p.text}`); }),
         readOnly() ? null : h("div", {}, h("button", { type: "button", class: "btn sm", "data-explain-stop": "", onclick: () => stop(id) }, T("Stop", "停止")))]
       : run.status === "done" ? [...String(run.answer || "").split(/\n{2,}/).map((p) => h("p", {}, p)),
         run.cites?.length ? h("div", { class: "rx-cites" }, run.cites.map((c) => h("span", { class: "rx-cite", "data-explain-cite": "" }, c))) : null,
-        run.version ? h("div", { class: "rx-upd", "data-explain-updated": run.version }, T(`↻ The output is now v${run.version}${run.summary ? `: ${run.summary}` : ""}`, `↻ 產出已更新為 v${run.version}${run.summary ? `：${run.summary}` : ""}`)) : null,
         spent ? h("small", { class: "faint" }, spent) : null]
       : (() => { const w = whyOf(run); return [h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), w.text, w.detail ? h("small", { class: "faint" }, ` ${w.detail}`) : null]; })()));
   }
@@ -669,23 +659,17 @@ function msgs(r, st) {
   // the question being sent, until the server's run (above) is it
   const p = X.pend.get(id);
   if (p && !pendRun(id, st)) { const PH = { sending: T("Sending…", "送出中…"), starting: T("Starting…", "開始中…"), confirm: T("Waits for your confirmation", "等你確認"), refused: T("Not asked", "沒有送出") };
-    out.push(h("div", { class: `rx-m me rx-pending${p.phase === "refused" ? " refused" : ""}`, "data-explain-pending": p.phase, "aria-busy": p.phase === "sending" || p.phase === "starting" ? "true" : null }, thumb(p.sel), p.q,
+    out.push(h("div", { class: `rx-m me rx-pending${p.phase === "refused" ? " refused" : ""}`, "data-explain-pending": p.phase, "aria-busy": p.phase === "sending" || p.phase === "starting" ? "true" : null }, h("span", { class: "rx-thumb" }, T(`about v${p.v}`, `關於 v${p.v}`)), p.q,
       h("small", { class: "rx-pendstate", role: "status", "data-explain-pendstate": "" }, PH[p.phase])));
     if (p.phase === "refused") out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), p.why,
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", "data-explain-pendx": "", onclick: () => { unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Back to the ask box", "放回輸入框")),
         h("button", { type: "button", class: "btn sm primary", "data-explain-retry": "", disabled: askMode(r, st) === "ask" ? null : true, title: askMode(r, st) === "ask" ? "" : T("Wait for the skill to finish", "等 skill 做完"), onclick: () => retry(id) }, T("Retry", "重試"))))); }
-  if (a) out.push(h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid follow-up", "確認付費追問") },
-    h("p", {}, T(`This follow-up is a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"} with ${a.offer.skill.name}.`, `這個追問會用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 和 ${a.offer.skill.name} 付費執行。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
-    scriptSummary(a.offer.scripts),
-    a.offer.decide?.state === "pending" ? h("div", { "data-explain-decidebox": "" }, ...decideFacts(a.offer.decide.facts)) : null,
+  if (a) out.push(h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid question", "確認付費提問") },
+    h("p", {}, T(`The room's tutor answers this question: a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"}. It reads the page shown and the change's code, and never changes the page.`, `審查室的導師回答這個問題：用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 付費執行。它讀目前這一版頁面和改動的程式碼，不會改頁面。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
     h("label", {}, h("input", { type: "checkbox", "data-explain-consent": "", onchange: (e) => { if (e.target.checked) X.consent.add(id); else X.consent.delete(id); } }),
-      a.offer.scripts?.run ? T(` Ask the next follow-ups here on this plan without confirming each, their scripts included (sandboxed${a.offer.scripts.network ? ", with network" : ""})`, ` 之後在這裡用同樣的設定追問時不用再確認，包括執行它的腳本（在沙盒裡${a.offer.scripts.network ? "、可以連網" : ""}）`)
-        : T(" Ask the next follow-ups here on this plan without confirming each", " 之後在這裡用同樣的設定追問時不用再確認")),
+      T(" Ask the next questions here on this tutor without confirming each", " 之後在這裡問同一位導師時不用再確認")),
     h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; if (X.pend.get(id)?.phase === "confirm") unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Cancel", "取消")),
-      a.offer.decide?.state === "pending"
-        ? [h("button", { type: "button", class: "btn sm", "data-explain-askok": "text-only", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id), "text-only") }, T("Text only, then ask", "只當文字並追問")),
-          h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "scripts", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id), "scripts") }, T("Approve with scripts and ask", "核准（含 script）並追問"))]
-        : h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並追問")))));
+      h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並提問")))));
 
   const err = X.err.get(id); if (err) out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), err));
   return h("div", { class: "rx-msgs", "data-x-msgs": "" }, out);
@@ -729,7 +713,7 @@ addEventListener("fullscreenchange", () => { if (L.full === "native" && !documen
 addEventListener("keydown", (e) => {
   if (e.key !== "f" && e.key !== "F" || e.metaKey || e.ctrlKey || e.altKey || L.full || X.boxing || document.querySelector(".rx-modal")) return;
   const t = e.target; if (!t?.closest || t.closest("textarea,input,select,[contenteditable=''],[contenteditable='true']")) return;
-  if (!t.closest("[data-x-stage]") && !(L.el && L.el.contains(t))) return;
+  if (!t.closest("[data-x-stage]") && !t.closest("[data-x-line]") && !(L.el && L.el.contains(t))) return;
   const slot = document.querySelector("[data-x-slot]"); if (!slot) return; const [id, n] = [slot.dataset.xSlot.split("/").slice(0, -1).join("/"), Number(slot.dataset.xSlot.split("/").at(-1))];
   const v = state(id)?.versions.find((x) => x.n === n); if (!v) return; e.preventDefault(); enterFull(id, v); });
 /** "Open in new tab": a fresh capability, Studio's page that frames the version exactly as here (sandbox allow-scripts, the output CSP) */
@@ -827,5 +811,5 @@ function closeVerMenu() {
 }
 addEventListener("hashchange", () => { if (L.full) exitFull(); X.boxing = null; X.verMenu = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
 
-window.crewRoomExplain = { ensure, state, active, picker, switcher, view, load, dialogs, full: () => L.full };
+window.crewRoomExplain = { ensure, state, active, picker, view, load, dialogs, full: () => L.full };
 })();
