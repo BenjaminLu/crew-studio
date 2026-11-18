@@ -29,8 +29,16 @@ export function claudeEfforts(model:string):string[]{
 export function validClaudePair(p:ClaudePair){return typeof p.model==='string'&&/^claude-[a-z0-9][a-z0-9.-]{1,100}$/.test(p.model)&&(p.effort===null||claudeEfforts(p.model).includes(p.effort));}
 export function isClaudeExecutionAdmission(cap:ProviderCapability,p:ClaudePair):boolean{const e=receipts.get(cap);return !!e&&e.valid&&e.expires>Date.now()&&pairKey(e.pair)===pairKey(p)&&e.owner.currentBinary()===e.binary&&cap.provider==='claude'&&cap.quota==='unknown'&&cap.auth==='verified';}
 const DENIAL=/rate.?limit|usage.?limit|quota|insufficient_quota|credits.?required|credit balance|spend.?limit|billing|payment|required.*credit|429/i;
-export function claudeFailureCode(m:any):'quotaExhausted'|'notLoggedIn'|'modelMismatch'|'cliError'|null{
+/** The CLI's own cap on one reply's output tokens, when a result says the reply passed it (its number), else null. */
+export function claudeOutputLimit(m:any):number|null{
+ if(m?.type!=='result'||m.subtype!=='success'||m.is_error!==true||typeof m.result!=='string'||(m.api_error_status??null)!==null)return null;
+ const x=/^API Error: Claude's response exceeded the (\d+) output token maximum/.exec(m.result);return x?Number(x[1]):null;
+}
+/** A failure that is the reply's own length, not the login or the CLI: it never invalidates readiness. */
+export const CLAUDE_NON_REFUSAL=new Set(['outputLimit']);
+export function claudeFailureCode(m:any):'quotaExhausted'|'notLoggedIn'|'modelMismatch'|'cliError'|'outputLimit'|null{
  if(m?.type==='rate_limit_event'&&m.rate_limit_info?.status==='rejected')return'quotaExhausted';
+ if(claudeOutputLimit(m)!==null)return'outputLimit';
  const status=m?.api_error_status??m?.error?.status;
  const text=[m?.error?.type,m?.error?.message,m?.error,m?.result,...Array.isArray(m?.errors)?m.errors:[]].filter(x=>typeof x==='string').join(' ');
  const errorContext=!!m?.error||m?.is_error===true||Array.isArray(m?.errors)&&m.errors.length>0||m?.type==='result'&&m.subtype!=='success';
@@ -57,7 +65,7 @@ export class ClaudeNative{
  invalidate(code='cliError',event?:any){for(const cap of this.admitted.values()){const e=receipts.get(cap);if(e)e.valid=false;}this.admitted.clear();if(code==='cleanupUnverified')this.cleanupBlocked=true;if(code==='quotaExhausted'){const raw=event?.rate_limit_info?.resetsAt;const resetAt=typeof raw==='number'&&Number.isFinite(raw)&&raw>0?raw*1000:null;this.denial={code,resetAt,at:Date.now()};}else if(code==='notLoggedIn')this.authDenied=true;}
  /** A fresh official sign-in (maybe another account) replaces the login: earlier refusals and verified admissions no longer apply; quota denial is kept. */
  signedIn(){this.invalidate('signedIn');this.authDenied=false;}
- observe(event:any){const code=claudeFailureCode(event);if(code)this.invalidate(code,event);}
+ observe(event:any){const code=claudeFailureCode(event);if(code&&!CLAUDE_NON_REFUSAL.has(code))this.invalidate(code,event);}
  async status(p:ClaudePair,signal?:AbortSignal):Promise<ClaudeCapability>{
   if(!validClaudePair(p))return this.base(p,{reason:'Exact configured Claude model/effort is unsupported; no substitute is selected'});
   if(this.unknownProcess||this.cleanupBlocked)return this.base(p,{available:false,reason:'Owned Claude process cleanup is unverified; restart Studio',refusal:'unverified'});
@@ -157,7 +165,7 @@ export class ClaudeNative{
    let init=false,result=false,assistant=false,invalid=false;
    const args=['-p','Reply with OK only. Do not use any tools.','--output-format','stream-json','--verbose','--include-partial-messages','--model',p.model,...p.effort?['--effort',p.effort]:[],'--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--permission-mode','dontAsk','--permission-prompts','none','--setting-sources','','--settings',JSON.stringify(claudeSettings(p)),'--safe-mode','--no-chrome','--disable-slash-commands','--no-session-persistence','--restricted','--max-turns','1','--max-budget-usd','0.05'];
    proc=probeProcess(argv(binary,args),work,env,m=>{
-    const code=claudeFailureCode(m);if(code){invalid=true;this.invalidate(code,m);}
+    const code=claudeFailureCode(m);if(code){invalid=true;if(!CLAUDE_NON_REFUSAL.has(code))this.invalidate(code,m);}
     if(m.type==='system'&&m.subtype==='init'){if(init||m.model!==p.model||!Array.isArray(m.tools)||m.tools.length)invalid=true;init=true;}
     if(m.type==='assistant'){if(m.message?.model!==p.model)invalid=true;if(m.message?.content?.some((c:any)=>c.type==='tool_use'))invalid=true;assistant=true;}
     if(m.type==='result'){if(result||!init||!assistant||m.is_error!==false||m.subtype!=='success'||typeof m.result!=='string'||!m.result.trim()||!m.modelUsage||Object.keys(m.modelUsage).length!==1||!Object.hasOwn(m.modelUsage,p.model))invalid=true;result=true;}

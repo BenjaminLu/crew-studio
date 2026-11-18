@@ -584,6 +584,7 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-ic { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; flex: none; margin-right: 6px; vertical-align: -3px; }
 .rx-state { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid; max-width: 520px; }
 .rx-state p { margin: 4px 0 0; }
+.rx-state > div { min-width: 0; overflow-wrap: anywhere; }
 .rx-state.warn, .rx-m.warn { background: color-mix(in srgb, var(--warn, #b54708) 9%, var(--surface)); border-color: color-mix(in srgb, var(--warn, #b54708) 40%, transparent); }
 .rx-state.warn .rx-ic, .rx-m.warn .rx-ic { background: var(--warn, #b54708); color: #fff; }
 .rx-state.err, .rx-m.err { background: color-mix(in srgb, var(--bad, #b42318) 8%, var(--surface)); border-color: color-mix(in srgb, var(--bad, #b42318) 40%, transparent); }
