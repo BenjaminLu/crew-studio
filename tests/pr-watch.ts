@@ -485,8 +485,8 @@ try {
     } finally { W2.stop(); p2.stop(); rmSync(dir, { recursive: true, force: true }); } }
   // an external CLI grant's tools (docs/units/cli-mcp-grant.md): the same edits as the board, never a GitHub write
   { const T = W.tools, names = T.list().map((x) => x.name);
-    ok(names.join() === "prs_list,prs_get,prs_refresh,prs_watch,prs_unwatch,prs_restore,prs_settings,prs_order,prs_deps,prs_group,prs_accept", "the list's tools: read, refresh, and Studio's own edits", names.join());
-    ok(!names.some((n) => /apply|merge|approve|comment|label|drift/.test(n)), "no tool writes to GitHub (the dependency block, merge, review, comment, label)");
+    ok(names.join() === "prs_list,prs_get,prs_refresh,prs_watch,prs_unwatch,prs_restore,prs_settings,prs_order,prs_deps,prs_group", "the list's tools: read, refresh, and Studio's own edits", names.join());
+    ok(!names.some((n) => /apply|merge|approve|accept|comment|label|drift/.test(n)), "no tool writes to GitHub (the dependency block, merge, review, comment, label), and none accepts for the captain");
     let before = sent.length, r: any = await T.call("prs_watch", { url: "https://github.com/northwind/ledger" });
     ok(!r.error && r.added?.repo === "northwind/ledger" && r.watch.repos.some((w: any) => w.repo === "northwind/ledger") && sent.slice(before).some(([t]) => t === "prs"), "prs_watch watches a repository and tells the page", JSON.stringify(r).slice(0, 300));
     const [ra, rb] = W.snapshot.rows.filter((x) => !x.single).map((x) => x.id);

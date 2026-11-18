@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const REPO = join(import.meta.dir, ".."), TOKEN = "csg_g-0000abcd_" + "b".repeat(64);
-const EVIL = "hello \x1b]0;PWNED-TITLE\x07\x1b[2J\x1b[31mRED\x1b[0m \x1b]8;;https://evil.example/click\x1b\\x\x1b]8;;\x1b\\ \x1b]52;c;cHduZWQ=\x07\u009b31m end";
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+const EVIL = "hello \x1b]0;PWNED-TITLE\x07\x1b[2J\x1b[31mRED\x1b[0m \x1b]8;;https://evil.example/click\x1b\\x\x1b]8;;\x1b\\ \x1b]52;c;cHduZWQ=\x07\u009b31m \u202ePWNEDRTL\u202c \u2066iso\u2069 \u200fmark\u200e end";
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 let seen: string[] = [], whoamiBroken = false, lastList: any = null;
 const stub = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
   const u = new URL(req.url); seen.push(u.pathname + u.search);
@@ -26,7 +26,7 @@ const stub = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
   if (name === "studio_get") return Response.json({ ref: "task:R-1", kind: "task", route: "#/run/R-1", updatedAt: "2026-01-01T00:00:00Z", data: { externalTitle: { untrusted: true, source: "a Task title", text: EVIL } }, untrusted: [{ path: "externalTitle" }] });
   if (name === "studio_list") lastList = await req.json().catch(() => null);
   if (name === "studio_list") return Response.json({ ref: "list:task", kind: "list", data: {}, items: [{ ref: "task:R-1", title: EVIL + EVIL }] });
-  return Response.json({ error: `boom ${EVIL} (look it up with studio_find first)` });
+  return Response.json({ error: `boom ${EVIL} (look it up with studio_find first, or studio_list {kind: "project"})` });
 } });
 const catcher = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) { caught.push(req.headers.get("x-crew-tool-token") ?? ""); return Response.json([]); } }); const caught: string[] = [];
 const base = `http://127.0.0.1:${stub.port}`;
@@ -59,7 +59,7 @@ try {
   });
   await step("a tool's hint names the CLI command, not the MCP tool", async () => {
     // the stub's error goes through fail(): the same path a real tool's "call studio_find" hint takes
-    const r = await cli(["call", "studio_x", "{}"]); assert.equal(r.code, 1); assert.match(r.json.error, /look it up with crew-studio find first/); assert.ok(!/studio_find/.test(r.json.error));
+    const r = await cli(["call", "studio_x", "{}"]); assert.equal(r.code, 1); assert.match(r.json.error, /look it up with crew-studio find first, or crew-studio list project\)/); assert.ok(!/studio_(find|list)|\{kind:/.test(r.json.error), r.json.error);
   });
   await step("a grant file whose address is not this Mac is refused (exit 7); the token is never sent", async () => {
     caught.length = 0; const h = homeWith(`http://example.invalid:${catcher.port}`); const r = await cli(["now"], h);
@@ -80,6 +80,10 @@ try {
     const b = homeWith(), elsewhere = homeWith(); symlinkSync(join(elsewhere, "grants", "bot.json"), join(b, "grants", "link.json"));
     r = await cli(["now", "--grant", "link"], b); assert.equal(r.code, 7); assert.match(r.json.error, /not a link/);
     const c = homeWith(); chmodSync(join(c, "grants"), 0o755); r = await cli(["now"], c); assert.equal(r.code, 7); assert.match(r.json.error, /mode 755\); fix: chmod 700/);
+  });
+  await step("a relative CREW_STUDIO_GRANT path is named as the absolute path it resolves to", async () => {
+    const r = await cli(["now"], H, { CREW_STUDIO_GRANT: "nope/bot.json" }); assert.equal(r.code, 7);
+    assert.ok(r.json.error.includes(join(REPO, "nope", "bot.json")), r.json.error);
   });
   await step("a malformed whoami answer is exit 1 in one line, no stack trace", async () => {
     whoamiBroken = true; const r = await cli(["whoami"]); whoamiBroken = false;

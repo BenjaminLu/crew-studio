@@ -85,10 +85,13 @@ function parse(argv: string[]): Parsed { const pos: string[] = [], flags: Record
 // ---------- output ----------
 const isTTY = () => !!process.stdout.isTTY;
 /** What a terminal may show of a text: no escape sequences (ESC[2J, OSC 0/8/52 …), no other control characters. */
-export const forTerminal = (s: string) => String(s).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
+// and no bidi controls (U+202A-202E, U+2066-2069, U+200E/200F) that would show a text in another order than it is
+export const forTerminal = (s: string) => String(s).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 // a tool's hint names its MCP tool (studio_get …): on the CLI it names the command instead
 const CLI_OF: Record<string, string> = { studio_now: "crew-studio now", studio_list: "crew-studio list", studio_get: "crew-studio get", studio_find: "crew-studio find", studio_logs: "crew-studio logs", studio_events: "crew-studio events" };
-const cliHints = (s: string) => s.replace(/\bstudio_(now|list|get|find|logs|events)\b/g, (m) => CLI_OF[m] ?? m);
+// `studio_list {kind: "project"}` → `crew-studio list project`; then any other mention of a tool → its command
+const cliHints = (s: string) => s.replace(/\bstudio_(now|list|get|find|logs|events) ?\{\s*\w+:\s*"([^"]*)"\s*\}/g, (_m, t, v) => `${CLI_OF[`studio_${t}`]} ${v}`)
+  .replace(/\bstudio_(now|list|get|find|logs|events)\b/g, (m) => CLI_OF[m] ?? m);
 const out = (s: string) => process.stdout.write(s.endsWith("\n") ? s : s + "\n");
 function fail(code: number, error: string, json: boolean, extra: Record<string, unknown> = {}): never {
   error = cliHints(error);
