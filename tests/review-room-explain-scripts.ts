@@ -11,12 +11,13 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   - the confirmation says the scripts run, sandboxed, with network, and names the interpreters; a changed package is a new
 //     version with a new confirmation; text only (the Skills page's decision) keeps the scripts from running.
 //        bun tests/review-room-explain-scripts.ts
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { connect } from "node:net";
 import { createHash } from "node:crypto";
 import { harness, suite, until } from "./rt-harness";
+import { PYPI, fixtureEgress, startRegistry } from "./lib/skill-fixtures";
 const { ok, end } = suite("review-room-explain-scripts");
 if (process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")) { console.log("FAIL  this suite needs macOS sandbox-exec (the round sandbox)"); process.exit(1); }
 const root = join(import.meta.dir, "..");
@@ -58,7 +59,9 @@ await until(() => E.get(r.id)!.nodes[merge.node].waiting === "card", 10000);
 const room = E.reviewRoom!, X = room.explain, id = merge.id;
 // Studio's proxy and skill packages, as the server wires them (after the made-up Task: its stub rounds run unsandboxed)
 (H.agents as any).egress = egress;
-E.deps.skillPackages = new SkillPackages({ dataDir: data, skills: E.skillLibrary(), brew: false, uv: false });
+// a prepare reaches only the wheel index its lockfile names: a local fixture behind its own strict egress (tests/lib/skill-fixtures.ts)
+const fx = startRegistry(), prepEgress = fixtureEgress(join(data, "egress-prepare.log")); await prepEgress.start(); prepEgress.testUpstreams.set(PYPI, { address: "127.0.0.1", port: fx.port });
+E.deps.skillPackages = new SkillPackages({ dataDir: data, skills: E.skillLibrary(), egress: () => prepEgress, brew: false, uv: false });
 
 // ---------- the made-up skill package: SKILL.md and python / shell scripts ----------
 const pkgDir = mkdtempSync(join(tmpdir(), "crew-skill-page-kit-"));
@@ -139,10 +142,10 @@ ok(e?.code === "confirm_required" && offer?.scripts?.run === true && offer.scrip
   && /run when it calls them, each in Studio's sandbox/.test(offer.scripts.en) && /With network: through Studio's proxy, to public hosts only/.test(offer.scripts.en) && /ANTHROPIC_API_KEY/.test(offer.scripts.en) && /never a key Studio stores/.test(offer.scripts.en)
   && /沙盒/.test(offer.scripts.zh) && /可以連網/.test(offer.scripts.zh) && !/GITHUB_TOKEN|GH_TOKEN/.test(JSON.stringify(offer)),
   "the confirmation says the skill's scripts run, sandboxed, with network, names the interpreters and the one credential they get", JSON.stringify(offer?.scripts));
-ok(offer?.scripts?.approved === false && /not approved for workflows on the Skills page: confirming here lets its scripts run for this run only/.test(offer.scripts.en) && offer.scripts.limits?.cpuS === 300,
-  "a version never approved on the Skills page: the confirmation says this run's confirmation is the approval; the caps are part of it", JSON.stringify(offer?.scripts));
-ok(JSON.stringify(offer?.scripts?.keys) === '["ANTHROPIC_API_KEY"]' && Array.isArray(offer.scripts.endpoints) && /public hosts only/.test(offer.scripts.rows?.network?.en) && /300 s of CPU/.test(offer.scripts.rows?.limits?.en) && /not approved/.test(offer.scripts.rows?.approval?.en) && /核准/.test(offer.scripts.rows?.approval?.zh) && !!offer.scripts.rows?.browser,
-  "the confirmation's rows: network, credentials by name (endpoints apart), limits, browser, the unapproved note, in both languages", JSON.stringify(offer?.scripts?.rows));
+ok(offer?.scripts?.approved === false && /no decision yet: choose below whether its scripts run/.test(offer.scripts.en) && offer.decide?.state === "pending" && offer.decide.facts.sha256 === v1.sha256 && offer.decide.facts.filesSha256 === v1.filesSha256 && offer.scripts.limits?.cpuS === 300,
+  "a version never decided: the confirmation asks for the decision, bound to both hashes; the caps are part of it", JSON.stringify(offer?.scripts));
+ok(JSON.stringify(offer?.scripts?.keys) === '["ANTHROPIC_API_KEY"]' && Array.isArray(offer.scripts.endpoints) && /public hosts only/.test(offer.scripts.rows?.network?.en) && /300 s of CPU/.test(offer.scripts.rows?.limits?.en) && /no decision yet/.test(offer.scripts.rows?.approval?.en) && /還沒決定/.test(offer.scripts.rows?.approval?.zh) && !!offer.scripts.rows?.browser,
+  "the confirmation's rows: network, credentials by name (endpoints apart), limits, browser, the undecided note, in both languages", JSON.stringify(offer?.scripts?.rows));
 process.env.ANTHROPIC_BASE_URL = "https://gateway.example";
 const withEp = X.offer(id, v1.id, "generate").scripts;
 ok(withEp.endpoints.includes("ANTHROPIC_BASE_URL") && !withEp.keys.includes("ANTHROPIC_BASE_URL"), "a base URL is listed as an endpoint, not a credential", JSON.stringify(withEp));
@@ -173,7 +176,8 @@ process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S = "2"; process.env.CREW_REVIEW_EXPL
 // tight caps for the cap checks below (the confirmation names them, so it is read again)
 e = await refused(() => X.generate(id, { skill: v1.id, confirm: offer.hash }, "captain"));
 ok(e?.code === "confirm_required" && e.offer.scripts.limits.cpuS === 2, "the confirmation made before the caps changed does not start the run", JSON.stringify(e?.offer?.scripts?.limits));
-let v = await X.generate(id, { skill: v1.id, confirm: e.offer.hash }, "captain");
+ok((await refused(() => X.generate(id, { skill: v1.id, confirm: e.offer.hash }, "captain")))?.code === "confirm_required", "an undecided script version does not start without the captain's pick");
+let v = await X.generate(id, { skill: v1.id, confirm: e.offer.hash, skillDecision: "scripts" }, "captain");
 const run1 = await waitRun(1);
 delete process.env.CREW_REVIEW_EXPLAIN_SCRIPT_CPU_S; delete process.env.CREW_REVIEW_EXPLAIN_SCRIPT_FILE_MB;
 v = X.view(id);
@@ -241,7 +245,7 @@ ok(v2.current === 2 && v2.filesSha256 !== v1.filesSha256 && v2.sha256 === v1.sha
 e = await refused(() => X.generate(id, { skill: v2.id, confirm: offer.hash }, "captain"));
 ok(e?.code === "confirm_required" && e.offer.skill.v === 2 && e.offer.hash !== offer.hash, "the v1 confirmation does not start v2", JSON.stringify(e?.offer?.skill));
 script.push([["out_write", { path: "spec.json", content: JSON.stringify({ title: "v2" }) }], ["skill_run", { script: "scripts/build.py", args: ["spec.json"] }], ["explain_done", { entry: "index.html", summary: "v2" }]]);
-await X.generate(id, { skill: v2.id, confirm: e.offer.hash }, "captain");
+await X.generate(id, { skill: v2.id, confirm: e.offer.hash, skillDecision: "scripts" }, "captain");
 const run2 = await waitRun(2);
 ok(run2.status === "done" && run2.skill.v === 2 && run2.skill.filesSha256 === v2.filesSha256 && /built by page-kit two/.test(readFileSync(join(E.rdir(r.id), "review-room", `${id}-explain`, `v${run2.version}`, "index.html"), "utf8")), "the run pins v2's package and its new script made the page", JSON.stringify({ s: run2.status, e: run2.error, skill: run2.skill }));
 
@@ -272,5 +276,98 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
   }
 }
 
-upstream.stop(true); egress.stop(); H.stop();
+// ---------- an undecided script skill with a hash-pinned requirements lock: decided in the confirmation, prepared, then run ----------
+{
+  const dirs: Record<string, string> = {};
+  const mkSkill = (name: string, requirements: string) => { const d = mkdtempSync(join(tmpdir(), `crew-skill-${name}-`)), f = join(d, name); mkdirSync(join(f, "scripts"), { recursive: true }); dirs[name] = f;
+    writeFileSync(join(f, "SKILL.md"), `---\nname: ${name}\ndescription: A page made by a script that needs one pinned package.\n---\n# ${name}\n\nRun scripts/use-py.py with a word.\n`);
+    writeFileSync(join(f, "requirements.txt"), requirements);
+    writeFileSync(join(f, "scripts", "use-py.py"), "import sys\nimport fixture_py\nout = fixture_py.shout(sys.argv[1] if len(sys.argv) > 1 else 'none')\nopen('index.html', 'w').write('<h1>' + out + '</h1>')\nprint(out)\n");
+    E.skillLibrary().importFolder(f, "captain"); return E.skillLibrary().library().find((x: any) => x.name === name)!; };
+  const ledger = (sid: string) => { try { return readFileSync(join(data, "skills", "_library", sid, "approvals.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+  const n0 = () => (X.view(id).runs.at(-1)?.n ?? 0) + 1;
+  const dep = mkSkill("dep-kit", fx.requirements);
+  const o1: any = X.offer(id, dep.id, "generate");
+  const f1 = o1.decide?.facts;
+  ok(o1.decide?.state === "pending" && f1?.sha256 === dep.sha256 && f1.filesSha256 === dep.filesSha256 && f1.scripts.some((x: any) => x.path === "scripts/use-py.py" && Array.isArray(x.flags)) && JSON.stringify(f1.locks) === '["python (requirements.txt)"]' && Array.isArray(f1.hosts) && Array.isArray(f1.bins),
+    "an undecided script skill with a lockfile: the confirmation carries the team-change card's facts (scripts and flags, hosts, lockfiles, programs), bound to both hashes", JSON.stringify(o1.decide));
+  ok((await refused(() => X.generate(id, { skill: dep.id, confirm: o1.hash }, "captain")))?.code === "confirm_required" && ledger(dep.id).length === 0, "confirming without the pick starts nothing and records nothing");
+  const nA = n0();
+  script.push([["skill_run", { script: "scripts/use-py.py", args: ["prepared"] }], ["explain_done", { entry: "index.html", summary: "made with its prepared env" }]]);
+  await X.generate(id, { skill: dep.id, confirm: o1.hash, skillDecision: "scripts" }, "captain");
+  const l1 = ledger(dep.id);
+  ok(l1.length === 1 && l1[0].scripts === "approved" && l1[0].via === "review-room" && l1[0].sha256 === dep.sha256 && l1[0].filesSha256 === dep.filesSha256 && /^[a-f0-9]{64}$/.test(l1[0].sig) && E.deps.skillPackages.decision(dep.id, 1)?.sig === l1[0].sig,
+    "Approve with scripts records one signed ledger line, via the review room, bound to the hashes shown", JSON.stringify(l1));
+  const runA = await waitRun(nA, 240000), use = results.filter(([nm]) => nm === "skill_run").at(-1)?.[1];
+  const stA = E.deps.skillPackages.status(dep.id, 1);
+  ok(runA?.prepare?.state === "done" && stA.state === "ready" && !!stA.envKey && stA.env?.python === true && fx.hits.some((h) => h.startsWith(`${PYPI}/files/`)), "the run waited for the version's prepare: its env was installed from the lockfile's index", JSON.stringify({ prep: runA?.prepare, st: stA.state, r: stA.reasons, hits: fx.hits.slice(-4) }));
+  ok(runA?.status === "done" && use?.exit === 0 && /py:PREPARED/.test(use.stdout), "skill_run ran the script in the prepared env (the pinned package imports)", JSON.stringify({ s: runA?.status, e: runA?.error, use }).slice(0, 600));
+  const startRec = E.trusted(r.id).entries.filter((y: any) => y.record === "review-room-explain-start").at(-1);
+  ok(startRec?.data?.decided === "approved" && runA.decided === "approved", "the run and its start record name the decision made with its confirmation", JSON.stringify(startRec?.data).slice(0, 300));
+  // already approved: no pick, the decision shown; the confirmation's hash moved with the decision
+  const o2: any = X.offer(id, dep.id, "generate");
+  ok(o2.decide?.state === "approved" && o2.decide.via === "review-room" && !o2.decide.facts && o2.hash !== o1.hash, "a decided version shows its decision and asks nothing; the offer's hash changed with the decision", JSON.stringify(o2.decide));
+  const nB = n0(); script.push([["skill_run", { script: "scripts/use-py.py", args: ["again"] }], ["explain_done", { entry: "index.html", summary: "again" }]]);
+  await X.generate(id, { skill: dep.id, confirm: o2.hash }, "captain"); const runB = await waitRun(nB);
+  ok(runB?.status === "done" && ledger(dep.id).length === 1 && !runB.prepare && /py:AGAIN/.test(results.filter(([nm]) => nm === "skill_run").at(-1)?.[1]?.stdout ?? ""), "an approved, prepared version runs without a pick or another prepare", JSON.stringify({ s: runB?.status, e: runB?.error, p: runB?.prepare }));
+  // text only, picked in the confirmation: recorded, and the run has no skill_run
+  const txt = mkSkill("dep-kit-text", fx.requirements), o3: any = X.offer(id, txt.id, "generate"), nC = n0();
+  script.push([["out_write", { path: "index.html", content: "<h1>by hand</h1>" }], ["explain_done", { entry: "index.html", summary: "text only" }]]);
+  await X.generate(id, { skill: txt.id, confirm: o3.hash, skillDecision: "text-only" }, "captain"); const runC = await waitRun(nC);
+  const l3 = ledger(txt.id);
+  ok(l3.length === 1 && l3[0].scripts === "text-only" && l3[0].via === "review-room" && runC?.status === "done" && !runC.prepare && !prompts.at(-1)!.tools.includes("skill_run") && /do not run here/.test(prompts.at(-1)!.text),
+    "Text only in the confirmation: recorded via the review room, no prepare, the round has no skill_run", JSON.stringify({ l3, s: runC?.status, tools: prompts.at(-1)!.tools.filter((t) => /skill/.test(t)) }));
+  // a prepare that fails stops the run with its reason, in both languages
+  const badReq = fx.requirements.replace(/sha256:[a-f0-9]{64}/, `sha256:${"0".repeat(64)}`), bad = mkSkill("dep-kit-bad", badReq), o4: any = X.offer(id, bad.id, "generate"), nD = n0(), roundsBefore = prompts.length;
+  await X.generate(id, { skill: bad.id, confirm: o4.hash, skillDecision: "scripts" }, "captain"); const runD = await waitRun(nD, 240000);
+  ok(runD?.status === "failed" && runD.why === "prepare" && runD.prepare?.state === "failed" && /could not prepare the skill's dependencies/.test(runD.error) && /沒辦法準備這個 skill 的依賴/.test(runD.error) && runD.rounds.length === 0 && prompts.length === roundsBefore,
+    "a prepare that fails stops the run before any paid round, with the reason in en and zh", JSON.stringify({ s: runD?.status, why: runD?.why, e: runD?.error, rounds: runD?.rounds?.length }));
+
+  // Stop while the version's prepare runs (it can take many minutes): the run stops at once and frees the room; the prepare
+  // is the version's and goes on (here a prepare held open by the test until it is released)
+  const pk = E.deps.skillPackages, ensure0 = pk.ensure.bind(pk), slow = mkSkill("dep-kit-slow", fx.requirements);
+  // (one prepare for the version, whoever waits for it: the approval's own and the run's)
+  let release: () => void = () => {}, held: Promise<any> | null = null;
+  pk.ensure = ((sid: string, sv: number, ...rest: any[]) => { if (sid !== slow.id) return ensure0(sid, sv, ...rest);
+    return held ??= new Promise((ok2) => { release = () => ok2(ensure0(sid, sv, ...rest)); }); }) as any;
+  const o5: any = X.offer(id, slow.id, "generate"), nE = n0(), roundsE = prompts.length;
+  await X.generate(id, { skill: slow.id, confirm: o5.hash, skillDecision: "scripts" }, "captain");
+  await until(() => X.view(id).runs.find((x: any) => x.n === nE)?.prepare?.state === "running", 30000);
+  const t0 = Date.now(); X.stop(id);
+  const runE = await waitRun(nE, 5000), took = Date.now() - t0;
+  ok(runE?.status === "stopped" && runE.why === "captain" && runE.prepare?.state === "left" && runE.rounds.length === 0 && prompts.length === roundsE && !X.running(id) && took < 3000,
+    "Stop during the prepare ends the run at once (why: captain, no round) and frees the room; it does not wait for the prepare", JSON.stringify({ s: runE?.status, why: runE?.why, p: runE?.prepare, took, running: X.running(id), rounds: runE?.rounds?.length, prompts: prompts.length - roundsE }));
+  release(); await until(() => pk.status(slow.id, 1).state === "ready", 240000);
+  ok(pk.status(slow.id, 1).state === "ready" && X.view(id).runs.find((x: any) => x.n === nE)?.status === "stopped", "the prepare went on in the background and finished for the version; the stopped run stays stopped");
+  pk.ensure = ensure0 as any;
+
+  // "don't ask again" with a pick in the follow-up: the consent is for the offer with the decision in force, so the next follow-up
+  // goes without asking (the pre-decision hash would never match again)
+  const from = X.view(id).versions.filter((x: any) => x.skill.id === dep.id).at(-1)!;
+  const dF = dirs["dep-kit"]; writeFileSync(join(dF, "scripts", "use-py.py"), "print('v2')\n"); rmSync(join(dF, "requirements.txt")); E.skillLibrary().importFolder(dF, "captain");
+  const o6: any = X.offer(id, null, "ask", from.n), nF = n0();
+  ok(o6.kind === "ask" && o6.decide?.state === "pending" && o6.skill.v === 2, "a follow-up on a new, undecided version asks for the pick", JSON.stringify({ d: o6.decide?.state, v: o6.skill }));
+  script.push([["explain_answer", { answer: "Because of the lock.", cites: [], updated: false, summary: "lock" }]]);
+  await X.ask(id, { question: "Why this lock?", selection: null, version: from.n, confirm: o6.hash, consent: true, skillDecision: "text-only" }, "captain"); const runF = await waitRun(nF);
+  const o7: any = X.offer(id, null, "ask", from.n);
+  ok(runF?.status === "done" && o7.decide?.state === "text-only" && o7.hash !== o6.hash && X.view(id).consent?.plan === o7.hash, "the consent given with the pick is stored for the offer after the decision", JSON.stringify({ s: runF?.status, e: runF?.error, consent: X.view(id).consent, o6: o6.hash, o7: o7.hash }));
+  const nG = n0(); script.push([["explain_answer", { answer: "Still the lock.", cites: [], updated: false, summary: "lock again" }]]);
+  await X.ask(id, { question: "And again?", selection: null, version: from.n }, "captain"); const runG = await waitRun(nG);
+  ok(runG?.status === "done" && runG.auto === true, "the next follow-up goes without asking", JSON.stringify({ s: runG?.status, auto: runG?.auto, e: runG?.error }));
+  // the same with Approve with scripts: the run prepares the version, and the prepared env changes the plan's interpreters;
+  // the consent moves with it, so the next follow-up still goes without asking
+  writeFileSync(join(dF, "requirements.txt"), fx.requirements);
+  writeFileSync(join(dF, "scripts", "use-py.py"), "import sys\nimport fixture_py\nprint(fixture_py.shout('v3'))\n"); E.skillLibrary().importFolder(dF, "captain");
+  const o8: any = X.offer(id, null, "ask", from.n), nH = n0();
+  ok(o8.decide?.state === "pending" && o8.skill.v === 3, "v3 is undecided", JSON.stringify({ d: o8.decide?.state, v: o8.skill }));
+  script.push([["explain_answer", { answer: "Approved.", cites: [], updated: false, summary: "approved" }]]);
+  await X.ask(id, { question: "Approve it?", selection: null, version: from.n, confirm: o8.hash, consent: true, skillDecision: "scripts" }, "captain"); const runH = await waitRun(nH, 240000);
+  const o9: any = X.offer(id, null, "ask", from.n);
+  ok(runH?.status === "done" && runH.prepare?.state === "done" && o9.decide?.state === "approved" && X.view(id).consent?.plan === o9.hash, "after the prepare, the consent given with Approve is for the offer with the prepared env", JSON.stringify({ s: runH?.status, e: runH?.error, p: runH?.prepare, consent: X.view(id).consent, o9: o9.hash, i: o9.scripts?.interpreters }));
+  const nI = n0(); script.push([["explain_answer", { answer: "Still approved.", cites: [], updated: false, summary: "approved again" }]]);
+  await X.ask(id, { question: "And now?", selection: null, version: from.n }, "captain"); const runI = await waitRun(nI);
+  ok(runI?.status === "done" && runI.auto === true, "the next follow-up after an approval and its prepare goes without asking", JSON.stringify({ s: runI?.status, auto: runI?.auto, e: runI?.error }));
+}
+
+upstream.stop(true); egress.stop(); prepEgress.stop(); fx.stop(); H.stop();
 end();

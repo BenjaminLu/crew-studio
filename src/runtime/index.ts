@@ -839,8 +839,8 @@ export function createRuntime(d: RuntimeDeps) {
           if (op === "offer") return json(X.offer(id, b?.skill ?? null, b?.kind ?? null, b?.v ?? null, typeof b?.prompt === "string" ? b.prompt : null));
           if (op === "select") return json(X.select(id, b?.skill ?? null));
           if (op === "stop") return json(X.stop(id));
-          if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm, prompt: b?.prompt }, by));
-          return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent }, by));
+          if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm, prompt: b?.prompt, skillDecision: b?.skillDecision }, by));
+          return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent, skillDecision: b?.skillDecision }, by));
         } catch (e: any) { return fail(e); } }
       const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|audio|speech|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings)(?:\/([A-Za-z0-9-]+\.(?:png|mp3)))?)?$/.exec(p);
       if (room) {
