@@ -314,6 +314,19 @@ try {
   ok(after.length === 1 && after[0].run === "4" && !(await p.$("[data-explain-pending]")), "when /ask answers after the push, still one entry", JSON.stringify(after));
   X = { ...X, running: null, runs: [...X.runs.slice(0, -1), run(4, "ask", "done", { question: rb.question, selection: rb.selection, from: 3, answer: "The bar moves." })] };
   await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector('[data-explain-answer="4"][data-status="done"]', { timeout: 5000 });
+  // Retry waits while the skill works; after another version is shown, it does not send the old version's region
+  onAsk = (r) => answer(r, { error: "A turn is already running in this room / 這個審查室已有一回合在進行", code: "busy" }, 409);
+  await p.click("[data-explain-pause]"); await p.waitForSelector('[data-explain-scope="frame"]');
+  await p.fill("[data-explain-q]", "Which frame is this?"); await p.click("[data-explain-send]"); await p.waitForSelector("[data-explain-retry]", { timeout: 3000 });
+  X = { ...X, running: 5, runs: [...X.runs, run(5, "generate", "running")] }; await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector("[data-explain-progress]", { timeout: 5000 }).catch(() => {});
+  const rbusy = await p.$eval("[data-explain-retry]", (e) => ({ disabled: e.disabled, title: e.title })).catch(() => null);
+  ok(rbusy?.disabled === true && /Wait for the skill/.test(rbusy.title) && (await mine("Which frame is this?")).length === 1, "while the skill works, Retry is off and says why (the refused question stays, once)", JSON.stringify(rbusy));
+  X = { ...X, running: null, runs: X.runs.slice(0, -1) }; await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector("[data-explain-retry]:not([disabled])", { timeout: 5000 }).catch(() => {});
+  await p.click('[data-explain-version="2"]'); await p.waitForSelector('[data-explain-frame="2"]', { timeout: 5000 });
+  onAsk = (r) => answer(r, X); const nposts = posts.length;
+  await p.click("[data-explain-retry]", { timeout: 2000 }).catch(() => {}); await p.waitForFunction((n) => !document.querySelector("[data-explain-pending]") , nposts, { timeout: 3000 }).catch(() => {});
+  const rv = posts.slice(nposts).find(([op]) => op === "ask")?.[1];
+  ok(rv?.question === "Which frame is this?" && rv.version === 2 && rv.selection === null, "Retry after another version is shown asks about that version, without the old version's frame", JSON.stringify(rv));
 
   // ---------- a page that tries to navigate itself out of Studio ----------
   onSelect = (r) => { const b = JSON.parse(r.request().postData() || "{}"); X = { ...X, selected: b.skill ? { id: b.skill, v: 1 } : null }; answer(r, X); };

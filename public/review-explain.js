@@ -445,12 +445,12 @@ async function send(id, q, confirm, consent) {
   const text = String(q ?? X.draft.get(id) ?? "").trim(); if (!text) return; const m = askMode(r, state(id));
   if (L.full) exitFull(); // the follow-up's confirmation and its answer are in the chat
   // the first output is still being made: the question waits for it (sent when the run ends with a version)
-  if (m === "queue") { X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
+  if (m === "queue") { if (X.pend.get(id)?.q === text) unpend(id, true); X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
   if (m !== "ask" || X.posting.has(`${id}/ask`)) return;
   const v = shownVersion(id), s = X.sel.get(id), st0 = state(id); X.posting.add(`${id}/ask`); X.ask = null;
   // the question is in the chat now and out of the ask box (Cancel or a refusal gives it back: nothing is lost)
   clearTimeout(X.pend.get(id)?.timer);
-  const p = { q: text, sel: s || null, phase: "sending", why: null, after: st0?.runs.at(-1)?.n ?? 0, timer: null }; X.pend.set(id, p);
+  const p = { q: text, sel: s || null, v: v.n, phase: "sending", why: null, after: st0?.runs.at(-1)?.n ?? 0, timer: null }; X.pend.set(id, p);
   p.timer = setTimeout(() => { if (X.pend.get(id) === p && p.phase === "sending") { p.phase = "starting"; refresh(id); } }, PEND_STARTING_MS);
   X.draft.delete(id); const ta0 = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta0) ta0.value = "";
   refresh(id); pendInView();
@@ -462,10 +462,12 @@ async function send(id, q, confirm, consent) {
   finally { X.posting.delete(`${id}/ask`); refresh(id); if (X.pend.get(id) === p && p.phase === "refused") pendInView(); }
 }
 /** the pending question set aside: back into the ask box when the box is empty (Cancel on the confirmation, or on a refusal) */
-function unpend(id) { const p = X.pend.get(id); if (!p) return; clearTimeout(p.timer); X.pend.delete(id);
-  if (!X.draft.get(id)) { X.draft.set(id, p.q); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta && !ta.value) ta.value = p.q; } }
-/** Retry a refused question: the same text and the same boxed region (or frame) */
-function retry(id) { const p = X.pend.get(id); if (!p || p.phase !== "refused") return; if (p.sel) X.sel.set(id, p.sel); else X.sel.delete(id); send(id, p.q); }
+function unpend(id, drop) { const p = X.pend.get(id); if (!p) return; clearTimeout(p.timer); X.pend.delete(id);
+  if (!drop && !X.draft.get(id)) { X.draft.set(id, p.q); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta && !ta.value) ta.value = p.q; } }
+/** Retry a refused question: the same text and the same boxed region (or frame), while the version it was about is shown; another
+ *  version shown since, the region is not on it: the question goes about the whole output shown (the About line says so) */
+function retry(id) { const p = X.pend.get(id); if (!p || p.phase !== "refused") return;
+  if (p.sel && shownVersion(id)?.n === p.v) X.sel.set(id, p.sel); else { if (p.sel) p.sel = null; X.sel.delete(id); } send(id, p.q); }
 function chat(r, st) {
   const id = r.card.id;
   if (readOnly()) return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st), h("p", { class: "rx-ro faint", "data-explain-readonly": "" }, T("Read only here: ask and run the skill on the Mac.", "這裡只能看：在 Mac 上追問和執行 skill。")));
@@ -520,7 +522,7 @@ function msgs(r, st) {
       h("small", { class: "rx-pendstate", role: "status", "data-explain-pendstate": "" }, PH[p.phase])));
     if (p.phase === "refused") out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), p.why,
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", "data-explain-pendx": "", onclick: () => { unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Back to the ask box", "放回輸入框")),
-        h("button", { type: "button", class: "btn sm primary", "data-explain-retry": "", onclick: () => retry(id) }, T("Retry", "重試"))))); }
+        h("button", { type: "button", class: "btn sm primary", "data-explain-retry": "", disabled: askMode(r, st) === "ask" ? null : true, title: askMode(r, st) === "ask" ? "" : T("Wait for the skill to finish", "等 skill 做完"), onclick: () => retry(id) }, T("Retry", "重試"))))); }
   if (a) out.push(h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid follow-up", "確認付費追問") },
     h("p", {}, T(`This follow-up is a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"} with ${a.offer.skill.name}.`, `這個追問會用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 和 ${a.offer.skill.name} 付費執行。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
     scriptSummary(a.offer.scripts),
