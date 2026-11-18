@@ -66,8 +66,9 @@ Diagrams
 
 Building and checking the page
 - Read references/spec.md for the packet's shape; do not read render.py or the template to rediscover it.
-- Write the packet spec into your output folder as .baton/packet.json (out_write, in parts for a big one). Then run the
-  scripts with skill_run; paths are relative to your output folder:
+- Write the packet spec into your output folder as .baton/packet.json yourself (out_write, in parts for a big one: the
+  first part, then append: true). skill_run runs only baton's own scripts below; a script you write, python3 itself or
+  a shell command is refused. Then run the scripts with skill_run; paths are relative to your output folder:
   scripts/render.py [".baton/packet.json", "-o", "index.html"]
   scripts/verify.py ["index.html", "--register", "engineer"] (or eli5), and fix what it reports by finding a real word;
   never --force.
