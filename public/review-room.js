@@ -1906,8 +1906,9 @@ window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, 
 // The separator's value is the main area's width (the panel before it): ← lowers it and widens the pane.
 (() => {
 const MIN = { board: 260, explain: 320 }, MAX = 720, STEP = 16, root = document.documentElement;
-// the board keeps 560 px for its camera beside the rail (196) and the two gaps (24)
-const KEEP = { board: 780, explain: 0 };
+// beside the rail (196) and the two gaps (24), the board keeps 560 px, or what its chapter and the follow-up column beside it need
+// at the camera's least scale (review-board.js needW), so the widest pane never clips them
+const keepOf = (v) => { if (v !== "board") return 0; const id = boardId(); return 220 + Math.max(560, (id && window.crewReviewRoom?.board?.needW?.(id)) || 0); };
 const key = (v) => `crew.roomPane.${v}`, prop = (v) => `--rr-pane-${v}`;
 const read = (v) => { try { const n = Number(localStorage.getItem(key(v))); return n > 0 ? n : null; } catch { return null; } };
 const keep = (v, n) => { try { if (n == null) localStorage.removeItem(key(v)); else localStorage.setItem(key(v), String(n)); } catch {} };
@@ -1916,7 +1917,7 @@ for (const v of Object.keys(MIN)) apply(v, read(v));
 const box = (v) => document.querySelector(v === "board" ? ".rb-view" : ".rx-body");
 const paneOf = (v) => box(v)?.querySelector(v === "board" ? ":scope > .rb-notes" : ":scope > .rx-chat");
 const mainOf = (v) => box(v)?.querySelector(v === "board" ? ":scope > .rb-main" : ":scope > .rx-stage");
-const bounds = (v) => { const w = box(v)?.clientWidth || innerWidth; return [MIN[v], Math.max(MIN[v], Math.min(MAX, Math.floor(w * 0.55), KEEP[v] ? w - KEEP[v] : Infinity))]; };
+const bounds = (v) => { const w = box(v)?.clientWidth || innerWidth; return [MIN[v], Math.max(MIN[v], Math.min(MAX, Math.floor(w * 0.55), keepOf(v) ? w - keepOf(v) : Infinity))]; };
 const width = (v) => Math.round(paneOf(v)?.getBoundingClientRect().width || 0);
 /** the pane's width when it is not on the page: the captain's, else the CSS default (review-board.css, review-room.css) */
 const guess = (v) => read(v) ?? Math.round(v === "board" ? Math.min(480, Math.max(272, 290 + (innerWidth - 1440) * 0.37)) : Math.min(560, Math.max(360, innerWidth * 0.32)));

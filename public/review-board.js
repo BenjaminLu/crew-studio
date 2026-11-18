@@ -402,10 +402,14 @@ function lockTarget(card) { const lock = B.lock.get(card), L = B.L.get(card); if
   return lock.region ? regionCam(card, lock.region) : lock.focus != null ? focusCam(card, lock.focus) : lock.all ? (() => { const ks = B.only.has(card) ? Object.keys(L.R).filter((k) => L.q[k]) : []; return frameRect(card, bounds(card, ks.length ? ks : null), 1, 0.94); })() : null; }
 /** a region at a readable scale: its text at 70% or more on a desktop (above the cards' mid detail, LOD), so the chapter and the
  *  follow-ups beside it fit the board's width; its column filling a phone's width */
+const COLUMN = 368, LEAST = 0.7; // the follow-up column beside a chapter (its card and the gap); the least scale a region is framed at
+/** the board's width a region needs (the current one by default): its chapter and the follow-up column beside it at the least
+ *  scale, with the camera's margins; review-room.js keeps the questions panel from taking it */
+function needW(card, key = B.cur.get(card)) { const r = B.L.get(card)?.R[key]; return r && r.w > r.W ? Math.ceil((r.W + COLUMN) * LEAST) + 34 : 0; }
 function regionCam(card, key) {
   const L = B.L.get(card), vp = vpOf(card), r = L?.R[key]; if (!r || !vp) return null; const W = vp.clientWidth;
   if (phone()) { const s = clamp((W - 24) / r.W, 0.5, 1.15); return { s, x: (W - r.W * s) / 2 - r.x * s, y: 44 - (r.y - 34) * s }; }
-  const avail = W - 32, want = Math.min(r.w, r.W + (r.w > r.W ? 368 : 0)), s = clamp(avail / want, 0.7, 1), vis = Math.min(want, avail / s);
+  const avail = W - 32, want = Math.min(r.w, r.W + (r.w > r.W ? COLUMN : 0)), s = clamp(avail / want, LEAST, 1), vis = Math.min(want, avail / s);
   return { s, x: 16 + (avail - vis * s) / 2 - r.x * s, y: 56 - (r.y - 34) * s };
 }
 function bounds(card, keys) { const L = B.L.get(card); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -746,6 +750,6 @@ function view(r, scenes, i) {
 /** forget everything kept for a room (it was started over) */
 function forget(card) { for (const m of [B.cam, B.lock, B.cur, B.visited, B.pend, B.focus, B.sheet, B.L, B.reveal, B.err, B.lod, B.focusKey, B.lastScene]) m.delete(card); for (const s of [B.only, B.before, B.notes]) s.delete(card);
   for (const s of [B.peek]) for (const k of [...s]) if (k.startsWith(`${card}/`)) s.delete(k); for (const m of [B.ver, B.code, B.figs]) for (const k of [...m.keys()]) if (k.startsWith(`${card}/`)) m.delete(k); if (B.pop?.card === card) B.pop = null; }
-return { selHeld: () => !!SEL.el, view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit };
+return { selHeld: () => !!SEL.el, view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit, needW };
 };
 })();

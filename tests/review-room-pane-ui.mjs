@@ -152,21 +152,22 @@ try {
   // and the play bar never overlap ----------
   for (const width of [1280, 1440, 1920]) {
     const { ctx, p } = await open("board", width);
-    const v = await p.evaluate(() => { const id = "SC-60", B = window.crewReviewRoom.board, L = B.layoutOf(id), cur = document.querySelector("[data-board]").dataset.scene, r = L.R[cur], cam = B.camOf(id);
+    const look = () => p.evaluate(() => { const id = "SC-60", B = window.crewReviewRoom.board, L = B.layoutOf(id), cur = document.querySelector("[data-board]").dataset.scene, r = L.R[cur], cam = B.camOf(id);
       const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), inside = (b) => b.left >= vp.left - 1 && b.right <= vp.right + 1;
       // the cards of the first column beside the chapter (the ones its camera frames; a card's side example goes further right)
       const cards = [...document.querySelectorAll(`[data-tlayer="${cur}"] .rb-card`)].map((c) => c.getBoundingClientRect()).filter((b) => b.top < vp.bottom - 40 && b.bottom > vp.top && (b.left - vp.left - cam.x) / cam.s < r.x + r.W + 60);
       const sl = vp.left + cam.x + r.x * cam.s, sc = { left: sl, right: sl + r.W * cam.s };
       const pl = document.querySelector(".rb-play")?.getBoundingClientRect(), zm = document.querySelector(".rb-zoom")?.getBoundingClientRect();
       const meet = pl && zm && !(pl.right <= zm.left || zm.right <= pl.left || pl.bottom <= zm.top || zm.bottom <= pl.top);
-      return { cur, s: cam.s, n: cards.length, whole: cards.every(inside), scene: inside(sc), meet, cut: cards.filter((b) => !inside(b)).map((b) => Math.round(b.right - vp.right)) }; });
+      return { cur, s: cam.s, n: cards.length, whole: cards.every(inside), scene: inside(sc), meet, vp: Math.round(vp.width), cut: cards.filter((b) => !inside(b)).map((b) => Math.round(b.right - vp.right)) }; });
+    const v = await look();
     ok(v.n > 0 && v.whole && v.scene && v.s >= 0.7, `board at ${width}: the chapter and its follow-up cards are whole on the canvas, at a readable scale`, JSON.stringify(v));
     ok(!v.meet, `board at ${width}: the zoom row and the play bar do not overlap`, JSON.stringify(v));
     // the questions panel at its widest: the board keeps 560 px, and its controls still do not overlap
-    await p.focus(split("board")); await p.keyboard.press("Home"); await p.waitForTimeout(700);
-    const w2 = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").clientWidth, pl = document.querySelector(".rb-play")?.getBoundingClientRect(), zm = document.querySelector(".rb-zoom")?.getBoundingClientRect();
-      return { vp, meet: !!pl && !!zm && !(pl.right <= zm.left || zm.right <= pl.left || pl.bottom <= zm.top || zm.bottom <= pl.top) }; });
+    await p.focus(split("board")); await p.keyboard.press("Home"); await p.waitForTimeout(800);
+    const w2 = await look();
     ok(w2.vp >= 556 && !w2.meet, `board at ${width}, the questions panel at its widest: the board keeps 560 px and its zoom row clears the play bar`, JSON.stringify(w2));
+    ok(w2.n > 0 && w2.whole && w2.scene && w2.s >= 0.7, `board at ${width}, the questions panel at its widest: the chapter and its follow-up cards are still whole`, JSON.stringify(w2));
     await ctx.close();
   }
 
