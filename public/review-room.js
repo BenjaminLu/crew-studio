@@ -9,7 +9,9 @@ const RR = { tutorMenu: null, step: new Map(), explain: new Map(), arrived: new 
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
-const rerender = () => { if (S.route?.name === "room") render(); };
+// the scene on screen is what the captain looks at (docs/units/observe.md "Focus"): its number only, never its text
+const focusScene = () => { const card = S.route?.arg; if (!card || !window.studioFocus) return; try { const { i, sc } = curScene(card); window.studioFocus.select(sc ? { kind: "scene", id: String(i + 1), label: T(`Scene ${i + 1}`, `場景 ${i + 1}`) } : null); } catch {} };
+const rerender = () => { if (S.route?.name === "room") { render(); focusScene(); } };
 // what a room finishes later (its poll, a live update, playback, a turn or a citation it sent, the mic) redraws only that
 // room's page (redraw): never the page the captain moved on to, where a redraw would replace the button being pressed
 // and swallow the click. Leaving a room stops its playback and its mic at once.
