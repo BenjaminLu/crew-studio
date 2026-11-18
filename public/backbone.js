@@ -151,7 +151,7 @@ function cliGrants() {
         h("pre", { class: "bb-grant-cmd mono", "data-grant-config": cur.client }, cur.config)] : null,
       h("div", { class: "actions" }, cur.command ? h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(cur.command) }, T("Copy command", "複製指令")) : null,
         cur.config ? h("button", { class: "btn", "data-grant-copy-config": cur.client, onclick: () => copy(cur.config) }, T("Copy config", "複製設定")) : null,
-        h("button", { class: "btn danger", "data-grant-revoke": g.id, onclick: async () => { try { await req(`/api/cli-grants/${g.id}/revoke`, {}); await load(); } catch (e) { toast(String(e.message || e)); } } }, T("Revoke", "撤銷授權")))];
+        h("button", { class: "btn danger", "data-grant-revoke": g.id, onclick: async () => { try { await req(`/api/cli-grants/${g.id}/revoke`, {}); await load(); } catch (e) { toast(String(e.message || e)); } } }, T("Revoke", "撤銷授權")))].flat();
   };
   const draw = () => {
     const projects = data?.projects ?? [], grants = data?.grants ?? [], groups = data?.observe?.groups ?? [];

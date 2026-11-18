@@ -42,6 +42,19 @@ try {
     const file = join(data, "grants", id), token = readFileSync(file, "utf8").trim();
     ok(/^claude mcp add studio -- \S+ \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/.test(line) && line.includes(file), `${key}: the copy-able command names the grant file`, line);
     ok(!line.includes(token) && !(await p.content()).includes(token), `${key}: the token is never on the page`);
+    // connecting a client: Claude Code (default), Codex, Cursor, VS Code, each its command and config entry
+    const tabs = await p.locator(`[data-grant="${id}"] [data-grant-client]`).allTextContents();
+    ok(JSON.stringify(tabs) === JSON.stringify(["Claude Code", "Codex", "Cursor", "VS Code"]), `${key}: a tab per client`, JSON.stringify(tabs));
+    ok(/"mcpServers"/.test(await p.locator(`[data-grant="${id}"] [data-grant-config=claude]`).textContent()), `${key}: Claude Code's .mcp.json entry`);
+    await p.click(`[data-grant="${id}"] [data-grant-client=codex]`);
+    const codexCmd = await p.locator(`[data-grant="${id}"] [data-grant-client-command=codex]`).textContent(), toml = await p.locator(`[data-grant="${id}"] [data-grant-config=codex]`).textContent();
+    ok(/^codex mcp add studio -- /.test(codexCmd) && /^\[mcp_servers\.studio\]\ncommand = /.test(toml) && toml.includes(file) && !toml.includes(token), `${key}: Codex's command and config.toml`, toml);
+    await p.click(`[data-grant="${id}"] [data-grant-client=vscode]`);
+    const vs = JSON.parse(await p.locator(`[data-grant="${id}"] [data-grant-config=vscode]`).textContent());
+    ok(vs.servers.studio.type === "stdio" && vs.servers.studio.args.includes(file) && !(await p.locator(`[data-grant="${id}"] [data-grant-client-command]`).count()), `${key}: VS Code's mcp.json (no command line)`, JSON.stringify(vs));
+    ok((await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)) <= 0, `${key}: no overflow with a config shown`);
+    if (shots) { await p.locator(`[data-grant="${id}"]`).scrollIntoViewIfNeeded(); await p.locator("[data-cli-grants]").screenshot({ path: join(shots, `cli-grant-clients-${key}.png`) }); }
+    await p.click(`[data-grant="${id}"] [data-grant-client=claude]`);
     ok(/sandbox/.test(await p.locator(`[data-grant="${id}"] .bb-grant-h`).textContent()), `${key}: the grant row names its project`);
     const over = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     ok(over <= 0, `${key}: no horizontal overflow`, String(over));

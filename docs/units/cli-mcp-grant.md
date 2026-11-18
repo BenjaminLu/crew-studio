@@ -135,6 +135,26 @@ project?, observe: {preset, kinds?, untrusted?}, ttl}`) picks what it reads (`sr
   `CREW_CLI_GRANT_HOURLY_BYTES` bytes of answers (4 MB) in any hour; past either it gets HTTP 429 saying when it frees up.
   The board shows this hour's use on each grant. The total call bound (`CREW_CLI_GRANT_MAX_CALLS`) stays.
 
+## Connecting a client (the plug-in kit)
+
+- **Snippets.** Each active grant on the board has a tab per client, each with copy buttons (`src/mcp-snippets.ts`,
+  `grantView(…).snippets`): Claude Code (`claude mcp add studio -- <helper>` or a project's `.mcp.json`), Codex
+  (`codex mcp add studio -- <helper>` or `[mcp_servers.studio]` in `~/.codex/config.toml`), Cursor (`.cursor/mcp.json`)
+  and VS Code (`.vscode/mcp.json`, `type: "stdio"`). Every one runs the same helper with the grant's file, never the token.
+- **Plug-in.** `plugins/crew-studio/` is one folder with a Claude Code manifest (`.claude-plugin/plugin.json`, listed in
+  the repository's marketplace `.claude-plugin/marketplace.json`) and a Codex manifest (`.codex-plugin/plugin.json`).
+  Both bring `.mcp.json` (`crew-studio mcp`) and the `studio` skill. The helper takes the grant file from
+  `CREW_STUDIO_GRANT_FILE` (and Studio's address from `CREW_STUDIO_URL`) when no `--grant-file` is given, and only for a
+  plain CLI (never when Studio started the helper with its own token).
+- **Generated pages.** The `studio` skill (`plugins/crew-studio/skills/studio/SKILL.md`) and the tools reference
+  (`docs/reference/studio-tools.md`) are made from `src/observe/` by `bun scripts/observe-index.ts --write`;
+  `tests/observe-index.ts` fails when one drifts.
+- **Conformance.** `tests/mcp-sdk-conformance.ts` (CI, `test:ci:portable`) connects the official MCP SDK client
+  (`@modelcontextprotocol/sdk`) through every snippet and the plug-in's `.mcp.json`. For each it checks: initialize;
+  `tools/list` in a fixed order with valid schemas; `studio_find`, with `structuredContent` checked against its
+  `outputSchema` by the SDK; a mistake returned as `isError`; and the resource template with `resources/read`. Real paid
+  CLIs are not part of the test.
+
 ## What the boundary is not
 
 - **It bounds the tool surface, not the process.** The CLI runs as the captain, unsandboxed, on the same Mac. A grant

@@ -149,6 +149,8 @@ try {
     assert.equal(never.status, 400); assert.match(never.body.error, /never reads terminal/);
     const r = await post("/api/cli-grants", { scopes: ["observe"], project: "sandbox", observe: { preset: "project" }, ttl: "1h" }, page()); assert.equal(r.status, 200, JSON.stringify(r.body)); const G = r.body.grant;
     assert.deepEqual(G.scopes, ["observe"]); assert.equal(G.observe.untrusted, false);
+    assert.deepEqual(G.snippets.map((x: any) => x.client), ["claude", "codex", "cursor", "vscode"]); assert.equal(G.snippets[0].command, G.claudeMcpAdd);
+    const token = readFileSync(G.file, "utf8").trim(); assert.ok(G.snippets.every((x: any) => x.config.includes(G.file) && !x.config.includes(token)), "every config names the grant file, never the token");
     const listed = await s.api("/api/cli-grants"); assert.deepEqual(listed.body.scopes, ["project", "prs", "observe"]); assert.ok(listed.body.observe.groups.some((g: any) => g.id === "system" && g.kinds.includes("doctor")));
     const c = mcp(G.file);
     try {
