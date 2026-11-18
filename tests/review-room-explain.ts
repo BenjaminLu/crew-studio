@@ -368,5 +368,15 @@ delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
 const started = X.view(id).runs.filter((x: any) => x.rounds.length).length;
 ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === started && E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain-start").length === started,
   "every run that started is on the ledger twice: when it starts (so one a stopped Studio interrupted is still there) and when it ends");
+// ---------- page.txt's visible text: what the page hides is not what a question is grounded on ----------
+{ const { shownHtml } = await import("../src/domain/review-explain");
+  const t = (h: string) => shownHtml(h).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const cases: [string, string][] = [[`<div hidden/>SECRET</div><p>ok</p>`, "ok"], [`<div style="font-family:'Inter'; display:none">S</div>ok`, "ok"], [`<div style=display:none>S</div>ok`, "ok"],
+    [`<div style="display:none !important">S</div>ok`, "ok"], [`<section hidden><p>S</p></section><template><p>S</p></template><noscript>S</noscript>ok`, "ok"],
+    [`<p data-note="was hidden here">visible</p>`, "visible"], [`<p data-style="display:none">visible</p>`, "visible"], [`<span aria-hidden="true">icon</span> t`, "icon t"], [`<p>I<br>J</p><script>if(a<b)x()</script><div style="color:red">K</div>`, "I J K"]];
+  const bad = cases.filter(([h, want]) => t(h) !== want).map(([h]) => [h, t(h)]);
+  ok(!bad.length, "hidden text is dropped (the hidden attribute, even written <div hidden/>; display:none or visibility:hidden in any style value, quoted or not; template, noscript), and nothing shown is: an attribute merely naming hidden, data-style, aria-hidden", JSON.stringify(bad));
+  const big = "<script></script>".repeat(20000) + "x".repeat(2_000_000), t0 = Date.now(); shownHtml(big);
+  ok(Date.now() - t0 < 2000, "one pass over the page: 20,000 scripts and 2 MB of text take well under two seconds", String(Date.now() - t0)); }
 globalThis.fetch = realFetch; H.stop();
 end();

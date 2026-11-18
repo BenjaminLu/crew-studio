@@ -165,20 +165,23 @@ const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".h
 const glyphs = (t: unknown) => String(t ?? "").replace(/</g, "‹").replace(/>/g, "›");
 const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
 /** An HTML page with what the reader never sees taken out: <template>, <noscript>, and any element that is hidden (the hidden
- *  attribute, aria-hidden="true", or an inline style of display:none or visibility:hidden), with everything inside it. A
- *  stylesheet's own hiding (a class) is not read. The text a question is grounded on is then the page as shown. */
+ *  attribute, or an inline style of display:none or visibility:hidden), with everything inside it. A stylesheet's own hiding
+ *  (a class) is not read. The text a question is grounded on is then the page as shown. One pass over the page. */
+const STYLE_ATTR = /(?:^|\s)style\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+const hiddenAttrs = (attrs: string) => { const bare = attrs.replace(/"[^"]*"|'[^']*'/g, '""'), st = STYLE_ATTR.exec(attrs), css = st ? (st[1] ?? st[2] ?? st[3] ?? "") : "";
+  return /(?:^|\s)hidden(?=[\s=/]|$)/i.test(bare) || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(css); };
 export function shownHtml(raw: string): string {
-  const tag = /<!--[\s\S]*?-->|<(\/?)([A-Za-z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  const tag = /<!--[\s\S]*?-->|<(\/?)([A-Za-z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g, low = raw.toLowerCase();
   let out = "", at = 0, skip: { name: string; depth: number } | null = null, m: RegExpExecArray | null;
   while ((m = tag.exec(raw))) {
     if (!m[2]) { if (!skip) out += raw.slice(at, m.index); at = tag.lastIndex; continue; }
-    const close = m[1] === "/", name = m[2].toLowerCase(), attrs = m[3] ?? "", selfClosing = /\/\s*$/.test(attrs) || VOID.has(name);
+    // a "/" before ">" closes nothing in HTML but a void element (a <div hidden/> still holds what follows it)
+    const close = m[1] === "/", name = m[2].toLowerCase(), attrs = m[3] ?? "", selfClosing = VOID.has(name);
     // a script or a style is copied whole (its text may hold a "<" that is no tag): later steps drop it
-    if (!close && (name === "script" || name === "style")) { const end = raw.toLowerCase().indexOf(`</${name}`, tag.lastIndex), stop = end < 0 ? raw.length : raw.indexOf(">", end) + 1 || raw.length;
+    if (!close && (name === "script" || name === "style")) { const end = low.indexOf(`</${name}`, tag.lastIndex), stop = end < 0 ? raw.length : raw.indexOf(">", end) + 1 || raw.length;
       if (!skip) out += raw.slice(at, stop); at = stop; tag.lastIndex = stop; continue; }
     if (skip) { if (name === skip.name && !selfClosing) { skip.depth += close ? -1 : 1; if (skip.depth === 0) skip = null; } at = tag.lastIndex; continue; }
-    const hidden = !close && !selfClosing && (name === "template" || name === "noscript" || /(?:^|\s)hidden(?:\s|=|\/|$)/i.test(attrs) || /aria-hidden\s*=\s*["']?true/i.test(attrs)
-      || /style\s*=\s*(["'])[^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(attrs));
+    const hidden = !close && !selfClosing && (name === "template" || name === "noscript" || hiddenAttrs(attrs));
     if (hidden) { out += raw.slice(at, m.index); skip = { name, depth: 1 }; at = tag.lastIndex; continue; }
   }
   if (!skip) out += raw.slice(at);

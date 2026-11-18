@@ -24,7 +24,7 @@ function roomData(s: Sources, id: string, full: boolean): Record<string, unknown
   const cost = round(runs.reduce((n: number, r: any) => n + usd(r.cost), 0));
   return {
     id, kind: v.subject?.kind ?? null, subject: { kind: v.subject?.kind ?? null, url: v.subject?.url ?? null, repository: v.subject?.repository ?? null, number: v.subject?.number ?? null, branch: v.subject?.branch ?? null, task: v.subject?.task ?? null },
-    task: v.task ? { id: v.task.id } : null, open: !!v.open, closed: v.closed ?? null, running: x?.running ? { run: x.running.n ?? null, kind: x.running.kind ?? null } : null, archived: !!v.archived,
+    task: v.task ? { id: v.task.id } : null, open: !!v.open, closed: v.closed ?? null, running: x?.running != null ? { run: x.running, kind: (x.runs ?? []).find((r: any) => r.n === x.running)?.kind ?? null } : null, archived: !!v.archived,
     pr: v.prState ? { state: v.prState.state, draft: v.prState.draft, mergedAt: v.prState.mergedAt, head: v.prState.head, headRef: v.prState.headRef, baseRef: v.prState.baseRef, author: v.prState.author, files: v.prState.files, approved: v.prState.approved,
       verdicts: (v.prState.verdicts ?? []).map((d: any) => ({ author: d.author, state: d.state, current: d.current })), title: v.prState.title } : null,
     head: v.head ?? null, base: v.base ?? null,

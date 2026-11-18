@@ -360,7 +360,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
    button and what the shown version was made from, on one line over the output; the versions open in a menu under it */
 .rx-line { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; min-width: 0; background: var(--surface); border-bottom: 1px solid var(--border); }
 
-.rx-verbtn { flex: none; max-width: 45%; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: 260px; }
+.rx-verbtn { flex: none; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: min(260px, 45%); }
 .rx-vername { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rx-vergen { flex: none; font-weight: 500; color: var(--accent-text, var(--accent)); }
 .rx-ver.gen { border: 1px dashed var(--accent); background: none; cursor: default; }
@@ -578,3 +578,8 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-table { border-collapse: collapse; font-size: 13px; }
 .rx-table th, .rx-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
 .rx-table th { background: var(--surface-2); font-weight: 600; }
+
+/* a Library save of a room's pages: its list scrolls inside the room's column, the way to the room stays reachable */
+.rr-saved { flex: 1 1 auto; min-height: 0; overflow: auto; margin-top: 10px; }
+.rr-saved h2 { font-size: 15px; margin: 0 0 8px; }
+.rr-saved-list { margin: 0 0 12px; padding-left: 22px; display: grid; gap: 6px; font-size: 13px; }

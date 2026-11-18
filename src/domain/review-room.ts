@@ -390,6 +390,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     const room0 = load(k)!, project = k.kind === "dir" ? null : room0.subject?.project ?? null;
     if (engine.grants.open("sandbox-off", project)) throw refuse(k.kind === "dir" ? "The tutor runs only in the round sandbox: an open sandbox-off grant is in effect; end it first" : "The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
     if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
+    if (live.has(k.id)) throw refuse("The room's host is being made: try again in a moment / 審查室的主機正在建立，請稍候再試", "busy");
+    const had = room0.host ? engine.get(room0.host) : null; if (had && (k.kind === "dir" ? isDirHostRun(had) : isHostRun(had))) return;
     live.set(k.id, -1);
     try {
       if (k.kind === "dir") {
@@ -403,8 +405,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       }
       // the host is one hook node: it ends at once, and its end aborts what listens to its signal. The page's round starts only
       // after that end (an auxiliary owner holds an ended host), so the first page is never cancelled by its own host finishing
-      const hid = load(k)?.host, t0 = Date.now();
-      while (hid && Date.now() - t0 < 10_000 && !["succeeded", "failed", "cancelled"].includes(String(engine.get(hid)?.status ?? "succeeded"))) await new Promise((r) => setTimeout(r, 25));
+      const hid = load(k)?.host, ended = () => ["succeeded", "failed", "cancelled"].includes(String(engine.get(hid!)?.status ?? "succeeded")), t0 = Date.now();
+      while (hid && !ended() && Date.now() - t0 < 30_000) await new Promise((r) => setTimeout(r, 25));
+      if (hid && !ended()) throw refuse("The room's host Task has not started yet (Studio is busy): try again in a moment / 審查室的主機任務還沒開始（Studio 忙碌中），請稍候再試", "busy");
     } finally { live.delete(k.id); }
   }
   /** instr: the seat on the tutor's member and its pinned texts (the explainer's: Studio's frame and the skill, or the question
@@ -633,10 +636,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   }
   /** Mark the room finished at the moment it finishes (its merge card answered, its pull request merged or closed) and save its
    *  pages to the Library once. A room with no page has nothing to keep; a failed save is recorded, not retried by itself. */
-  const finish = (api: any, k: Key, reason: string) => { try { let room = load(k); if (!room) { if (!explainer.pages(k.id).length) return; room = fresh(k, subjectOf(k)); }
-    if (room.finished || !explainer.pages(k.id).length) return; room.finished = { at: new Date().toISOString(), reason }; save(k, room); autoSave(api, k); } catch {} };
+  const finish = (api: any, k: Key, reason: string) => { try { let room = load(k); if (!room) { if (existsSync(k.file) || (!explainer.pages(k.id).length && !explainer.running(k.id))) return; room = fresh(k, subjectOf(k)); }
+    if (room.finished) return; room.finished = { at: new Date().toISOString(), reason }; save(k, room); autoSave(api, k); } catch {} };
   // a page being made: the save waits for it to end (Studio saves what is there once nothing runs), never half a version
-  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room?.finished || room.finished.tried || explainer.running(k.id)) return;
+  const autoSave = (api: any, k: Key) => { try { const room = load(k); if (!room?.finished || room.finished.tried || explainer.running(k.id) || !explainer.pages(k.id).length) return;
     room.finished.tried = true; save(k, room);
     void queueSave(k.id, () => snapshot(api, k, room.finished!.reason, true)).catch((e: any) => { const r2 = load(k); if (r2?.finished) { r2.finished.error = String(e?.message ?? e).slice(0, 300); save(k, r2); } }); } catch {} };
   /** a room's old whiteboard, as counts (the page offers its record as a file): never its text */
@@ -665,7 +668,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     // a run that ends in a finished room saves its pages to the Library then (autoSave waits for it)
     notify: (k) => { try { engine.deps.send("review-explain", { card: k.id }); } catch {}
       // a room's first page gives it its file (the room list reads rooms by their files)
-      try { if (!load(k) && explainer.pages(k.id).length) { save(k, fresh(k, subjectOf(k))); notify(k); } } catch {}
+      try { if (!existsSync(k.file) && explainer.pages(k.id).length) { save(k, fresh(k, subjectOf(k))); notify(k); } } catch {}
       // a page made at the room's head is the captain's look at it: "new commits since you last looked" counts from there
       try { if (!explainer.running(k.id)) { const r = load(k), b = explainer.brief(k.id), h = r && b?.heads.length ? subjectOf(k).head : null; if (r && h && b?.heads.includes(h) && r.seen?.head !== h) { r.seen = { head: h, at: new Date().toISOString() }; save(k, r); } } } catch {}
       try { if (self && !explainer.running(k.id)) autoSave(self, k); } catch {} },
