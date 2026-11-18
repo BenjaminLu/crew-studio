@@ -116,6 +116,22 @@ try {
     const who = cli(["whoami", "--grant", R.id]).json.data.tools; assert.deepEqual(h.commands.filter((c: any) => c.available).map((c: any) => c.tool).filter((t: string, i: number, a: string[]) => a.indexOf(t) === i).sort(), [...who].sort());
     assert.deepEqual(h.kinds, grantableKinds()); assert.deepEqual(h.exitCodes.map((e: any) => e.code), [0, 1, 2, 3, 4, 5, 6, 7]);
   });
+  await step("a named grant: its file and --grant use the name; a second active grant cannot take it; a bad name is refused", async () => {
+    const r = await post("/api/cli-grants", { scopes: ["observe"], observe: { preset: "review" }, ttl: "1h", name: "Review-Bot" }); assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.grant.cliName, "review-bot"); assert.equal(r.body.grant.cliTest, "crew-studio --grant review-bot whoami"); assert.ok(existsSync(join(GRANTS, "review-bot.json")));
+    const w = cli(["--grant", "review-bot", "whoami"]); assert.equal(w.code, 0, w.stdout + w.stderr); assert.equal(w.json.data.id, r.body.grant.id);
+    assert.equal((await post("/api/cli-grants", { scopes: ["observe"], observe: { preset: "review" }, ttl: "1h", name: "review-bot" })).status, 400);
+    assert.equal((await post("/api/cli-grants", { scopes: ["observe"], observe: { preset: "review" }, ttl: "1h", name: "../x" })).status, 400);
+    assert.equal((await post(`/api/cli-grants/${r.body.grant.id}/revoke`, {})).status, 200); assert.ok(!existsSync(join(GRANTS, "review-bot.json")));
+  });
+  await step("Doctor's Install the CLI: a shim in the Studio's own HOME (a temporary one here), the row says what PATH lacks", async () => {
+    const home = join(s.root, "home"), bin = join(home, ".local", "bin", "crew-studio");
+    const r = await post("/api/cli/install", {}); assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.cli.bin, bin, "only ever the Studio process's HOME"); assert.ok(existsSync(bin) && r.body.cli.current);
+    const d = await (await fetch(s.base + "/api/doctor", { headers: page() })).json(); const row = d.items.find((x: any) => x.id === "crew-studio-cli");
+    assert.ok(row && row.cli.current && row.action.kind === "none", JSON.stringify(row));
+    const w = Bun.spawnSync([bin, "help", "--json"], { env: { ...process.env, HOME: home, CREW_STUDIO_HOME: HOME } as any }); assert.equal(w.exitCode, 0, w.stderr.toString());
+  });
   await step("exit 7 on a revoked grant, and its CLI file is gone", async () => {
     await post(`/api/cli-grants/${R.id}/revoke`, {}); assert.ok(!existsSync(join(GRANTS, `${R.id}.json`)));
     const h = mkdtempSync(join(tmpdir(), "crew-cli-revoked-")); mkdirSync(join(h, "grants"));

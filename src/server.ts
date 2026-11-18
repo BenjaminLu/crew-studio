@@ -88,6 +88,7 @@ import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
 import { CliGrants, createGrantTools, installGrantViews, GRANT_SCOPES } from "./cli-grants";
 import { cliGrantsDir } from "./studio-home";
+import { cliDoctorItem, cliInstallState, installCli } from "./cli-install";
 import { KIND_GROUPS, KIND_LABELS, OBSERVE_PRESETS } from "./observe/grant-scope";
 import { NEVER_GRANTABLE, STUDIO_WIDE } from "./observe/registry";
 import { amendmentsNotice } from "./runtime/refine";
@@ -346,8 +347,10 @@ const CURSOR_NO_TAKEOVER = "Studio does not take over a Cursor session from a te
 setInterval(() => { try { cursorAccount(true); } catch {} }, 60_000).unref();
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
+// the crew-studio CLI in ~/.local/bin (src/cli-install.ts): this Studio's binary, or a shim to this checkout
+const cliEnv = () => ({ compiled: COMPILED, execPath: process.execPath, srcRoot: SRC_ROOT });
 const doctor = () => (doctorCache = diagnose({ lanKeystore: (() => { try { return lan ? lan.keystore() : null; } catch { return null; } })(), state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }).concat((() => { try { return runtime.engine.cloudHandoff?.doctor(runtime.projects.list() as any) ?? []; } catch { return []; } })()));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }).concat((() => { try { return runtime.engine.cloudHandoff?.doctor(runtime.projects.list() as any) ?? []; } catch { return []; } })()).concat([cliDoctorItem(cliInstallState(cliEnv())) as any]));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 installs.onFinished = () => { refreshTs(); send("doctor", doctor()); };
 
@@ -543,7 +546,10 @@ const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants,
 /** the line the board shows to copy: the MCP helper with the grant's token file (and Studio's URL when not the default port) */
 const grantCommand = (file: string) => { const port = server?.port ?? PORT; return helperCommand("mcp", ["--grant-file", file, ...(port !== 4210 ? ["--url", `http://127.0.0.1:${port}`] : [])]); };
 const shq = (a: string) => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
-const grantView = (g: ReturnType<CliGrants["view"]>) => g.file ? { ...g, command: grantCommand(g.file), claudeMcpAdd: ["claude", "mcp", "add", "studio", "--", ...grantCommand(g.file)].map(shq).join(" ") } : g;
+// the dialog shows a grant's name, reach and expiry and one line to test it with the crew-studio CLI (docs/units/cli.md);
+// command and claudeMcpAdd stay for a client that runs the MCP helper with the token file directly
+const grantView = (g: ReturnType<CliGrants["view"]>) => g.file ? { ...g, cliName: g.name ?? g.id, cliFile: cliGrants.cliFile(g.id), cliTest: `crew-studio --grant ${g.name ?? g.id} whoami`,
+  command: grantCommand(g.file), claudeMcpAdd: ["claude", "mcp", "add", "studio", "--", ...grantCommand(g.file)].map(shq).join(" ") } : g;
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit, o) => {
   if (main.view().state === "detached") return false;
@@ -799,16 +805,16 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/api/cli-grants" || /^\/api\/cli-grants\/g-[0-9a-f]{8}\/revoke$/.test(p)) {
       if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (!hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
-      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], scopes: [...GRANT_SCOPES], observe: { presets: [...OBSERVE_PRESETS], groups: KIND_GROUPS, labels: KIND_LABELS, studioWide: [...STUDIO_WIDE], never: [...NEVER_GRANTABLE] }, projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
+      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), cli: { installed: cliInstallState(cliEnv()).current }, ttls: ["1h", "8h", "eod"], scopes: [...GRANT_SCOPES], observe: { presets: [...OBSERVE_PRESETS], groups: KIND_GROUPS, labels: KIND_LABELS, studioWide: [...STUDIO_WIDE], never: [...NEVER_GRANTABLE] }, projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
       if (req.headers.get("x-crew-tool-token") || !hasSessionCookie(req, SESSION) || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin")
         return json({ error: "Only the captain issues or revokes an external CLI grant, from Studio's page on this Mac / 只有船長能在這台 Mac 的 Studio 頁面發出或撤銷外部 CLI 授權", code: "captainOnly" }, 403);
       let b: any; try { b = await req.json(); } catch { return json({ error: "json only" }, 400); }
       if (p !== "/api/cli-grants") { try { return json({ grant: grantView(cliGrants.revoke(p.split("/")[3], "captain")) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 404); } }
-      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => !["project", "ttl", "scope", "scopes", "observe"].includes(k))) return json({ error: "send {scopes: [project, prs, observe], project?, observe?: {preset, kinds?, untrusted?}, ttl}" }, 400);
+      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => !["project", "ttl", "scope", "scopes", "observe", "name"].includes(k))) return json({ error: "send {scopes: [project, prs, observe], project?, observe?: {preset, kinds?, untrusted?}, ttl}" }, 400);
       if (b.scopes !== undefined) { const asked = Array.isArray(b.scopes) ? b.scopes : [];
         const project = b.project === undefined || b.project === "" ? null : runtime.projects.get(String(b.project)) as any; if (b.project !== undefined && b.project !== "" && (!project || project.enabled === false)) return json({ error: "no such project" }, 404);
         if (asked.includes("prs") && asked.length === 1 && project) return json({ error: "a pull request list grant has no project" }, 400);
-        try { const r = cliGrants.issue({ scopes: b.scopes, project: project?.id, observe: b.observe, ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
+        try { const r = cliGrants.issue({ scopes: b.scopes, project: project?.id, observe: b.observe, name: b.name, ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
       if (b.scope === "prs") { if (b.project !== undefined) return json({ error: "a pull request list grant has no project" }, 400);
         try { const r = cliGrants.issue({ scope: "prs", ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
       if (b.scope !== undefined && b.scope !== "project") return json({ error: "scope is project or prs" }, 400);
@@ -829,6 +835,10 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // --- Doctor ---
     // which process answers (tests check they reach the server they started)
     if (p === "/api/instance" && !writing) return json(launchAuthority.respond(url.searchParams.get("challenge")));
+    // Doctor's "Install the CLI": only the captain's own page on this Mac (the write guard above: session, same site, JSON)
+    if (p === "/api/cli/install" && writing) { if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      try { const st = installCli(cliEnv()); studioLog.emit({ type: "cli_installed", workflow: "studio", actor: "captain", summary: `crew-studio CLI installed at ${st.bin}`, data: { onPath: st.onPath } }); return json({ cli: st, item: cliDoctorItem(st) }); }
+      catch (e: any) { return json({ error: String(e?.message ?? e) }, 409); } }
     if (p === "/api/doctor") return json({ items: doctor(), os: process.platform, compiled: COMPILED, installer: installs.runner.real ? "real" : "mock", execution: executionMode(),
       jobs: [...installs.jobs.values()].slice(-5) });
     if (p === "/api/doctor/methods") { const item = url.searchParams.get("item") ?? ""; return json({ item, methods: methodsFor(item), login: LOGINS[item] ?? null }); }

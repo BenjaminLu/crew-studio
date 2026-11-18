@@ -135,7 +135,7 @@ function cliGrants() {
   const kb = (n) => n < 1024 ? `${n} B` : `${Math.round(n / 1024)} KB`;
   // what the form holds between draws
   // custom: project "" is every project (the captain picks one, or none); the other presets never send a hidden choice
-  const pick = { scopes: new Set(["project"]), preset: "project", kinds: new Set(), untrusted: false, project: null, customProject: "" };
+  const pick = { scopes: new Set(["project"]), preset: "project", kinds: new Set(), untrusted: false, project: null, customProject: "", name: "" };
   let data = null, fresh = null;
   const needsProject = () => pick.scopes.has("project") || (pick.scopes.has("observe") && pick.preset === "project");
   const mayPickProject = () => !needsProject() && pick.scopes.has("observe") && pick.preset === "custom";
@@ -156,6 +156,9 @@ function cliGrants() {
     if (!mayPickProject() && !projects.some((p) => p.id === project.value) && projects.length) project.value = projects[0].id;
     const projLabel = h("label", { hidden: !(needsProject() || mayPickProject()) || null }, h("span", { class: "faint" }, T("Project", "專案")), project);
     const ttl = h("select", { id: "grantTtl", "aria-label": T("Expires", "有效期") }, (data?.ttls ?? ["8h", "1h", "eod"]).map((k) => h("option", { value: k, selected: k === "8h" || null }, TTL[k] ?? k)));
+    // the name the crew-studio CLI calls it by (crew-studio --grant <name> …); empty: its id
+    const name = h("input", { id: "grantName", class: "mono bb-grant-name", placeholder: T("e.g. review-bot", "例如 review-bot"), maxlength: "40", autocomplete: "off", spellcheck: "false", value: pick.name ?? "", "aria-label": T("Name", "名稱"),
+      oninput: () => { pick.name = name.value.trim().toLowerCase(); } });
     const observe = !pick.scopes.has("observe") ? null : h("fieldset", { class: "bb-grant-observe", "data-grant-observe": "" },
       h("legend", { class: "faint" }, T("What it reads", "讀得到什麼")),
       h("div", { class: "bb-grant-presets", role: "radiogroup" }, ["project", "review", "custom"].map((p) => h("label", { class: "bb-set" },
@@ -168,9 +171,9 @@ function cliGrants() {
       h("span", { class: "faint" }, T("Settings, grants, peers, terminals and what you are looking at are never shared.", "設定、授權、peer、terminal 和你正在看的畫面永遠不會給。")));
     const ok = pick.scopes.size > 0 && (!needsProject() || projects.length) && (!(pick.scopes.has("observe") && pick.preset === "custom") || pick.kinds.size > 0);
     const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: !ok || null, onclick: async () => { issue.disabled = true;
-      const body = { scopes: [...pick.scopes], ttl: ttl.value, ...(needsProject() || (mayPickProject() && project.value) ? { project: project.value } : {}),
+      const body = { scopes: [...pick.scopes], ttl: ttl.value, ...(pick.name ? { name: pick.name } : {}), ...(needsProject() || (mayPickProject() && project.value) ? { project: project.value } : {}),
         ...(pick.scopes.has("observe") ? { observe: { preset: pick.preset, untrusted: pick.untrusted, ...(pick.preset === "custom" ? { kinds: [...pick.kinds] } : {}) } } : {}) };
-      try { fresh = (await req("/api/cli-grants", body)).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
+      try { fresh = (await req("/api/cli-grants", body)).grant.id; pick.name = ""; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
     const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
     box.replaceChildren(
       h("h2", { style: "margin:0;font-size:16px" }, T("External CLI grants", "外部 CLI 授權")),
@@ -178,15 +181,16 @@ function cliGrants() {
         "讓你自己開的 claude 或 codex 在一個專案裡發起 run（每個都等你核准）並追蹤；讀取、編輯 PR 列表（只改 Studio 自己的清單，不寫 GitHub）；或讀取 Studio。核准卡片、staffing、merge 都只能在這裡做。token 寫進 0600 檔案，不出現在指令列。")),
       h("div", { class: "bb-grant-scopes", "data-grant-scopes": "" }, h("span", { class: "faint" }, T("Reaches", "可以做")), check("project"), check("prs"), check("observe")),
       ...(observe ? [observe] : []),
-      h("div", { class: "bb-grant-form" }, projLabel, h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
+      data?.cli && !data.cli.installed ? h("div", { class: "faint", "data-cli-missing": "1" }, T("The test line below needs the crew-studio CLI: install it from Doctor first (crew-studio CLI row).", "下面的測試指令需要 crew-studio CLI：請先到健康檢查（crew-studio CLI 那一列）安裝。"), " ", h("a", { href: "#/doctor" }, T("Open Doctor", "開啟健康檢查"))) : null,
+      h("div", { class: "bb-grant-form" }, h("label", {}, h("span", { class: "faint" }, T("Name (optional: a-z, 0-9, -)", "名稱（可不填：a-z、0-9、-）")), name), projLabel, h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
         !needsProject() || projects.length ? null : h("span", { class: "faint", "data-grant-need-project": "" }, T("Register a project first.", "請先登錄專案。"))),
       grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
-        h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
+        h("div", { class: "bb-grant-h" }, h("b", { class: "mono", "data-grant-name": g.name ?? g.id }, g.name ? `${g.name} · ${g.id}` : g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
           h("span", { class: "faint", "data-grant-scope": (g.scopes || [g.scope || "project"]).join(" ") }, `${summary(g)} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)}`),
           g.budget && g.state === "active" ? h("span", { class: `faint${g.budget.usedUp ? " bb-grant-full" : ""}`, "data-grant-budget": g.budget.usedUp ? "used-up" : "" }, budgetLine(g.budget)) : null),
-        g.state === "active" && g.claudeMcpAdd ? [h("span", { class: "faint" }, T("Add Studio's MCP in your terminal:", "在 terminal 加上 Studio 的 MCP：")),
-          h("pre", { class: "bb-grant-cmd mono", "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) }, g.claudeMcpAdd),
-          h("div", { class: "actions" }, h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(g.claudeMcpAdd) }, T("Copy command", "複製指令")),
+        g.state === "active" && g.cliTest ? [h("span", { class: "faint" }, T(`The crew-studio CLI finds it as ${g.cliName}. Test it in a terminal:`, `crew-studio CLI 用 ${g.cliName} 這個名稱找到它。在 terminal 測試：`)),
+          h("pre", { class: "bb-grant-cmd mono", "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) }, g.cliTest),
+          h("div", { class: "actions" }, h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(g.cliTest) }, T("Copy command", "複製指令")),
             h("button", { class: "btn danger", "data-grant-revoke": g.id, onclick: async () => { try { await req(`/api/cli-grants/${g.id}/revoke`, {}); await load(); } catch (e) { toast(String(e.message || e)); } } }, T("Revoke", "撤銷授權")))] : null)))
         : h("div", { class: "empty" }, T("No external CLI grant yet.", "還沒有外部 CLI 授權。")));
   };

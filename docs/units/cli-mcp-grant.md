@@ -28,15 +28,15 @@ from this Mac (`origin` and `sec-fetch-site: same-origin`), as the operating-rul
 | `runs` | the proposals it started, each with the staffing preference it asked for |
 
 The token (`csg_<id>_<64 hex>`) is written once to `data/grants/<id>`, mode 0600, in a 0700 folder. `data/cli-grants.json`
-keeps only its SHA-256; no route ever returns the token or the hash. Revoke removes the token file; so does the first call or board listing after the grant expired. The board shows the
-line to copy, which names the file and never the token:
+keeps only its SHA-256; no route ever returns the token or the hash. Revoke removes the token file; so does the first call or board listing after the grant expired. The captain may name a grant (1 to 40 lower-case letters, digits and dashes, unique among active grants; default: its id): the name is the CLI's `--grant <name>` and its file `~/.crew-studio/grants/<name>.json` (docs/units/cli.md "Grants"). The board shows the grant's name, reach and expiry and one line to test it, never the token and no per-client snippet:
 
 ```
-claude mcp add studio -- crew-studio mcp --grant-file <data>/grants/g-1a2b3c4d
+crew-studio --grant review-bot whoami
 ```
 
-From source the helper is `bun src/mcp.ts --grant-file …`; Studio adds `--url http://127.0.0.1:<port>` when it is not on
-4210. The helper refuses to start (exit 2) when the file cannot be read.
+An MCP client's whole config is `crew-studio mcp` (it finds the grant as the CLI does). The older form,
+`bun src/mcp.ts --grant-file <data>/grants/<id> --url http://127.0.0.1:<port>`, still works; the helper refuses to start
+(exit 2) when the file cannot be read.
 
 ## The four tools
 

@@ -25,7 +25,7 @@ export type GrantTtl = (typeof GRANT_TTLS)[number];
  *  pull request list; observe: read Studio (the kinds the captain picked) */
 export const GRANT_SCOPES = ["project", "prs", "observe"] as const;
 export type GrantScope = (typeof GRANT_SCOPES)[number];
-export type CliGrant = { id: string; scopes: GrantScope[]; observe?: ObserveScope | null; project: string; ttl: GrantTtl; createdAt: string; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null;
+export type CliGrant = { id: string; /** what the CLI calls it: --grant <name>, ~/.crew-studio/grants/<name>.json (default: the id) */ name?: string; scopes: GrantScope[]; observe?: ObserveScope | null; project: string; ttl: GrantTtl; createdAt: string; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null;
   revokedBy: string | null; createdBy: string; calls: number; tokenHash: string; runs: { run: string; at: string; staffing: Record<string, string> | null }[];
   /** the rolling budget's window: each call's time and the bytes it returned (the last hour's only) */
   usage?: { at: number; bytes: number; pending?: true }[]; scope?: GrantScope };
@@ -35,6 +35,7 @@ export type Audit = (type: string, summary: string, data: Record<string, unknown
 export type ExternalOrigin = { kind: "external-cli"; grant: string; staffing: Record<string, string> | null };
 
 const TOKEN = /^csg_(g-[0-9a-f]{8})_[0-9a-f]{64}$/;
+export const GRANT_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
 /** the `by` a grant's proposal run carries: set only by this module's start_run (POST /api/wruns sets the captain's own) */
 export const grantBy = (id: string) => `External CLI grant ${id} (captain approval required)`;
 const BY = /^External CLI grant (g-[0-9a-f]{8}) \(captain approval required\)$/;
@@ -82,13 +83,14 @@ export class CliGrants {
    *  CLI files (an in-process test) */
   constructor(readonly dataDir: string, private audit: Audit = () => {}, private cli: { dir: string; url: () => string } | null = null) { try { this.migrate(); } catch {} }
   /** The CLI grant file of a grant (docs/units/cli.md): ~/.crew-studio/grants/<id>.json. */
-  cliFile(id: string) { return this.cli ? join(this.cli.dir, `${id}.json`) : null; }
+  cliFile(id: string) { if (!this.cli) return null; const g = this.read().find((x) => x.id === id); return join(this.cli.dir, `${g?.name ?? id}.json`); }
   private writeCliFile(g: CliGrant, token: string) {
-    if (!this.cli) return; const f = this.cliFile(g.id)!; mkdirSync(this.cli.dir, { recursive: true, mode: 0o700 }); chmodSync(this.cli.dir, 0o700);
-    const body: CliGrantFile = { schema: 1, name: g.id, id: g.id, token, scopes: g.scopes, project: g.project || null, expiresAt: g.expiresAt, url: this.cli.url() };
+    if (!this.cli) return; const f = join(this.cli.dir, `${g.name ?? g.id}.json`); mkdirSync(this.cli.dir, { recursive: true, mode: 0o700 }); chmodSync(this.cli.dir, 0o700);
+    const body: CliGrantFile = { schema: 1, name: g.name ?? g.id, id: g.id, token, scopes: g.scopes, project: g.project || null, expiresAt: g.expiresAt, url: this.cli.url() };
     writeFileSync(f + ".tmp", JSON.stringify(body, null, 1) + "\n", { mode: 0o600 }); chmodSync(f + ".tmp", 0o600); renameSync(f + ".tmp", f);
   }
-  private dropCliFile(id: string) { const f = this.cliFile(id); if (f) rmSync(f, { force: true }); }
+  // only this grant's own file goes: a name used again by a newer grant (after a revoke or an expiry) keeps its file
+  private dropCliFile(id: string) { const f = this.cliFile(id); if (!f) return; try { if (JSON.parse(readFileSync(f, "utf8"))?.id !== id) return; } catch { return; } rmSync(f, { force: true }); }
   private file() { return join(this.dataDir, "cli-grants.json"); }
   tokenFile(id: string) { return join(this.dataDir, "grants", id); }
   private read(): CliGrant[] { try { const j = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(j) ? j.filter(isRecord).map(migrateGrant) : []; } catch { return []; } }
@@ -113,8 +115,14 @@ export class CliGrants {
   active(id: string) { const g = this.get(id); return !!g && this.stateOf(g) === "active"; }
 
   /** The captain issues a grant (called only from the board's authenticated, same-site route). */
-  issue(o: { project?: string; ttl: string; scope?: string; scopes?: unknown; observe?: unknown }, by: string): { grant: GrantView; file: string } {
+  issue(o: { project?: string; ttl: string; scope?: string; scopes?: unknown; observe?: unknown; name?: unknown }, by: string): { grant: GrantView; file: string } {
     if (!(GRANT_TTLS as readonly string[]).includes(o.ttl)) throw new Error(`choose an expiry: ${GRANT_TTLS.join(", ")}`);
+    // a name the captain gives it (the CLI's --grant <name>): short, lower case, unique among the grants still active
+    const name = o.name === undefined || o.name === "" ? null : String(o.name).trim().toLowerCase();
+    if (name !== null && !GRANT_NAME.test(name)) throw new Error("a grant's name is 1 to 40 lower-case letters, digits and dashes (it becomes the CLI's --grant name)");
+    // a name shaped like a grant id would read as another grant's
+    if (name !== null && /^g-[0-9a-f]{8}$/.test(name)) throw new Error("a grant's name may not look like a grant id (g-xxxxxxxx): choose a word such as review-bot");
+    if (name !== null && this.read().some((x) => (x.name ?? x.id) === name && this.stateOf(x) === "active")) throw new Error(`an active grant is already called ${name}`);
     const asked: unknown[] = o.scopes !== undefined ? (Array.isArray(o.scopes) ? o.scopes : [null]) : [o.scope ?? "project"];
     if (!asked.length || asked.some((x) => !(GRANT_SCOPES as readonly unknown[]).includes(x))) throw new Error(`choose what the grant reaches: ${GRANT_SCOPES.join(", ")}`);
     const scopes = GRANT_SCOPES.filter((x) => asked.includes(x));
@@ -126,7 +134,7 @@ export class CliGrants {
     if (!needsProject && !(observe && o.project)) o = { ...o, project: "" };
     const scope = scopes[0];
     const id = `g-${randomBytes(4).toString("hex")}`, token = `csg_${id}_${randomBytes(32).toString("hex")}`, now = new Date();
-    const g: CliGrant = { id, scopes, ...(observe ? { observe } : {}), project: o.project!, ttl: o.ttl as GrantTtl, createdAt: now.toISOString(), expiresAt: expiryOf(o.ttl as GrantTtl, now).toISOString(), lastUsedAt: null,
+    const g: CliGrant = { id, ...(name ? { name } : {}), scopes, ...(observe ? { observe } : {}), project: o.project!, ttl: o.ttl as GrantTtl, createdAt: now.toISOString(), expiresAt: expiryOf(o.ttl as GrantTtl, now).toISOString(), lastUsedAt: null,
       revokedAt: null, revokedBy: null, createdBy: by, calls: 0, tokenHash: sha(token), runs: [] };
     const dir = join(this.dataDir, "grants"); mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700);
     const f = this.tokenFile(id); writeFileSync(f, token + "\n", { mode: 0o600 }); chmodSync(f, 0o600);

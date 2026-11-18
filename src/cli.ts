@@ -11,6 +11,8 @@ import { grantableKinds } from "./observe/grant-scope";
 import { GRANT_TOOLS } from "./cli-grants";
 import { findGrant, NoGrant, NotLocal, request, Unreachable, type Conn } from "./studio-client";
 import { PR_TOOL_SPECS } from "./pr-watch";
+import { cliSkill, skillTargets, writeSkill } from "./cli-skill";
+import { statSync } from "node:fs";
 
 export const EXIT = { ok: 0, usage: 2, notGranted: 3, quota: 4, notFound: 5, unreachable: 6, noGrant: 7, failed: 1 } as const;
 export const EXIT_MEANING: Record<number, string> = { 0: "ok", 1: "the tool failed (see error)", 2: "usage: the command or its arguments are wrong (the right usage is printed)",
@@ -70,6 +72,8 @@ export const LOCAL = [
   { verb: "help", usage: "crew-studio help [--json]", summary: "Every command, its arguments, the kinds, the exit codes and what this grant can use (--json for agents)." },
   { verb: "whoami", usage: "crew-studio whoami", summary: "Which grant this is: its scopes, kinds, project, expiry and what is left of its hourly budget." },
   { verb: "call", usage: "crew-studio call <tool> ['{json args}']", summary: "Call any tool this grant lists by its name (for one with no command, such as the pull request list's)." },
+  { verb: "skill install", usage: "crew-studio skill install [--claude] [--codex] [--project <dir>] [--yes] [--force]", summary: "Teach Claude Code and/or Codex to use this CLI: write the short crew-studio skill for you (default) or one project, after asking once." },
+  { verb: "skill show", usage: "crew-studio skill show", summary: "Print the crew-studio skill (what skill install writes)." },
   { verb: "mcp", usage: "crew-studio mcp", summary: "The same tools as an MCP server over stdio, for a client without a shell (its grant is found as the CLI finds it)." },
 ];
 
@@ -170,6 +174,28 @@ async function whoami() {
     `budget this hour: ${b.calls}/${b.maxCalls} calls, ${Math.round(b.bytes / 1024)}/${Math.round(b.maxBytes / 1024)} KB${b.usedUp ? ` · used up, frees up at ${b.freesAt}` : ""}`, `tools: ${r.body.tools.join(", ")}`].join("\n")));
 }
 
+/** The skill text: the command table and exit codes of this CLI. */
+export const skillText = () => cliSkill([...verbs().map((v) => ({ usage: v.usage, summary: v.summary })), ...LOCAL.filter((l) => !l.verb.startsWith("skill"))], EXIT_MEANING);
+async function skill(sub: string | undefined, _rest: string[]) {
+  const json = !!flags.json || !isTTY();
+  if (sub === "show") { process.stdout.write(skillText()); return; }
+  if (sub !== "install") fail(EXIT.usage, "skill takes install or show", json, { usage: "crew-studio skill install [--claude] [--codex] [--project <dir>] [--yes]" });
+  if (flags.project === true) fail(EXIT.usage, "--project takes a folder", json, { usage: "crew-studio skill install --project <dir>" });
+  if (typeof flags.project === "string") { let dir = false; try { dir = statSync(flags.project).isDirectory(); } catch {} if (!dir) fail(EXIT.usage, `--project ${flags.project}: no such folder (it is not made for you)`, json, { usage: "crew-studio skill install --project <dir>" }); }
+  const targets = skillTargets({ claude: !!flags.claude, codex: !!flags.codex, project: typeof flags.project === "string" ? flags.project : null });
+  // it writes only where the captain said: asked once on a terminal, --yes otherwise
+  if (!flags.yes) {
+    if (!process.stdin.isTTY || !isTTY()) fail(EXIT.usage, `skill install writes ${targets.map((t) => t.file).join(" and ")}: run it in a terminal to confirm, or add --yes`, json, { targets: targets.map((t) => t.file) });
+    process.stdout.write(`Write the crew-studio skill to:\n${targets.map((t) => `  ${t.file}  (${t.agent}, ${t.scope})`).join("\n")}\nProceed? [y/N] `);
+    const answer = await new Promise<string>((res) => { process.stdin.setEncoding("utf8"); process.stdin.once("data", (d) => res(String(d))); });
+    if (!/^y(es)?$/i.test(answer.trim())) { out("Nothing written."); process.exit(EXIT.ok); }
+  }
+  const r = writeSkill(targets, skillText(), { force: !!flags.force });
+  if (json) out(JSON.stringify({ ok: !r.refused.length && !r.edited.length, data: r }));
+  else out([...r.written.map((f) => `wrote ${f}`), ...r.refused.map((f) => `left alone (not written by crew-studio): ${f}`), ...r.edited.map((f) => `left alone (edited since crew-studio wrote it; --force replaces it): ${f}`)].join("\n"));
+  if (r.refused.length || r.edited.length) process.exit(EXIT.failed);
+}
+
 export async function main(argv: string[]) {
   try { await run(argv); }
   catch (e: any) { const json = !!flags.json || !isTTY(); fail(EXIT.failed, `unexpected: ${String(e?.message ?? e).slice(0, 300)}`, json); }
@@ -179,6 +205,7 @@ async function run(argv: string[]) {
   const [w0, w1] = p.pos;
   if (!w0 || w0 === "help" || flags.help) return help(json);
   if (w0 === "whoami") return whoami();
+  if (w0 === "skill") return skill(w1, p.pos.slice(2));
   if (w0 === "call") { if (!w1) fail(EXIT.usage, "call takes a tool name", json, { usage: "crew-studio call <tool> ['{json args}']" });
     let args: any = {}; if (p.pos[2]) { try { args = JSON.parse(p.pos[2]); } catch { fail(EXIT.usage, "the arguments are one JSON object", json, { usage: "crew-studio call <tool> ['{json args}']" }); } }
     const r = await callTool(conn(), w1, args); return show("call", r.body, r.quota); }
