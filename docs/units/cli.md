@@ -8,10 +8,15 @@ Code:
 - `src/cli.ts`: the commands, output and exit codes.
 - `src/studio-client.ts`: the tool API client and grant lookup, shared with the MCP helper `src/mcp.ts`.
 - `src/studio-home.ts`: `~/.crew-studio`.
+- `src/cli-install.ts`: Doctor's "Install the CLI".
+- `src/cli-skill.ts`: the crew-studio skill, and `crew-studio skill install`.
+- `scripts/cli-reference.ts`: writes docs/reference/crew-studio-cli.md from the command table.
 
 Tests:
 - `tests/cli.ts`: end to end, against a real Studio.
-- `tests/cli-drift.ts`: in process, in CI's portable job.
+- `tests/cli-drift.ts`: in process, in CI's portable job: registry, help, commands, skill and reference agree.
+- `tests/cli-install.ts`: install and skill install in a temporary HOME.
+- `tests/mcp-sdk-conformance.ts`: `crew-studio mcp` against the official MCP SDK client.
 
 ## Commands
 
@@ -72,6 +77,22 @@ The CLI and `crew-studio mcp` find a grant in this order:
 The token is read from that file only. It is never printed, never on a command line, never in an environment value.
 
 `GET /api/tools?whoami=1` (`crew-studio whoami`) answers which grant a token is. It counts no call.
+
+## Install
+
+Doctor's "crew-studio CLI" row installs `~/.local/bin/crew-studio` (`POST /api/cli/install`, the captain's own page on this Mac only). From the app it is a symlink to Studio's binary; from a checkout, a two-line shim that runs `bun <checkout>/src/main.ts`. Studio never overwrites a file there it did not write, and never edits a shell profile: when `~/.local/bin` is not on PATH the row says which line to add to which file (`~/.zprofile`, `~/.bash_profile`, or fish's `fish_add_path`).
+
+## Skill
+
+`crew-studio skill install` writes a short `SKILL.md` that teaches an agent the CLI: start with `now`, read with `get`, `help --json` when unsure, what each exit code asks it to do, and the rules every Studio reader follows. It is made from the same command table, exit codes and rules (`src/cli-skill.ts`), so it cannot drift from `help`.
+
+| Flags | Writes |
+| --- | --- |
+| (none) | `~/.claude/skills/crew-studio/SKILL.md` and `~/.agents/skills/crew-studio/SKILL.md` |
+| `--claude` / `--codex` | only Claude Code's / only Codex's |
+| `--project <dir>` | `<dir>/.claude/skills/…` and/or `<dir>/.agents/skills/…` instead |
+
+It asks once on a terminal (`--yes` skips the question; piped without `--yes` it writes nothing, exit 2) and never writes over a file it did not write. `crew-studio skill show` prints it.
 
 ## Transport
 

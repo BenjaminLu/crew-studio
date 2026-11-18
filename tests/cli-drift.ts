@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { observeSpecs } from "../src/observe/tools";
 import { grantableKinds, readObserve } from "../src/observe/grant-scope";
 import { GRANT_TOOLS, createGrantTools } from "../src/cli-grants";
-import { verbs, LOCAL, EXIT_MEANING } from "../src/cli";
+import { verbs, LOCAL, EXIT_MEANING, skillText } from "../src/cli";
+import { cliReference, REFERENCE_PATH } from "../scripts/cli-reference";
+import { readFileSync } from "node:fs";
 
 const REPO = join(import.meta.dir, "..");
 let failed = false;
@@ -36,6 +38,12 @@ step("the tools a grant lists over MCP (tools/list) are the CLI's commands' tool
   const tools = (scopes: string[]) => gt.list({ id: "g-00000000", scopes, project: "p", observe: readObserve({ preset: "project" }) } as any).map((t) => t.name);
   const vs = new Set(verbs().map((v) => v.tool));
   for (const sc of [["observe"], ["project"], ["project", "observe"]]) assert.deepEqual(tools(sc).filter((t) => !vs.has(t)), [], `${sc.join("+")}: a listed tool with no command`);
+});
+step("the skill names every command and every exit code, from the same table; the reference page is what the script writes", () => {
+  const sk = skillText(); for (const v of verbs()) assert.ok(sk.includes(v.usage), `the skill misses ${v.usage}`);
+  for (const c of Object.keys(EXIT_MEANING)) if (c !== "0") assert.ok(new RegExp(`^\\| ${c} \\|`, "m").test(sk), `the skill misses exit ${c}`);
+  assert.ok(/^---\nname: crew-studio\ndescription: .+\n---\n/.test(sk), "a skill: name and description front matter");
+  assert.equal(readFileSync(REFERENCE_PATH, "utf8"), cliReference(), "docs/reference/crew-studio-cli.md drifted: run bun scripts/cli-reference.ts --write");
 });
 console.log(failed ? "\ncli-drift: FAILED" : "\ncli-drift: all passed");
 process.exit(failed ? 1 : 0);
