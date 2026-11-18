@@ -353,7 +353,7 @@ try {
     ok(!tools.box && !tools.pause && /About: the page shown \(v1\)/.test(tools.scope) && /answered by the room's tutor · claude · claude-opus-5/.test(tools.who), "no region to box: a question is about the page shown, and the chat says who answers it", JSON.stringify(tools)); }
   onAsk = (r) => { const b = JSON.parse(r.request().postData() || "{}"); if (!b.confirm) return answer(r, { error: "confirm", code: "confirm_required", offer: ASK_OFFER }, 409);
     X = { ...X, running: 3, runs: [...X.runs, run(3, "ask", "running", { question: b.question, from: b.version, progress: [{ at: "t", text: "reading the page and the diff" }] })] }; answer(r, X);
-    setTimeout(() => { X = { ...X, running: null, consent: { plan: ASK_OFFER.hash }, runs: [...X.runs.slice(0, -1), run(3, "ask", "done", { question: b.question, from: b.version, version: null, answer: 'Rounding happens once, at the end. <img src=x onerror="window.__pwned=1">', cites: ["src/percent.ts:L3", "page:Step 1 · rounding"] })] }; }, 900); };
+    setTimeout(() => { X = { ...X, running: null, consent: { plan: ASK_OFFER.hash }, runs: [...X.runs.slice(0, -1), run(3, "ask", "done", { question: b.question, from: b.version, version: null, answer: 'Rounding happens once, at the end. <img src=x onerror="window.__pwned=1">\n\n- **first** point\n- `second` point\n\n| Input | Result |\n|---|---|\n| 1999 | 300 |', cites: ["src/percent.ts:L3", "page:Step 1 · rounding"] })] }; }, 900); };
   await p.fill("[data-explain-q]", "Why round here?"); await p.click("[data-explain-send]");
   await p.waitForSelector("[data-explain-askconfirm]");
   const first = posts.at(-1)[1];
@@ -367,7 +367,9 @@ try {
   ok(busy.send && /Wait for the answer/.test(busy.why), "while the tutor answers, Ask waits and says why", JSON.stringify(busy));
   await p.waitForSelector('[data-explain-answer="3"][data-status="done"]', { timeout: 10000 });
   ok(posts.at(-1)[1].confirm === ASK_OFFER.hash && posts.at(-1)[1].consent === true, "confirmed with “don't ask again”: the same question goes with the confirmation and the consent", JSON.stringify(posts.at(-1)[1]));
-  const ans = await p.$eval('[data-explain-answer="3"]', (e) => ({ text: e.textContent, cites: [...e.querySelectorAll("[data-explain-cite]")].map((c) => c.textContent), upd: !!e.querySelector("[data-explain-updated]"), img: !!e.querySelector("img") }));
+  const ans = await p.$eval('[data-explain-answer="3"]', (e) => ({ text: e.textContent, cites: [...e.querySelectorAll("[data-explain-cite]")].map((c) => c.textContent), upd: !!e.querySelector("[data-explain-updated]"), img: !!e.querySelector("img"),
+    li: [...e.querySelectorAll("[data-explain-md] li")].map((x) => x.innerHTML), cells: [...e.querySelectorAll("[data-explain-md] table th, [data-explain-md] table td")].map((x) => x.textContent) }));
+  ok(JSON.stringify(ans.li) === JSON.stringify(["<b>first</b> point", "<code>second</code> point"]) && ans.cells.join("|") === "Input|Result|1999|300", "the answer's Markdown reads as a list and a table, built from text (bold and code as elements, nothing else)", JSON.stringify(ans));
   ok(ans.cites.join("|") === "src/percent.ts:L3|page:Step 1 · rounding" && !ans.upd && /onerror/.test(ans.text) && !ans.img && !(await p.evaluate(() => window.__pwned)), "the answer shows its citations; the page is not changed; the model's text stays text", JSON.stringify(ans));
   ok((await p.$eval('[data-explain-q-run="3"] [data-explain-about]', (e) => e.textContent)) === "about v1" && (await p.$$eval("[data-explain-version]", (es) => es.length).catch(() => 0)) === 0 && !!(await p.$('[data-explain-frame="1"]')),
     "the question says which version it was about; still one version, still shown");
