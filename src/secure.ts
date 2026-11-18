@@ -100,6 +100,8 @@ export const SECRET_VALUE: RegExp[] = [
 ];
 /** The one marker a removed credential leaves (the pinned spec's words). */
 export const REDACTED = "[credential removed]";
+/** A URL's userinfo, the part before "@" after the scheme: never shown (it is a password or a token). */
+export const URL_USERINFO = /\b([a-z][a-z0-9+.-]{1,30}:\/\/)(?!\[credential removed\]@)(?!git@)[^\s\/?#@"'<>]+@/gi;
 const valueSources: (() => (string | null | undefined)[])[] = [];
 /** Whoever reads a credential registers it there, at the moment it reads it (rule 1). */
 export function registerSecretValues(f: () => (string | null | undefined)[]) { valueSources.push(f); }
@@ -142,6 +144,8 @@ export function redactText(s: string, extra: (string | null | undefined)[] = [])
   let out = String(s);
   for (const v of secretValues(process.env, extra)) if (out.includes(v)) out = out.split(v).join(REDACTED);
   for (const re of SECRET_VALUE) out = out.replace(re, REDACTED);
+  // credentials in a URL's userinfo (https://user:pass@host, https://<token>@host): the scheme and host stay
+  out = out.replace(URL_USERINFO, (_w, scheme: string) => `${scheme}${REDACTED}@`);
   for (const { re, name } of NAMED) out = out.replace(re, (...a: any[]) => { const m = a.slice(0, -2) as string[]; const whole = a[0], pre = a[1], value = a[3];
     const nm = name(m); if (!isCredentialName(nm) || value === undefined || value.includes(REDACTED) || keptUnderName(value)) return whole; return `${pre}${quoteKeep(value)}`; });
   return out;

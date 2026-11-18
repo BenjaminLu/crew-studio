@@ -3,6 +3,7 @@
 // version's summary is its maker's (a model's) words, so it is untrusted; so is a render's detail (it may quote a tool).
 // Reading never approves, renders or makes a version.
 import { registerKind, type Entity, type Sources } from "../registry";
+import { withheldOf } from "./task";
 
 const storeOf = (s: Sources): any => { try { return s.artifacts?.() ?? null; } catch { return null; } };
 const view = (s: Sources): any[] => { try { return storeOf(s)?.view?.() ?? []; } catch { return []; } };
@@ -14,13 +15,18 @@ export function artifactRow(a: any, all = false) {
       approvedBy: v.approvedBy ?? null, approvedAt: v.approvedAt ?? null, parent: v.parent ?? null, cost: v.cost ?? null, notes: v.notes ?? 0, files: v.fileCount ?? null,
       render: v.render ? { state: v.render.state, ms: v.render.ms ?? null, detail: v.render.detail ?? null } : null, summary: v.summary ?? null })) };
 }
-const entity = (a: any): Entity => ({ id: a.id, title: `${a.id} (${a.type}${a.approved ? `, v${a.approved} approved` : a.latest ? `, v${a.latest}` : ""})`, updatedAt: a.versions?.at(-1)?.createdAt ?? a.created ?? null, project: a.project ?? null,
+/** Why an artifact's words are withheld from Firstmate: a version was made by a Task whose text is (a peer's Studio, issue text). */
+export function artifactWithheld(s: Sources, a: any): string | null {
+  for (const v of a.versions ?? []) { const id = v.createdBy?.run; const r = typeof id === "string" ? s.engine.get(id) : null; const w = r ? withheldOf(s.engine, r) : null; if (w) return w; }
+  return null;
+}
+const entity = (s: Sources, a: any): Entity => ({ id: a.id, withheld: artifactWithheld(s, a), title: `${a.id} (${a.type}${a.approved ? `, v${a.approved} approved` : a.latest ? `, v${a.latest}` : ""})`, updatedAt: a.versions?.at(-1)?.createdAt ?? a.created ?? null, project: a.project ?? null,
   data: artifactRow(a), full: () => artifactRow(a, true) });
 
 export const ARTIFACT_FIELDS = [
   ...["id", "type", "source", "project", "created", "entry", "latest", "approved", "versions[].n", "versions[].status", "versions[].createdAt", "versions[].createdBy", "versions[].approvedBy", "versions[].approvedAt",
     "versions[].parent", "versions[].cost", "versions[].notes", "versions[].files", "versions[].render.state", "versions[].render.ms", "withheld"].map((path) => ({ path, trust: "studio" as const })),
-  { path: "title", trust: "captain" as const },
+  { path: "title", trust: "untrusted" as const, source: "the artifact's title (from the Task that made it, or its maker)" },
   { path: "versions[].summary", trust: "untrusted" as const, source: "the version's maker's summary (a model)" },
   { path: "versions[].render.detail", trust: "untrusted" as const, source: "the renderer's message (it may quote a tool's output)" },
 ];
@@ -33,6 +39,6 @@ registerKind({
   scope: (e) => e.project ?? null, grantable: true, viewer: "desktop",
   filters: { type: { type: "string", description: "web, video, image, doc or audio", enum: ["web", "video", "image", "doc", "audio"] }, project: { type: "string", description: "a project id" } },
   fields: ARTIFACT_FIELDS,
-  list: (s, filter) => view(s).filter((a) => (!filter.type || a.type === filter.type) && (!filter.project || a.project === filter.project)).map(entity),
-  get: (s, id) => { const a = view(s).find((x) => x.id === id); return a ? entity(a) : null; },
+  list: (s, filter) => view(s).filter((a) => (!filter.type || a.type === filter.type) && (!filter.project || a.project === filter.project)).map((a) => entity(s, a)),
+  get: (s, id) => { const a = view(s).find((x) => x.id === id); return a ? entity(s, a) : null; },
 });

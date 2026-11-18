@@ -91,6 +91,8 @@ export type KindDef = {
   /** studio_logs for this kind: what it did and how far it is, oldest first, after `since` (a cursor it gave, or a time).
    *  `cursor` is where the next call goes on. Absent: studio_logs refuses this kind, naming the ones it reads. */
   logs?: (s: Sources, id: string, o: { tail: number; since: string | null; ctx: CallCtx }) => { data: Record<string, unknown>; cursor: string | null; updatedAt?: string | null } | null;
+  /** what a log's cursor is: a time (ISO 8601) or a sequence (seq:N); `since` must be the same kind */
+  logCursor?: "time" | "seq";
   /** every field studio_logs emits for this kind, declared as `fields` are */
   logFields?: FieldDecl[];
 };
@@ -107,6 +109,24 @@ export function sinceOf(since: string | null): { seq: number | null; at: number 
   const t = Date.parse(since); return Number.isFinite(t) && /^\d{4}-\d\d-\d\d/.test(since) ? { seq: null, at: t } : { seq: null, at: null };
 }
 export const seqCursor = (n: number) => `seq:${n}`;
+/** One page of a log whose entries carry a time (a Task's steps and events, a room's rounds), cursor by time. After `since`:
+ *  the oldest `tail` entries, and any more at the last one's very millisecond, so the cursor (the last entry's time) never
+ *  skips one; without `since`: the newest `tail`. An entry that changes later (a step that ends) comes again with its new time. */
+export function timePage<T>(entries: T[], at: (x: T) => string | null | undefined, sinceAt: number | null, tail: number): { page: T[]; cursor: string | null; more: boolean } {
+  const t = (x: T) => { const n = Date.parse(String(at(x) ?? "")); return Number.isFinite(n) ? n : 0; };
+  const sorted = entries.map((x, i) => ({ x, n: t(x), i })).sort((a, b) => a.n - b.n || a.i - b.i);
+  const after = sinceAt === null ? sorted : sorted.filter((e) => e.n > sinceAt);
+  let page = sinceAt === null ? after.slice(-tail) : after.slice(0, tail);
+  if (sinceAt !== null && page.length) { const last = page.at(-1)!.n; let k = page.length; while (k < after.length && after[k].n === last) k++; page = after.slice(0, k); }
+  const lastN = page.length ? page.at(-1)!.n : null;
+  return { page: page.map((e) => e.x), cursor: lastN !== null ? new Date(lastN).toISOString() : sinceAt !== null ? new Date(sinceAt).toISOString() : null, more: sinceAt !== null && page.length < after.length };
+}
+/** One page of a log by sequence (a pull request's events): after `since`, the oldest `tail`; else the newest. The cursor is
+ *  the last entry shown, so the next call starts right after it. */
+export function seqPage<T extends { seq: number }>(entries: T[], sinceSeq: number | null, tail: number): { page: T[]; cursor: string | null; more: boolean } {
+  const after = sinceSeq === null ? entries : entries.filter((e) => e.seq > sinceSeq), page = sinceSeq === null ? after.slice(-tail) : after.slice(0, tail);
+  return { page, cursor: page.length ? seqCursor(page.at(-1)!.seq) : sinceSeq !== null ? seqCursor(sinceSeq) : null, more: sinceSeq !== null && page.length < after.length };
+}
 
 const KINDS = new Map<string, KindDef>();
 const checkFields = (kind: string, fields: FieldDecl[]) => {

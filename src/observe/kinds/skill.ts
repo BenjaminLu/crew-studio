@@ -21,7 +21,10 @@ export function skillRow(s: Sources, k: any, v?: number) {
   return { id: k.id, version: n, current: k.current, latest: n === k.current, sourceKind: k.sourceKind, fits: k.fits ?? null, files: (k.files ?? []).length, bytes: ver?.bytes ?? k.bytes, createdAt: ver?.createdAt ?? null, by: ver?.by ?? null,
     versions: (k.versions ?? []).map((x: any) => ({ n: x.n, createdAt: x.createdAt, by: x.by })),
     ...(builtin ? { name: k.name, description: k.description } : { skillName: k.name, skillDescription: k.description }),
-    package: skillState(s, k.id, n) };
+    // a script skill's hosts, warnings and reasons name what its author chose (files, modules, hosts): its words unless Studio ships it
+    ...(() => { const p = skillState(s, k.id, n); if (!p || builtin) return { package: p };
+      const { hosts, warnings, reasons, decision, ...rest } = p; const { hosts: approvedHosts, ...dec } = decision ?? ({} as any);
+      return { package: { ...rest, decision: decision ? dec : null }, packageText: { hosts, warnings, reasons, approvedHosts: approvedHosts ?? [] } }; })() };
 }
 const entity = (s: Sources, k: any, v?: number): Entity => { const n = v ?? k.current;
   return { id: v ? `${k.id}@v${n}` : k.id, title: `${k.id}@v${n}`, updatedAt: (k.versions ?? []).find((x: any) => x.n === n)?.createdAt ?? null, project: null, data: skillRow(s, k, v) }; };
@@ -36,6 +39,7 @@ registerKind({
   fields: [
     ...["id", "version", "current", "latest", "sourceKind", "fits", "files", "bytes", "createdAt", "by", "versions", "name", "description", "package"].map((path) => ({ path, trust: "studio" as const })),
     { path: "skillName", trust: "untrusted", source: "the skill's own SKILL.md name (its author)" },
+    { path: "packageText", trust: "untrusted", source: "a script skill's hosts, warnings and readiness reasons (they name its author's files and modules)" },
     { path: "skillDescription", trust: "untrusted", source: "the skill's own SKILL.md description (its author)" },
   ],
   list: (s, filter) => lib(s).map((k) => entity(s, k)).filter((e) => { const p = (e.data as any).package; return (filter.scripts !== true || !!p) && (filter.ready !== false || (!!p && !p.ready)); }),

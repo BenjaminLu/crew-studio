@@ -5,12 +5,12 @@
 import { readFileSync } from "node:fs";
 import { registerKind, type Entity, type Sources } from "../registry";
 import { docRows } from "../../docs";
-import { artifactRow, ARTIFACT_FIELDS } from "./artifact";
+import { artifactRow, artifactWithheld, ARTIFACT_FIELDS } from "./artifact";
 
 const storeOf = (s: Sources): any => { try { return s.artifacts?.() ?? null; } catch { return null; } };
 const rows = (s: Sources): any[] => { const st = storeOf(s); if (!st) return []; try { return docRows(st); } catch { return []; } };
 const docData = (d: any, all = false) => ({ ...artifactRow(d, all), words: d.words ?? 0, openNotes: d.openNotes ?? 0, pdfUnavailable: !!d.pdfUnavailable });
-const entity = (s: Sources, d: any): Entity => ({ id: d.id, title: `${d.id} (document${d.approved ? `, v${d.approved} approved` : d.latest ? `, v${d.latest}` : ""})`, updatedAt: d.versions?.at(-1)?.createdAt ?? d.created ?? null, project: d.project ?? null,
+const entity = (s: Sources, d: any): Entity => ({ id: d.id, withheld: artifactWithheld(s, d), title: `${d.id} (document${d.approved ? `, v${d.approved} approved` : d.latest ? `, v${d.latest}` : ""})`, updatedAt: d.versions?.at(-1)?.createdAt ?? d.created ?? null, project: d.project ?? null,
   data: docData(d),
   full: () => { let text: string | null = null; try { const st = storeOf(s), f = d.latest ? st?.mdSource(d.id, d.latest) : null; text = f ? readFileSync(f, "utf8").slice(0, 16_000) : null; } catch {} return { ...docData(d, true), text }; } });
 

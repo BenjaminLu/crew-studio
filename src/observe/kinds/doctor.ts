@@ -1,11 +1,13 @@
 // Doctor (doctor:<item>): the Doctor page's rows (src/doctor.ts diagnose, the items GET /api/doctor returns): whether each
 // tool, sign-in and setting Studio needs is there, and what fixes it. Paths in a row's text are shown from the home folder
-// (~/…). Reading never installs, signs in or changes anything.
+// (~/…), never with a URL's credentials; a row's detail and version quote the tool (untrusted). Reading never installs, signs in or changes anything.
 import { homedir } from "node:os";
 import { registerKind, type Entity, type Sources } from "../registry";
+import { URL_USERINFO, REDACTED } from "../../secure";
 
 const HOME = homedir();
-const home = (v: unknown) => (typeof v === "string" && HOME.length > 1 ? v.split(HOME).join("~") : v ?? null);
+/** A row's text as shown: home paths from ~, and never a URL's userinfo (an endpoint written https://user:pass@host). */
+const home = (v: unknown) => { if (typeof v !== "string") return v ?? null; const t = HOME.length > 1 ? v.split(HOME).join("~") : v; return t.replace(URL_USERINFO, (_w, scheme: string) => `${scheme}${REDACTED}@`); };
 const items = (s: Sources): any[] => { try { return s.doctor?.() ?? []; } catch { return []; } };
 /** One Doctor row as an agent reads it. */
 export function doctorRow(i: any) {
@@ -19,7 +21,10 @@ registerKind({
   about: "A Doctor row: whether a tool, sign-in or setting Studio needs is there (ok, degraded, missing), its version and what fixes it.",
   scope: () => null, grantable: true, viewer: "desktop",
   filters: { status: { type: "string", description: "ok, degraded, missing or info", enum: ["ok", "degraded", "missing", "info"] } },
-  fields: ["id", "title", "group", "status", "availability", "authenticated", "version", "detail", "adds", "fix", "action"].map((path) => ({ path, trust: "studio" as const })),
+  fields: [...["id", "title", "group", "status", "availability", "authenticated", "adds", "fix", "action"].map((path) => ({ path, trust: "studio" as const })),
+    // a row's detail and version quote the tool itself (its --version output, the endpoint it was given): its words, not Studio's
+    { path: "detail", trust: "untrusted", source: "the Doctor row's detail (it quotes the tool's own output)" },
+    { path: "version", trust: "untrusted", source: "the tool's own --version output" }],
   list: (s, filter) => items(s).filter((i) => !filter.status || i.status === filter.status).map(entity),
   get: (s, id) => { const i = items(s).find((x) => x.id === id); return i ? entity(i) : null; },
 });

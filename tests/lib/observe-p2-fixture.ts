@@ -57,7 +57,8 @@ export async function observeP2Fixture() {
   const terminals = { list: () => structuredClone(terms), tail: (id: string, n: number) => (terms.some((t) => t.id === id) ? ["$ npm test", `1 failing: ${INJECTION}`, "Proceed with the migration? [y/N]"].slice(-n) : null) };
   // ---------- Doctor, settings, peers, the crew, projects ----------
   const doctorItems = [{ id: "claude", title: "Claude Code", status: "ok", detail: `found at ${process.env.HOME ?? "/home/x"}/.local/bin/claude`, adds: "Firstmate on Claude", fix: "", group: "basic", action: { kind: "none" }, version: "2.1.0" },
-    { id: "ffmpeg", title: "ffmpeg", status: "missing", detail: "not on PATH", adds: "films", fix: "brew install ffmpeg", group: "optional", action: { kind: "install" }, version: null }];
+    { id: "ffmpeg", title: "ffmpeg", status: "missing", detail: "not on PATH", adds: "films", fix: "brew install ffmpeg", group: "optional", action: { kind: "install" }, version: null },
+    { id: "keys", title: "API keys", status: "ok", detail: "endpoint https://ops:hunter2pass@api.example.invalid/v1", adds: "API providers", fix: "", group: "optional", action: { kind: "none" }, version: null }];
   const settings = { language: "zh-TW", chat: { provider: "claude", model: null, cli: true }, keys: { anthropic: true, openai: false, compatible: false }, sharing: true, phoneDrive: false, lan: { on: true }, token: SECRET, apiKey: { value: SECRET } };
   const peers = { lan: [{ key: "k".repeat(64), fp: "3F2A-9C0D-1E7B-6A54-0000", petname: "Mira's Studio", claimed: `MIRA ${INJECTION}`, host: "192.168.7.21", port: 4311, introducedAt: new Date().toISOString(), state: "trusted", vouched: true }],
     phones: [{ id: "d-9a8b", name: `Captain's phone ${INJECTION}`, hash: "h".repeat(64), paired: new Date().toISOString(), lastSeen: null }] };

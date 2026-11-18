@@ -63,13 +63,17 @@ the registry refuses a never-grantable kind that says otherwise.
 `studio_logs` reads a kind's `logs` (declared with `logFields`, trust as for `fields`). A terminal's log is its state; the last
 lines of its screen come only when the captain's own message in this turn names a terminal and its output
 (`captainAskedForScreen`, read from the captain's words, never from the tool's arguments); never on a card, a wake, another
-question or for a grant. The screen and the question it shows come as untrusted.
+question or for a grant. The screen and the question it shows come as untrusted. A page is one timeline (a Task's steps and events, a
+room's rounds, runs and events) cut by time: after `since` the oldest `tail` entries, the cursor the last one shown (a
+time; a pull request's log is by sequence, `seq:N`), so no entry is skipped; a page that would pass 4 KB is asked again with
+fewer entries rather than cut.
 
 `studio_events` reads Studio's event log oldest first after `since` (the `nextCursor` of the last call, `seq:N`, or a time);
 with no `since` it reads the latest. Each event names the refs it is about (`refsOf`), so `ref` and `kinds` follow some. The
 retro's signals (`run_failed`, `room_round_failed`, `pr_*`, `captain_note`) carry codes and refs at Studio's trust; a
 `captain_note` brings the note's text at captain trust and the page text selected with it as untrusted. Studio's audit lines
-(grants, skill imports) keep their summary; any other line's summary comes as untrusted and none of its data. A withheld
+(a grant issued or revoked, a skill imported: checked ids only) keep their summary; a grant's use or refusal names what the
+caller sent, so it is untrusted like any other line's summary comes as untrusted and none of its data. A withheld
 Task's events show none of their untrusted parts.
 
 ## The envelope
