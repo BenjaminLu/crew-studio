@@ -614,6 +614,56 @@ try {
     }
     ok(looks.every((l) => l.ok), "at 1440, 900 and 390, light and dark, English and 繁體中文: no sideways scroll, Full screen in reach, the field inside its dialog, Confirm in view with long instructions (the dialog's footer stays), the words in the captain's language", JSON.stringify(looks.filter((l) => !l.ok)));
   }
+
+  // ---------- Confirm and start while the server is slow to admit the run: it says so, then the dialog closes and stays closed ----------
+  // the server answers only once the run is admitted (a model it verifies again can take a minute) and pushes that the run
+  // started; pushes and the poll landing meanwhile or after never bring the dialog back. Refused, the dialog stays with why.
+  for (const from of ["tutor", "again", "refused"]) {
+    const c7 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await c7.addInitScript((zh) => { try { localStorage.setItem("crew.lang", zh ? "zh-TW" : "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; }, from === "again");
+    await c7.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    // from the board (the skill picked, nothing made yet), or Try again after a run the provider refused
+    let Y = from === "tutor" ? { ...X, selected: null, versions: [], running: null, consent: null, runs: [] }
+      : { ...X, selected: { id: "walkthrough", v: 1 }, versions: [], running: null, consent: null, runs: [run(1, "generate", "failed", { why: "provider", error: "readiness was invalidated" })] };
+    let release = null; const gens = [];
+    await c7.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: Y }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain/offer$`), (r) => r.fulfill({ json: OFFER }));
+    await c7.route(new RegExp(`/api/review-room/${ID}/explain/generate$`), async (r) => { gens.push(JSON.parse(r.request().postData() || "{}"));
+      await new Promise((go) => (release = go));
+      if (from === "refused") return r.fulfill({ status: 400, json: { error: "The tutor's model is not available: not signed in / 導師的模型不能用：沒有登入", code: "no_tutor" } });
+      // recorded as the server does (no rounds, no progress yet), pushed, then answered
+      Y = { ...Y, selected: { id: "walkthrough", v: 1 }, running: 2, runs: [...Y.runs, run(2, "generate", "running", { rounds: [], cost: null })] }; r.fulfill({ json: Y }); });
+    const w = await c7.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    const push = () => w.evaluate((id) => { for (const t of ["review-explain", "review-room"]) LIVE.es.dispatchEvent(new MessageEvent(t, { data: JSON.stringify({ card: id }) })); }, ID);
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-picker]", { timeout: 15000 });
+    if (from === "tutor") { await w.click("[data-explain-open]"); await w.click('[data-explain-skill="walkthrough"]'); } else await w.click("[data-explain-again]");
+    await w.waitForSelector("[data-explain-start]:not([disabled])");
+    await w.click("[data-explain-start]"); for (let i = 0; i < 60 && !release; i++) await w.waitForTimeout(50);
+    await push(); await w.waitForTimeout(300); await w.keyboard.press("Escape"); await w.waitForTimeout(150);
+    await w.click(".rx-modalbg", { position: { x: 5, y: 5 } }).catch(() => {}); await push(); await w.waitForTimeout(300);
+    const busy = await w.evaluate(() => { const b = document.querySelector("[data-explain-start]"), cancel = document.querySelector(".rx-modal .rx-foot .btn:not(.primary)");
+      return { open: !!document.querySelector("[data-explain-confirm]"), disabled: !!b?.disabled, text: b?.textContent || "", busy: b?.getAttribute("aria-busy"), cancel: !!cancel?.disabled, said: document.querySelector("[data-explain-starting]")?.textContent || "" }; });
+    const starting = from === "again" ? /開始中…/.test(busy.text) && /正在確認模型並開始執行/.test(busy.said) : /Starting…/.test(busy.text) && /starting the run/.test(busy.said);
+    ok(gens.length === 1 && busy.open && busy.disabled && starting && busy.busy === "true" && busy.cancel,
+      `${from}: while the server starts the run the dialog says it is starting, on its button; Esc, the backdrop and Cancel do not dismiss it, and it is sent once`, JSON.stringify({ busy, gens: gens.length }));
+    release?.();
+    if (from === "refused") {
+      await w.waitForSelector("[data-explain-confirm] .rx-state.err", { timeout: 5000 }).catch(() => {});
+      const after = await w.evaluate(() => { const b = document.querySelector("[data-explain-start]"); return { open: !!document.querySelector("[data-explain-confirm]"), note: document.querySelector("[data-explain-confirm] .rx-state.err")?.textContent || "", disabled: !!b?.disabled, text: b?.textContent || "", starting: !!document.querySelector("[data-explain-starting]") }; });
+      ok(after.open && /not signed in/.test(after.note) && !after.disabled && /Confirm and start/.test(after.text) && !after.starting, "refused: the dialog stays with why, and Confirm and start is on again", JSON.stringify(after));
+      await w.click(".rx-modal .rx-foot .btn:not(.primary)"); await w.waitForTimeout(150);
+      ok(!(await w.$("[data-explain-confirm]")), "refused: Cancel closes it then");
+    } else {
+      await w.waitForSelector("[data-explain-confirm]", { state: "detached", timeout: 5000 }).catch(() => {});
+      await push(); await w.waitForTimeout(3200); // a push, and the room's poll (every 2.5 s), after the answer
+      const after = await w.evaluate(() => ({ open: !!document.querySelector("[data-explain-confirm], .rx-modal"), progress: !!document.querySelector("[data-explain-progress]") }));
+      ok(!after.open && after.progress, `${from}: once started, the dialog closes and stays closed (a push and the poll after it do not bring it back); the run's progress shows`, JSON.stringify(after));
+    }
+    await c7.close();
+  }
   ok(!errors.length, "no page error", errors.join(" | "));
 } catch (e) { fail++; console.log("  FAIL  the run stopped:", e?.stack || e); console.log(appLog.slice(-3000)); }
 finally { await browser.close(); app.kill(); probe.close(); }

@@ -721,7 +721,11 @@ The room can be presented by one of the captain's own skills instead of the tuto
   "not known yet"), the safety limit, and the isolation. `POST …/explain/generate {skill, confirm, prompt}` starts only with that
   offer's hash; a changed tutor, skill version, limit or instructions asks again. A follow-up's offer (`kind=ask&v=<n>`) is for the skill
   that made version n, the same one its run checks. A pull request or directory room no Task hosts yet makes
-  its host Task once, after this confirmation, as a tutor turn does (`ensureHost`).
+  its host Task once, after this confirmation, as a tutor turn does (`ensureHost`). The server answers once the run is admitted
+  (a model it verifies again can take a minute): until then Confirm reads "Starting…" / 開始中… (`aria-busy`), a line says Studio
+  is checking the model and starting the run (`[data-explain-starting]`), and the dialog is not dismissed (Esc, Cancel, the
+  backdrop) nor sent twice. Its answer acts on that dialog only: started, it closes, and a push or poll never brings it back;
+  refused, it stays with why and Confirm on again.
 - **What it should produce** (the confirmation's first field, `[data-explain-prompt]`, "What should it produce?" / 要產出什麼？):
   the captain's own instructions for this generation, multi-line, at most 2000 characters (`PROMPT_MAX`, a counter under it,
   warning past 90%); empty is the skill's own default. It is prefilled with the skill's **default instructions** when the
