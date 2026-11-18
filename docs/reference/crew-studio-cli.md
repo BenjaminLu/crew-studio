@@ -182,12 +182,6 @@ Put a pull request in one of the release groups from the settings ({pr, group});
 
 Tool: `prs_group`.
 
-### `crew-studio prs accept`
-
-Accept Studio's proposed order and dependencies as the captain's.
-
-Tool: `prs_accept`.
-
 ### `crew-studio help [--json]`
 
 Every command, its arguments, the kinds, the exit codes and what this grant can use (--json for agents).
