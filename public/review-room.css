@@ -740,3 +740,13 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 }
 /* a link in Studio's toast (dark on light, light on dark) reads as part of it */
 .toast a[href] { color: inherit; text-decoration: underline; font-weight: 600; }
+/* a scene's full explanation (its body): under its points, folded to one line until the captain opens it; markdown as text */
+.rr-sbody { margin: 10px 0 0; border-top: 1px dashed var(--rr-paper-edge); padding-top: 8px; color: var(--rr-ink); }
+.rr-sbody > summary { cursor: pointer; font-size: 13px; color: var(--rr-marker); list-style-position: inside; }
+.rr-sbody-text { margin-top: 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
+.rr-sbody-text > p { margin: 0 0 10px; }
+.rr-sbody-text .rr-sbody-h { margin: 14px 0 6px; font-size: 14.5px; color: var(--rr-ink); }
+.rr-sbody-text h5.rr-sbody-h { font-size: 13.5px; }
+.rr-sbody-text .rr-sbody-list { margin: 0 0 10px; padding-left: 20px; }
+.rr-sbody-text .rr-sbody-list li { margin: 2px 0; }
+.rr-sbody-text .rr-sbody-pre { margin: 0 0 10px; max-height: none; overflow-x: auto; white-space: pre; font-size: 12.5px; }

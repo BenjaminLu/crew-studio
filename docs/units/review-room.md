@@ -43,8 +43,8 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   and shows what the drawing has. On a lesson the explanation tops the board's ask popover (its chips stay: asking is still
   a paid turn); on an answer it is a small card over the picture (`data-explain`) whose "Ask about this" only fills the
   question field (nothing sent, nothing paid). The tutor gives these: scene_show points take `picture`, `focus` (at most 8)
-  and `detail` (one or two sentences, at most 80 CJK or 160 Latin characters, `STEP_LIMITS`); board_draw's mermaid, states,
-  arch and sequence items and figure_svg take `explain: [{edge, does, why?, cites?}]` (at most 20; does at most 60 CJK or 120
+  and `detail` (a paragraph, at most 600 CJK or 1200 Latin characters, `STEP_LIMITS`); board_draw's mermaid, states,
+  arch and sequence items and figure_svg take `explain: [{edge, does, why?, cites?}]` (at most 80; does at most 60 CJK or 120
   Latin, why at most 80 / 160, `EXPLAIN_LIMITS`; an edge the drawing does not have is refused, a mermaid's is not checked),
   and a states or figure transition takes `why`. Its prompt says so ("STEPS AND ILLUSTRATIONS"); the pinned skills are
   unchanged. A translation carries a scene's details (kept only when every one came back within the limit) and a drawing's
@@ -112,15 +112,27 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   board, never pushing it; a turn being sent shows in the dock. The **transcript** is a drawer over the room, closed by
   default: each question with its scene's title (a click flies the board to the scene and closes the drawer, nothing scrolls), the
   tutor's full answer, the understanding check and the sources. A citation's basis opens over the room too.
-- **Short on the board, long in the transcript.** The tutor builds an answer as scenes with `scene_show` {title, picture,
-  points: [{text, cites}]}: a title of at most 20 CJK characters or 48 Latin ones, a picture (a board item it drew), 2 to 4
+- **Short on the board, long in the body.** The tutor builds an answer as scenes with `scene_show` {title, picture,
+  points: [{text, cites}], body}: a title of at most 20 CJK characters or 48 Latin ones, a picture (a board item it drew), 2 to 4
   points of at most 60 CJK characters or 120 Latin ones each (citations not counted; a CJK character weighs as many Latin
-  ones as the two limits trade it for, `SCENE_LIMITS`, `boardLength`), at most twelve scenes a turn. Over a limit the tool
-  refuses the scene and says which part, so the tutor rewrites; the longer explanation is its final answer, which the
-  transcript shows. An older answer (no scenes) is split on the page, sentence by sentence, into points of at most 120 (a
+  ones as the two limits trade it for, `SCENE_LIMITS`, `boardLength`). The title and points are the board's glanceable
+  layer: over a limit the tool refuses the scene and says which part, so the tutor rewrites. The full explanation is the
+  scene's `body`: markdown with no small cap (at most 20 000 characters a scene, a safety bound, `SCENE_LIMITS.body`), its
+  citations checked like a point's (`bodyCites`); `scene_body {scene, body, replace?}` appends to (or replaces) the body of a
+  scene this turn showed, so a long explanation is sent in several tool calls rather than one giant reply. Every prompt tells
+  the tutor so ("FULL EXPLANATIONS", in Studio's frame: the pinned skills are unchanged): the mechanism, why it is built this
+  way, the edge cases, before and after, each claim cited, the way a trusted engineer hands it in. The board shows a body
+  under the scene's points, an answer's and a lesson chapter's alike, folded to one line ("The full explanation · n words",
+  `data-scene-body`) and opened with a click, kept open across redraws; it is rendered as a small markdown (headings, lists,
+  fenced code, paragraphs, **bold**, `code`, citations as chips), every word through text nodes. The next turn's prompt (an
+  understanding check's too) carries the last six turns' scene bodies (3000 characters a scene, 8000 a turn). A translation
+  carries each body and keeps it only when it came back whole with every citation (`keepBody`), else the original shows,
+  marked "not translated yet". A turn shows at most 120 scenes and draws at most 400 board items and 40 `figure_svg` tries
+  (`SCENE_LIMITS.scenes`, `TURN_LIMITS`): bounds against a runaway tutor across a lesson's rounds, not sizes to aim for. The
+  final answer is still the transcript. An older answer (no scenes) is split on the page, sentence by sentence, into points of at most 120 (a
   CJK character counting two), each citation staying with its sentence; its markdown tables become a `table` picture and
   its code a picture labelled as the tutor's own code, shown with the point after them. A `table` board item (`rows`, the
-  header first, 2 to 8 rows of at most 5 cells of at most 60 characters) is drawn by Studio as text; a markdown table in an
+  header first, 2 to 30 rows of at most 5 cells of at most 60 characters) is drawn by Studio as text; a markdown table in an
   answer is a `table` block, not a claim.
 - **Labels in the captain's language**: a scene's title is the tutor's (or its heading), else the question itself, never
   "Question: …" beside the same question; Studio's own titles ("This change at a glance", "What changed since you last
@@ -364,8 +376,25 @@ questions. Studio enforces the shape: `what` and `change` (at least one item) ar
 where the drawing would be; a skip counts toward the turn's scenes); chapters come in any order, so a chapter missed earlier
 can still be added; one drawing a chapter except the change and the decisions; the drawing chapters show their own kind; a risk, a road not taken and a rejected option need a verified
 citation of their kind. `lesson_check` tells the tutor what is still missing, and a lesson that ends missing a chapter it
-owes is refused: the turn fails, saying which (the paid round is still recorded). Other answers (a question, how, why,
+owes and shows nothing is refused: the turn fails, saying which (the paid round is still recorded). Other answers (a question, how, why,
 a quiz, the merge check) are scenes on the board and may name a chapter in any order, or none.
+
+**A lesson's rounds: until it is complete, not a fixed count.** A lesson is not one round. When a round ends, Studio hands
+the lesson back to the same tutor, in the same turn, with the whole prompt again, the scenes already on the board (each with
+how long its body is), what it still lacks and which round of the ceiling this is ("STUDIO'S FOLLOW-UP"), until it is
+complete: every chapter it owes is on the board and the tutor says so (`lesson_check {complete: true}`, refused while a
+chapter is missing). It stops early only when two rounds in a row change nothing on the board (no new or changed board item
+or scene: `LESSON_IDLE`), at the ceiling (12 rounds, `CREW_REVIEW_ROOM_LESSON_ROUNDS` within 2 to 30, `lessonRounds`), or
+when the captain cancels or the round fails (`lessonNext`). Every round is one more paid job on the same tutor, admitted,
+pinned and sandboxed like the first; its job id joins the turn's `jobs`, its cost is summed into the turn's, its answer joins
+the transcript; the turn stays running until the last round ends. A lesson that stops before its tutor said it is complete
+is kept, marked on its first chapter with why and after how many rounds (`stopped`: `no-progress`, `ceiling`, `cancelled`;
+with any chapters still missing named, `gaps`), and its ledger entry records `rounds`, `complete` and `stopped`. Every
+confirmation of a lesson (the dock's, the welcome's, a paste's, arrival's, auto-teach's settings) says it runs one paid round,
+then more paid rounds until the lesson is complete, stopping when two rounds in a row add nothing, at most the ceiling.
+A round has 200 tool calls (`ROUND_BUDGET.maxTools`) and 30 minutes (`CREW_REVIEW_ROOM_TIMEOUT_MS`, within 10 seconds and
+2 hours, `roundTimeoutMs`; a translation's round the same time). A reply too long for the tutor's own output limit is the
+provider's to continue (separate work on the Claude provider), not the room's.
 
 A finished lesson is on the **board** with the room's other answers (`public/review-board.js`): each chapter a
 region of the canvas, numbered, its chapter and title, its points as prose (what this is) or as findings with a tone stripe
@@ -451,7 +480,7 @@ script, style, foreignObject, image, use, link, href, class, filter, on* handler
 palette's tokens; at most 80 000 characters, 900 elements, 2400 × 2400) and runs a geometric gate: no label on another, no
 label on a line, no connector through a box that is not one of its ends, no label outside the viewBox, no Chinese under
 12px, every label with `data-en`, `data-hant` and `data-hans`. A figure that fails is refused with each problem, and the
-tutor redraws (at most eight tries a turn). The page rebuilds the tree element by element (createElementNS, setAttribute,
+tutor redraws (at most 40 tries a turn, `TURN_LIMITS.figureTries`). The page rebuilds the tree element by element (createElementNS, setAttribute,
 textContent; never markup, from the client's own allowlist too, so a tampered room file adds nothing), its ids kept to the
 figure, each text in the room's language (a label of several lines keeps its tspans, each line in the room's language). The
 gate is bounded: every coordinate within the viewBox (plus 40), at most 40 000 sample points a figure, the label-on-line scan
@@ -468,6 +497,17 @@ curve, bowed only as far as it must to clear the boxes, or under them, crossing 
 apart, a state's way back to itself a small loop); its numbered chip sits on it near its middle, and a picked chip opens the
 transaction panel right under the map. The sequence is one event a band, each fragment's tab on its own band, calls,
 returns and async calls in their own colours.
+
+**Sizes that fit a real system.** A drawing holds up to 40 states and 80 transitions (a transition's `detail` a paragraph
+of at most 1200 characters), 16 actors and 80 steps, 48 nodes and 96 edges, 8 rejected options, 16 calls an item
+(`FIGURE_LIMITS`); only a connector's label (40) and a box's label stay short, so they fit their line and box. A drawing
+larger than its column holds at three quarters of its drawn size is never shrunk past reading or cut: its region (a lesson
+chapter) or card (an answer) widens until the picture column fits it at that size (`figColumn`, at most 12 000 px; an
+answer's points keep a 380 px column beside it, and its picture loses the 360 px height cap), and the board's camera zooms
+and pans over it as over any region; the page itself never scrolls sideways. A long lifecycle keeps its main row on one
+line, so it is wide. The connector router skips a pair of connectors whose boxes are apart (the same verdict, so a
+96-connector architecture lays out in a moment, not minutes) and takes one refinement pass instead of two past 40
+connectors.
 
 **A database lifecycle per entity; every call.** A lifecycle is owed only for a real state write: UPDATE … SET status/state,
 INSERT INTO … (status), an ORM write with a status/state key, setState / setStatus / transition(), or an entity's status
@@ -638,7 +678,7 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
 - Read-only. The round runs in the round sandbox with nothing to write (`writes: []`) and no host beyond its model
   (`allow: []`, `egress.allow` is not carried); a sandbox-off grant or local unrestricted mode refuses the turn. Its tools
   (`ROOM_TOOLS`): `fs_list`, `fs_search`, `fs_read` (the head commit, through `git ls-tree`, `git grep`, `git show`),
-  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `scene_show`, `chapter_skip`, `lesson_check`, `screenshots_show`, `chart_draw`, `illustrate` (only with generated pictures on), `check_ask`, `check_grade`, `web_search`,
+  `git_diff`, `git_log` (with pickaxe), `git_show`, `git_blame`, `board_draw`, `scene_show`, `scene_body`, `chapter_skip`, `lesson_check`, `screenshots_show`, `chart_draw`, `illustrate` (only with generated pictures on), `check_ask`, `check_grade`, `web_search`,
   `web_fetch`. Nothing reads or writes the worktree's files, index or refs. Nothing goes to GitHub: no comment, review or
   request of any kind.
 - Recorded like any round: `data/runs/<task>/nodes/<merge node>/room-<card>-<n>/` (`prompt.md` with the skill pins in its
@@ -1216,6 +1256,19 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "a translation carries the new words after the ones …", "a translated scene keeps its steps' details only when …";
     review-room-steps-ui (each rule); review-room-board-only-ui "a rail entry flies the board to that answer …", "on the board
     the answer shows its chart …".
+47. Quality, not size caps: a lesson is handed back round after round while it makes progress, past the old three, until
+    every chapter it owes is on the board and the tutor says it is complete; two rounds in a row that change nothing end it,
+    and so does the ceiling (12, bounded), each marked; every round paid, summed and on the ledger; a round has 200 tool calls
+    and 30 minutes, each env override bounded; every lesson confirmation says rounds go on until complete, with the ceiling.
+    A scene takes a long markdown body (refused only over 20 000 characters), appended in parts with scene_body, its
+    citations checked; the next prompt and the understanding check carry the bodies; a translation keeps a body only whole.
+    Drawings far over the old caps are accepted and drawn whole at a legible size, the region widened, nothing cut. —
+    review-room-anywhere "a lesson that keeps making progress is handed back past three rounds …", "each round's follow-up
+    says which round of the ceiling it is …", "a lesson stops after two rounds in a row that change nothing …", "a lesson that
+    still changes the board at the ceiling stops there …", "the ceiling is 12 rounds by default …", "a tutor round gets 200
+    tool calls and 30 minutes", "a scene takes a long markdown body …", "the body is stored whole …", "the next turn's
+    prompt, an understanding check's too, carries the scenes' full explanations …", "a translated body is kept only whole …";
+    review-room-quality-ui (each rule).
 46. A directory of any GitHub repository has a room: its address checked; a public repository read anonymously, another
     through the captain's gh login, else refused with why; its ref resolved and pinned at that commit (pasting again keeps it);
     its parts and README known; the same board and every follow-up (questions on the board and on selected words, regenerate,

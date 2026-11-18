@@ -12,7 +12,7 @@
 window.crewReviewBoard = (D) => {
 const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual } = D;
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody, figColumn } = D;
 /** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
  *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
 const isLesson = (x) => !!(x?.chapter && x.t?.action === "teach" && x.t.status === "done");
@@ -114,11 +114,16 @@ function decorate(fig, x, it, ctx) {
 const boardCite = (p) => [...(p?.cites || [])].reverse().find((c) => c?.ref?.startsWith("board:"))?.ref.slice(6) || null;
 const illustrated = (x) => !x.skip && (!!x.pic || x.points.some((p) => p.picture || boardCite(p)));
 const widthOf = (x) => (phone() ? 340 : !illustrated(x) ? 540 : x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 840 : 780);
+/** a chapter with a large drawing (more than its column holds at a legible size) is as wide as the drawing needs: the board is a
+ *  canvas, the captain zooms, nothing is shrunk past reading or cut */
+const regionW = (card, r, x) => { const W = widthOf(x); if (phone() || !illustrated(x)) return W; const col = W - stepsW(x) - 64;
+  const need = Math.max(0, ...[x.pic, ...x.points.map((p) => (p.picture ? r.board.find((b) => b.id === p.picture) : null))].filter(Boolean).map((it) => figColumn(card, it, col) || 0));
+  return need ? stepsW(x) + 64 + need : W; };
 /** a chapter's steps column on a desktop: a drawing gets the wider illustration */
 const stepsW = (x) => (x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 300 : 440);
 function regionEl(card, r, x, j, nth, ctx) {
   const key = x.key, ch = x.chapter, tone = POINTS_TONE[ch], seen = ctx.visited.has(key), ths = ctx.threads.filter((t) => t.anchor.scene === key);
-  const open = ths.filter(confusedOf).length, done = ths.filter((t) => t.state === "resolved" || t.merged).length, cards = ths.reduce((n, t) => n + t.nodes.length, 0), W = widthOf(x);
+  const open = ths.filter(confusedOf).length, done = ths.filter((t) => t.state === "resolved" || t.merged).length, cards = ths.reduce((n, t) => n + t.nodes.length, 0), W = regionW(card, r, x);
   const head = h("div", { class: "rp-head" }, h("span", { class: "rp-num" }, String(j + 1).padStart(2, "0")),
     h("h3", {}, chapterName(ch), ch === "decisions" ? h("span", { class: "rp-of" }, ` · ${T(`Choice ${nth}`, `決定 ${nth}`)}`) : null), h("p", { class: "rp-sub", "data-section-title": "" }, x.title));
   const sent = (p, m) => sentences(card, x, p, m, ch === "watch" ? "risk" : "sentence", ctx);
@@ -148,7 +153,7 @@ function regionEl(card, r, x, j, nth, ctx) {
   const gist = plain(x.points[0]?.text || x.title || "");
   return h("section", { class: `rb-region${seen ? "" : " unvisited"}${ths.length ? " hasq" : ""}${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-report-section": key, "data-chapter": ch, "data-turn": x.turn, "data-open": open, "data-done": done, id: `rp-${card}-${key}`, "aria-label": `${String(j + 1).padStart(2, "0")} ${chapterName(ch)}` },
     h("div", { class: "rb-rtitle" }, h("b", {}, String(j + 1).padStart(2, "0")), h("span", {}, chapterName(ch)), ths.length ? h("span", { class: "rb-cnt" }, T(`${cards} asked`, `問 ${cards}`), open ? h("i", {}, T(` · ${open} not understood`, ` · 未解 ${open}`)) : null) : null),
-    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, absorbed), illus),
+    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, sceneBody(card, x), absorbed), illus),
       // far away: only the chapter's number, its title, one line and its questions
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, String(j + 1).padStart(2, "0")), h("div", { class: "rb-mt" }, chapterName(ch)), h("div", { class: "rb-mg", "data-map-gist": "" }, gist),
         h("div", { class: "rb-mq" }, h("span", { class: "rb-badge q", "data-map-open": open }, T(`${open} not understood`, `未解 ${open}`)), h("span", { class: "rb-badge ok", "data-map-done": done }, T(`${done} understood`, `懂了 ${done}`)))),
@@ -679,7 +684,9 @@ function view(r, scenes, i) {
   const notesOpen = lesson && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
   // a scene region is as wide as the board shows at a readable scale: the board's width, at most 980
   const avail = isFs() ? innerWidth - 40 : Math.min(innerWidth, 1480) - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - (notesOpen ? 284 : 0) - 32;
-  const sceneW = (x) => (phone() ? 340 : clamp(Math.round(avail), 600, x.quiz ? 760 : 980));
+  const sceneW = (x) => { if (phone()) return 340; const W = clamp(Math.round(avail), 600, x.quiz ? 760 : 980); if (x.quiz) return W;
+    // a large drawing: its picture column as wide as it needs, the points beside it keep their reading width (review-board.css rr-bigfig)
+    const need = Math.max(0, ...(x.visuals || []).map((it) => figColumn(card, it, Math.round(W * 0.56) - 30) || 0)); return need ? need + 30 + 22 + 380 : W; };
   const firstOf = (x) => scenes.find((y) => y.turn === x.turn) === x;
   const ctx = { threads, TN, visited, cur: B.cur.get(card), scenes, sceneW, firstOf, lastLesson: secs.at(-1)?.turn };
   const regions = scenes.map((x, j) => (isLesson(x) ? regionEl(card, r, x, j, x.chapter === "decisions" ? scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === "decisions").length : 0, ctx) : sceneRegionEl(card, r, x, j, ctx)));

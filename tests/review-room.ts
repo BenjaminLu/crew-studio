@@ -177,6 +177,7 @@ script.push([
   ["scene_show", { chapter: "watch", title: "What to watch", picture: "B1-15", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Users may notice.", cites: [] }] }],
   ["scene_show", { chapter: "watch", title: "What to watch", picture: "B1-15", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "The test pins it [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }] }],
   ["scene_show", { chapter: "what", title: "Too late", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
+  ["lesson_check", { complete: true }],
   ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nThe sketch shows the rounding [board:B1-11].\n\n| case | cents |\n|---|---|\n| 1999 at 15% | 300 [diff:src/percent.ts:L2-3] |\n\nWant me to go deeper?`]]);
 // the renderer's captures for this head (the Task's capture check makes them; stubbed here) and the image generator, stubbed
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -274,7 +275,7 @@ ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "he
     ok(item?.name === "percent()" && item.basis === "cited" && states?.transitions.length === 2 && states.transitions[0].cite.ok === true && /s_draft -->\|price\| s_priced/.test(states.code) && seq?.steps[1].frame === "loop" && seq.steps[2].kind === "return" && /item 5: name is 1 to 33/.test(figs?.errors[0] ?? ""),
       "per-item figures, a state machine (every transition, each cited) and a sequence (its loop kept) are board items Studio draws; a label too long for the layout is refused", JSON.stringify({ item, figs: figs?.errors })); }
   const tbl = board.find((b) => b.type === "table"), bd = results.filter(([n]) => n === "board_draw")[1]?.[1];
-  ok(tbl && JSON.stringify(tbl.rows) === JSON.stringify([["amount", "15%"], ["1999", "300"], ["1000", "150"]]) && tbl.basis === "cited" && /a table is 2 to 8 rows/.test(bd.errors[0]), "a table is a board item of text cells (a number becomes text); one too wide is refused", JSON.stringify({ tbl, bd }));
+  ok(tbl && JSON.stringify(tbl.rows) === JSON.stringify([["amount", "15%"], ["1999", "300"], ["1000", "150"]]) && tbl.basis === "cited" && /a table is 2 to 30 rows/.test(bd.errors[0]), "a table is a board item of text cells (a number becomes text); one too wide is refused", JSON.stringify({ tbl, bd }));
   ok(claims.some((c) => c.kind === "table" && /1999 at 15%/.test(c.text)) && !claims.some((c) => c.kind === "claim" && /^\s*\|/.test(c.text)), "a markdown table in an answer is not a claim: the board shows it as a table", JSON.stringify(claims.map((c) => c.kind))); }
 const cDiff: any = await room.cite(merge.id, "diff:src/percent.ts:L2-3"), cLedger: any = await room.cite(merge.id, `ledger:#${ledgerSeq}`), cSource: any = await room.cite(merge.id, "source:8");
 let badCite = ""; try { await room.cite(merge.id, "diff:README.md"); } catch (e: any) { badCite = e.code; }
