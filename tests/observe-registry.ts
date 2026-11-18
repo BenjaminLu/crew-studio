@@ -308,5 +308,18 @@ try {
       ok(heldNow.length > 0 && heldNow.every((w: any) => w.withheld && !("options" in w) && !("question" in w)) && heldCard.data.withheld && heldCard.data.options.every((o: any) => !("label" in o) && !("labelZh" in o)) && !J(heldCard).includes("PULL_REQUEST_TEMPLATE"),
         "a withheld Task's card emits no option labels, in studio_now or studio_get", J([heldNow, heldCard.data.options]).slice(0, 300));
     } finally { for (const r of E2.list()) { try { await E2.cancel(r.id); } catch {} } H2.stop(); } }
+  // ---------- a confirm-door card that names a two-way door reads one-way, as the Inbox ranks it ----------
+  { const flow = { id: "two-way-fixture", name: "two-way-fixture", version: 1, roles: [], edges: [{ from: "tier", to: "ask", when: "ok" }, { from: "ask", to: "done", when: "go" }],
+      nodes: [{ id: "tier", kind: "hook", label: "Door tier", x: 0, y: 1, do: "tier" }, { id: "ask", kind: "card", label: "Decide", x: 1, y: 1, card: { body: { en: "Ship the tide alerts now?", "zh-TW": "現在上線潮汐警報？" }, door_from: "tier", confirm_door: true, options: [{ id: "go", label: "Ship it", labelZh: "上線" }, { id: "hold", label: "Hold", labelZh: "先等等", hold: true }] } },
+        { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }] };
+    const H3 = await harness([JSON.stringify(flow)]), E3 = H3.engine;
+    E3.actions.tier = (x: any) => { x.ctx.tier = "two-way"; return "ok"; }; // the step before the card names the door, as a merge card's door_from does
+    try {
+      const run = E3.start({ workflow: "two-way-fixture", version: 1, title: "Tide alerts", text: "x", by: "fixture", params: {} } as any);
+      await until(() => E3.cards.list({ run: run.id, open: true }).length > 0);
+      const card = E3.cards.list({ run: run.id, open: true })[0], O3 = (await import("../src/observe/tools")).createObserve({ engine: E3, taskRow: (r: any) => taskRow(E3, r) });
+      const w: any = (await O3.call("studio_now", {}) as any).data.waiting.find((x: any) => x.card === card.id), g: any = await O3.call("studio_get", { ref: `card:${card.id}` });
+      ok(card.door === "two-way" && card.confirmDoor && w?.door === "one-way" && w.urgency === g.data.urgency && g.data.urgency === "one-way door", "a confirm-door card naming a two-way door: studio_now says one-way, with studio_get's urgency", J([card.door, w, g.data.urgency]));
+    } finally { for (const r of E3.list()) { try { await E3.cancel(r.id); } catch {} } H3.stop(); } }
 } finally { for (const r of F.E.list()) if (!["failed", "cancelled", "succeeded"].includes(r.status)) { try { await F.E.cancel(r.id); } catch {} } F.H.stop(); }
 end();

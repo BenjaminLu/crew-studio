@@ -34,7 +34,7 @@ await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clien
 const list = await rpc("tools/list", {});
 const names = (list?.result?.tools ?? []).map((t) => t.name);
 const now = names.includes("studio_now") ? await rpc("tools/call", { name: "studio_now", arguments: {} }) : null;
-const answer = now ? "tools: " + names.join(",") + "; studio_now answered（見「room:PR-0123456789ab-1645」；\\x60room:PR-0123456789ab-1645\\x60）" : "no tools";
+const answer = now ? "tools: " + names.join(",") + "; studio_now answered（見「room:PR-0123456789ab-1645」；\\x60room:PR-0123456789ab-1645\\x60）**room:PR-0123456789ab-1645**" : "no tools";
 p.kill();
 if (codex) { console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: answer } })); console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } })); }
 else console.log(JSON.stringify({ result: answer, usage: { input_tokens: 1, output_tokens: 1 } }));
@@ -47,6 +47,6 @@ for (const provider of ["claude", "codex"]) {
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
   const line = (r.stdout ?? "").split("\n").find((l) => l.startsWith("Q1 ")) ?? "";
   ok(/calls 1 \(studio_now\)/.test(line), `${provider}: the CLI's tools/list and studio_now are answered while the eval waits on it (not blocked by a sync spawn)`, `${line} ${(r.stderr ?? "").slice(-400)}`);
-  ok(/refs room:PR-0123456789ab-1645 room:PR-0123456789ab-1645$/.test(line), `${provider}: the eval reads the answer's refs without the CJK punctuation or backtick after them`, line);
+  ok(/refs room:PR-0123456789ab-1645 room:PR-0123456789ab-1645 room:PR-0123456789ab-1645$/.test(line), `${provider}: the eval reads the answer's refs without the CJK punctuation, backtick or markdown bold after them`, line);
 }
 end();
