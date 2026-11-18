@@ -80,7 +80,9 @@ ok(r.proxyNoCred !== undefined && r.proxyNoCred !== 407, "the admitted round's s
   ok(/^HTTP\/1.1 407/.test(reply), "the central trusted proxy still rejects a request without its upstream credential");
 }
 { const { isCredentialName } = await import("../src/secure");
-  const creds = (r.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY|TOKEN|SECRET/.test(k)).sort();
+  // CLAUDE_CODE_MAX_OUTPUT_TOKENS is Studio's output cap for the CLI (a number, no credential), so it is set apart
+  const creds = (r.envKeys ?? []).filter((k: string) => k !== "CLAUDE_CODE_MAX_OUTPUT_TOKENS" && (isCredentialName(k) || /KEY|TOKEN|SECRET/.test(k))).sort();
+  ok((r.envKeys ?? []).includes("CLAUDE_CODE_MAX_OUTPUT_TOKENS"), "the sandboxed round's CLI gets Studio's output cap (CLAUDE_CODE_MAX_OUTPUT_TOKENS)", JSON.stringify(r.envKeys));
   ok(JSON.stringify(creds) === JSON.stringify(["CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR", "CREW_TOOL_TOKEN_FILE"]) && r.apiKey === API_KEY && r.oauth === null && /^http:\/\/127\.0\.0\.1:\d+$/.test(r.proxyEnv ?? ""),
     "the round's env holds only its API key's descriptor and a PATH to its tool token (never either value itself, which KERN_PROCARGS2 would expose): no GitHub token, no other key from Studio's environment; its traffic goes to the proxy", JSON.stringify([creds, r.apiKey === API_KEY]));
   ok(!(r.envKeys ?? []).includes("CREW_TOOL_TOKEN") && r.toolTokenEnv == null && r.toolTokenFileIsPath === true, "the tool token is not anywhere in the round's environment; CREW_TOOL_TOKEN_FILE names a 0600 file, and the token lives only there", JSON.stringify([r.toolTokenEnv, r.toolTokenFileIsPath])); }
@@ -122,7 +124,7 @@ ok(!existsSync(join(data, "rounds", job.id, "home")) && egress.status().rounds =
   const a = await agents.run({ kind: "t", title: "own account", system: "s", text: `PROBE ${JSON.stringify(ap)}`, tools: [], provider, timeoutMs: 30000, sandbox: { writes: [wt], cwd: wt } });
   let o: any = {}; try { o = JSON.parse(a.said); } catch {}
   process.env.ANTHROPIC_API_KEY = before; process.env.CREW_CLAUDE_BILLING = "api-key";
-  const { isCredentialName } = await import("../src/secure"); const creds = (o.envKeys ?? []).filter((k: string) => isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k)).sort();
+  const { isCredentialName } = await import("../src/secure"); const creds = (o.envKeys ?? []).filter((k: string) => k !== "CLAUDE_CODE_MAX_OUTPUT_TOKENS" && (isCredentialName(k) || /KEY$|TOKEN|SECRET/.test(k))).sort();
   ok(a.status === "done" && o.home !== realHome && /\/rounds\/J\w+\/home$/.test(o.home ?? "") && JSON.stringify(creds) === JSON.stringify(["CREW_TOOL_TOKEN_FILE"]) && o.oauth === null && o.apiKey === null && !o.envKeys.includes("CLAUDE_CONFIG_DIR") && o.envKeys.includes("USER"),
     "on the captain's own sign-in the round runs in a throwaway home with no CLAUDE_CONFIG_DIR and the login user (the CLI finds its own keychain item), and Studio hands it no credential", JSON.stringify([a.error, o.home, creds]));
   ok(Object.values(o.accountWrites ?? { x: true }).every((v) => v === false) && Object.values(o.accountReads ?? { x: true }).every((v) => v === false) && !existsSync(join(C, "settings.json")), "none of the captain's Claude files is readable or writable (not ~/.claude, not ~/.claude.json), and no other keychain", JSON.stringify([o.accountWrites, o.accountReads]));

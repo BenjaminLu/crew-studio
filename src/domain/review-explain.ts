@@ -28,7 +28,7 @@
 //   data/review-room-explain-prompts.json the last instructions ("What should it produce?") each skill ran with: the prefill
 //   ledger: review-room-explain           each run: subject, skill pin, provider, model, rounds (jobs), cost, status, version
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { folderTools, insideDir, type AgentTool } from "../agent";
@@ -59,6 +59,8 @@ What you have:
 - The skill's own supporting files, read-only: skill_list, skill_read, skill_search.
 - Your output folder: out_list, out_read, out_search, out_write, out_replace (text files) and out_write_base64 (a picture or a
   video: .png .jpg .gif .webp .mp4 .webm).
+- Write a big file in parts: out_write its first part, then out_write with append: true for each next part. Never one giant
+  write: a reply has an output limit, and a write cut at that limit is lost.
 - explain_progress {text}: one short line on what you are doing now. The captain sees it live; send one at each step.
 - The skill's own scripts, when the first message lists them: skill_run {script, args, timeout_s} runs one in Studio's sandbox.
   Its working folder is your output folder (relative paths land there); it reads the materials, the skill's files ($SKILL_DIR)
@@ -112,8 +114,8 @@ type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running"
   prepare?: { state: "running" | "done" | "failed"; at: string; reasons?: { en: string; zh: string }[] };
   /** why it stopped or failed, as a code the page words in the captain's language (stop / error keep Studio's English detail) */
   /** a stalled run: how many rounds in a row left the output unchanged */
-  stalled?: number;
-  why?: "captain" | "cancelled" | "limit" | "interrupted" | "closed" | "admission" | "provider" | "stalled" | "entry" | "error" | "start" | "prepare";
+  stalled?: number; /** rounds in a row cut at the model's output limit, when that stopped the run */ cut?: number;
+  why?: "captain" | "cancelled" | "limit" | "interrupted" | "closed" | "admission" | "provider" | "outputLimit" | "stalled" | "entry" | "error" | "start" | "prepare";
   from: number | null; version: number | null; question?: string; selection?: Selection | null; answer?: string; cites?: string[]; summary?: string; auto?: boolean;
   /** a generation's: what the captain asked this output to contain ("" = the skill's own default), trusted, part of the confirmation */
   prompt?: string };
@@ -153,6 +155,8 @@ export const LIMIT_RANGE = { min: 1, max: 24 * 60 } as const;
 /** one round's own time limit (within what is left of the run's) and tool budget: a round is long, never the whole run */
 const ROUND_MS = () => { const v = Number(process.env.CREW_REVIEW_EXPLAIN_ROUND_MS); return Number.isFinite(v) && v > 0 ? v : 25 * 60_000; };
 /** how many rounds in a row may leave the output folder (its notes included) exactly as it was before Studio stops the run */
+/** rounds in a row that may end at the model's output limit before Studio stops the run */
+const OUTPUT_LIMIT_ROUNDS = 2;
 const STALL_ROUNDS = () => { const v = Number(process.env.CREW_REVIEW_EXPLAIN_STALL_ROUNDS); return Number.isInteger(v) && v >= 1 ? v : 3; };
 const ROUND_TOOLS = () => { const v = Number(process.env.CREW_REVIEW_EXPLAIN_ROUND_TOOLS); return Number.isFinite(v) && v > 0 ? v : 400; };
 const MAT_BYTES = { diff: 3_000_000, file: 300_000, files: 3_000_000 };
@@ -493,7 +497,11 @@ export function installExplainer(d: ExplainerDeps) {
     const ro = (dir: string, prefix: string) => folderTools(dir, () => {}, prefix).filter((t) => /_(list|read|search)$/.test(t.name));
     const size = () => filesOf(ws.out).reduce((n, f) => n + f.bytes, 0);
     // every write into the output folder counts against one cap (60 MB), the text tools too
-    const out = folderTools(ws.out, () => {}, "out").map((t) => !/_(write|replace)$/.test(t.name) ? t : { ...t, run: (a: any) => { const add = Buffer.byteLength(String(a?.content ?? a?.new ?? ""));
+    // out_write with append: true adds to the end of a text file (a big file is written in parts, never in one reply)
+    const out = folderTools(ws.out, () => {}, "out").map((t) => t.name !== "out_write" ? t : { ...t, description: "Write a whole text file (creates folders as needed). With append: true, add the content to the end of the file instead (created when missing): write a big file in several parts.",
+      schema: { ...t.schema, properties: { ...(t.schema as any).properties, append: { type: "boolean" } } },
+      run: (a: any) => { if (a?.append !== true) return t.run(a); const p = insideDir(ws.out, a.path, true), c = String(a.content ?? ""); if (c.length > 600_000) return { error: "content too large" };
+        if (existsSync(p) && !lstatSync(p).isFile()) return { error: `not a file: ${a.path}` }; mkdirSync(dirname(p), { recursive: true }); appendFileSync(p, c); return { ok: true, appended: Buffer.byteLength(c) }; } }).map((t) => !/_(write|replace)$/.test(t.name) ? t : { ...t, run: (a: any) => { const add = Buffer.byteLength(String(a?.content ?? a?.new ?? ""));
       if (size() + add > OUT_CAP()) return { error: "the output folder is full (60 MB)" }; return t.run(a); } });
     const save = () => write(k, read(k));
     return [...ro(ws.mat, "mat"), ...ro(ws.skill, "skill"), ...out, ...extra,
@@ -531,8 +539,9 @@ export function installExplainer(d: ExplainerDeps) {
           sel.headings?.length ? `Headings: ${untag(sel.headings.join(" › "))}` : "", sel.nodes?.length ? `Figure elements: ${untag(sel.nodes.join(", "))}` : "", sel.text ? `Text: ${untag(sel.text)}` : "", "</selection>"].filter((x) => x !== "").join("\n") : "",
         "", "Answer with explain_answer. Change the output first when the answer is better shown there (updated: true)."].join("\n"),
   ].join("\n");
-  const nextPrompt = (run: XRun, n: number, last: string, files: string[]) => [run.kind === "generate" ? "ROOM EXPLAIN (continued)" : "ROOM EXPLAIN ASK (continued)",
+  const nextPrompt = (run: XRun, n: number, last: string, files: string[], cut = false) => [run.kind === "generate" ? "ROOM EXPLAIN (continued)" : "ROOM EXPLAIN ASK (continued)",
     `Round ${n}. Your previous round ended before ${run.kind === "generate" ? "explain_done" : "explain_answer"}. There is no round cap: carry on until you are satisfied.`,
+    cut ? "Your last reply was cut at the model's output limit, so its last tool call was lost. Write large files in several smaller writes: out_write the first part, then out_write with append: true for each next part. Check with out_list or out_read what is really there before you go on." : "",
     `Files in your output folder: ${files.length ? files.slice(0, 80).join(", ") : "(none)"}. Your notes, if you kept them: out/.notes.md.`,
     run.progress.length ? `What you reported so far: ${run.progress.slice(-8).map((p) => p.text).join(" · ")}` : "",
     last ? ["Your last message:", "<previous>", untag(clip(last, 3000)), "</previous>"].join("\n") : "",
@@ -541,7 +550,7 @@ export function installExplainer(d: ExplainerDeps) {
   /** one run: rounds until the skill says it is done, the captain stops it, the time limit passes, or it stalls */
   async function loop(k: any, s: any, room: any, run: XRun, adm: any, ws: Ws, skillFiles: string[], from: XVersion | null, plan: Plan | null) {
     const st = read(k), live = running.get(k.id)!, end: { done?: any; answer?: any } = {}, deadline = Date.parse(run.at) + run.limitMin * 60_000;
-    let subj: any = { kind: k.kind, room: k.id, head: s.head, base: s.base }, stalled = 0, last = "";
+    let subj: any = { kind: k.kind, room: k.id, head: s.head, base: s.base }, stalled = 0, last = "", cut = 0;
     const save = () => write(k, st);
     try {
       subj = d.subjectRecord(k, s, room);
@@ -567,7 +576,7 @@ export function installExplainer(d: ExplainerDeps) {
         // each round is its own job with its own staffing receipt (the first was issued at admission)
         let receipt: unknown; try { receipt = n === 1 ? adm.admissionReceipt : adm.receipt(adm.rules); } catch (e: any) { Object.assign(run, { status: "failed", error: `the round could not be admitted: ${clip(e?.message ?? e, 300)}`, why: "admission" }); break; }
         const before = outSig(ws.out), round: Round = { n, job: null, status: "running", tools: 0, cost: null, at: now(), ended: null, error: null }; run.rounds.push(round); save(); d.notify(k);
-        const text = n === 1 ? firstPrompt(k, run, mats, skillFiles, subj, from, run.selection ?? null, scriptLine(plan, ws)) : nextPrompt(run, n, last, filesOf(ws.out).map((f) => f.path));
+        const text = n === 1 ? firstPrompt(k, run, mats, skillFiles, subj, from, run.selection ?? null, scriptLine(plan, ws)) : nextPrompt(run, n, last, filesOf(ws.out).map((f) => f.path), cut > 0);
         const job: any = await engine.deps.agents.run({ kind: "review-room-explain", title: `${s.run.id} review room ${k.id} · ${run.skill.id} ${run.kind} ${run.n} · round ${n}`, system: adm.system, text,
           tools: tools(k, run, ws, end, scriptTools(k, s, run, ws, plan, round)), provider: adm.provider, ref: s.run.id, admissionReceipt: receipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal,
           owns: () => engine.owns(adm.x) && k.open() && !live.stop, ...(adm.held ? { auxOwner: adm.x } : {}), project: s.run.params?.project || null, rules: adm.rules,
@@ -579,9 +588,13 @@ export function installExplainer(d: ExplainerDeps) {
         run.cost = addCost(run.cost, job.cost); last = String(job.answer ?? "").trim();
         if (end.done || end.answer) { run.status = "done"; break; }
         if (live.stop || job.status === "cancelled") { Object.assign(run, { status: "stopped", stop: live.stop ?? "cancelled", why: live.stop ? "captain" : "cancelled" }); break; }
+        // a reply cut at the model's output limit is no provider failure: the next round is told to write in parts; the same
+        // cut OUTPUT_LIMIT_ROUNDS rounds in a row stops the run
+        const atLimit = job.status === "failed" && job.errorCode === "outputLimit"; cut = atLimit ? cut + 1 : 0;
+        if (cut >= OUTPUT_LIMIT_ROUNDS) { Object.assign(run, { status: "failed", error: clip(job.error, 1200), why: "outputLimit", cut }); break; }
         // a provider that refused or failed (not signed in, out of quota, its CLI broke) ends the run; a round that only ran out of
-        // its own time or tool budget is followed by the next one
-        if (job.status === "failed" && !/^no result within|tool limit/.test(String(job.error ?? ""))) { Object.assign(run, { status: "failed", error: clip(job.error, 500), why: "provider" }); break; }
+        // its own time or tool budget, or was cut at the output limit, is followed by the next one
+        if (job.status === "failed" && !atLimit && !/^no result within|tool limit/.test(String(job.error ?? ""))) { Object.assign(run, { status: "failed", error: clip(job.error, 1200), why: "provider" }); break; }
         stalled = before === outSig(ws.out) ? stalled + 1 : 0;
         if (stalled >= STALL_ROUNDS()) { Object.assign(run, { status: "failed", error: `${stalled} rounds in a row left the output unchanged: Studio stopped the run`, why: "stalled", stalled }); break; }
         save(); d.notify(k);

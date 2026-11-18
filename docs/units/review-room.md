@@ -768,13 +768,18 @@ The room can be presented by one of the captain's own skills instead of the tuto
   1440 minutes, default 120, `CREW_REVIEW_EXPLAIN_LIMIT_MIN`; also shown and editable in the confirmation), the provider
   fails (not signed in, out of quota), or three rounds in a row leave the output folder exactly as it was, its notes included,
   whatever tools they call (stalled: never an endless paid loop; `CREW_REVIEW_EXPLAIN_STALL_ROUNDS`). There is no cost cap. A round's own time is 25 minutes (`CREW_REVIEW_EXPLAIN_ROUND_MS`) and 400 tool calls
-  (`CREW_REVIEW_EXPLAIN_ROUND_TOOLS`); running out of either only starts the next round.
+  (`CREW_REVIEW_EXPLAIN_ROUND_TOOLS`); running out of either only starts the next round. A round whose reply was cut at the
+  model's output limit (the provider's `outputLimit`, no refusal: readiness stays) is no provider failure either: the next
+  round is told its last call was lost and to write big files in parts (`out_write` with `append: true`); two such rounds in
+  a row stop the run (`why: outputLimit`). A Claude round runs with a 64000-token output cap
+  (`CREW_CLAUDE_MAX_OUTPUT_TOKENS`, 4000 to 128000, handed to the CLI as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`).
 - **Materials, read once, read-only**, into the run's workspace (`materials/`): the pull request's title and description,
   the diff base..head (3 MB at most), the diffstat, the commits with their messages, the head of every changed text file
   (300 KB each, 3 MB in all), reviews and comments, check runs and commit statuses at the head and the issues the
   description links (GitHub GET only, when the room's repository is a connected project; the adapter's new `issue` read is
   one issue by number). A README lists them and says which text is untrusted; untrusted text is fenced. The skill reads them
-  with `mat_list/mat_read/mat_search`, its own supporting files with `skill_*` (a copy), and writes only `out/` (`out_*`,
+  with `mat_list/mat_read/mat_search`, its own supporting files with `skill_*` (a copy), and writes only `out/` (`out_*`;
+  `out_write` with `append: true` adds to the end of a text file,
   `out_write_base64` for a picture or a video; every write counts against one 60 MB cap, `CREW_REVIEW_EXPLAIN_OUT_BYTES`,
   a script's included). The diff is fenced as untrusted; the head files are kept as the author wrote them, line for line (citations need their
   lines), except that a `<captain-instructions` or `<untrusted` in them is neutralised (above),
