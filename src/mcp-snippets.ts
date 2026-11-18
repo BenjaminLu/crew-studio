@@ -31,6 +31,7 @@ export function clientSnippets(helper: string[], plugin?: { grantFile: string; u
   ];
 }
 /** The plug-in's server (plugins/crew-studio/.mcp.json): a resolver that needs nothing on PATH. CREW_STUDIO_BIN (the binary)
- *  or CREW_STUDIO_SRC (a checkout, run with bun) say where Studio is; `crew-studio` on PATH also works; else it says so. */
+ *  or CREW_STUDIO_SRC (a checkout, run with bun) say where Studio is; `crew-studio` on PATH also works; else it says so.
+ *  env_vars: Codex starts a plug-in's server with a clean environment and passes on only the variables named here. */
 export const PLUGIN_SERVER = { type: "stdio", command: "sh", args: ["-c",
-  'if [ -n "$CREW_STUDIO_BIN" ]; then exec "$CREW_STUDIO_BIN" mcp; elif [ -n "$CREW_STUDIO_SRC" ]; then exec bun "$CREW_STUDIO_SRC/src/mcp.ts"; elif command -v crew-studio >/dev/null 2>&1; then exec crew-studio mcp; else echo "crew-studio mcp: Studio not found: set CREW_STUDIO_BIN to the Studio binary or CREW_STUDIO_SRC to a checkout (the grant dialog Plug-in tab shows both)" >&2; exit 127; fi'] };
+  'if [ -n "$CREW_STUDIO_BIN" ]; then exec "$CREW_STUDIO_BIN" mcp; elif [ -n "$CREW_STUDIO_SRC" ]; then exec bun "$CREW_STUDIO_SRC/src/mcp.ts"; elif command -v crew-studio >/dev/null 2>&1; then exec crew-studio mcp; else echo "crew-studio mcp: Studio not found: set CREW_STUDIO_BIN to the Studio binary or CREW_STUDIO_SRC to a checkout (the grant dialog Plug-in tab shows both)" >&2; exit 127; fi'], env_vars: ["CREW_STUDIO_GRANT_FILE", "CREW_STUDIO_URL", "CREW_STUDIO_BIN", "CREW_STUDIO_SRC"] };

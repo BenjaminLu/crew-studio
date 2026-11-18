@@ -91,6 +91,7 @@ try {
     "the plug-in: Claude Code and Codex manifests, its .mcp.json, the marketplace entry", J({ plug, codexManifest }));
   // the plug-in tab's export lines, as a shell would set them, start the resolver with no crew-studio on PATH
   const exported = Object.fromEntries(all.at(-1)!.config.trim().split("\n").map((l) => { const m = /^export (\w+)=(.*)$/.exec(l)!; return [m[1], words(m[2])[0]]; }));
+  ok(Object.keys(exported).every((k) => (plug.env_vars ?? []).includes(k)) && ["CREW_STUDIO_BIN", "CREW_STUDIO_SRC"].every((k) => plug.env_vars.includes(k)), "Codex starts a plug-in server with a clean environment: env_vars names every variable the resolver reads", J(plug.env_vars));
   ok(exported.CREW_STUDIO_GRANT_FILE === grantFile && exported.CREW_STUDIO_URL === base && exported.CREW_STUDIO_SRC === REPO, "the plug-in tab exports the grant file, Studio's address and where Studio is", J(exported));
   const noPath = { PATH: "/usr/bin:/bin:" + dirname(process.execPath) };
   const viaEnv = await connectAndUse("the plug-in's server, from its tab's exports (no crew-studio on PATH)", { command: plug.command, args: plug.args }, { ...noPath, ...exported });

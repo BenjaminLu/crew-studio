@@ -6,6 +6,12 @@
       "args": [
         "-c",
         "if [ -n \"$CREW_STUDIO_BIN\" ]; then exec \"$CREW_STUDIO_BIN\" mcp; elif [ -n \"$CREW_STUDIO_SRC\" ]; then exec bun \"$CREW_STUDIO_SRC/src/mcp.ts\"; elif command -v crew-studio >/dev/null 2>&1; then exec crew-studio mcp; else echo \"crew-studio mcp: Studio not found: set CREW_STUDIO_BIN to the Studio binary or CREW_STUDIO_SRC to a checkout (the grant dialog Plug-in tab shows both)\" >&2; exit 127; fi"
+      ],
+      "env_vars": [
+        "CREW_STUDIO_GRANT_FILE",
+        "CREW_STUDIO_URL",
+        "CREW_STUDIO_BIN",
+        "CREW_STUDIO_SRC"
       ]
     }
   }
