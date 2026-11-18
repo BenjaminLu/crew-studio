@@ -13,7 +13,7 @@
 window.crewReviewBoard = (D) => {
 const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual } = D;
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody } = D;
 /** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
  *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
 const isLesson = (x) => !!(x?.chapter && x.t?.action === "teach" && x.t.status === "done");
@@ -153,7 +153,7 @@ function regionEl(card, r, x, j, nth, ctx) {
   const gist = plain(x.points[0]?.text || x.title || "");
   return h("section", { class: `rb-region${seen ? "" : " unvisited"}${ths.length ? " hasq" : ""}${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-report-section": key, "data-chapter": ch, "data-turn": x.turn, "data-open": open, "data-done": done, id: `rp-${card}-${key}`, "aria-label": `${String(j + 1).padStart(2, "0")} ${chapterName(ch)}` },
     h("div", { class: "rb-rtitle" }, h("b", {}, String(j + 1).padStart(2, "0")), h("span", {}, chapterName(ch)), ths.length ? h("button", { type: "button", class: "rb-cnt", "data-region-questions": key, title: T("Read them in the conversation", "在問答欄裡看"), onclick: (e) => { e.stopPropagation(); showConv(card, key); } }, T(`${ths.length} question${ths.length === 1 ? "" : "s"}`, `${ths.length} 個問題`), open ? h("i", {}, T(` · ${open} not understood`, ` · 未解 ${open}`)) : null) : null),
-    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, absorbed), illus),
+    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, sceneBody(card, x), absorbed), illus),
       // far away: only the chapter's number, its title, one line and its questions
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, String(j + 1).padStart(2, "0")), h("div", { class: "rb-mt" }, chapterName(ch)), h("div", { class: "rb-mg", "data-map-gist": "" }, gist),
         h("div", { class: "rb-mq" }, h("span", { class: "rb-badge q", "data-map-open": open }, T(`${open} not understood`, `未解 ${open}`)), h("span", { class: "rb-badge ok", "data-map-done": done }, T(`${done} understood`, `懂了 ${done}`)))),
@@ -479,18 +479,19 @@ function moveCam(card, to, glide = true) {
 /** where the camera's lock says it should be: its region, its focused question, or the whole board (or its asked chapters) */
 function lockTarget(card) { const lock = B.lock.get(card), L = B.L.get(card); if (!lock || !L) return null;
   return lock.region ? regionCam(card, lock.region) : lock.focus != null ? focusCam(card, lock.focus) : lock.all ? (() => { const ks = B.only.has(card) ? Object.keys(L.R).filter((k) => L.q[k]) : []; return frameRect(card, bounds(card, ks.length ? ks : null), 1, 0.94); })() : null; }
-/** a region at a readable scale: its text at 88% or more on a desktop (its answers are read in the conversation pane, so the camera
- *  frames the chapter alone); its column filling a phone's width */
+/** a region whole at a readable scale: the camera frames the chapter alone (its answers are read in the conversation pane); a
+ *  drawing's chapter is never wider than the board shows at 0.92 (regionMax), so this is 0.9 or more by default, and 0.7 at the
+ *  least when the captain widens the pane; its column filling a phone's width */
 function regionCam(card, key) {
   const L = B.L.get(card), vp = vpOf(card), r = L?.R[key]; if (!r || !vp) return null; const W = vp.clientWidth;
   if (phone()) { const s = clamp((W - 24) / r.W, 0.5, 1.15); return { s, x: (W - r.W * s) / 2 - r.x * s, y: 44 - (r.y - 34) * s }; }
-  const avail = W - 32, want = r.W, s = clamp(avail / want, 0.88, 1), vis = Math.min(want, avail / s);
+  const avail = W - 32, want = r.W, s = clamp(avail / want, 0.7, 1), vis = Math.min(want, avail / s);
   return { s, x: 16 + (avail - vis * s) / 2 - r.x * s, y: 56 - (r.y - 34) * s };
 }
 function bounds(card, keys) { const L = B.L.get(card); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const k of keys || Object.keys(L?.R || {})) { const r = L.R[k]; if (!r) continue; x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y - 40); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }; }
-function frameRect(card, b, maxS = 1, pad = 0.92) { const vp = vpOf(card); if (!vp || !isFinite(b.w)) return null; const top = 44, W = vp.clientWidth, H = vp.clientHeight - top, s = Math.min(W * pad / b.w, H * pad / b.h, maxS);
+function frameRect(card, b, maxS = 1, pad = 0.92) { const vp = vpOf(card); if (!vp || !isFinite(b.w)) return null; const top = 44, W = vp.clientWidth, H = vp.clientHeight - top, s = Math.max(0.1, Math.min(W * pad / b.w, H * pad / b.h, maxS));
   return { s, x: W / 2 - (b.x + b.w / 2) * s, y: top + H / 2 - (b.y + b.h / 2) * s }; }
 /** full screen (review-room.js FS): the viewport's size before a change of size, then the camera re-fitted to the new one. A
  *  locked camera aims at its region again (after() already did, on the redraw); one moved by hand keeps the same middle */

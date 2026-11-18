@@ -152,19 +152,20 @@ try {
   // pane); the zoom row and the play bar never overlap ----------
   for (const width of [1280, 1440, 1920]) {
     const { ctx, p } = await open("board", width);
-    const v = await p.evaluate(() => { const id = "SC-60", B = window.crewReviewRoom.board, L = B.layoutOf(id), cur = document.querySelector("[data-board]").dataset.scene, r = L.R[cur], cam = B.camOf(id);
+    const look = () => p.evaluate(() => { const id = "SC-60", B = window.crewReviewRoom.board, L = B.layoutOf(id), cur = document.querySelector("[data-board]").dataset.scene, r = L.R[cur], cam = B.camOf(id);
       const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), inside = (b) => b.left >= vp.left - 1 && b.right <= vp.right + 1;
       const sl = vp.left + cam.x + r.x * cam.s, sc = { left: sl, right: sl + r.W * cam.s };
       const pl = document.querySelector(".rb-play")?.getBoundingClientRect(), zm = document.querySelector(".rb-zoom")?.getBoundingClientRect();
       const meet = pl && zm && !(pl.right <= zm.left || zm.right <= pl.left || pl.bottom <= zm.top || zm.bottom <= pl.top);
-      return { cur, s: cam.s, scene: inside(sc), meet, pane: document.querySelectorAll("[data-board-notes] .rb-card").length }; });
+      return { cur, s: cam.s, scene: inside(sc), meet, vp: Math.round(vp.width), pane: document.querySelectorAll("[data-board-notes] .rb-card").length }; });
+    const v = await look();
     ok(v.scene && v.s >= 0.88 && v.pane > 0, `board at ${width}: the chapter is whole on the canvas at 0.88 or more, its answers in the pane`, JSON.stringify(v));
     ok(!v.meet, `board at ${width}: the zoom row and the play bar do not overlap`, JSON.stringify(v));
-    // the conversation at its widest: the board keeps 560 px, and its controls still do not overlap
-    await p.focus(split("board")); await p.keyboard.press("Home"); await p.waitForTimeout(700);
-    const w2 = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").clientWidth, pl = document.querySelector(".rb-play")?.getBoundingClientRect(), zm = document.querySelector(".rb-zoom")?.getBoundingClientRect();
-      return { vp, meet: !!pl && !!zm && !(pl.right <= zm.left || zm.right <= pl.left || pl.bottom <= zm.top || zm.bottom <= pl.top) }; });
+    // the conversation at its widest: the board keeps 560 px, the chapter still whole, and its controls still do not overlap
+    await p.focus(split("board")); await p.keyboard.press("Home"); await p.waitForTimeout(800);
+    const w2 = await look();
     ok(w2.vp >= 556 && !w2.meet, `board at ${width}, the conversation at its widest: the board keeps 560 px and its zoom row clears the play bar`, JSON.stringify(w2));
+    ok(w2.scene && w2.s >= 0.7, `board at ${width}, the conversation at its widest: the chapter is still whole`, JSON.stringify(w2));
     await ctx.close();
   }
 

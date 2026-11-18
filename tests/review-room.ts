@@ -120,6 +120,9 @@ const scripted = (id: string, model: string) => ({ id, model, sandboxFree: true,
     yield { type: "turnEnd", status: "ok", usage: { usd: 0.02, inTokens: 10, outTokens: 5 } } as any; } }; } });
 const baseProvider = E.deps.provider; E.deps.provider = (id?: string, model?: string) => id === "tutor" || id === "codex" ? scripted(id, model ?? "") : baseProvider(id, model);
 const runArgs: any[] = []; const baseRun = E.deps.agents.run.bind(E.deps.agents); E.deps.agents.run = (o: any) => { if (o.kind === "review-room") runArgs.push(o); return baseRun(o); };
+// a scene's full explanation, long (a translation sends it in jobs of its own, after the titles and points)
+const SMALLBODY = "The test pins the rounding [diff:test/percent.test.ts].";
+const BIGBODY = Array.from({ length: 180 }, (_, i) => `Part ${i + 1}: percent multiplies, then rounds half up [diff:src/percent.ts:L2-3].`).join("\n\n");
 const MDN = "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/round";
 script.push([
   ["say", "Let me look at the diff first."], // a preamble streamed as deltas only, then a tool call: not the answer
@@ -159,7 +162,7 @@ script.push([
   ["scene_show", { chapter: "what", title: "Rounding", picture: "B9-9", points: [{ text: "Only one." }] }],
   ["scene_show", { chapter: "what", title: "Rounding", picture: "B1-1", points: [{ text: "a".repeat(121) }, { text: "Two." }] }],
   ["scene_show", { chapter: "what", title: "四捨五入", picture: "B1-1", points: [{ text: "金".repeat(61) }, { text: "Two." }] }],
-  ["scene_show", { chapter: "what", title: "金".repeat(20), picture: "B1-2", points: [{ text: `${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, cites: ["diff:src/percent.ts:L2-3"] }, { text: "a".repeat(120), cites: ["diff:src/percent.ts"] }, { text: "It was probably for invoices." }] }],
+  ["scene_show", { chapter: "what", title: "金".repeat(20), picture: "B1-2", body: BIGBODY, points: [{ text: `${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, cites: ["diff:src/percent.ts:L2-3"] }, { text: "a".repeat(120), cites: ["diff:src/percent.ts"] }, { text: "It was probably for invoices." }] }],
   // a lesson, chapter by chapter: per-item figures from one layout, a state machine, a sequence; chapters in order, risks cited
   ["board_draw", { items: [{ type: "item", title: "Rounding", name: "percent()", before: "Fractions of a cent kept", after: "Rounded to the cent", mechanism: "Math.round", cites: ["diff:src/percent.ts:L2-3"] },
     { type: "item", title: "Tests", name: "percent.test.ts", before: "No test of rounding", after: "1999 at 15% pinned to 300", cites: ["diff:test/percent.test.ts"] },
@@ -175,8 +178,9 @@ script.push([
   ["scene_show", { chapter: "lifecycle", title: "An invoice", picture: "B1-17", points: [{ text: "Draft, priced, paid.", cites: [] }, { text: "Pricing rounds [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }] }],
   ["scene_show", { chapter: "sequence", title: "Pricing a line", picture: "B1-18", points: [{ text: "Each line is rounded once.", cites: [] }, { text: "The result goes back [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }] }],
   ["scene_show", { chapter: "watch", title: "What to watch", picture: "B1-15", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "Users may notice.", cites: [] }] }],
-  ["scene_show", { chapter: "watch", title: "What to watch", picture: "B1-15", points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "The test pins it [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }] }],
+  ["scene_show", { chapter: "watch", title: "What to watch", picture: "B1-15", body: SMALLBODY, points: [{ text: "Halves round up [diff:src/percent.ts:L2-3].", cites: ["diff:src/percent.ts:L2-3"] }, { text: "The test pins it [diff:test/percent.test.ts].", cites: ["diff:test/percent.test.ts"] }] }],
   ["scene_show", { chapter: "what", title: "Too late", picture: "B1-1", points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }] }],
+  ["lesson_check", { complete: true }],
   ["say", `## Overview\n\nThe change adds \`percent\`, which rounds to the cent [diff:src/percent.ts:L2-3].\n\nIt was probably added for invoices.\n\n- The test pins the rounding [ledger:#${ledgerSeq}]\n- An old commit explains it [commit:deadbeef]\n\nThe sketch shows the rounding [board:B1-11].\n\n| case | cents |\n|---|---|\n| 1999 at 15% | 300 [diff:src/percent.ts:L2-3] |\n\nWant me to go deeper?`]]);
 // the renderer's captures for this head (the Task's capture check makes them; stubbed here) and the image generator, stubbed
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -274,7 +278,7 @@ ok(find(/Overview/)?.kind === "heading" && find(/deeper/)?.kind === "aside", "he
     ok(item?.name === "percent()" && item.basis === "cited" && states?.transitions.length === 2 && states.transitions[0].cite.ok === true && /s_draft -->\|price\| s_priced/.test(states.code) && seq?.steps[1].frame === "loop" && seq.steps[2].kind === "return" && /item 5: name is 1 to 33/.test(figs?.errors[0] ?? ""),
       "per-item figures, a state machine (every transition, each cited) and a sequence (its loop kept) are board items Studio draws; a label too long for the layout is refused", JSON.stringify({ item, figs: figs?.errors })); }
   const tbl = board.find((b) => b.type === "table"), bd = results.filter(([n]) => n === "board_draw")[1]?.[1];
-  ok(tbl && JSON.stringify(tbl.rows) === JSON.stringify([["amount", "15%"], ["1999", "300"], ["1000", "150"]]) && tbl.basis === "cited" && /a table is 2 to 8 rows/.test(bd.errors[0]), "a table is a board item of text cells (a number becomes text); one too wide is refused", JSON.stringify({ tbl, bd }));
+  ok(tbl && JSON.stringify(tbl.rows) === JSON.stringify([["amount", "15%"], ["1999", "300"], ["1000", "150"]]) && tbl.basis === "cited" && /a table is 2 to 30 rows/.test(bd.errors[0]), "a table is a board item of text cells (a number becomes text); one too wide is refused", JSON.stringify({ tbl, bd }));
   ok(claims.some((c) => c.kind === "table" && /1999 at 15%/.test(c.text)) && !claims.some((c) => c.kind === "claim" && /^\s*\|/.test(c.text)), "a markdown table in an answer is not a claim: the board shows it as a table", JSON.stringify(claims.map((c) => c.kind))); }
 const cDiff: any = await room.cite(merge.id, "diff:src/percent.ts:L2-3"), cLedger: any = await room.cite(merge.id, `ledger:#${ledgerSeq}`), cSource: any = await room.cite(merge.id, "source:8");
 let badCite = ""; try { await room.cite(merge.id, "diff:README.md"); } catch (e: any) { badCite = e.code; }
@@ -384,16 +388,27 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   ok(runArgs.length === runs0 + 1 && trArgs.tools.length === 0 && /translation/.test(trArgs.title) && /TRANSLATION ONLY/.test(prompts.at(-1)!.text) && !/THE DIFF/.test(prompts.at(-1)!.text), "the translation round gets no tool and no code: only the room's text", JSON.stringify({ tools: trArgs.tools.length, title: trArgs.title }));
   ok(!v1.translations.en?.["1"] && JSON.stringify(v1.translating.dropped) === "[1]" && v1.translate.confirmed === true, "a translation that lost a citation is not kept: the validator drops it and the original shows", JSON.stringify(v1.translating));
   figs = { "B1-20": ["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"], "B1-15": ["only one word"] };
-  script.push([["msg", tr("Rounded to the cent [diff:src/percent.ts:L2-3]")]]);
-  await room.translate(merge.id, { lang: "en" }, "captain"); await room.settle(merge.id);
-  const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"];
+  // the titles and points come back whole; then the bodies, in two chunks (the long one alone): the long one comes back whole
+  // with every citation and is kept, the short one without its citation and stays as written
+  const bigScene = t1o.scenes.findIndex((x: any) => x.body === BIGBODY), smallScene = t1o.scenes.findIndex((x: any) => x.body === SMALLBODY), BIG_EN = BIGBODY.replace(/rounds half up/g, "rounds halves up");
+  const bodyReply = JSON.stringify({ bodies: [{ n: 1, m: bigScene, body: BIG_EN }, { n: 1, m: smallScene, body: "Lost its citation." }] });
+  script.push([["msg", tr("Rounded to the cent [diff:src/percent.ts:L2-3]")]], [["msg", bodyReply]], [["msg", bodyReply]]);
+  const pr0 = prompts.length, ra0 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain"); await room.settle(merge.id);
+  const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"], trMain = prompts[pr0]!, trBody = prompts[pr0 + 1];
+  ok(bigScene >= 0 && smallScene >= 0 && BIGBODY.length > 12_000 && need.offer.translate.jobs === 3 && !trMain.text.includes("Part 1: percent multiplies") && /Translate each scene body/.test(trBody?.text ?? "")
+    && runArgs.length === ra0 + 3 && /bodies 2/.test(runArgs.at(-1)?.title ?? "") && kept?.scenes[0].title === "Rounding to the cent" && v2.translating.status === "done",
+    "a scene's long body never rides in the translation of titles and points: the bodies go in jobs of their own after them, a chunk each (the long one alone), and the confirmation counted those paid jobs (3)", JSON.stringify({ bigScene, smallScene, jobs: need.offer.translate.jobs, bodies: v2.translating.bodies, title: kept?.scenes?.[0]?.title }));
+  ok(kept?.scenes[bigScene].body === BIG_EN && !kept.scenes[smallScene].body && v2.translating.bodies?.asked === 2 && v2.translating.bodies.kept === 1 && v2.translating.bodies.jobs.length === 2,
+    "a body that comes back whole with every citation is kept on its own scene (matched by turn and scene); one that lost its citation stays as written", JSON.stringify(v2.translating.bodies));
+  const { bodyChunks } = await import("../src/domain/review-room");
+  ok(JSON.stringify(bodyChunks([{ body: "a".repeat(8) }, { body: "b".repeat(8) }, { body: "c".repeat(30) }, { body: "d" }], 20).map((c: any[]) => c.length)) === "[2,1,1]", "bodies are sent in chunks within a budget, a longer one alone", "bodyChunks");
   ok(kept?.scenes[0].title === "Rounding to the cent" && kept.claims.length === blocks.length && /^EN /.test(kept.answer) && JSON.stringify(v2.translate.pending.en) === "[]" && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-translate" && e.data.lang === "en" && JSON.stringify(e.data.kept) === "[1]"),
     "confirmed once, the next translation runs without asking again; a valid one is kept per turn and language, and recorded", JSON.stringify(kept));
   { const { OperatingRules } = await import("../src/operating-rules"); const sec = new OperatingRules(data).section(E.get(r.id)?.params?.project || null);
     const trJob = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-translate").at(-1)?.data?.job;
-    ok(prompts.at(-1)!.system.includes(sec.text) && !!trJob && E.deps.agents.jobs.get(trJob)?.operatingRules?.hash === sec.hash && E.deps.agents.jobs.get(trJob)?.operatingRules?.project === (E.get(r.id)?.params?.project || null),
+    ok(trMain.system.includes(sec.text) && !!trJob && E.deps.agents.jobs.get(trJob)?.operatingRules?.hash === sec.hash && E.deps.agents.jobs.get(trJob)?.operatingRules?.project === (E.get(r.id)?.params?.project || null),
       "the translation's instructions carry the captain's operating rules for the Task's project too, and its job keeps their hash", JSON.stringify({ job: trJob })); }
-  ok(JSON.stringify(kept?.figures?.["B1-20"]) === JSON.stringify(["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"]) && !kept?.figures?.["B1-15"] && /figures/.test(prompts.at(-1)!.text) && prompts.at(-1)!.text.includes('"B1-20":["Who calls percent","Cart","percent()","Math","calls","rounds"]') && prompts.at(-1)!.text.includes('"B1-15":["Rounding","percent()","Fractions of a cent kept","Rounded to the cent","Math.round"]'),
+  ok(JSON.stringify(kept?.figures?.["B1-20"]) === JSON.stringify(["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"]) && !kept?.figures?.["B1-15"] && /figures/.test(trMain.text) && trMain.text.includes('"B1-20":["Who calls percent","Cart","percent()","Math","calls","rounds"]') && trMain.text.includes('"B1-15":["Rounding","percent()","Fractions of a cent kept","Rounded to the cent","Math.round"]'),
     "a translation carries the drawings' words too (asked in order, per drawing): a drawing whose words came back whole is kept, one with a missing word stays as drawn", JSON.stringify(kept?.figures));
   const runs1 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain");
   let over: any = null; { const { translationErrors } = await import("../src/domain/review-room"); over = translationErrors(t1o, { scenes: t1o.scenes.map((x: any, m: number) => m ? { title: x.title, points: x.points.map((q: any) => q.text) } : { title: "x".repeat(49), points: ["a", "b", "c"] }), claims: blocks, answer: t1o.answer }); }
