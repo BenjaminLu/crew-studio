@@ -138,6 +138,15 @@ try {
   ok(prodOf(d2)?.on === null && d2.tab === "merged" && J(pods(d2)["profile-service"]) === J([null, "latest"]), "none runs it and one service cannot be read: unknown, not off", J(d2?.envs));
   ok(prodOf(a2)?.on === true && a2.tab === "live", "one service that cannot be read does not undo another that runs the merge", J(a2?.envs));
   D.files[profile] = was;
+  // the release brief for #8 after storefront rolled out a newer tag carrying it (the list not refreshed since): no line
+  // moves storefront back to the older tag that carries #8; the services still on the old tag move to it
+  const carry = sha("mono-carry"), ahead = sha("mono-newer"), store = `${L.cfg}/deploy/storefront/overlays/cluster-prod/flux-patch.yaml`, storeWas = D.files[store];
+  D.tags["northwind/shop-monorepo"] = [{ name: "0.9.13", sha: carry }]; D.contains[carry] = [D.merge(pD)]; D.contains[ahead] = [D.merge(pD), carry];
+  D.files[store] = storeWas.replace(/go-shop:0\.9\.12-[0-9a-f]+/, `go-shop:0.9.14-${ahead.slice(0, 7)}`);
+  const br = await call("/api/prs/brief", { prs: ["northwind/shop-monorepo#8"] }), bl = br.body.batches?.[0]?.units?.[0]?.lines ?? [], by = (svc: string) => bl.find((l: any) => l.service === svc);
+  ok(br.status === 200 && by("storefront")?.already === true && !by("storefront")?.newTag && by("storefront")?.oldTag === `0.9.14-${ahead.slice(0, 7)}`, "a service already on a newer tag carrying the batch gets no change line (no move back to 0.9.13)", J(bl));
+  ok(["checkout-server", "profile-service"].every((s) => by(s)?.newTag === "0.9.13" && by(s)?.oldTag === `0.9.11-${L.mono[1].slice(0, 7)}` && !by(s)?.already), "the services still on the old tag move to the tag that carries it", J(bl));
+  D.files[store] = storeWas; delete D.tags["northwind/shop-monorepo"];
   const b1 = W.view().merged.find((r: any) => r.id === "northwind/weather-api#3");
   ok(b1?.envs.find((e: any) => e.name === "production")?.on === true && gh.calls.some((c) => c.path.startsWith("/repos/northwind/weather-api/tags")), "a version-only tag (2.4.1) is resolved through the git tag v2.4.1 to the commit that contains the merge", J(b1?.envs));
   // a tag that names no commit and no git tag (latest): the environment reads "not read", never off, with at most three

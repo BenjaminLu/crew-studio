@@ -1561,6 +1561,12 @@ export function createPrWatch(d: PrWatchDeps) {
           const fileTag = text != null ? R.tagOf(text, dt.template) : null, before = prev ? prev.name || null : fileTag;
           // the commit production runs before this batch: the batch before's tag, else the file's tag
           const baseSha = prev ? prev.sha : fileTag ? (await tagsOf(repo)).find((t) => Env.tagNames(fileTag).includes(t.name))?.sha ?? R.commitOfTag(fileTag) : null;
+          // a service that already runs a tag carrying every merge up to this batch (one service of several rolled out
+          // ahead): no change line, which would move it back to an older tag
+          if (!prev && baseSha && mine.length && (await Promise.all(mine.map((m) => has_(repo, m, baseSha)))).every((x) => x === true)) {
+            const [pre, post] = dt.template.split("{tag}");
+            lines.push({ env: e.name, service: Env.serviceOf(dt.path), repository: dt.repository, path: dt.path, before: `${pre}${fileTag}${post}`, after: null, oldTag: fileTag, newTag: null, ci: null, problem: null, laterBy: [], already: true });
+            continue; }
           let after: string | null = null, problem: string | null = text == null && !prev ? "file" : prev && !prev.name ? "previous" : null, ci: string | null = null;
           const lack = { contains: 0, laterBy: new Set<string>(), red: 0 };
           for (const t of (await tagsOf(repo)).slice(0, 20)) {

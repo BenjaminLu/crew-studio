@@ -262,11 +262,18 @@ function rowView(r, d) {
 // muted hint (docs/units/pr-watch.md "Find environments automatically").
 const podMark = (x) => x.on ? "✓" : x.on === null ? "?" : "✗";
 const podsWord = (pods) => pods.map((x) => `${x.service} ${podMark(x)} ${x.tag || T("(not read)", "（讀不到）")}`).join(" · ");
-function podsLine(e) {
-  const behind = e.on ? e.pods.filter((x) => x.on !== true) : [];
-  return h("small", { class: "faint pw-pods", "data-prs-pods": e.name, title: e.name },
-    h("span", { class: "mono" }, `${e.name}: `, ...e.pods.flatMap((x, i) => [i ? h("span", { class: "pw-podsep" }, " · ") : "", h("span", { "data-prs-pod": x.service, "data-on": x.on === null ? "unknown" : String(x.on) }, `${x.service} ${podMark(x)} ${x.tag || T("(not read)", "（讀不到）")}`)])),
-    behind.length ? h("span", { "data-prs-pods-behind": e.name }, T(`still on an older tag: ${behind.map((x) => x.service).join(", ")}`, `還在舊 tag：${behind.map((x) => x.service).join("、")}`)) : null);
+// service names as shown: one two manifests share gets the first folder its path differs in: <service> (<folder>)
+const podLabels = (pods) => pods.map((x) => { const same = pods.filter((y) => y.service === x.service); if (same.length < 2) return x.service;
+  const segs = x.path.split("/"), k = segs.findIndex((s, j) => same.some((y) => y !== x && y.path.split("/")[j] !== s)), d = segs[k];
+  return `${x.service} (${d && d !== x.service ? d.replace(/\.(ya?ml|json)$/i, "") : x.path})`; });
+// a tag with its commit cut to 7 characters (v1.4.0-155a481); the full tag stays in the title
+const shortTag = (t) => String(t || "").replace(/([0-9a-f]{7})[0-9a-f]+$/i, "$1");
+function podsLine(e, o = {}) {
+  const names = podLabels(e.pods), behind = e.on ? e.pods.filter((x) => x.on !== true) : [];
+  return h("div", { class: `pw-pods${o.inline ? " inline" : ""}`, "data-prs-pods": e.name }, o.label ? h("span", { class: "faint pw-pod" }, `${e.name}:`) : null,
+    ...e.pods.map((x, i) => h("span", { class: "pw-pod", "data-prs-pod": x.service, "data-on": x.on === null ? "unknown" : String(x.on), title: `${e.name} · ${names[i]} ${podMark(x)} ${x.tag || T("(not read)", "（讀不到）")}` },
+      h("span", {}, names[i]), " ", h("span", { class: x.on ? "pw-pod-ok" : "faint" }, podMark(x)), " ", h("span", { class: "faint" }, shortTag(x.tag) || T("(not read)", "（讀不到）")))),
+    behind.length ? h("span", { class: "faint pw-pod", "data-prs-pods-behind": e.name, title: behind.map((x) => `${x.service} ${x.tag || ""}`).join(" · ") }, T(`older tag: ${podLabels(e.pods).filter((_, i) => behind.includes(e.pods[i])).join(", ")}`, `舊 tag：${podLabels(e.pods).filter((_, i) => behind.includes(e.pods[i])).join("、")}`)) : null);
 }
 // ---------- merged pull requests, followed until production ----------
 const shipRows = () => (PW.data?.merged || []).filter((r) => r.tab === PW.tab);
@@ -310,8 +317,10 @@ function shipRow(r, i) {
     h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono", title: r.mergeSha || "" }, (r.mergeSha || "—").slice(0, 7)), h("small", {}, T(`merged ${span(Date.now() - Date.parse(r.mergedAt))} ago`, `${span(Date.now() - Date.parse(r.mergedAt))}前合併`))),
     h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono pw-unit" }, r.unit), r.deps.length ? h("small", { "data-prs-ship-deps": "" }, T("depends on ", "依賴 "), r.deps.map((x) => short(x.id, r.repo)).join(", ")) : null),
     h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? [...r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: (e.on ? T(`${e.name} has the merge commit`, `${e.name} 已有這個 merge commit`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name} does not have it yet`, `${e.name} 還沒有`)) + (e.pods ? `\n${podsWord(e.pods)}` : "") }, e.name)),
-      ...r.envs.filter((e) => e.pods).map((e) => podsLine(e))] : h("span", { class: "faint" }, "—")),
-    h("span", { class: "pw-revs", role: "cell", "data-prs-ops": r.id }, r.ops?.length ? opBadges(r.ops) : h("span", { class: "faint" }, "—")));
+]  : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-revs", role: "cell", "data-prs-ops": r.id }, r.ops?.length ? opBadges(r.ops) : h("span", { class: "faint" }, "—")),
+    // an environment read from several manifests: each service on a full-width line under the row
+    r.envs.some((e) => e.pods) ? h("div", { class: "pw-podrow", role: "cell" }, ...r.envs.filter((e) => e.pods).map((e, _, all) => podsLine(e, { inline: true, label: all.length > 1 }))) : null);
 }
 // ---------- the release brief ----------
 function opText(o, P) {
@@ -349,7 +358,7 @@ function briefText(b, P) {
   // no production environment reads this unit's tag from a file: a neutral note for whoever reads the text (the dialog
   // offers Set up production beside it, setupProd)
   const lines = b.units.flatMap((u) => u.noFile ? [P(`${u.repo} · image tag: not tracked (no production environment reads it from a file)`, `${u.repo} · image tag：未追蹤（沒有 production 環境從檔案讀它）`)]
-    : u.lines.map((l) => `${u.lines.length > 1 && l.service ? `${l.service}: ` : ""}${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
+    : u.lines.map((l) => l.already ? `${u.lines.length > 1 && l.service ? `${l.service}: ` : ""}${l.repository} · ${l.path}\n= ${l.before} ${P("(already runs these merges: no change)", "（已經跑著這些合併：不用改）")}` : `${u.lines.length > 1 && l.service ? `${l.service}: ` : ""}${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
   const added = b.added.map((a) => P(`${hash(a.id)} was added: ${hash(a.for)} depends on it`, `${hash(a.id)} 是補進來的：${hash(a.for)} 依賴它`));
   const ops = b.ops.map((o) => `- [${opTag(o, P)}] ${opText(o, P)} (${o.url})`);
   return [P("Please open a deploy pull request following the team's rules", "請照團隊規範開一個部署 PR") + order, "", lines.join("\n\n"), "", P("Includes: ", "包含：") + b.prs.map((p) => title(p.id)).join(P("; ", "；")),
@@ -479,7 +488,7 @@ function detail(r) {
         h("h3", {}, T("Reviews", "Reviews")), r.reviews.length ? r.reviews.map((x) => h("div", { class: "kv" }, h("span", {}, x.login, x.author ? T(" (author)", "（作者）") : ""), h("span", {}, reviewWord(x.state), x.stale ? T(" · stale", " · 舊 head") : ""))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Test evidence", "測試證據")), r.evidence ? [h("div", { class: "kv" }, h("span", {}, `${r.evidence.by}${r.evidence.at ? ` · ${day(r.evidence.at)}` : ""} (${r.evidence.source})`), h("span", {}, verdictWord(r.evidence.verdict))),
           h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : r.evidence.covers === "unknown" ? T("unknown: commit not named", "不確定：沒指明 commit") : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
-        h("h3", {}, T("Environments", "環境")), r.envs.length ? r.envs.map((e) => h("div", { class: "kv" }, h("span", {}, e.name, e.production ? T(" (production)", "（正式）") : ""), h("span", {}, e.on ? T("runs this head", "跑著這個 head") : e.on === null ? T("could not be read", "讀不到") : T("no", "沒有")), e.pods ? podsLine(e) : null)) : h("span", { class: "faint" }, T("none set", "未設定"))),
+        h("h3", {}, T("Environments", "環境")), r.envs.length ? r.envs.flatMap((e) => [h("div", { class: "kv" }, h("span", {}, e.name, e.production ? T(" (production)", "（正式）") : ""), h("span", {}, e.on ? T("runs this head", "跑著這個 head") : e.on === null ? T("could not be read", "讀不到") : T("no", "沒有"))), e.pods ? podsLine(e) : null]) : h("span", { class: "faint" }, T("none set", "未設定"))),
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("How the next step was found", "下一步怎麼算出來的")),
         h("ol", { class: "pw-rules", "data-prs-rules": "" }, rules.map((x, i) => h("li", { class: x.id === n.rule ? "hit" : n.matched?.[i] ? "" : "no", "data-rule": x.id }, T(x.en, x.tw), x.id === n.rule ? T(" ← this one", " ← 這條") : ""))),
@@ -786,14 +795,15 @@ function discoverModal(o = {}) {
   const pathLink = (e) => h("a", { href: e.url, target: "_blank", rel: "noopener noreferrer", class: "mono pw-small pw-path" }, ...`${e.path}:${e.line}`.split("/").flatMap((x, i, a) => i < a.length - 1 ? [`${x}/`, h("wbr", {})] : [x]));
   // a repository deployed as several services: a row per manifest (its service, path, the image:tag it runs now and its
   // proof), each with its own tick when `tick` (on: it can be changed)
-  const podRows = (c, tick) => { const all = [c.evidence, ...(c.evidence.more || [])];
+  const podRows = (c, tick) => { const all = [c.evidence, ...(c.evidence.more || [])], names = podLabels(all.map((m) => ({ service: m.service || m.path, path: m.path }))), none = tick && all.every((_, i) => fileOff.has(`${c.id}|${i}`));
     return h("div", { class: "pw-disc-pods", "data-prs-discover-pods": c.id },
       ...all.map((m, i) => { const k = `${c.id}|${i}`;
         return h("div", { class: "pw-disc-pod", "data-prs-discover-pod": m.path },
-          h("label", { class: "pw-disc-podh" }, tick ? h("input", { type: "checkbox", "data-prs-discover-file": k, checked: !fileOff.has(k), disabled: !tick.on, "aria-label": T(`${m.service || m.path}: count this manifest`, `${m.service || m.path}：採用這個 manifest`), onchange: (e) => { e.target.checked ? fileOff.delete(k) : fileOff.add(k); foot_(); } }) : null,
-            h("b", { class: "pw-small" }, m.service || m.path)),
+          h("label", { class: "pw-disc-podh" }, tick ? h("input", { type: "checkbox", "data-prs-discover-file": k, checked: !fileOff.has(k), disabled: !tick.on, "aria-label": T(`${names[i]}: count this manifest`, `${names[i]}：採用這個 manifest`), onchange: (e) => { e.target.checked ? fileOff.delete(k) : fileOff.add(k); draw(); box.querySelector(`[data-prs-discover-file="${k}"]`)?.focus(); } }) : null,
+            h("b", { class: "pw-small" }, names[i])),
           h("span", { class: "pw-disc-ev" }, pathLink(m), m.image ? h("code", { class: "pw-disc-line", "data-prs-discover-runs": "" }, `${noHost(m.image)}:${m.tag}`) : null, sigLine(m))); }),
-      h("span", { class: "faint pw-small" }, T(`${all.length} services: live when any ticked one runs it`, `${all.length} 個服務：勾選的任一個跑到就算上線`))); };
+      none ? h("span", { class: "pw-small pw-warn", "data-prs-discover-none": c.id }, T("No manifest ticked: this environment is left out", "沒有勾任何 manifest：這個環境不設定"))
+        : h("span", { class: "faint pw-small" }, T(`${all.length} services: live when any ticked one runs it`, `${all.length} 個服務：勾選的任一個跑到就算上線`))); };
   const evidence = (c, tick = null) => c.evidence.more?.length ? h("div", { class: "pw-disc-ev" }, podRows(c, tick),
     c.evidence.alsoFor?.length ? h("span", { class: "pw-small pw-warn", "data-prs-discover-also": "" }, T(`also proposed for ${c.evidence.alsoFor.join(", ")}`, `也被提議給 ${c.evidence.alsoFor.join("、")}`)) : null) : h("div", { class: "pw-disc-ev" },
     c.evidence.path ? pathLink(c.evidence) : extLink(c.evidence.url, T(c.evidence.text, c.evidence.tw || c.evidence.text), { class: "pw-small" }),

@@ -77,7 +77,7 @@ try {
   const wst = C('northwind/web-app|staging'), wfiles = wst.locator('[data-prs-discover-file]');
   ok(await wst.getAttribute('data-state') === 'ok' && /2 services: live when any ticked one runs it/.test(await wst.innerText()) && await wst.locator('a.pw-path').count() === 2 && await wfiles.count() === 2 && await wfiles.nth(0).isChecked() && await wfiles.nth(1).isChecked(),
     'web-app staging: its image in two manifests, a row and a tick each, both ticked', await wst.innerText());
-  ok(J(await wst.locator('[data-prs-discover-pod]').evaluateAll((es) => es.map((e) => [e.querySelector('b').textContent, e.dataset.prsDiscoverPod, /^web-app:[0-9a-f]{9}$/.test(e.querySelector('[data-prs-discover-runs]')?.textContent || '')]))) === J([['web-app', 'apps/web-app/overlays/stg/deployment.yaml', true], ['web-app', 'legacy/stg/web-app.yaml', true]]), 'each row: the service, the file and the image:tag it runs now', await wst.innerText());
+  ok(J(await wst.locator('[data-prs-discover-pod]').evaluateAll((es) => es.map((e) => [e.querySelector('b').textContent, e.dataset.prsDiscoverPod, /^web-app:[0-9a-f]{9}$/.test(e.querySelector('[data-prs-discover-runs]')?.textContent || '')]))) === J([['web-app (apps)', 'apps/web-app/overlays/stg/deployment.yaml', true], ['web-app (legacy)', 'legacy/stg/web-app.yaml', true]]), 'each row: the service (two of the same name told apart by the folder they differ in), the file and the image:tag it runs now', await wst.innerText());
   ok(/commit [0-9a-f]{12} is in the repository/.test(await C('northwind/web-app|production').locator('[data-prs-discover-signals]').innerText()), 'the cell says what tied the image to the repository', await C('northwind/web-app|production').innerText());
   const ledger = C('northwind/ledger|production');
   ok(await ledger.locator('[data-prs-discover-pick]:disabled').count() === 1 && /does not end in a commit/.test(await ledger.innerText()) && /only resembles/.test(await ledger.innerText()), 'ledger: the tag with no commit cannot be picked; the look-alike is marked weak');
@@ -89,8 +89,12 @@ try {
   ok(!/\bnull\b/.test(await p.locator('[data-prs-discover]').innerText()) && !(await p.locator('[data-prs-discover]').innerText()).includes('production [production]'), 'no empty part shows as text, no doubled badge');
   ok(await p.evaluate(() => { const f = document.querySelector('[data-prs-dialog="discover"] .pw-mf'); return getComputedStyle(f).position === 'sticky'; }), 'the footer with Accept stays in view');
   await p.screenshot({ path: join(shots, 'envs-discover-1440-light.png') });
+  // nothing ticked in a several-service cell: said in the cell, and Accept no longer counts that repository's cell
+  await wfiles.nth(0).uncheck(); await wfiles.nth(1).uncheck();
+  ok(await wst.locator('[data-prs-discover-none]').count() === 1 && /No manifest ticked: this environment is left out/.test(await wst.innerText()) && !/live when any ticked one runs it/.test(await wst.innerText()), 'every manifest unticked: the cell says the environment is left out', await wst.innerText());
+  await wfiles.nth(0).check();
+  ok(await wst.locator('[data-prs-discover-none]').count() === 0 && await wfiles.nth(0).isChecked() && !(await wfiles.nth(1).isChecked()), 'ticking one again takes the notice away, the other stays unticked');
   // only one of web-app's staging manifests ticked: only that one is saved
-  await wfiles.nth(1).uncheck();
   await C('northwind/checkout-api|staging').locator('[data-prs-discover-pick]').nth(1).check();
   await C('northwind/ledger|production').locator('[data-prs-discover-skip]').check();
   ok(!(await p.locator('[data-prs-discover-accept]').isDisabled()) && (await p.locator('[data-prs-discover-accept]').innerText()) === 'Accept 2 repositories' && await p.locator('[data-prs-discover-left]').isHidden(), 'every pick made: Accept names the repositories it saves', await p.locator('[data-prs-discover-accept]').innerText());
@@ -158,9 +162,13 @@ try {
     const o = await open(1440, 'light'); await o.p.goto(`${base}/#/prs`); await o.p.waitForSelector('[data-prs-page]:not([data-loading])');
     await o.p.click('[data-prs-tab="live"]'); await o.p.waitForSelector('[data-prs-ship="live"]');
     const row = o.p.locator('[data-prs-merged="northwind/checkout-api#23"]'), line = row.locator('[data-prs-pods="production"]');
-    ok(await line.count() === 1 && /checkout-api ✓ v1\.4\.0-[0-9a-f]{12}/.test(await line.innerText()) && (await line.innerText()).includes(`checkout-worker ✗ ${old}`) && /still on an older tag: checkout-worker/.test(await row.locator('[data-prs-pods-behind]').innerText()),
+    ok(await line.count() === 1 && /^checkout-api ✓ v1\.4\.0-[0-9a-f]{7}$/m.test(await line.innerText()) && (await line.innerText()).includes('checkout-worker ✗ v1.3.0-0a1b2c3') && !(await line.innerText()).includes('production:') && /^older tag: checkout-worker$/.test(await row.locator('[data-prs-pods-behind]').innerText())
+      && await line.locator('[data-prs-pod="checkout-worker"]').getAttribute('title') === `production · checkout-worker ✗ ${old}`,
       'a merge one service runs is live; the row shows each service with its tag and, muted, the one still on an older tag', await row.innerText());
-    ok((await row.locator('[data-prs-pods-behind]').evaluate((e) => getComputedStyle(e.closest('.pw-pods')).color)) === (await o.p.locator('.faint').first().evaluate((e) => getComputedStyle(e).color)), 'the hint is muted, not an alarm');
+    const faint = await o.p.locator('.faint').first().evaluate((e) => getComputedStyle(e).color), colour = (sel) => line.locator(sel).first().evaluate((e) => getComputedStyle(e).color);
+    ok(await colour('[data-prs-pods-behind]') === faint && await colour('.pw-pod-ok') !== faint && await colour('[data-prs-pod="checkout-worker"] .faint') === faint, 'the hint and ✗ are muted, ✓ is coloured');
+    ok(await line.evaluate((e) => { const pods = [...e.querySelectorAll('.pw-pod')], cell = e.closest('.pw-podrow').getBoundingClientRect(), pr = e.closest('[data-prs-merged]').querySelector('.pw-pr').getBoundingClientRect();
+      return pods.every((p) => p.getBoundingClientRect().height < 20 && p.scrollWidth <= p.clientWidth + 1) && Math.abs(cell.left - pr.left) < 2 && cell.width > 600; }), 'each service on one unclipped line, in a full-width line under the row', await line.evaluate((e) => e.closest('.pw-podrow').getBoundingClientRect().width));
     await o.p.screenshot({ path: join(shots, 'envs-pods-live-1440-light.png'), fullPage: true });
     await o.p.click('[data-prs-settings]'); await o.p.waitForSelector('[data-prs-envsum="production"]');
     const pc = await o.p.locator('[data-prs-envsum="production"]').innerText();

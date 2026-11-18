@@ -137,17 +137,22 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     deployed as several pods): the cell shows a row per manifest, each with its own tick, its service (the file name
     unless that is a layout word such as deployment, kustomization, values or flux-patch, or an environment; else the
     deepest folder that is neither), its path, the image:tag it runs now and its proof. Every strong, readable row starts
-    ticked; only the ticked ones are saved (`files`, or `file` when one is left; none ticked leaves the cell out). A line
+    ticked; only the ticked ones are saved (`files`, or `file` when one is left; none ticked leaves the cell out and the
+    cell says so). Two manifests of the same service name are told apart by the first folder their paths differ in
+    (`web-app (legacy)`). A line
     of the same image Studio cannot read a commit from (a version no git tag has, a second line read first) is shown as
     its own candidate and does not make the cell a pick.
   - **Live with several manifests** (`files`; `anyOn` in src/pr-watch-rules.ts): the environment has a merge when
     **any** of its manifests runs it (a release often rolls out one service and leaves the others on an older tag of
     the same repository). When none does: unknown when one of them could not be read (the file, or a tag that names
     no commit and no git tag), else off. Each manifest is read every refresh and the environment carries each one's
-    service, tag and status (`pods`: ✓ runs it, ✗ does not, ? not read), shown as `storefront ✓ 1.2.0-abc1234 ·
-    checkout ✗ 1.1.9-def5678` in a row's environment tooltip, under a merged row's environments (with a muted "still on an
-    older tag: …" when it is live but a service is not), in the details, and on the settings card (each service with the
-    tag it runs, from the last refresh); the release brief names each line's service. A `files` detect saved by an older
+    service, tag and status (`pods`: ✓ runs it (in the ok colour), ✗ does not, ? not read), shown as `storefront ✓
+    1.2.0-abc1234 · checkout ✗ 1.1.9-def5678` in a row's environment tooltip, on a full-width line under a merged row
+    (one service per unbroken piece, the commit cut to 7 characters, the full tag in its title; a muted "older tag: …"
+    when it is live but a service is not), in the details under the environment, and on the settings card (each service
+    with the tag it runs, from the last refresh). The release brief names each line's service, and a service whose
+    current tag already carries every merge up to the batch gets no change line (`= <its line> (already runs these
+    merges: no change)`), never a move back to an older tag. A `files` detect saved by an older
     Studio keeps working with this rule, and an older Studio still loads what this one saves.
   - Live with a version-only tag: a refresh resolves the tag through the repository's git tags (three pages, once a
     refresh) to its commit before checking that it contains the merge commit. A tag that is neither (latest, a
