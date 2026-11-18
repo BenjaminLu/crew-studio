@@ -3,8 +3,10 @@
 // hand. `crew-studio skill install` writes it where the agent looks:
 //   Claude Code   ~/.claude/skills/crew-studio/SKILL.md     (--project <dir>: <dir>/.claude/skills/crew-studio/SKILL.md)
 //   Codex         ~/.agents/skills/crew-studio/SKILL.md     (--project <dir>: <dir>/.agents/skills/crew-studio/SKILL.md)
-// It only writes where the captain said, after asking once (or --yes), and never over a file it did not write.
+// It only writes where the captain said, after asking once (or --yes), never over a file it did not write, and never over
+// one it wrote that was edited since (--force replaces that one). --project names a folder that exists.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { IRON_RULES, READING_RULES } from "./observe/instructions";
@@ -72,11 +74,21 @@ export function skillTargets(o: { claude: boolean; codex: boolean; project: stri
   return out;
 }
 /** Write the skill to each target; a file there that this command did not write is left alone and named. */
-export function writeSkill(targets: SkillTarget[], text: string): { written: string[]; refused: string[] } {
-  const written: string[] = [], refused: string[] = [];
+// The last line of a skill it wrote holds the hash of the rest: a file edited since (the marker kept) is someone's work too.
+const HASH_LINE = /\n<!-- crew-studio skill sha256=([0-9a-f]{64}) -->\n?$/;
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+const stamped = (text: string) => `${text}\n<!-- crew-studio skill sha256=${sha(text)} -->\n`;
+/** Write the skill to each target. Left alone and named: a file this command did not write (refused), and one it wrote but
+ *  someone edited since (edited), unless `force` says to replace that one. */
+export function writeSkill(targets: SkillTarget[], text: string, o: { force?: boolean } = {}): { written: string[]; refused: string[]; edited: string[] } {
+  const written: string[] = [], refused: string[] = [], edited: string[] = [];
   for (const t of targets) {
-    if (existsSync(t.file) && !readFileSync(t.file, "utf8").includes(SKILL_MARK)) { refused.push(t.file); continue; }
-    mkdirSync(join(t.file, ".."), { recursive: true }); const tmp = `${t.file}.tmp-${process.pid}`; writeFileSync(tmp, text); renameSync(tmp, t.file); written.push(t.file);
+    if (existsSync(t.file)) {
+      const now = readFileSync(t.file, "utf8");
+      if (!now.includes(SKILL_MARK)) { refused.push(t.file); continue; }
+      const m = HASH_LINE.exec(now); if (!o.force && (!m || sha(now.slice(0, m.index)) !== m[1])) { edited.push(t.file); continue; }
+    }
+    mkdirSync(join(t.file, ".."), { recursive: true }); const tmp = `${t.file}.tmp-${process.pid}`; writeFileSync(tmp, stamped(text)); renameSync(tmp, t.file); written.push(t.file);
   }
-  return { written, refused };
+  return { written, refused, edited };
 }

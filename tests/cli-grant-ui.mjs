@@ -42,6 +42,11 @@ try {
     const cmd = p.locator("[data-cli-grants] [data-grant-command][data-fresh]"); await cmd.waitFor({ timeout: 10000 });
     const line = await cmd.textContent(), id = await cmd.getAttribute("data-grant-command");
     ok((await p.inputValue("#grantName")) === "", `${key}: the name field is empty again after issuing`);
+    // this Studio has no CLI installed in its HOME: the dialog says where it comes from; the name is marked optional
+    ok(await p.locator("[data-cli-grants] [data-cli-missing] a[href='#/doctor']").count() === 1, `${key}: "install the CLI from Doctor first", with a link to Doctor`);
+    ok(/optional|可不填/.test(await p.locator("[data-cli-grants] .bb-grant-form label").first().innerText()), `${key}: the name is marked optional, with its characters`);
+    const nameBg = await p.evaluate(() => getComputedStyle(document.querySelector("#grantName")).backgroundColor), ttlBg = await p.evaluate(() => getComputedStyle(document.querySelector("#grantTtl")).backgroundColor);
+    ok(nameBg !== "rgba(0, 0, 0, 0)" && !/239, 239, 239|rgb\(2[0-9]{2}, 2[0-9]{2}, 2[0-9]{2}\)/.test(theme === "dark" ? nameBg : "") , `${key}: the name field has the form's own background (not the grey of a disabled field)`, `${nameBg} vs ${ttlBg}`);
     const file = join(data, "grants", id), token = readFileSync(file, "utf8").trim();
     // the dialog shows the name, reach and expiry, and one line to test it with the CLI; no per-client snippet
     const cliFile = join(process.env.CREW_STUDIO_HOME, "grants", `${name}.json`);

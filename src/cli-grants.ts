@@ -89,7 +89,8 @@ export class CliGrants {
     const body: CliGrantFile = { schema: 1, name: g.name ?? g.id, id: g.id, token, scopes: g.scopes, project: g.project || null, expiresAt: g.expiresAt, url: this.cli.url() };
     writeFileSync(f + ".tmp", JSON.stringify(body, null, 1) + "\n", { mode: 0o600 }); chmodSync(f + ".tmp", 0o600); renameSync(f + ".tmp", f);
   }
-  private dropCliFile(id: string) { const f = this.cliFile(id); if (f) rmSync(f, { force: true }); }
+  // only this grant's own file goes: a name used again by a newer grant (after a revoke or an expiry) keeps its file
+  private dropCliFile(id: string) { const f = this.cliFile(id); if (!f) return; try { if (JSON.parse(readFileSync(f, "utf8"))?.id !== id) return; } catch { return; } rmSync(f, { force: true }); }
   private file() { return join(this.dataDir, "cli-grants.json"); }
   tokenFile(id: string) { return join(this.dataDir, "grants", id); }
   private read(): CliGrant[] { try { const j = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(j) ? j.filter(isRecord).map(migrateGrant) : []; } catch { return []; } }
@@ -119,6 +120,8 @@ export class CliGrants {
     // a name the captain gives it (the CLI's --grant <name>): short, lower case, unique among the grants still active
     const name = o.name === undefined || o.name === "" ? null : String(o.name).trim().toLowerCase();
     if (name !== null && !GRANT_NAME.test(name)) throw new Error("a grant's name is 1 to 40 lower-case letters, digits and dashes (it becomes the CLI's --grant name)");
+    // a name shaped like a grant id would read as another grant's
+    if (name !== null && /^g-[0-9a-f]{8}$/.test(name)) throw new Error("a grant's name may not look like a grant id (g-xxxxxxxx): choose a word such as review-bot");
     if (name !== null && this.read().some((x) => (x.name ?? x.id) === name && this.stateOf(x) === "active")) throw new Error(`an active grant is already called ${name}`);
     const asked: unknown[] = o.scopes !== undefined ? (Array.isArray(o.scopes) ? o.scopes : [null]) : [o.scope ?? "project"];
     if (!asked.length || asked.some((x) => !(GRANT_SCOPES as readonly unknown[]).includes(x))) throw new Error(`choose what the grant reaches: ${GRANT_SCOPES.join(", ")}`);

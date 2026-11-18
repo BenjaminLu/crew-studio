@@ -194,7 +194,7 @@ Which grant this is: its scopes, kinds, project, expiry and what is left of its 
 
 Call any tool this grant lists by its name (for one with no command, such as the pull request list's).
 
-### `crew-studio skill install [--claude] [--codex] [--project <dir>] [--yes]`
+### `crew-studio skill install [--claude] [--codex] [--project <dir>] [--yes] [--force]`
 
 Teach Claude Code and/or Codex to use this CLI: write the short crew-studio skill for you (default) or one project, after asking once.
 
