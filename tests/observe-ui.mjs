@@ -46,7 +46,7 @@ try {
   const look = await p.evaluate(() => { const b = document.querySelector("#fmSees"), log = document.querySelector("#chatLog"), cs = getComputedStyle(b), r = b.getBoundingClientRect(), panel = document.querySelector("#chat").getBoundingClientRect();
     return { w: r.width, panel: panel.width, bg: cs.backgroundColor, border: cs.borderTopWidth, pressed: b.getAttribute("aria-pressed"), fs: parseFloat(cs.fontSize), gap: log.getBoundingClientRect().top - r.bottom }; });
   ok(look.w < look.panel * 0.75 && look.bg === "rgba(0, 0, 0, 0)" && look.border === "0px" && look.pressed === null && look.fs <= 12 && look.gap >= 6, "the label is small, muted and as wide as its words, with room below it before the log", JSON.stringify(look));
-  ok((await p.locator("#fmSees").getAttribute("data-state")) === "offline" && /Firstmate 未連線/.test(await p.locator("#fmSees").innerText()), "with Firstmate not connected it says so, greyed");
+  ok((await p.locator("#fmSees").getAttribute("data-state")) === "offline" && /Firstmate 未連接/.test(await p.locator("#fmSees").innerText()), "with Firstmate not connected it says so, greyed");
   reports.length = 0; const navAt = Date.now();
   await p.evaluate(() => { location.hash = "#/run/R-162"; });
   await p.waitForTimeout(250); await p.evaluate(() => { location.hash = "#/inbox"; }); await p.waitForTimeout(250); await p.evaluate(() => { location.hash = "#/run/R-162"; });

@@ -106,7 +106,7 @@ function paintSees() {
   b.dataset.sharing = on ? "1" : "0"; b.dataset.state = !on ? "paused" : !d.ok ? "failed" : offline ? "offline" : "ok";
   const text = !on ? T("Not sharing your page · Resume", "沒有分享畫面 · 恢復")
     : !d.ok ? T(`Not delivered: ${f.label()}`, `沒送到：${f.label()}`)
-    : T(`Sees: ${d.label ?? f.label()}${age ? ` (${age} min ago)` : ""}${offline ? " · Firstmate is not connected" : ""}`, `看得到：${d.label ?? f.label()}${age ? `（${age} 分鐘前）` : ""}${offline ? " · Firstmate 未連線" : ""}`);
+    : T(`Sees: ${d.label ?? f.label()}${age ? ` (${age} min ago)` : ""}${offline ? " · Firstmate not connected" : ""}`, `看得到：${d.label ?? f.label()}${age ? `（${age} 分鐘前）` : ""}${offline ? " · Firstmate 未連接" : ""}`);
   b.replaceChildren(icon(on ? "eye" : "pause", "ic sm"), h("span", { class: "fm-sees-t" }, text));
   b.title = !on ? T("Share your page with Firstmate again.", "恢復與 Firstmate 分享頁面。") : !d.ok ? T("Studio did not receive this page; it keeps the last one it did. Click to pause sharing.", "Studio 沒收到這一頁，仍是上一次收到的。點一下暫停分享。")
     : T("Firstmate sees this page's name and the item you selected, never what you type. Click to pause.", "Firstmate 看得到頁面和選取項目的名稱，看不到你輸入中的文字。點一下暫停分享。");
