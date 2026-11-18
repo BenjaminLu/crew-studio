@@ -89,7 +89,9 @@ import { bundledText } from "./bundled";
 import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
-import { CliGrants, createGrantTools, installGrantViews } from "./cli-grants";
+import { CliGrants, createGrantTools, installGrantViews, GRANT_SCOPES } from "./cli-grants";
+import { KIND_GROUPS, OBSERVE_PRESETS } from "./observe/grant-scope";
+import { NEVER_GRANTABLE } from "./observe/registry";
 import { amendmentsNotice } from "./runtime/refine";
 import { Terminals, TermError, terminalRoutes } from "./terminals";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
@@ -542,7 +544,7 @@ nativeEngineForPolicy = runtime.engine;
 // external CLI grants (docs/units/cli-mcp-grant.md): issued and revoked on the board only; a grant token reaches four run tools, or the pull request list's
 const cliGrants = new CliGrants(DATA, (type, summary, data) => { try { studioLog.emit({ type, workflow: "cli-grant", actor: type === "cli_grant_issued" || type === "cli_grant_revoked" ? "captain" : "external-cli", summary, data }); } catch {} });
 installGrantViews(runtime.engine, cliGrants);
-const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants, firstmate: () => runtime.firstmate, prs: () => prWatch.tools });
+const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants, firstmate: () => runtime.firstmate, prs: () => prWatch.tools, observe: (g) => runtime.observeFor(g) });
 /** the line the board shows to copy: the MCP helper with the grant's token file (and Studio's URL when not the default port) */
 const grantCommand = (file: string) => { const port = server?.port ?? PORT; return helperCommand("mcp", ["--grant-file", file, ...(port !== 4210 ? ["--url", `http://127.0.0.1:${port}`] : [])]); };
 const shq = (a: string) => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
@@ -802,12 +804,16 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/api/cli-grants" || /^\/api\/cli-grants\/g-[0-9a-f]{8}\/revoke$/.test(p)) {
       if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (!hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
-      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], scopes: ["project", "prs"], projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
+      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], scopes: [...GRANT_SCOPES], observe: { presets: [...OBSERVE_PRESETS], groups: KIND_GROUPS, never: [...NEVER_GRANTABLE] }, projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
       if (req.headers.get("x-crew-tool-token") || !hasSessionCookie(req, SESSION) || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin")
         return json({ error: "Only the captain issues or revokes an external CLI grant, from Studio's page on this Mac / 只有船長能在這台 Mac 的 Studio 頁面發出或撤銷外部 CLI 授權", code: "captainOnly" }, 403);
       let b: any; try { b = await req.json(); } catch { return json({ error: "json only" }, 400); }
       if (p !== "/api/cli-grants") { try { return json({ grant: grantView(cliGrants.revoke(p.split("/")[3], "captain")) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 404); } }
-      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => k !== "project" && k !== "ttl" && k !== "scope")) return json({ error: "send {project, ttl} or {scope: \"prs\", ttl}" }, 400);
+      if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).some((k) => !["project", "ttl", "scope", "scopes", "observe"].includes(k))) return json({ error: "send {scopes: [project, prs, observe], project?, observe?: {preset, kinds?, untrusted?}, ttl}" }, 400);
+      if (b.scopes !== undefined) { const asked = Array.isArray(b.scopes) ? b.scopes : [];
+        const project = b.project === undefined || b.project === "" ? null : runtime.projects.get(String(b.project)) as any; if (b.project !== undefined && b.project !== "" && (!project || project.enabled === false)) return json({ error: "no such project" }, 404);
+        if (asked.includes("prs") && asked.length === 1 && project) return json({ error: "a pull request list grant has no project" }, 400);
+        try { const r = cliGrants.issue({ scopes: b.scopes, project: project?.id, observe: b.observe, ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
       if (b.scope === "prs") { if (b.project !== undefined) return json({ error: "a pull request list grant has no project" }, 400);
         try { const r = cliGrants.issue({ scope: "prs", ttl: String(b.ttl ?? "") }, "captain"); return json({ grant: grantView(r.grant) }); } catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } }
       if (b.scope !== undefined && b.scope !== "project") return json({ error: "scope is project or prs" }, 400);
@@ -980,11 +986,13 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       if (CliGrants.claims(wt)) {
         const name = p === "/api/tools" ? "tools/list" : decodeURIComponent(p.slice("/api/tools/".length));
         const u = cliGrants.use(wt, name); if (!u.ok) return json({ error: u.error }, u.status);
-        if (p === "/api/tools") return json(grantTools.list(u.grant));
+        if (p === "/api/tools") { const l = grantTools.list(u.grant); cliGrants.charge(u.grant.id, Buffer.byteLength(JSON.stringify(l))); return json(l); }
         if (!grantTools.list(u.grant).some((t) => t.name === name)) return json({ error: `no such tool: ${name} (studio exposes ${grantTools.list(u.grant).map((t) => t.name).join(", ")})` }, 404);
         const raw = await req.text(); if (raw.length > 65_536) return json({ error: "arguments too large" }, 413);
         let args: any = {}; try { args = raw ? JSON.parse(raw) : {}; } catch {}
-        try { return json(await grantTools.call(u.grant, name, args)); } catch (e: any) { return json({ error: String(e?.message ?? e) }); }
+        // what a call returns counts toward the grant's hourly bytes
+        let out: unknown; try { out = await grantTools.call(u.grant, name, args); } catch (e: any) { out = { error: String(e?.message ?? e) }; }
+        const body = JSON.stringify(out); cliGrants.charge(u.grant.id, Buffer.byteLength(body)); return new Response(body, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
       }
       const tk = tokens.get(req.headers.get("x-crew-tool-token") ?? "");
       if (!tk || tk.expires < Date.now()) return json({ error: "no valid tool token" }, 403);

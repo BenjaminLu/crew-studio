@@ -4,23 +4,31 @@
 //                          started, and only a SHA-256 of the token
 //   data/grants/<id>       the token itself, mode 0600 (directory 0700): `crew-studio mcp --grant-file <path>` reads it,
 //                          so it never appears on a command line; removed on revoke
-// A project grant reaches exactly four tools (GRANT_TOOLS); a pull request list grant (scope "prs") reaches only that list's
-// tools (src/pr-watch.ts), which edit Studio's own list and never write to GitHub. None answers a card, changes staffing or merges: a run a grant
+// A grant has a set of scopes: "project" reaches exactly four tools (GRANT_TOOLS); "prs" the pull request list's tools
+// (src/pr-watch.ts), which edit Studio's own list and never write to GitHub; "observe" Studio's read tools (src/observe/),
+// limited to the kinds the captain picked (a preset or groups, src/observe/grant-scope.ts), to its project, and without
+// external text unless the captain ticked it. A grant written before scopes were a set (scope: "prs", or none) is read as
+// that one scope and written back as a set. Each grant also has a rolling budget: calls and bytes in the last hour. None answers a card, changes staffing or merges: a run a grant
 // starts is a Firstmate-style proposal whose dispatch card only the captain answers, on the board. Every issue, use,
 // refusal and revoke is appended to Studio's own event log (data/events.jsonl) through `audit`.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import type { Engine, Run } from "./runtime/engine";
+import { readObserve, type ObserveScope } from "./observe/grant-scope";
+import type { GrantView as ObserveGrant } from "./observe/registry";
 
 export const GRANT_TTLS = ["1h", "8h", "eod"] as const;
 export type GrantTtl = (typeof GRANT_TTLS)[number];
-/** project: start and follow runs in one project (the default, and every grant issued before scopes); prs: read and edit the pull request list */
-export const GRANT_SCOPES = ["project", "prs"] as const;
+/** project: start and follow runs in one project (the default, and every grant issued before scopes); prs: read and edit the
+ *  pull request list; observe: read Studio (the kinds the captain picked) */
+export const GRANT_SCOPES = ["project", "prs", "observe"] as const;
 export type GrantScope = (typeof GRANT_SCOPES)[number];
-export type CliGrant = { id: string; scope?: GrantScope; project: string; ttl: GrantTtl; createdAt: string; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null;
-  revokedBy: string | null; createdBy: string; calls: number; tokenHash: string; runs: { run: string; at: string; staffing: Record<string, string> | null }[] };
-export type GrantView = Omit<CliGrant, "tokenHash"> & { state: "active" | "expired" | "revoked"; file: string | null };
+export type CliGrant = { id: string; scopes: GrantScope[]; observe?: ObserveScope | null; project: string; ttl: GrantTtl; createdAt: string; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null;
+  revokedBy: string | null; createdBy: string; calls: number; tokenHash: string; runs: { run: string; at: string; staffing: Record<string, string> | null }[];
+  /** the rolling budget's window: each call's time and the bytes it returned (the last hour's only) */
+  usage?: { at: number; bytes: number }[]; scope?: GrantScope };
+export type GrantView = Omit<CliGrant, "tokenHash" | "usage"> & { state: "active" | "expired" | "revoked"; file: string | null; budget: { calls: number; bytes: number; maxCalls: number; maxBytes: number } };
 export type Audit = (type: string, summary: string, data: Record<string, unknown>) => void;
 /** What a run started under a grant says about itself: the board's label and its cards' "from an external CLI" line. */
 export type ExternalOrigin = { kind: "external-cli"; grant: string; staffing: Record<string, string> | null };
@@ -32,6 +40,10 @@ const BY = /^External CLI grant (g-[0-9a-f]{8}) \(captain approval required\)$/;
 export const grantOfBy = (by: unknown): string | null => typeof by === "string" ? BY.exec(by)?.[1] ?? null : null;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const maxCalls = () => Number(process.env.CREW_CLI_GRANT_MAX_CALLS) || 2000;
+/** The rolling budget: at most this many calls, and this many bytes of answers, in any hour. */
+export const ROLLING = { windowMs: 3600_000, calls: () => Number(process.env.CREW_CLI_GRANT_HOURLY_CALLS) || 600, bytes: () => Number(process.env.CREW_CLI_GRANT_HOURLY_BYTES) || 4 * 1024 * 1024 };
+/** A record as written before scopes were a set: its one scope (none: "project") becomes the set. */
+export function migrateGrant(g: any): CliGrant { if (Array.isArray(g?.scopes)) return g; const { scope, ...rest } = g ?? {}; return { ...rest, scopes: [scope === "prs" ? "prs" : "project"] }; }
 
 /** When a grant of this length ends: 1 h, 8 h, or the end of the local day. */
 export function expiryOf(ttl: GrantTtl, now = new Date()): Date {
@@ -40,32 +52,45 @@ export function expiryOf(ttl: GrantTtl, now = new Date()): Date {
   const d = new Date(now); d.setHours(24, 0, 0, 0); return d;
 }
 
+const windowOf = (u: CliGrant["usage"], now = Date.now()) => (u ?? []).filter((x) => now - x.at < ROLLING.windowMs);
+
 export class CliGrants {
   private unknownAt = 0; private unknownQuiet = 0;
-  constructor(readonly dataDir: string, private audit: Audit = () => {}) {}
+  constructor(readonly dataDir: string, private audit: Audit = () => {}) { try { this.migrate(); } catch {} }
   private file() { return join(this.dataDir, "cli-grants.json"); }
   tokenFile(id: string) { return join(this.dataDir, "grants", id); }
-  private read(): CliGrant[] { try { const j = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(j) ? j : []; } catch { return []; } }
+  private read(): CliGrant[] { try { const j = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(j) ? j.map(migrateGrant) : []; } catch { return []; } }
+  /** Write back every record in the set form, once, when one was written before scopes were a set. */
+  migrate(): number { let raw: any[] = []; try { const j = JSON.parse(readFileSync(this.file(), "utf8")); raw = Array.isArray(j) ? j : []; } catch { return 0; }
+    const old = raw.filter((g) => !Array.isArray(g?.scopes)).length; if (old) this.write(raw.map(migrateGrant)); return old; }
   private write(all: CliGrant[]) { mkdirSync(this.dataDir, { recursive: true }); const f = this.file(); writeFileSync(f + ".tmp", JSON.stringify(all, null, 1), { mode: 0o600 }); renameSync(f + ".tmp", f); }
   private stateOf(g: CliGrant, now = Date.now()): GrantView["state"] { return g.revokedAt ? "revoked" : Date.parse(g.expiresAt) <= now ? "expired" : "active"; }
   get(id: string): CliGrant | null { return this.read().find((g) => g.id === id) ?? null; }
-  view(g: CliGrant): GrantView { const { tokenHash: _h, ...rest } = g; const state = this.stateOf(g); return { ...rest, state, file: state === "active" && existsSync(this.tokenFile(g.id)) ? this.tokenFile(g.id) : null }; }
+  view(g: CliGrant): GrantView { const { tokenHash: _h, usage, ...rest } = g; const state = this.stateOf(g), u = windowOf(usage);
+    return { ...rest, state, file: state === "active" && existsSync(this.tokenFile(g.id)) ? this.tokenFile(g.id) : null, budget: { calls: u.length, bytes: u.reduce((n, x) => n + x.bytes, 0), maxCalls: ROLLING.calls(), maxBytes: ROLLING.bytes() } }; }
   list(): GrantView[] { const all = this.read(); for (const g of all) if (this.stateOf(g) !== "active") rmSync(this.tokenFile(g.id), { force: true }); return all.map((g) => this.view(g)).reverse(); }
   active(id: string) { const g = this.get(id); return !!g && this.stateOf(g) === "active"; }
 
   /** The captain issues a grant (called only from the board's authenticated, same-site route). */
-  issue(o: { project?: string; ttl: string; scope?: string }, by: string): { grant: GrantView; file: string } {
+  issue(o: { project?: string; ttl: string; scope?: string; scopes?: unknown; observe?: unknown }, by: string): { grant: GrantView; file: string } {
     if (!(GRANT_TTLS as readonly string[]).includes(o.ttl)) throw new Error(`choose an expiry: ${GRANT_TTLS.join(", ")}`);
-    const scope: GrantScope = o.scope === undefined ? "project" : (GRANT_SCOPES as readonly string[]).includes(o.scope) ? o.scope as GrantScope : (() => { throw new Error(`choose what the grant reaches: ${GRANT_SCOPES.join(", ")}`); })();
-    if (scope === "project" && (!o.project || typeof o.project !== "string")) throw new Error("choose a project");
-    if (scope === "prs") o = { ...o, project: "" };
+    const asked: unknown[] = o.scopes !== undefined ? (Array.isArray(o.scopes) ? o.scopes : [null]) : [o.scope ?? "project"];
+    if (!asked.length || asked.some((x) => !(GRANT_SCOPES as readonly unknown[]).includes(x))) throw new Error(`choose what the grant reaches: ${GRANT_SCOPES.join(", ")}`);
+    const scopes = GRANT_SCOPES.filter((x) => asked.includes(x));
+    const observe = scopes.includes("observe") ? readObserve(o.observe) : null;
+    if (!observe && o.observe !== undefined) throw new Error("observe settings need the observe scope");
+    // a project: for its runs, and for reading one project (a "review only" read grant may name none: every room)
+    const needsProject = scopes.includes("project") || observe?.preset === "project";
+    if (needsProject && (!o.project || typeof o.project !== "string")) throw new Error("choose a project");
+    if (!needsProject && !(observe && o.project)) o = { ...o, project: "" };
+    const scope = scopes[0];
     const id = `g-${randomBytes(4).toString("hex")}`, token = `csg_${id}_${randomBytes(32).toString("hex")}`, now = new Date();
-    const g: CliGrant = { id, scope, project: o.project!, ttl: o.ttl as GrantTtl, createdAt: now.toISOString(), expiresAt: expiryOf(o.ttl as GrantTtl, now).toISOString(), lastUsedAt: null,
+    const g: CliGrant = { id, scopes, ...(observe ? { observe } : {}), project: o.project!, ttl: o.ttl as GrantTtl, createdAt: now.toISOString(), expiresAt: expiryOf(o.ttl as GrantTtl, now).toISOString(), lastUsedAt: null,
       revokedAt: null, revokedBy: null, createdBy: by, calls: 0, tokenHash: sha(token), runs: [] };
     const dir = join(this.dataDir, "grants"); mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700);
     const f = this.tokenFile(id); writeFileSync(f, token + "\n", { mode: 0o600 }); chmodSync(f, 0o600);
     this.write([...this.read(), g]);
-    this.audit("cli_grant_issued", `external CLI grant ${id} issued for ${scope === "prs" ? "the pull request list" : g.project} until ${g.expiresAt}`, { grant: id, scope, project: g.project, expiresAt: g.expiresAt, by });
+    this.audit("cli_grant_issued", `external CLI grant ${id} issued (${scopes.join(", ")}${g.project ? ` for ${g.project}` : ""}) until ${g.expiresAt}`, { grant: id, scope, scopes, project: g.project, observe: observe ? { preset: observe.preset, kinds: observe.kinds, untrusted: observe.untrusted } : null, expiresAt: g.expiresAt, by });
     return { grant: this.view(g), file: f };
   }
 
@@ -91,11 +116,16 @@ export class CliGrants {
     if (g.revokedAt) return refuse(403, `grant ${g.id} was revoked by the captain at ${g.revokedAt}`, "revoked");
     if (Date.parse(g.expiresAt) <= Date.now()) { rmSync(this.tokenFile(g.id), { force: true }); return refuse(403, `grant ${g.id} expired at ${g.expiresAt}`, "expired"); }
     if (g.calls >= maxCalls()) return refuse(429, `grant ${g.id} reached its limit of ${maxCalls()} calls; ask the captain for a new grant`, "call limit");
-    g.calls += 1; g.lastUsedAt = new Date().toISOString(); this.write(all);
+    const now = Date.now(), w = windowOf(g.usage, now), bytes = w.reduce((n, x) => n + x.bytes, 0);
+    if (w.length >= ROLLING.calls() || bytes >= ROLLING.bytes()) { const again = new Date((w[0]?.at ?? now) + ROLLING.windowMs).toISOString();
+      return refuse(429, `grant ${g.id} used its hourly budget (${w.length} of ${ROLLING.calls()} calls, ${bytes} of ${ROLLING.bytes()} bytes in the last hour); it frees up from ${again}`, "hourly budget"); }
+    g.calls += 1; g.lastUsedAt = new Date(now).toISOString(); g.usage = [...w, { at: now, bytes: 0 }]; this.write(all);
     this.audit("cli_grant_used", `external CLI grant ${g.id} called ${tool}`, { grant: g.id, tool });
     return { ok: true, grant: g };
   }
 
+  /** What a call returned counts toward the grant's hourly bytes (its last call's entry). */
+  charge(id: string, bytes: number) { const all = this.read(), g = all.find((x) => x.id === id); if (!g?.usage?.length) return; g.usage[g.usage.length - 1].bytes += Math.max(0, Math.round(bytes)); g.usage = windowOf(g.usage); this.write(all); }
   recordRun(id: string, run: string, staffing: Record<string, string> | null) {
     const all = this.read(), g = all.find((x) => x.id === id); if (!g) return;
     g.runs.push({ run, at: new Date().toISOString(), staffing }); this.write(all);
@@ -145,9 +175,16 @@ export function installGrantViews(engine: Engine, grants: CliGrants) {
 
 /** The pull request list's tools (src/pr-watch.ts `tools`): what a grant of scope "prs" reaches instead of the four. */
 export type PrTools = { list(): { name: string; description: string; inputSchema: unknown }[]; call(name: string, args: unknown, grant: string): Promise<unknown>; writes(name: string): boolean };
-export const scopeOf = (g: Pick<CliGrant, "scope">): GrantScope => g.scope ?? "project";
+/** A grant's scopes (a record from before the set: its one scope). */
+export const scopesOf = (g: Partial<Pick<CliGrant, "scopes" | "scope">>): GrantScope[] => (Array.isArray(g.scopes) ? g.scopes : [g.scope ?? "project"]);
+/** What a grant's read tools reach (src/observe/tools.ts createObserve's grant), or null when it has no observe scope. */
+export function observeGrant(g: Pick<CliGrant, "id" | "project" | "observe" | "scopes">): ObserveGrant | null {
+  if (!scopesOf(g).includes("observe") || !g.observe) return null;
+  return { id: g.id, kinds: [...g.observe.kinds], project: g.project || null, untrusted: g.observe.untrusted === true };
+}
+type ObserveTools = { specs: { name: string; description: string; inputSchema: unknown; outputSchema?: unknown; annotations?: unknown }[]; call(name: string, args: unknown): Promise<unknown> };
 
-export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstmate: () => Firstmate; prs?: () => PrTools | null }) {
+export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstmate: () => Firstmate; prs?: () => PrTools | null; observe?: (grant: ObserveGrant) => ObserveTools | null }) {
   const { engine, grants } = d;
   const projectScoped = (def: any) => !!def && Object.hasOwn(def.params ?? {}, "project") && !String(def.id).startsWith("firstmate-");
   /** the runs a grant may read: the proposals it started (recorded here and marked with its id), the work their dispatch
@@ -223,16 +260,28 @@ export function createGrantTools(d: { engine: Engine; grants: CliGrants; firstma
     return { workflows: engine.defs.catalog().filter(projectScoped).map((w: any) => ({ id: w.id, name: w.displayName ?? w.name, version: w.version, kind: w.kind ?? null, description: w.description ?? "",
       inputs: Object.entries(w.params ?? {}).filter(([k]) => !["project", "repo", "base", "branch", "worktree"].includes(k)).map(([k, s]: [string, any]) => ({ name: k, label: s?.label ?? k, required: !!s?.required })) })) };
   }
+  const readTools = (g: Pick<CliGrant, "id" | "project" | "observe" | "scopes">) => { const v = observeGrant(g); return v ? d.observe?.(v) ?? null : null; };
+  const toolsOf = (g?: Pick<CliGrant, "id" | "project" | "observe" | "scopes" | "scope">): { name: string; description: string; inputSchema: unknown }[] => {
+    const sc = g ? scopesOf(g) : (["project"] as GrantScope[]);
+    return [...(sc.includes("project") ? GRANT_TOOLS.map((t) => ({ ...t })) : []), ...(sc.includes("prs") ? d.prs?.()?.list() ?? [] : []),
+      ...(sc.includes("observe") && g ? (readTools(g as any)?.specs ?? []).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, outputSchema: t.outputSchema, annotations: t.annotations })) : [])];
+  };
   return {
-    /** the tools a grant reaches: the four run tools for a project grant, the pull request list's for a "prs" grant */
-    list: (g?: Pick<CliGrant, "scope">): { name: string; description: string; inputSchema: unknown }[] => g && scopeOf(g) === "prs" ? d.prs?.()?.list() ?? [] : GRANT_TOOLS.map((t) => ({ ...t })),
+    /** the tools a grant reaches, by its scopes: the four run tools, the pull request list's, Studio's read tools; a tool its
+     *  scopes do not give is not in the list at all */
+    list: toolsOf,
     async call(g: CliGrant, name: string, args: unknown): Promise<unknown> {
-      if (scopeOf(g) === "prs") {
-        const prs = d.prs?.(); if (!prs || !prs.list().some((t) => t.name === name)) return { error: `no such tool: ${name}` };
+      const sc = scopesOf(g);
+      if (sc.includes("observe") && (readTools(g)?.specs ?? []).some((t) => t.name === name)) {
+        try { return await readTools(g)!.call(name, args); } catch (e: any) { return { error: e?.publicFailure?.reason?.en ?? String(e?.message ?? e), code: e?.publicFailure?.code ?? null }; }
+      }
+      if (sc.includes("prs") && (d.prs?.()?.list() ?? []).some((t) => t.name === name)) {
+        const prs = d.prs?.(); if (!prs) return { error: `no such tool: ${name}` };
         const out: any = await prs.call(name, args, g.id);
         if (prs.writes(name) && !(out && typeof out === "object" && "error" in out)) grants.recordEdit(g.id, name, args);
         return out;
       }
+      if (!sc.includes("project")) return { error: `no such tool: ${name} (this grant reaches ${toolsOf(g).map((t) => t.name).join(", ")})` };
       if (name === "list_workflows") return list();
       if (name === "start_run") return start(g, args);
       if (name === "run_status") return status(g, args);

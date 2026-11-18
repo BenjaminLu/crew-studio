@@ -35,6 +35,8 @@ const call = async (path: string, body?: unknown) => {
   return JSON.parse(text);
 };
 
+/** studio_get as a resource template: studio://{kind}/{id} */
+const RESOURCE_TEMPLATE = { uriTemplate: "studio://{kind}/{id}", name: "studio-entity", title: "A Studio entity", description: "One Task, card, review room, pull request, workflow, skill or other Studio entity, as studio_get reads it (kind:id refs, e.g. studio://task/R-162).", mimeType: "application/json" };
 /** the tools whose results go as structuredContent (those with an outputSchema), from the last tools/list */
 let structured: Set<string> | null = null;
 const listStructured = async () => { try { const t = await call("/api/tools"); return new Set<string>((Array.isArray(t) ? t : []).filter((x: any) => x?.outputSchema).map((x: any) => x.name)); } catch { return new Set<string>(); } };
@@ -47,10 +49,23 @@ rl.on("line", async (line) => {
   try {
     switch (m.method) {
       case "initialize":
-        return reply({ protocolVersion: negotiateProtocolVersion(m.params?.protocolVersion), capabilities: { tools: {} }, serverInfo: { name: "studio", version: "0.2.0" }, instructions: SERVER_INSTRUCTIONS });
+        return reply({ protocolVersion: negotiateProtocolVersion(m.params?.protocolVersion), capabilities: { tools: {}, resources: {} }, serverInfo: { name: "studio", version: "0.2.0" }, instructions: SERVER_INSTRUCTIONS });
       case "notifications/initialized": return;
       case "ping": return reply({});
       case "tools/list": { const tools = byName(await call("/api/tools")); structured = new Set((Array.isArray(tools) ? tools : []).filter((t: any) => t?.outputSchema).map((t: any) => t.name)); return reply({ tools }); }
+      // resources: studio://{kind}/{id} mirrors studio_get (src/observe/tools.ts), so a client can attach a room or a Task as
+      // context; offered only where this session has studio_get. Nothing is listed up front: studio_find and studio_list
+      // return resource links.
+      case "resources/list": return reply({ resources: [] });
+      case "resources/templates/list": { const tools = await call("/api/tools"); const has = Array.isArray(tools) && tools.some((t: any) => t?.name === "studio_get");
+        return reply({ resourceTemplates: has ? [RESOURCE_TEMPLATE] : [] }); }
+      case "resources/read": {
+        const uri = String(m.params?.uri ?? ""); if (!/^studio:\/\/[a-z][a-z-]{1,20}\/.+/.test(uri)) return fail(-32602, "a Studio resource is studio://kind/id (studio://task/R-162)");
+        const r = await call("/api/tools/studio_get", { ref: uri });
+        if (!r || typeof r !== "object" || r.error) return fail(-32002, `Resource not found: ${uri}${r?.error ? ` (${String(r.error).slice(0, 300)})` : ""}`);
+        const { _meta, ...data } = r as any;
+        return reply({ contents: [{ uri, mimeType: "application/json", text: JSON.stringify(data) }], ...(_meta ? { _meta } : {}) });
+      }
       case "tools/call": {
         const name = String(m.params?.name ?? "");
         const r = await call(`/api/tools/${encodeURIComponent(name)}`, m.params?.arguments ?? {});

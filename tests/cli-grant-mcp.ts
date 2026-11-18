@@ -105,7 +105,7 @@ try {
     const badScope = await post("/api/cli-grants", { scope: "everything", ttl: "1h" }, page()); assert.equal(badScope.status, 400);
     const asScript = await post("/api/cli-grants", { scope: "prs", ttl: "1h" }, { "content-type": "application/json", "x-crew-session": s.token }); assert.equal(asScript.status, 403, "only the captain's page issues it");
     const r = await post("/api/cli-grants", { scope: "prs", ttl: "1h" }, page()); assert.equal(r.status, 200, JSON.stringify(r.body)); const P = r.body.grant;
-    assert.equal(P.scope, "prs"); assert.equal(P.project, ""); assert.equal(statSync(P.file).mode & 0o777, 0o600); assert.match(P.claudeMcpAdd, /--grant-file /);
+    assert.deepEqual(P.scopes, ["prs"]); assert.equal(P.project, ""); assert.equal(statSync(P.file).mode & 0o777, 0o600); assert.match(P.claudeMcpAdd, /--grant-file /);
     const c = mcp(P.file);
     try {
       const list = await c.rpc("tools/list"); const names = list.result.tools.map((t: any) => t.name);
