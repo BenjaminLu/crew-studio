@@ -64,6 +64,11 @@ export type Sources = {
 export type LogEvent = { seq: number; ts: string; type: string; task: string | null; actor: string; pr: number | null; summary: any; data: any; workflow?: string };
 /** What a call may see beyond the default: a terminal's screen, only when the captain asked for it in this turn. */
 export type CallCtx = { captainAskedTail?: boolean };
+/** What an external CLI grant's read tools reach (src/cli-grants.ts, scope "observe"): its kinds, its project (null: every
+ *  project, for the "review only" preset) and whether external text (untrusted fields) is in. */
+export type GrantView = { id: string; kinds: string[]; project: string | null; untrusted: boolean };
+/** Kinds that belong to no project (Studio's catalog, library, crew and Doctor): a project grant that names them sees them all. */
+export const STUDIO_WIDE = new Set(["workflow", "skill", "crew", "doctor"]);
 export type KindDef = {
   kind: string;
   /** the board route of one entity (`:id` stands for its id) and of the kind's list */

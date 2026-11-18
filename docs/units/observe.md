@@ -76,6 +76,13 @@ retro's signals (`run_failed`, `room_round_failed`, `pr_*`, `captain_note`) carr
 caller sent, so it is untrusted like any other line's summary comes as untrusted and none of its data. A withheld
 Task's events show none of their untrusted parts.
 
+## External CLI grants
+
+The same read tools reach an external CLI grant with scope `observe` (docs/units/cli-mcp-grant.md): only the kinds the
+captain picked, only its project's entities, no focus, and no untrusted field unless the captain ticked "include external
+text" (`createObserve(sources, grant)`). The MCP helper mirrors `studio_get` as the resource template
+`studio://{kind}/{id}`. Tests: `tests/observe-grants.ts` (question 8), `tests/cli-grant.ts`, `tests/cli-grant-mcp.ts`.
+
 ## The envelope
 
 `{ref, kind, route, updatedAt, data, untrusted, nextCursor, truncated}`, and `items: [{ref, kind, route, title, updatedAt}]`

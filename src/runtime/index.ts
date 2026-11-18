@@ -315,7 +315,10 @@ export function createRuntime(d: RuntimeDeps) {
   // the retro's quick note: the captain's own words, written down for the next retro (src/retro-note-tool.ts)
   const noteTool=installNoteTool(d.dataDir,d.log);
   // Studio's read tools (src/observe/tools.ts): studio_now, studio_find, studio_list, studio_get, the same for Claude and Codex
-  const observe=createObserve({engine,taskRow:(r:any)=>taskRow(engine,r),prs:d.prs,focus:d.focus??null,log:d.log,dataDir:d.dataDir,skills:()=>d.skills??null,packages:()=>skillPackages??null,crew:()=>crewStore.current(),artifacts:()=>d.m3?.store??null,...(d.observe??{})});
+  const observeSources:any={engine,taskRow:(r:any)=>taskRow(engine,r),prs:d.prs,focus:d.focus??null,log:d.log,dataDir:d.dataDir,skills:()=>d.skills??null,packages:()=>skillPackages??null,crew:()=>crewStore.current(),artifacts:()=>d.m3?.store??null,...(d.observe??{})};
+  const observe=createObserve(observeSources);
+  // an external CLI grant's read tools (src/cli-grants.ts, scope observe): the same sources, its kinds and project, no focus
+  const observeFor=(grant:import('../observe/registry').GrantView)=>createObserve({...observeSources,focus:null},grant);
   // a terminal's screen only when the captain's own message in this turn asks for it (never a card, a wake, a grant or a repair)
   const observeCtx=(owner:any)=>({captainAskedTail:!!owner?.captain&&!owner?.origin?.grant&&!owner?.repair&&captainAskedForScreen(captainWords(String(owner?.text??'')))});
   const firstmate={specs:[...observe.specs,...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs,...noteTool.specs],call:(name:string,args:any,owner:any)=>observe.has(name)?(owner?.live?.()===false?Promise.reject(new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。')):observe.call(name,args,observeCtx(owner))):name==='studio_note_issue'?noteTool.call(name,args,owner):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
@@ -984,6 +987,6 @@ export function createRuntime(d: RuntimeDeps) {
     if (cap.quota !== "available" && id !== "claude") return `${id}'s quota could not be read just now${r}`;
     return null;
   };
-  return { handle, engine, defs, projects, firstmate, observe, startFromBranch, startLan, lanProviderProblem, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, observe, observeFor, startFromBranch, startLan, lanProviderProblem, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };
