@@ -18,6 +18,7 @@ import { processSession, type LineParser } from "./proc";
 import { cursorEnv, cursorPrompt } from "../host/jsonl";
 import type { ProviderCapability } from "./policy";
 import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec, type Usage } from "./types";
+import { scriptArgv } from "../self";
 
 export const CURSOR_HOSTS = ["api2.cursor.sh", "agentn.global.api5.cursor.sh"];
 
@@ -80,7 +81,7 @@ export async function verifyCursor(o: { bin?: string; fresh?: boolean; timeoutMs
     for (const d of ["h/.config", "d", "t"]) mkdirSync(join(root, d), { recursive: true, mode: 0o700 });
     const env = { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "en_US.UTF-8", NO_COLOR: "1", HOME: join(root, "h"), XDG_CONFIG_HOME: join(root, "h", ".config"), CURSOR_DATA_DIR: join(root, "d"), TMPDIR: join(root, "t"), AGENT_CLI_CREDENTIAL_STORE: "memory", ...login.env };
     let result: CursorCheck = { bin, source: login.source ?? "", ok: false, models: [], reason: "the check did not finish", at: Date.now() }, clean = true;
-    const proc = probeProcess(/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, "models"] : [bin, "models"], root, env, undefined, { timeoutMs: o.timeoutMs ?? 20_000, bytes: 256 * 1024 });
+    const proc = probeProcess(scriptArgv(bin, ["models"]), root, env, undefined, { timeoutMs: o.timeoutMs ?? 20_000, bytes: 256 * 1024 });
     // the caller left (its round or turn ended): the check stops, and an ended check is not remembered as a result
     const stop = () => { void proc.stop().catch(() => {}); }; o.signal?.addEventListener("abort", stop, { once: true });
     try {
@@ -140,7 +141,7 @@ export function cursorProvider(model = process.env.CREW_CURSOR_MODEL ?? "", bin 
       const env: Record<string, string> = { ...cursorEnv(ctx.env), HOME: join(root, "h"), XDG_CONFIG_HOME: join(root, "h", ".config"), CURSOR_DATA_DIR: join(root, "d"), AGENT_CLI_CREDENTIAL_STORE: "memory" };
       if (!env.CURSOR_API_KEY) { const login = cursorLogin(); if (login.ok) Object.assign(env, login.env); }
       const args = ["-p", "--output-format", "stream-json", "--trust", "--approve-mcps", "--sandbox", "disabled", "--workspace", join(root, "w"), ...(model ? ["--model", model] : []), "--", "{TEXT}"];
-      const cmd = () => (/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
+      const cmd = () => scriptArgv(bin, args);
       const session = processSession(cmd, join(root, "w"), env, parser, ctx.sandbox);
       return { interrupt() { session.interrupt(); drop(); }, async *send(text: string) { try { yield* session.send(cursorPrompt(text)); } finally { drop(); } } };
     },

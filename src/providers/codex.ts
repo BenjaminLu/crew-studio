@@ -12,6 +12,7 @@ import { blocksText } from "../tool-content";
 import { codexNeeds, type ApprovedCodexConfig } from "./needs";
 import { processSession, type LineParser } from "./proc";
 import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec, type Usage } from "./types";
+import { scriptArgv } from "../self";
 
 const toml = (s: string) => JSON.stringify(s); // a TOML basic string is a JSON string
 
@@ -36,7 +37,7 @@ export function codexProvider(model = process.env.CREW_CODEX_MODEL ?? "", bin = 
         "-c", `mcp_servers.studio.env={${env}}`, "-c", `mcp_servers.studio.default_tools_approval_mode=${toml("approve")}`,
         "-c", `mcp_servers.studio.enabled_tools=[${tools.map((t) => toml(t.name)).join(",")}]`,
         ...(approved?.effort ? ["-c", `model_reasoning_effort=${toml(approved.effort)}`] : []), ...(model ? ["-m", model] : []), "{TEXT}"];
-      const cmd = () => (/\.(mjs|js|ts)$/.test(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
+      const cmd = () => scriptArgv(bin, args);
       const auth = codexCredentialFiles(ctx.env, dirname(ctx.tokenFile));
       const session = processSession(cmd, ctx.cwd, auth.env, parser, ctx.sandbox);
       return { interrupt() { session.interrupt(); auth.close(); }, async *send(text: string) { try { yield* session.send(text); } finally { auth.close(); } } };
