@@ -64,6 +64,25 @@ try {
   for (const [style, payload] of [["line breaks (Ink)", box(42, [UNKNOWN.slice(0, 40), UNKNOWN.slice(40)]) + "last\r\n"], ["cursor moves (ratatui)", cupBox(42, [UNKNOWN.slice(0, 40), UNKNOWN.slice(40)])]] as const) {
     r = await shown(`unknown-${style}`, payload);
     ok(!unknownLeaks(r.lines).length && r.lines.some((l) => l.includes("last")), `a link Studio was not told, in a box drawn by ${style}, is removed whole`, JSON.stringify(r.lines)); }
+  // review round 5: boxes side by side, two links, a full-width link with a word below it, a token split on one row
+  // while the screen is read as plain text. Session links of the real shape (built at run time: none is committed)
+  const S1 = "https://claude.ai/code/" + "ses" + "sion_01ABCDEFGHIJKLMNOPQRSTUVWX", S2 = "https://claude.ai/code/" + "ses" + "sion_02ZYXWVUTSRQPONMLKJIHGFEDC";
+  const padTo = (x: string, n: number) => x + " ".repeat(Math.max(0, n - x.length)), heavy = `${E}[200S${E}[200T`.repeat(5500);
+  const r5: [string, string, number, number, (l: string[]) => boolean][] = [
+    ["two boxes side by side, the link in the left one", `${E}[2J${E}[1;1H│ ${S1.slice(0, 40)} │ │ ${padTo("left alone", 20)} │${E}[2;1H│ ${padTo(S1.slice(40), 40)} │ │ ${padTo("normal words", 20)} │${E}[4;1Hlast`, 100, 30,
+      (l) => !l.join("\n").includes(S1.slice(40)) && l.join("\n").includes("normal words") && l.join("\n").includes("left alone")],
+    ["two links in two boxes side by side", `${E}[2J${E}[1;1H│ ${S1.slice(0, 40)} │ │ ${S2.slice(0, 40)} │${E}[2;1H│ ${padTo(S1.slice(40), 40)} │ │ ${padTo(S2.slice(40), 40)} │${E}[4;1Hlast`, 100, 30,
+      (l) => !l.join("\n").includes(S1.slice(40)) && !l.join("\n").includes(S2.slice(40))],
+    ["a full-width link with a word alone on the row below (the word is no part of it)", `${E}[2J${E}[1;1H${"y".repeat(100 - S1.length - 1)} ${S1}${E}[2;1Hstandalone${E}[3;1Hother line`, 100, 30,
+      (l) => l.includes("standalone") && !l.join("\n").includes("ABCDEFGHIJ")],
+    ["a token in two pieces on one row, read as plain text (the worker out of budget)", heavy + `${E}[2J${E}[4;1Hkey ${TOK.slice(0, 28)}${E}[4;33H${TOK.slice(28)} end${E}[6;1Hlast`, 500, 200,
+      (l) => !l.join("\n").includes(TOK.slice(28)) && !l.join("\n").includes(TOK.slice(4, 20))],
+  ];
+  for (const [name, payload, c, rr, good] of r5) { r = await shown(`r5-${name}`, payload, { cols: c, rows: rr }); ok(good(r.lines), name, JSON.stringify(r.lines).slice(0, 400)); }
+  { const { findLink, findLinks } = await import("../src/terminals"), { rowBreaks } = await import("../src/terminal-rows");
+    ok(findLink(`${"y".repeat(100 - S1.length - 1)} ${S1}\r\nstandalone\r\n`, 100) === S1, "findLink: a whole session link is never joined with the word below it");
+    ok(JSON.stringify(findLinks(`│ ${S1.slice(0, 40)} │ │ ${S2.slice(0, 40)} │\r\n│ ${padTo(S1.slice(40), 40)} │ │ ${padTo(S2.slice(40), 40)} │\r\n`, 100).sort()) === JSON.stringify([S1, S2].sort()), "findLinks: two links in boxes side by side, each rejoined in its own box's columns");
+    ok(rowBreaks(`a${E}[1;5Hb${E}[2;1Hc${E}[Ad`) === "ab\r\nc\r\nd", "rowBreaks: a move along the row joins, a move to another row breaks"); }
   // the same through the plain-text fallback (the worker out of budget): cursor-placed rows are still rows there
   { const plain = (await import("../src/terminal-screen")).plainScreen(cupBox(42, [UNKNOWN.slice(0, 40), UNKNOWN.slice(40)]));
     ok(plain.lines.length >= 2 && plain.lines.some((l) => l.includes(UNKNOWN.slice(0, 40))) && plain.lines.some((l) => l.includes(UNKNOWN.slice(40))), "the plain fallback keeps cursor-placed rows apart, so the same link reading applies", JSON.stringify(plain.lines)); }

@@ -14,6 +14,7 @@
 import { Terminal } from "@xterm/headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { screenLines } from "./terminal-state";
+import { rowBreaks } from "./terminal-rows";
 
 /** At most this much of a terminal's latest output is read (Terminals.tail cuts its ring to it). */
 export const SCREEN_INPUT_MAX = 64_000;
@@ -71,8 +72,9 @@ export async function drawScreen(raw: string, cols0: number, rows0: number, budg
   } finally { term.dispose(); }
 }
 /** The plain text of the output, as Studio read a terminal before it drew screens: escapes dropped, carriage returns applied. */
-// a cursor move to another row (CUP, HVP, VPA) starts a new line there, so rows a program placed stay rows
-export const plainScreen = (raw: string): Screen => ({ lines: screenLines(raw.slice(-SCREEN_INPUT_MAX).replace(/\x1b\[\d*(?:;\d*)?[Hf]|\x1b\[\d*d/g, "\r\n")).filter((l, i, a) => l !== "" || (i > 0 && a[i - 1] !== "")), alternate: false, plain: true });
+// a cursor move to another row starts a new line there and one along the same row joins it (rowBreaks), so what a
+// program placed on one row stays one line
+export const plainScreen = (raw: string): Screen => ({ lines: screenLines(rowBreaks(raw.slice(-SCREEN_INPUT_MAX))).filter((l, i, a) => l !== "" || (i > 0 && a[i - 1] !== "")), alternate: false, plain: true });
 
 // the worker's module: next to this one from source; inside the binary, the entry point scripts/build.ts adds (a binary's
 // workers are named as built, relative, not by their $bunfs URL)
