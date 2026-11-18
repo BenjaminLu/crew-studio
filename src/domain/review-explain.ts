@@ -41,7 +41,7 @@ import { skillTools, type SkillRunRecord } from "../skillpkg/run";
 import { sweepHolders } from "../runtime/checks";
 import { hostPython, resolveNode, type Runtime } from "../skillpkg/runtimes";
 import { signal } from "../retro-signals";
-import { BATON_ADAPTER, BATON_PIN, isPinnedBaton } from "./review-baton";
+import { BATON_ADAPTER, BATON_PIN, isBaton, isPinnedBaton } from "./review-baton";
 
 const SKILL_ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
@@ -258,6 +258,8 @@ export function installExplainer(d: ExplainerDeps) {
   const defaults = (): Record<string, { text: string; at: string }> => { const x = rawSettings().defaultPrompts; return x && typeof x === "object" && !Array.isArray(x) ? x : {}; };
   const defaultPrompt = (skill: string): string | null => { const x = defaults()[skill]; const t = typeof x?.text === "string" ? clip(normPrompt(x.text), PROMPT_MAX) : ""; return t || null; };
   const library = () => { try { return engine.skillLibrary().library() as any[]; } catch { return []; } };
+  /** a skill as the room names it: the built-in baton is "baton (built in)", beside the captain's own "baton" */
+  const nameOf = (s: any) => s.id === BATON_PIN.id ? BATON_PIN.name : String(s.name || s.id);
   /** the last instructions each skill was run with (Studio-wide, per skill): what the next confirmation is prefilled with */
   const promptsFile = () => join(d.dataDir, "review-room-explain-prompts.json");
   const prompts = (): Record<string, { text: string; at: string }> => { try { const j = JSON.parse(readFileSync(promptsFile(), "utf8")); return j && typeof j.prompts === "object" && j.prompts ? j.prompts : {}; } catch { return {}; } };
@@ -270,7 +272,7 @@ export function installExplainer(d: ExplainerDeps) {
     if (!s) throw refuse("Pick a skill from Studio's skill library (the Skills page) / 請從 Studio 的技能庫（技能頁）挑一個技能", "bad_skill");
     const lv = lib.libVersion(s.id, s.current); if (!lv || !lib.filesIntact(s.id, s.current)) throw refuse(`The skill ${s.id} v${s.current} changed on disk since it was imported: import it again / 技能 ${s.id} v${s.current} 匯入後在磁碟上被改過，請重新匯入`, "skill_pin");
     const body = lib.body(s.id, s.current, s.sha256, s.filesSha256);
-    return { pin: { id: s.id, v: s.current, sha256: s.sha256, filesSha256: s.filesSha256, name: String(s.name || s.id).slice(0, 80), bodySha: sha(body) }, body, dir: join(lv.dir, "files"), files: lv.rec.files ?? [] };
+    return { pin: { id: s.id, v: s.current, sha256: s.sha256, filesSha256: s.filesSha256, name: nameOf(s).slice(0, 80), bodySha: sha(body) }, body, dir: join(lv.dir, "files"), files: lv.rec.files ?? [] };
   };
   /** What a run of this version may execute: null for a skill without scripts. Its scripts run unless the captain chose text
    *  only for this version (decided on the team-change card, the Crew page or the confirmation), on the runtimes found here (a version approved and prepared
@@ -342,7 +344,7 @@ export function installExplainer(d: ExplainerDeps) {
   const seatOf = (p: Pin) => `review-room-explainer:${p.id}@v${p.v}`;
   // baton (the built-in, or the captain's own copy of it) runs with Studio's adapter: the room's materials, not git, gh or transcripts
   const texts = (p: Pin, body: string) => [{ id: "review-room-explainer", sha256: sha(EXPLAINER_FRAME), text: EXPLAINER_FRAME },
-    ...(p.id === BATON_PIN.id ? [{ id: "review-room-baton-adapter", sha256: sha(BATON_ADAPTER), text: BATON_ADAPTER }] : []), { id: `${p.id}@v${p.v}`, sha256: p.bodySha, text: body }];
+    ...(isBaton(p.id) ? [{ id: "review-room-baton-adapter", sha256: sha(BATON_ADAPTER), text: BATON_ADAPTER }] : []), { id: `${p.id}@v${p.v}`, sha256: p.bodySha, text: body }];
   /** what a run of this skill took before (its median), for "expected time": null until one finished */
   const expected = (s: XState, skill: string, kind: "generate" | "ask") => { const ms = s.runs.filter((r) => r.kind === kind && r.skill.id === skill && r.status === "done" && r.ended).map((r) => Date.parse(r.ended!) - Date.parse(r.at)).sort((a, b) => a - b);
     return ms.length ? { minutes: Math.max(1, Math.round(ms[Math.floor(ms.length / 2)] / 60_000)), from: ms.length } : null; };
@@ -442,7 +444,7 @@ export function installExplainer(d: ExplainerDeps) {
     const job = live?.job ? jobs?.get(live.job) : null;
     // the captain's own skills (imported from a folder, a skills home or git) first, then the ones Studio ships in its library
     const own = (s: any) => !!s.sourceKind && s.sourceKind !== "builtin";
-    return { selected: selectedOf(st), tutor: !!st.tutor, auto: autoOf(k), skills: library().map((s) => ({ id: s.id, name: s.name, description: clip(s.description, 300), v: s.current, source: s.sourceKind ?? null, own: own(s) })).sort((a, b) => Number(!a.own) - Number(!b.own)),
+    return { selected: selectedOf(st), tutor: !!st.tutor, auto: autoOf(k), skills: library().map((s) => ({ id: s.id, name: nameOf(s), description: clip(s.description, 300), v: s.current, source: s.sourceKind ?? null, own: own(s) })).sort((a, b) => Number(!a.own) - Number(!b.own)),
       versions: st.versions, runs: st.runs.map((r) => ({ ...r, progress: r.progress.slice(-30) })), running: live ? live.run : null, consent: st.consent ?? null,
       // the live log of the round that runs now (its tool calls and what it said), as text
       log: job ? (job.log ?? []).slice(-40).map((l: any) => ({ ts: l.ts, kind: l.kind, text: clip(l.text, 300) })) : [], settings: settings(), busy: d.tutorBusy(k.id) };

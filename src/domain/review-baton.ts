@@ -1,15 +1,18 @@
 // baton, the review room's default way to explain a change (docs/units/review-room.md, "Explain with your own skill").
-// Studio ships upstream baton as a built-in library skill (packs/core/skills/baton/, copied byte for byte, credit in its
+// Studio ships upstream baton as a built-in library skill (packs/core/skills/studio-baton/, copied byte for byte, credit in its
 // NOTICE.md and THIRD_PARTY_NOTICES.md) and pins it here by both of the library's hashes: SKILL.md (sha256) and every other
 // file (filesSha256). The pinned version is the one the captain decided to run by itself when a room opens: its scripts are
 // approved in advance (recorded once in the signed approvals ledger, via "builtin-pin"), and a room's generation needs no
 // paid confirmation. Any other version (a changed file, the captain's own import of baton) is an ordinary skill: confirmed.
+// The built-in lives under its own library id (studio-baton, shown "baton (built in)"): a captain who imported baton from a skills
+// home keeps that copy as "baton", and the room's default never resolves to it.
 //   BATON_ADAPTER  Studio's adapter, sent with the skill and pinned with it: what differs in a review room (the room's
 //                  materials instead of git, gh and session transcripts; diagram-design read from the skill's folder)
 
-/** the built-in baton as Studio ships it: the library's two hashes of packs/core/skills/baton/ (tests/review-baton.ts checks them) */
+/** the built-in baton as Studio ships it: the library's two hashes of packs/core/skills/studio-baton/ (tests/review-baton.ts checks them) */
 export const BATON_PIN = {
-  id: "baton",
+  /** its own id, beside any baton the captain imported (that one is the captain's skill: picked per room, confirmed) */
+  id: "studio-baton", name: "baton (built in)",
   sha256: "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1",
   filesSha256: "7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9",
   upstream: { repo: "https://github.com/BenjaminLu/baton", commit: "c382464ab02a14ad3dda364143c74bff58ddbcfc" },
@@ -24,6 +27,8 @@ export const BATON_PIN = {
   } as Record<string, string>,
 } as const;
 
+/** baton, the built-in or the captain's own copy of it: either runs with Studio's adapter */
+export const isBaton = (id: string) => id === BATON_PIN.id || id === "baton";
 /** the library version is exactly the built-in Studio pinned */
 export const isPinnedBaton = (p: { id: string; sha256: string; filesSha256: string } | null | undefined) =>
   !!p && p.id === BATON_PIN.id && p.sha256 === BATON_PIN.sha256 && p.filesSha256 === BATON_PIN.filesSha256;

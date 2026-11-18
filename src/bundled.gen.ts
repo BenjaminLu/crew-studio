@@ -85,48 +85,48 @@ import b81 from "../packs/core/checks/ste-wording/run" with { type: "file" };
 import b82 from "../packs/core/evals/coordinator.json" with { type: "file" };
 import b83 from "../packs/core/manifest.yaml" with { type: "file" };
 import b84 from "../packs/core/skills/accessible-ui/SKILL.md" with { type: "file" };
-import b85 from "../packs/core/skills/baton/NOTICE.md" with { type: "file" };
-import b86 from "../packs/core/skills/baton/SKILL.md" with { type: "file" };
-import b87 from "../packs/core/skills/baton/diagram-design/LICENSE" with { type: "file" };
-import b88 from "../packs/core/skills/baton/diagram-design/SKILL.md" with { type: "file" };
-import b89 from "../packs/core/skills/baton/diagram-design/assets/template.html" with { type: "file" };
-import b90 from "../packs/core/skills/baton/diagram-design/references/output-spec.md" with { type: "file" };
-import b91 from "../packs/core/skills/baton/diagram-design/references/semantic-patterns.md" with { type: "file" };
-import b92 from "../packs/core/skills/baton/diagram-design/references/style-guide.md" with { type: "file" };
-import b93 from "../packs/core/skills/baton/diagram-design/references/type-architecture.md" with { type: "file" };
-import b94 from "../packs/core/skills/baton/diagram-design/references/type-data-flow.md" with { type: "file" };
-import b95 from "../packs/core/skills/baton/diagram-design/references/type-db-schema.md" with { type: "file" };
-import b96 from "../packs/core/skills/baton/diagram-design/references/type-dependency.md" with { type: "file" };
-import b97 from "../packs/core/skills/baton/diagram-design/references/type-deployment.md" with { type: "file" };
-import b98 from "../packs/core/skills/baton/diagram-design/references/type-er.md" with { type: "file" };
-import b99 from "../packs/core/skills/baton/diagram-design/references/type-flowchart.md" with { type: "file" };
-import b100 from "../packs/core/skills/baton/diagram-design/references/type-layers.md" with { type: "file" };
-import b101 from "../packs/core/skills/baton/diagram-design/references/type-sequence.md" with { type: "file" };
-import b102 from "../packs/core/skills/baton/diagram-design/references/type-state.md" with { type: "file" };
-import b103 from "../packs/core/skills/baton/diagram-design/references/type-swimlane.md" with { type: "file" };
-import b104 from "../packs/core/skills/baton/diagram-design/references/type-timeline.md" with { type: "file" };
-import b105 from "../packs/core/skills/baton/diagram-design/references/type-tree.md" with { type: "file" };
-import b106 from "../packs/core/skills/baton/references/diagrams.md" with { type: "file" };
-import b107 from "../packs/core/skills/baton/references/extraction.md" with { type: "file" };
-import b108 from "../packs/core/skills/baton/references/pipeline.md" with { type: "file" };
-import b109 from "../packs/core/skills/baton/references/spec.md" with { type: "file" };
-import b110 from "../packs/core/skills/baton/requirements.txt" with { type: "file" };
-import b111 from "../packs/core/skills/baton/scripts/export_pdf.py" with { type: "file" };
-import b112 from "../packs/core/skills/baton/scripts/figures.py" with { type: "file" };
-import b113 from "../packs/core/skills/baton/scripts/render.py" with { type: "file" };
-import b114 from "../packs/core/skills/baton/scripts/snapshot.py" with { type: "file" };
-import b115 from "../packs/core/skills/baton/scripts/verify.py" with { type: "file" };
-import b116 from "../packs/core/skills/baton/templates/packet.html" with { type: "file" };
-import b117 from "../packs/core/skills/code-review/SKILL.md" with { type: "file" };
-import b118 from "../packs/core/skills/commit-and-pr-text/SKILL.md" with { type: "file" };
-import b119 from "../packs/core/skills/coordinator.md" with { type: "file" };
-import b120 from "../packs/core/skills/data-viz/SKILL.md" with { type: "file" };
-import b121 from "../packs/core/skills/fail-first-testing/SKILL.md" with { type: "file" };
-import b122 from "../packs/core/skills/film-direction/SKILL.md" with { type: "file" };
-import b123 from "../packs/core/skills/image-prompting/SKILL.md" with { type: "file" };
-import b124 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
-import b125 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
-import b126 from "../packs/core/skills/security-review/SKILL.md" with { type: "file" };
+import b85 from "../packs/core/skills/code-review/SKILL.md" with { type: "file" };
+import b86 from "../packs/core/skills/commit-and-pr-text/SKILL.md" with { type: "file" };
+import b87 from "../packs/core/skills/coordinator.md" with { type: "file" };
+import b88 from "../packs/core/skills/data-viz/SKILL.md" with { type: "file" };
+import b89 from "../packs/core/skills/fail-first-testing/SKILL.md" with { type: "file" };
+import b90 from "../packs/core/skills/film-direction/SKILL.md" with { type: "file" };
+import b91 from "../packs/core/skills/image-prompting/SKILL.md" with { type: "file" };
+import b92 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
+import b93 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
+import b94 from "../packs/core/skills/security-review/SKILL.md" with { type: "file" };
+import b95 from "../packs/core/skills/studio-baton/NOTICE.md" with { type: "file" };
+import b96 from "../packs/core/skills/studio-baton/SKILL.md" with { type: "file" };
+import b97 from "../packs/core/skills/studio-baton/diagram-design/LICENSE" with { type: "file" };
+import b98 from "../packs/core/skills/studio-baton/diagram-design/SKILL.md" with { type: "file" };
+import b99 from "../packs/core/skills/studio-baton/diagram-design/assets/template.html" with { type: "file" };
+import b100 from "../packs/core/skills/studio-baton/diagram-design/references/output-spec.md" with { type: "file" };
+import b101 from "../packs/core/skills/studio-baton/diagram-design/references/semantic-patterns.md" with { type: "file" };
+import b102 from "../packs/core/skills/studio-baton/diagram-design/references/style-guide.md" with { type: "file" };
+import b103 from "../packs/core/skills/studio-baton/diagram-design/references/type-architecture.md" with { type: "file" };
+import b104 from "../packs/core/skills/studio-baton/diagram-design/references/type-data-flow.md" with { type: "file" };
+import b105 from "../packs/core/skills/studio-baton/diagram-design/references/type-db-schema.md" with { type: "file" };
+import b106 from "../packs/core/skills/studio-baton/diagram-design/references/type-dependency.md" with { type: "file" };
+import b107 from "../packs/core/skills/studio-baton/diagram-design/references/type-deployment.md" with { type: "file" };
+import b108 from "../packs/core/skills/studio-baton/diagram-design/references/type-er.md" with { type: "file" };
+import b109 from "../packs/core/skills/studio-baton/diagram-design/references/type-flowchart.md" with { type: "file" };
+import b110 from "../packs/core/skills/studio-baton/diagram-design/references/type-layers.md" with { type: "file" };
+import b111 from "../packs/core/skills/studio-baton/diagram-design/references/type-sequence.md" with { type: "file" };
+import b112 from "../packs/core/skills/studio-baton/diagram-design/references/type-state.md" with { type: "file" };
+import b113 from "../packs/core/skills/studio-baton/diagram-design/references/type-swimlane.md" with { type: "file" };
+import b114 from "../packs/core/skills/studio-baton/diagram-design/references/type-timeline.md" with { type: "file" };
+import b115 from "../packs/core/skills/studio-baton/diagram-design/references/type-tree.md" with { type: "file" };
+import b116 from "../packs/core/skills/studio-baton/references/diagrams.md" with { type: "file" };
+import b117 from "../packs/core/skills/studio-baton/references/extraction.md" with { type: "file" };
+import b118 from "../packs/core/skills/studio-baton/references/pipeline.md" with { type: "file" };
+import b119 from "../packs/core/skills/studio-baton/references/spec.md" with { type: "file" };
+import b120 from "../packs/core/skills/studio-baton/requirements.txt" with { type: "file" };
+import b121 from "../packs/core/skills/studio-baton/scripts/export_pdf.py" with { type: "file" };
+import b122 from "../packs/core/skills/studio-baton/scripts/figures.py" with { type: "file" };
+import b123 from "../packs/core/skills/studio-baton/scripts/render.py" with { type: "file" };
+import b124 from "../packs/core/skills/studio-baton/scripts/snapshot.py" with { type: "file" };
+import b125 from "../packs/core/skills/studio-baton/scripts/verify.py" with { type: "file" };
+import b126 from "../packs/core/skills/studio-baton/templates/packet.html" with { type: "file" };
 import b127 from "../packs/core/skills/technical-writing/SKILL.md" with { type: "file" };
 import b128 from "../packs/core/skills/translation-zh-tw/SKILL.md" with { type: "file" };
 import b129 from "../packs/core/skills/visual-design-review/SKILL.md" with { type: "file" };
@@ -492,48 +492,48 @@ export const BUNDLED: Record<string, string> = {
   "packs/core/evals/coordinator.json": b82,
   "packs/core/manifest.yaml": b83,
   "packs/core/skills/accessible-ui/SKILL.md": b84,
-  "packs/core/skills/baton/NOTICE.md": b85,
-  "packs/core/skills/baton/SKILL.md": b86,
-  "packs/core/skills/baton/diagram-design/LICENSE": b87,
-  "packs/core/skills/baton/diagram-design/SKILL.md": b88,
-  "packs/core/skills/baton/diagram-design/assets/template.html": b89,
-  "packs/core/skills/baton/diagram-design/references/output-spec.md": b90,
-  "packs/core/skills/baton/diagram-design/references/semantic-patterns.md": b91,
-  "packs/core/skills/baton/diagram-design/references/style-guide.md": b92,
-  "packs/core/skills/baton/diagram-design/references/type-architecture.md": b93,
-  "packs/core/skills/baton/diagram-design/references/type-data-flow.md": b94,
-  "packs/core/skills/baton/diagram-design/references/type-db-schema.md": b95,
-  "packs/core/skills/baton/diagram-design/references/type-dependency.md": b96,
-  "packs/core/skills/baton/diagram-design/references/type-deployment.md": b97,
-  "packs/core/skills/baton/diagram-design/references/type-er.md": b98,
-  "packs/core/skills/baton/diagram-design/references/type-flowchart.md": b99,
-  "packs/core/skills/baton/diagram-design/references/type-layers.md": b100,
-  "packs/core/skills/baton/diagram-design/references/type-sequence.md": b101,
-  "packs/core/skills/baton/diagram-design/references/type-state.md": b102,
-  "packs/core/skills/baton/diagram-design/references/type-swimlane.md": b103,
-  "packs/core/skills/baton/diagram-design/references/type-timeline.md": b104,
-  "packs/core/skills/baton/diagram-design/references/type-tree.md": b105,
-  "packs/core/skills/baton/references/diagrams.md": b106,
-  "packs/core/skills/baton/references/extraction.md": b107,
-  "packs/core/skills/baton/references/pipeline.md": b108,
-  "packs/core/skills/baton/references/spec.md": b109,
-  "packs/core/skills/baton/requirements.txt": b110,
-  "packs/core/skills/baton/scripts/export_pdf.py": b111,
-  "packs/core/skills/baton/scripts/figures.py": b112,
-  "packs/core/skills/baton/scripts/render.py": b113,
-  "packs/core/skills/baton/scripts/snapshot.py": b114,
-  "packs/core/skills/baton/scripts/verify.py": b115,
-  "packs/core/skills/baton/templates/packet.html": b116,
-  "packs/core/skills/code-review/SKILL.md": b117,
-  "packs/core/skills/commit-and-pr-text/SKILL.md": b118,
-  "packs/core/skills/coordinator.md": b119,
-  "packs/core/skills/data-viz/SKILL.md": b120,
-  "packs/core/skills/fail-first-testing/SKILL.md": b121,
-  "packs/core/skills/film-direction/SKILL.md": b122,
-  "packs/core/skills/image-prompting/SKILL.md": b123,
-  "packs/core/skills/plain-writing/NOTICE.md": b124,
-  "packs/core/skills/plain-writing/SKILL.md": b125,
-  "packs/core/skills/security-review/SKILL.md": b126,
+  "packs/core/skills/code-review/SKILL.md": b85,
+  "packs/core/skills/commit-and-pr-text/SKILL.md": b86,
+  "packs/core/skills/coordinator.md": b87,
+  "packs/core/skills/data-viz/SKILL.md": b88,
+  "packs/core/skills/fail-first-testing/SKILL.md": b89,
+  "packs/core/skills/film-direction/SKILL.md": b90,
+  "packs/core/skills/image-prompting/SKILL.md": b91,
+  "packs/core/skills/plain-writing/NOTICE.md": b92,
+  "packs/core/skills/plain-writing/SKILL.md": b93,
+  "packs/core/skills/security-review/SKILL.md": b94,
+  "packs/core/skills/studio-baton/NOTICE.md": b95,
+  "packs/core/skills/studio-baton/SKILL.md": b96,
+  "packs/core/skills/studio-baton/diagram-design/LICENSE": b97,
+  "packs/core/skills/studio-baton/diagram-design/SKILL.md": b98,
+  "packs/core/skills/studio-baton/diagram-design/assets/template.html": b99,
+  "packs/core/skills/studio-baton/diagram-design/references/output-spec.md": b100,
+  "packs/core/skills/studio-baton/diagram-design/references/semantic-patterns.md": b101,
+  "packs/core/skills/studio-baton/diagram-design/references/style-guide.md": b102,
+  "packs/core/skills/studio-baton/diagram-design/references/type-architecture.md": b103,
+  "packs/core/skills/studio-baton/diagram-design/references/type-data-flow.md": b104,
+  "packs/core/skills/studio-baton/diagram-design/references/type-db-schema.md": b105,
+  "packs/core/skills/studio-baton/diagram-design/references/type-dependency.md": b106,
+  "packs/core/skills/studio-baton/diagram-design/references/type-deployment.md": b107,
+  "packs/core/skills/studio-baton/diagram-design/references/type-er.md": b108,
+  "packs/core/skills/studio-baton/diagram-design/references/type-flowchart.md": b109,
+  "packs/core/skills/studio-baton/diagram-design/references/type-layers.md": b110,
+  "packs/core/skills/studio-baton/diagram-design/references/type-sequence.md": b111,
+  "packs/core/skills/studio-baton/diagram-design/references/type-state.md": b112,
+  "packs/core/skills/studio-baton/diagram-design/references/type-swimlane.md": b113,
+  "packs/core/skills/studio-baton/diagram-design/references/type-timeline.md": b114,
+  "packs/core/skills/studio-baton/diagram-design/references/type-tree.md": b115,
+  "packs/core/skills/studio-baton/references/diagrams.md": b116,
+  "packs/core/skills/studio-baton/references/extraction.md": b117,
+  "packs/core/skills/studio-baton/references/pipeline.md": b118,
+  "packs/core/skills/studio-baton/references/spec.md": b119,
+  "packs/core/skills/studio-baton/requirements.txt": b120,
+  "packs/core/skills/studio-baton/scripts/export_pdf.py": b121,
+  "packs/core/skills/studio-baton/scripts/figures.py": b122,
+  "packs/core/skills/studio-baton/scripts/render.py": b123,
+  "packs/core/skills/studio-baton/scripts/snapshot.py": b124,
+  "packs/core/skills/studio-baton/scripts/verify.py": b125,
+  "packs/core/skills/studio-baton/templates/packet.html": b126,
   "packs/core/skills/technical-writing/SKILL.md": b127,
   "packs/core/skills/translation-zh-tw/SKILL.md": b128,
   "packs/core/skills/visual-design-review/SKILL.md": b129,

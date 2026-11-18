@@ -36,6 +36,12 @@ const shownVersion = (id) => { const st = state(id); if (!st) return null; const
   return st.versions.find((v) => v.n === n) || [...st.versions].reverse().find((v) => v.skill.id === sid) || latest(st); };
 /** the skill the room is explained with now: the shown version's (what a follow-up runs), else the selected one */
 const shownSkill = (id) => { const st = state(id), v = shownVersion(id); return v ? { id: v.skill.id, name: v.skill.name } : st?.selected ? { id: st.selected.id, name: skillName(st, st.selected.id) } : null; };
+/** the run that made a version (its model, cost and head) */
+const runOf = (st, v) => st?.runs?.find((r) => r.n === v?.run) || null;
+const short = (h) => String(h || "").slice(0, 7);
+/** who runs it and who pays, in a line: the run's provider and model, billed to that provider's account on this Mac */
+const whoPays = (run) => T(`On ${run.provider} · ${run.model || "default model"} · billed to the ${run.provider} account Studio runs it with on this Mac`,
+  `用 ${run.provider} · ${run.model || "預設模型"} · 由這台 Mac 上 Studio 使用的 ${run.provider} 帳號付費`);
 const liveRun = (st) => (st?.running != null ? st.runs.find((r) => r.n === st.running) : null);
 const readOnly = () => !!window.crewRemote?.token?.(); // a paired phone: Studio runs paid work only from the Mac
 const KIND = { html: ["HTML page", "HTML 頁"], markdown: ["Markdown", "Markdown"], image: ["picture", "圖片"], video: ["video", "影片"], text: ["text", "文字"] };
@@ -438,6 +444,8 @@ function bar(r, st) {
       h("span", { class: "rx-vername" }, gen ? run.skill.name : cur ? cur.skill.name : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
       h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
     cur && !gen ? versionHead(r, st, cur) : h("span", { class: "rx-linefill" }),
+    cur && !gen && runOf(st, cur) ? h("span", { class: "rx-vfacts faint", "data-explain-vfacts": cur.n, title: whoPays(runOf(st, cur)) },
+      [runOf(st, cur).head ? `head ${short(runOf(st, cur).head)}` : null, money(runOf(st, cur).cost), runOf(st, cur).model || null].filter(Boolean).join(" · ")) : null,
     cur && !gen ? autoNote(r, st) : null,
     // under the menu, a clear layer over the page (and the output's frame, which keeps its own clicks): a click there closes it
     X.verMenu === id ? [h("div", { class: "rx-verscrim", "data-explain-verscrim": "", onpointerdown: (e) => { e.preventDefault(); closeVerMenu(); } }), verMenu(r, st)] : null);
@@ -460,7 +468,7 @@ function verMenu(r, st) {
     run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, run.skill.name), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
     [...st.versions].reverse().map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null,
         onclick: () => { X.verMenu = null; showVersion(r, v); focusLater("[data-explain-versions]"); } },
-      h("span", { class: "k" }, `${v.skill.name} v${v.n}`), v.summary || v.entry, h("small", {}, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
+      h("span", { class: "k" }, `${v.skill.name} v${v.n}`), v.summary || v.entry, h("small", { "data-explain-verfacts": v.n }, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${runOf(st, v)?.head ? ` · ${T("head", "head")} ${short(runOf(st, v).head)}` : ""}${money(runOf(st, v)?.cost) ? ` · ${money(runOf(st, v).cost)}` : ""}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
       madeFrom(v) ? h("small", { class: "rx-verprompt", "data-explain-verprompt": v.n, title: madeFrom(v).full }, madeFrom(v).short) : null)),
     // one Generate: here once an output exists; before that the stage has it
     sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => { X.verMenu = null; openConfirm(r, sid, "generate", "[data-explain-versions]", cur.skill.id === sid && typeof cur.prompt === "string" ? cur.prompt : undefined); } }, T("Generate a new version", "重新產生一版")) : null,
@@ -491,7 +499,7 @@ function versionHead(r, st, v) {
 }
 function stage(r, st) {
   const id = r.card.id, run = liveRun(st), v = shownVersion(id), sid = st.selected?.id, lastGen = [...st.runs].reverse().find((x) => x.kind === "generate" && x.skill.id === sid);
-  if (run && run.kind === "generate") return progressCard(r, st, run);
+  if (run && run.kind === "generate" && !v) return progressCard(r, st, run);
   // "Starting" only while the page is starting it, or is about to (due, not sent yet): never a state nothing will end
   const starting = !run && (X.posting.has(`${id}/auto`) || (st.auto?.due && r.open && !readOnly() && !X.autoErr.has(id) && !X.autoPosted.has(`${id}@${st.auto.head}`)));
   if (!v && starting) return h("div", { class: "rx-gen", "data-x-stage": "", "data-explain-starting": "" }, h("div", { class: "rx-gencard", role: "status" },
@@ -511,7 +519,10 @@ function stage(r, st) {
       (bad && fa?.run === lastGen ? retryBtn() : null) ?? (r.open && !readOnly() ? h("button", { type: "button", class: "btn primary", "data-explain-again": "", onclick: () => openConfirm(r, sid, "generate", "[data-explain-again]") }, bad ? T("Try again", "再試一次") : T("Generate", "產生")) : null)); }
   const media = v.kind === "video" || v.kind === "image", asking = run && run.kind === "ask";
   const page = v.kind === "html" || v.kind === "markdown" || v.kind === "text";
-  return h("div", { class: "rx-stagein", "data-x-stage": "" },
+  const gen = run && run.kind === "generate" ? run : null;
+  return h("div", { class: `rx-stagein${gen ? " gen" : ""}`, "data-x-stage": "" },
+    // a new version being made (a new head): the one shown stays, the progress is one strip above it, with Stop
+    gen ? genStrip(r, st, gen) : null,
     // the layer with the output is placed over this slot (it is not part of the page's redraws)
     h("div", { class: "rx-slot", "data-x-slot": `${id}/${v.n}` }),
     h("div", { class: "rx-tools" },
@@ -523,6 +534,15 @@ function stage(r, st) {
           "▭ ", X.boxing === id ? T("Drag over the output, or press Enter for what is in view (Esc cancels)", "在產出上拖出一塊，或按 Enter 選目前看得到的（Esc 取消）") : T("Box a region to ask", "框一塊問")),
       h("span", { class: "rx-tag", "data-explain-isolation": "" }, media ? T("Shown by Studio", "由 Studio 顯示") : T("Isolated frame · no network · cannot read Studio · storage kept by Studio in memory", "隔離框 · 不能連網 · 不能讀 Studio · 儲存由 Studio 代管"))));
 }
+function genStrip(r, st, run) {
+  const id = r.card.id, ms = Date.now() - Date.parse(run.at), last = (run.progress || []).at(-1);
+  return h("div", { class: "rx-genstrip", role: "status", "data-explain-genstrip": run.n },
+    h("b", {}, T(`${run.skill.name} is making a new version${run.head ? ` for ${short(run.head)}` : ""}`, `${run.skill.name} 正在產生新的一版${run.head ? `（${short(run.head)}）` : ""}`)),
+    h("span", { class: "faint" }, `${fmtMin(ms)} · ${T(`round ${run.rounds.length || 1}`, `第 ${run.rounds.length || 1} 輪`)}${money(run.cost) ? ` · ${money(run.cost)}` : ""}`),
+    h("span", { class: "faint", "data-explain-model": "" }, whoPays(run)),
+    last ? h("span", { class: "faint" }, last.text) : null, h("span", { class: "rx-genstrip-fill" }),
+    readOnly() ? null : h("button", { type: "button", class: "btn sm", "data-explain-stop": "", disabled: X.posting.has(`${id}/stop`) ? true : null, onclick: () => stop(id) }, T("Stop", "停止")));
+}
 function progressCard(r, st, run) {
   const id = r.card.id, ms = Date.now() - Date.parse(run.at), rounds = run.rounds.length, prog = run.progress || [], prep = run.prepare || null, read = prog.length > 1 || rounds > 0 || !!prep;
   const pct = Math.max(2, Math.min(100, Math.round((ms / (run.limitMin * 60000)) * 100)));
@@ -530,6 +550,7 @@ function progressCard(r, st, run) {
   return h("div", { class: "rx-gen", "data-x-stage": "", "data-explain-progress": run.n },
     h("div", { class: "rx-gencard" },
       h("h3", {}, T(`${run.skill.name} is making the explanation`, `${run.skill.name} 正在產生說明`)),
+      h("div", { class: "faint", "data-explain-model": "" }, whoPays(run)),
       h("div", { class: "faint" }, T(`${fmtMin(ms)} so far · round ${rounds || 1} · it runs in the background: you can leave, Studio tells you when it is done`, `已跑 ${fmtMin(ms)} · 第 ${rounds || 1} 輪 · 在背景跑：可以先離開，做好了 Studio 會通知`), money(run.cost) ? ` · ${money(run.cost)}` : ""),
       h("ol", { class: "rx-steps", "data-explain-steps": "" },
         step(read ? "done" : "now", read ? "✓" : "●", T("Studio reads the materials (read-only)", "Studio 讀材料（唯讀）")),

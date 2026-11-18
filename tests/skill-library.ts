@@ -28,7 +28,7 @@ const lib = new Skills(fresh, flows).library();
 ok(lib.length >= 10 && builtins.every((id) => lib.some((s) => s.id === id && s.sourceKind === "builtin" && s.current === 1)), "a new data folder gets every built-in skill (at least 10), each v1", JSON.stringify(lib.map((s) => s.id)));
 ok(lib.every((s) => s.description.trim().length > 20 && s.fits && (s.fits.roles?.length ?? 0) > 0), "every built-in skill has a one-line description and says where it fits", JSON.stringify(lib.filter((s) => !s.fits || !s.description).map((s) => s.id)));
 // plain-writing predates the rule; baton is upstream's text, vendored byte for byte (tests/review-baton.ts pins it)
-const words = builtins.filter((id) => id !== "plain-writing" && id !== "baton").map((id) => [id, splitFrontmatter(readFileSync(join(root, "packs/core/skills", id, "SKILL.md"), "utf8")).body.split(/\s+/).filter(Boolean).length] as const);
+const words = builtins.filter((id) => id !== "plain-writing" && id !== "studio-baton").map((id) => [id, splitFrontmatter(readFileSync(join(root, "packs/core/skills", id, "SKILL.md"), "utf8")).body.split(/\s+/).filter(Boolean).length] as const);
 ok(words.length >= 10 && words.every(([, n]) => n <= 160), "the new built-in skills are short (about 150 words at most)", JSON.stringify(words));
 ok(new Skills(fresh, flows).library().every((s) => s.current === 1 && s.versions.length === 1), "seeding again adds no version");
 

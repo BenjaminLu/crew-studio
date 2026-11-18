@@ -33,10 +33,10 @@ const publicAttribution = new Map<string,string>([
  ["THIRD_PARTY_NOTICES.md:16","f1eb9e9fb7b09dbe1b7cb8dbcaa0b5abddbdda63119be0e9b40cdb70c0634970"],
  ["workflows/skills/baton/NOTICE.md:6","9956a3efe84aeeb5ccd95c4a0bd9c2e30bb86313bad8095e7ceb6cac9902e4c1"],
  ["workflows/skills/baton/NOTICE.md:18","765b91112284b6626e5743d21b152bef37ab40e749aad16cac3cdbfd33d71639"],
- // the vendored baton, the review room's built-in default skill (packs/core/skills/baton/NOTICE.md, its pin in src/domain/review-baton.ts)
+ // the vendored baton, the review room's built-in default skill (packs/core/skills/studio-baton/NOTICE.md, its pin in src/domain/review-baton.ts)
  ["THIRD_PARTY_NOTICES.md:20","05f7cb99f32d4f77f76be79d233ceb70cf0b92fc526b8a2da58718d982891383"],
- ["packs/core/skills/baton/NOTICE.md:5","862c401d3a519ef5fe127c832f18f1330dedbbc56896acd2ec757cc339d0f107"],
- ["packs/core/skills/baton/NOTICE.md:23","765b91112284b6626e5743d21b152bef37ab40e749aad16cac3cdbfd33d71639"],
+ ["packs/core/skills/studio-baton/NOTICE.md:5","862c401d3a519ef5fe127c832f18f1330dedbbc56896acd2ec757cc339d0f107"],
+ ["packs/core/skills/studio-baton/NOTICE.md:23","765b91112284b6626e5743d21b152bef37ab40e749aad16cac3cdbfd33d71639"],
  ["src/domain/review-baton.ts:15","9e2950801105c865fd43a3a57f653a5a59617cc195a9eb8b0e93570cb2b15a98"],
 ]);
 const publicLine=(f:string,n:number,line:string)=>publicAttribution.get(`${f}:${n}`)===createHash("sha256").update(line).digest("hex");
