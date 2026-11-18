@@ -71,7 +71,6 @@ try {
   const startShell = (p, project = "demo") => p.evaluate(async (project) => { const r = await fetch("/api/terminals", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project, preset: "shell", cols: 100, rows: 30 }) }); return (await r.json()).terminal.id; }, project);
   const dismiss = (p, id) => p.evaluate(async (id) => (await fetch(`/api/terminals/${id}/dismiss`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).ok, id);
   const show = async (p, id) => { await p.goto(`${base}/#/terminals/${encodeURIComponent(id)}`); await p.locator(`.wt-pane[data-term-pane="${id}"] .xterm-rows`).waitFor({ timeout: 10000 });
-    const hide = p.locator('[data-term-appwin] button[aria-label="Hide"]'); if (await hide.count()) await hide.click();
     await p.locator(`.wt-pane[data-term-pane="${id}"] .xterm-screen`).click(); await until(async () => /\$ $/m.test(await rowsOf(p, id))); };
   const say = async (p, line) => { await p.keyboard.type(line); await p.keyboard.press("Enter"); };
   const pidOf = async (p, id, tag) => { await say(p, `echo ${tag}=$$`); const m = await until(async () => new RegExp(`^${tag}=(\\d+)`, "m").exec(await rowsOf(p, id))); return m ? +m[1] : null; };
@@ -132,7 +131,7 @@ try {
 
   // Stop ends the shell: its process is gone, and it leaves too
   const c = await startShell(p); await show(p, c); const pidC = await pidOf(p, c, "PIDC");
-  await p.locator(`[data-term-kill="${c}"]`).click();
+  await p.locator("[data-term-menu]").click(); await p.locator(`[data-term-menu-pop] [data-term-kill="${c}"]`).click();
   ok(await until(async () => !alive(pidC), 6000), "Stop ends the shell (its process is gone)", String(pidC));
   ok(await until(async () => !(await listed(p)).some((t) => t.id === c) && !(await p.locator(`.wt-pane[data-term-pane="${c}"]`).count())), "and it leaves the list and its tab");
 
@@ -143,7 +142,7 @@ try {
   await p.waitForTimeout(800);
   ok((await listed(p)).some((t) => t.id === e) && (await p.locator(`.wt-pane[data-term-pane="${e}"]`).count()) === 1, "it stays listed and in its tab: an error is not cleaned away");
   ok(await until(async () => { const r = await rowsOf(p, e); return /rc: this setup is broken/.test(r) && /process ended: exit 3/.test(r); }), "its pane shows its last output and exit 3", await rowsOf(p, e));
-  ok(await until(async () => /Exited 3/.test(await p.locator(`.wt-pane[data-term-pane="${e}"] .wt-pbar, [data-term-detail="${e}"] .wt-dhead`).allInnerTexts().then((x) => x.join(" ")))), "and its badge says Exited 3");
+  ok(await until(async () => /Exited 3/.test(await p.locator(`.wt-tabs [aria-selected="true"]`).getAttribute("title")) && await p.locator(`.wt-tabs [aria-selected="true"] [data-term-state="exited"]`).count() === 1), "and its tab says Exited 3 (a red dot, Exited 3 in its title)");
   ok(await dismiss(p, e) && await until(async () => !(await listed(p)).some((t) => t.id === e)), "the captain removes it");
 
   // a shell that exits 0 with work to send for review stays, with Send for review; one with nothing to review leaves
@@ -152,7 +151,8 @@ try {
   ok(await until(async () => (await listed(p)).some((t) => t.id === r1 && !t.running)), "a shell that committed on a branch exits 0");
   await p.waitForTimeout(800);
   ok((await listed(p)).some((t) => t.id === r1), "it stays listed: it has a commit beyond main to send for review");
-  ok(await until(async () => (await p.locator(`[data-term-send="${r1}"]:not([disabled])`).count()) === 1), "with Send for review, ready");
+  ok(await until(async () => { if (!(await p.locator("[data-term-menu-pop]").count())) await p.locator("[data-term-menu]").click(); const n = await p.locator(`[data-term-menu-pop] [data-term-send="${r1}"]:not([disabled])`).count(); if (!n) await p.keyboard.press("Escape"); return n === 1; }), "with Send for review, ready (in its menu)");
+  await p.keyboard.press("Escape");
   await dismiss(p, r1); execFileSync("git", ["checkout", "-q", "main"], { cwd: repo });
   const r2 = await startShell(p, "repo"); await show(p, r2);
   await say(p, "echo draft > notes.txt; exit");

@@ -8,7 +8,7 @@ Code: `src/terminals.ts` (service and routes), `src/terminal-state.ts` (state he
 `public/terminals.css` (page, panel tab, sidebar count), `public/vendor/xterm-*` (xterm.js 6.0.0, its fit addon 0.11.0 and its
 Unicode 11 addon 0.9.0, pinned, copied by `scripts/vendor-xterm.ts`). Tests: `tests/terminal-state.ts`, `tests/terminals.ts`,
 `tests/terminals-ui.mjs`, `tests/terminal-focus-ui.mjs`, `tests/terminal-keys.ts`, `tests/terminal-launch.ts`,
-`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs`, `tests/terminal-theme.ts`, `tests/terminal-reattach-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`. Colours: `public/term-theme.js`.
+`tests/terminal-panes-ui.mjs`, `tests/terminal-input-ui.mjs`, `tests/terminal-theme.ts`, `tests/terminal-reattach-ui.mjs`, `tests/terminal-chrome-ui.mjs` (`bun run test:terminals`); the launch's argv also in `tests/open.ts`. Keys: `public/term-keys.js`. Colours: `public/term-theme.js`.
 
 ## Focus mode
 
@@ -27,13 +27,27 @@ The sidebar has a **Terminals** item (its own icon, right after Firstmate, also 
 
 The state is on `<body>` and in `PAGE_FOCUS`, outside `#view`, so a `render()` changes nothing.
 
-With a terminal shown, the page is the terminal: a row of tabs and tools, the focused terminal's header on one line (state,
-command, Stop, Restart, Remove, Send for review, Remote Control), the tab's panes filling the rest, width and height, and a
-line of key hints. Each pane's fit addon follows every resize, and its PTY gets the new size (`…/resize`). **Launch…** opens
-the launcher (agent presets, a command, every terminal listed) above the panes; starting a terminal closes it; it starts
-open while nothing is running. A phone sees the same tabs with a "View only" badge in place of the tools that start
-terminals; at 760 px and below the sidebar stays the top bar (its theme and gear row is hidden on this page) and the panes
-take the screen's width. With no tab at all, the page is the launcher and the list, as before.
+With a terminal shown, the page is the terminal: one slim strip of tabs (each a title and one dot for its state: waiting,
+working, exited or done, the panes' worst first; each pane's name, state and question in its title) and a **⋯** menu, and
+the tab's panes fill the rest, width and height (at 1440 x 900 the terminal is the window's height less at most 48 px). No
+pane has a bar or a button, and there is no header, key hint line or banner: people who use a terminal drive it from the
+keyboard. Each pane's fit addon follows every resize, and its PTY gets the new size (`…/resize`).
+
+The ⋯ menu (⌘., Ctrl+Shift+. elsewhere; the chat head's Firstmate menu look) holds every action, each with the chord that
+works where the page is: Launch…, Stop, Restart, Remove, Send for review (disabled with its reason while it cannot go), In
+review, Remote Control link…, Retry the output that waits; new tab, split right and down, zoom, clear, close pane, close tab,
+rename tab, go to; Open in a Studio window (in a browser tab), the sidebar, and **?** Keyboard shortcuts. Its head is the
+focused terminal: its name, state, command and folder, the question it asks, its branch and commits, Remote Control
+waiting for its link, a terminal from before a restart, view only. Opened, its first item has the focus; the arrows,
+Home and End move, Enter runs, ? opens the key table, Esc closes it and gives the keys back to the terminal, a click
+outside closes it. It is drawn in place, never with a full render, so the terminals keep their focus and selection.
+Over the terminal the page adds one line only when it needs the captain: a refused Send for review (it stays until the
+next try), and on a pane a quiet notice while its output waits (too many views). **Launch…** opens the launcher (agent
+presets, a command, every terminal listed) above the panes with its command field focused; starting a terminal closes it;
+it starts open while nothing is running. Remote Control's link and QR code open from the menu as a sheet. A phone sees the
+same strip; its menu leaves out what starts, stops or sends; at 760 px and below the sidebar stays the top bar (its theme
+and gear row is hidden on this page), the panes take the screen's width and the menu fits it. With no tab at all, the page
+is the launcher and the list, as before.
 
 ## Tabs, panes and keys
 
@@ -58,6 +72,14 @@ The keys are the platform's own terminal's (`public/term-keys.js`, the prototype
 | Resize, zoom | ⌃⌘arrows, ⇧⌘↩ | Alt+Shift+arrows, Ctrl+Shift+Enter |
 | Close pane (last: the tab) | ⌘W, in a browser tab ⌥W | Ctrl+Shift+W, in a browser tab Ctrl+Alt+W |
 | Clear, go to, sidebar, keys | ⌘K, ⇧⌘O, ⌘B, ⌘/ | Ctrl+Shift+K, Ctrl+Shift+P, Ctrl+Shift+B, Ctrl+Shift+/ |
+| Close tab (its terminals run on) | ⌥⇧⌘W | Ctrl+Alt+Shift+W |
+| The ⋯ menu | ⌘. | Ctrl+Shift+. |
+| Launch…, Stop, Restart, Remove | ⌥⌘N, ⌥⌘X, ⌥⌘R, ⌥⌘⌫ | Ctrl+Alt+Shift+N, X, R, Backspace |
+| Send for review, Retry, Studio window | ⌥⌘S, ⌥⌘G, ⌥⌘O | Ctrl+Alt+Shift+S, G, O |
+
+Every Mac chord holds ⌘ (a plain key, ⌃ or ⌥ alone is the shell's or a full-screen program's); the terminal's own actions,
+once buttons, are ⌥⌘ chords no browser keeps and no TUI gets (⌥⌘W, ⌥⌘M and ⌥⌘U are macOS's or Chrome's, so they are not
+used).
 
 Chords are matched on `KeyboardEvent.code` (the physical key: an input method or a keyboard layout does not move them),
 in the capture phase ahead of xterm, with `preventDefault`, so a chord that is Studio's never also reaches the shell.
@@ -65,8 +87,8 @@ Everything else (plain keys, Ctrl+C, the browser's copy and paste, F1 to F12, wh
 use) goes to the terminal as before. So does a chord with nothing to do (no such tab, one pane, no split that way), and
 AltGr: Windows reports it as Ctrl+Alt, so a Ctrl+Alt keydown that says AltGraph or types a character other than its key's
 own ({ [ ] ~ | \ # on German and French layouts) is text. The second chord of an action counts only in a browser tab; in a
-Studio window ⌥T, ⌥W and ⌥⇧] are Option-as-Meta and the shell's. The hints and the key table (⌘/, Ctrl+Shift+/ or the Keys
-button; both platforms one click apart) show the chord that works where the page is, and strike out the other. The table
+Studio window ⌥T, ⌥W and ⌥⇧] are Option-as-Meta and the shell's. The ⋯ menu and the key table (⌘/, Ctrl+Shift+/ or the
+menu's ?; both platforms one click apart) show the chord that works where the page is; the table strikes out the other. The table
 also lists copy mode and a new workspace (⇧⌘C, ⌘N on a Mac): this page has no workspaces and xterm selects and copies by
 itself, so those chords are not taken and reach the terminal.
 
@@ -103,10 +125,10 @@ scrollbar. The wheel scrolls back a row per row height of pixels, as 5.5.0 did (
 program asks for mouse reports, the wheel is left to xterm.
 
 Tab is the shell's: xterm sends it as `\t` and keeps the focus (the login shell, `$SHELL -l` on a PTY with
-`TERM=xterm-256color`, is interactive, so bash and zsh complete). A press on the pane around the terminal (its bar, the
-frame's padding) used to take the focus to the page, and the next Tab moved it to the pane's × instead of completing;
-a click there now gives the keys back to the pane's terminal: the first button only, and not a click that ends a drag
-selecting the bar's text (the press itself is left alone, so that text can be selected; buttons and links keep theirs). The same test checks
+`TERM=xterm-256color`, is interactive, so bash and zsh complete). A press on the pane around the terminal (the frame's
+padding) used to take the focus to the page, and the next Tab moved it to the next button instead of completing; a click
+there now gives the keys back to the pane's terminal: the first button only, and not a click that ends a drag selecting
+text (the press itself is left alone; buttons and links keep theirs). The same test checks
 `\t` reaches the PTY, the focus stays, and bash and zsh complete `ech` to `echo`.
 
 ## Colours
@@ -141,8 +163,8 @@ cannot press keys the OS gives the browser). So:
   POSIX's: not exercised on those systems. The launch never blocks (the page's button runs it inside the server): an opener
   (open, xdg-open, start) is waited for without blocking, at most 5 s; a browser started directly is the window itself, so
   it is started detached, never waited for and never stopped.
-- In a browser tab the terminal page shows a banner naming the chords the tab keeps and the ones to use instead, with **Open
-  in a Studio window**: `POST /api/terminals/app-window` runs the same launch as an app window. The desktop page's own
+- In a browser tab the terminal page's ⋯ menu shows the chords that work there (⌥T for ⌘T, which the tab keeps) and offers
+  **Open in a Studio window** (⌥⌘O): `POST /api/terminals/app-window` runs the same launch as an app window. The desktop page's own
   request only (its cookie, same origin, the guard of every terminal POST; a phone and a script are refused). It answers
   what opened, or 502 `noWindow` and the page stays; a second ask within 5 s is 429 `tooSoon`. A launch that opened nothing
   removes its private redirect file at once (others go after 10 minutes, as before).
@@ -269,7 +291,7 @@ For the Claude Code preset, Remote Control is on by default (a toggle on the pag
 `claude --help` (no model call; cached per binary and modification time) lists `--remote-control`, so the session starts
 with that flag. A CLI whose help does not list it gets `/remote-control` typed once, the first time the session sits idle at
 its own prompt (`reason: prompt`; never at a question or a mere pause). When Claude Code prints its session link (`https://claude.ai/code…`), the terminal's
-header shows it with a QR code drawn on the page (the vendored qrcode library). The link lets anyone signed in to the
+⋯ menu offers it (Remote Control link…), a sheet with a QR code drawn on the page (the vendored qrcode library). The link lets anyone signed in to the
 account drive the session, so it is treated as a secret:
 
 - Studio finds it even when the terminal wrapped it at its width (Ink breaks long links over indented lines) or put an
@@ -299,4 +321,4 @@ A finished terminal whose project checkout is on a branch with commits beyond th
 review**: code-firstmate reviews the branch from a copy in a Studio worktree (docs/units/branch-intake.md). The terminal
 records the checkout's branch and head at start and at end (Studio's own git: no hooks, no user config), and the lines the
 captain typed at an agent's own prompt, for the spec writer, as data. A terminal listed from its record after a restart
-keeps its button: its git end is the head it hands over, and a checkout that moved since is refused as for any terminal.
+keeps its menu item: its git end is the head it hands over, and a checkout that moved since is refused as for any terminal.

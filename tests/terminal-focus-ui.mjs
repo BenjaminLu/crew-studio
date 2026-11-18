@@ -4,7 +4,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   the sidebar has a Terminals item with its icon, in the full sidebar and in the rail, current on the page;
 //   on #/terminals/<id> the side bar is the 64 px rail, the chat panel and its button are gone, and the terminal takes the
 //   rest of the window (>= 90 % of the width beside the rail, most of the height); the PTY follows a window resize
-//   (stty size inside it); the sessions strip, Stop and New stay; all of it survives render(); leaving gives back the
+//   (stty size inside it); the tabs strip and its ⋯ menu (Stop, Launch) stay; all of it survives render(); leaving gives back the
 //   sidebar and chat the captain had, without writing crew.side or crew.chatOpen; a toggle made during focus is kept;
 //   at 390 px the terminal is the width of the screen with no sideways scroll.
 //   TERMINAL_FOCUS_SHOTS=<dir>  also write screenshots there
@@ -24,6 +24,9 @@ const ok = (v, n, extra = "") => { if (v) { pass++; console.log("ok " + n); } el
 const seen = async (loc, timeout = 8000) => { try { await loc.first().waitFor({ timeout }); return true; } catch { return false; } };
 const until = async (f, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await f(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
 const shot = async (p, name) => { if (shots) await p.screenshot({ path: join(shots, name) }); };
+// Stop and Launch are items of the strip's ⋯ menu
+const menu = async (pg) => { if ((await pg.locator("[data-term-menu]").getAttribute("aria-expanded")) !== "true") await pg.locator("[data-term-menu]").click(); await seen(pg.locator("[data-term-menu-pop]"), 3000); };
+const unmenu = async (pg) => { if (await pg.locator("[data-term-menu-pop]").count()) await pg.keyboard.press("Escape"); };
 
 writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "demo", name: "Demo", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true }]));
 const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bun"], { encoding: "utf8" }).trim();
@@ -79,13 +82,13 @@ try {
     const avail = L.vw - L.side.w;
     ok(L.focus === "terminal" && L.collapsed && L.chatClosed && !L.chat?.shown && L.side.w <= 64, `${when}: the side bar is the rail, the chat is gone`, JSON.stringify(L));
     ok(L.xterm && L.xterm.w >= 0.9 * avail, `${when}: the terminal is >= 90 % of the width beside the rail (${Math.round(L.xterm?.w)} of ${avail})`, JSON.stringify(L.xterm));
-    ok(L.xterm && L.xterm.h >= L.vh - 200, `${when}: and the window's height but for the tabs, its header and the key hints, at most 200 px (${Math.round(L.xterm?.h)} of ${L.vh})`, JSON.stringify(L.xterm));
+    ok(L.xterm && L.xterm.h >= L.vh - 48, `${when}: and the window's height but for the tabs strip, at most 48 px (${Math.round(L.xterm?.h)} of ${L.vh})`, JSON.stringify(L.xterm));
     ok(L.scrollW <= L.vw + 1, `${when}: no sideways scroll`);
-    ok(await p.locator('.wt-tabs [data-term-tab][aria-selected="true"]').isVisible() && await p.locator(`.wt-pane.focus[data-term-pane="${id}"]`).isVisible() && await p.locator(`[data-term-kill="${id}"]`).isVisible() && await p.locator("[data-term-new]").isVisible(),
-      `${when}: the tabs (this one current, its pane focused), Stop and Launch stay`);
+    const strip = await p.locator('.wt-tabs [data-term-tab][aria-selected="true"]').isVisible() && await p.locator(`.wt-pane.focus[data-term-pane="${id}"]`).isVisible() && await p.locator("[data-term-menu]").isVisible();
+    await menu(p); const inMenu = await p.locator(`[data-term-menu-pop] [data-term-kill="${id}"]`).isVisible() && await p.locator("[data-term-menu-pop] [data-term-new]").isVisible(); await unmenu(p);
+    ok(strip && inMenu, `${when}: the tabs (this one current, its pane focused) and the ⋯ menu with Stop and Launch stay`);
     return L;
   };
-  await p.locator('[data-term-appwin] button[aria-label="Hide"]').click(); await p.waitForTimeout(200);
   await check("a terminal shown");
   await shot(p, "focus-terminal-after.png");
   const host0 = await p.locator(".wt-xterm").elementHandle();
@@ -105,11 +108,12 @@ try {
   await p.setViewportSize({ width: 1360, height: 900 }); await p.waitForTimeout(400);
 
   // New opens the launcher in place and closes it again; the state lives in the page's model, not the DOM
-  await p.locator("[data-term-new]").click();
-  ok(await seen(p.locator(".wt-new #termCmd")) && await p.locator("[data-term-new]").getAttribute("aria-expanded") === "true", "Launch opens the launcher above the terminal");
+  await menu(p); await p.locator("[data-term-menu-pop] [data-term-new]").click();
+  ok(await seen(p.locator(".wt-new #termCmd")) && (await menu(p), await p.locator("[data-term-menu-pop] [data-term-new]").getAttribute("aria-checked")) === "true", "Launch opens the launcher above the terminal");
+  await unmenu(p);
   await p.evaluate(() => render());
   ok(await p.locator(".wt-new #termCmd").isVisible(), "an open launcher survives render()");
-  await p.locator("[data-term-new]").click();
+  await menu(p); await p.locator("[data-term-menu-pop] [data-term-new]").click();
   ok(await until(async () => !(await p.locator(".wt-new").count())), "Launch again closes it");
 
   // leaving gives back what the captain had
@@ -145,10 +149,11 @@ try {
   await q.goto(`${base}/#/terminals/${encodeURIComponent(id)}`); await seen(q.locator(".wt-xterm .xterm-rows"), 10000); await q.waitForTimeout(300);
   L = await layout(q);
   ok(L.focus === "terminal" && !L.chat?.shown && !L.fab?.shown && L.xterm?.w >= 0.9 * L.vw && L.xterm?.h >= 0.5 * L.vh && L.scrollW <= L.vw + 1, "at 390 px: the terminal is the screen's width and most of its height, no chat button, no sideways scroll", JSON.stringify(L));
-  ok(await q.locator('.nav > .nav-item[data-view="terminals"]').isVisible() && await q.locator(`[data-term-kill="${id}"]`).isVisible(), "the top bar keeps the way back, and the terminal keeps Stop");
+  await menu(q);
+  ok(await q.locator('.nav > .nav-item[data-view="terminals"]').isVisible() && await q.locator(`[data-term-menu-pop] [data-term-kill="${id}"]`).isVisible(), "the top bar keeps the way back, and the terminal keeps Stop (in its menu)");
   await shot(q, "focus-terminal-phone.png");
   await q.locator(`[data-term-kill="${id}"]`).click();
-  ok(await seen(q.locator(`.wt-detail [data-term-state="exited"], .wt-detail [data-term-state="done"]`), 8000), "Stop ends it");
+  ok(await seen(q.locator(`.wt-tabs [data-term-state="exited"], .wt-tabs [data-term-state="done"]`), 8000), "Stop ends it");
   await ctx3.close();
   ok(!errors.length, "no page errors", errors.join(" | "));
 } finally {
