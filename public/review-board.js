@@ -677,8 +677,10 @@ function view(r, scenes, i) {
   if (!order.includes(B.cur.get(card))) B.cur.set(card, order.includes(want) ? want : sc?.key ?? order[0]);
   else if (want && order.includes(want) && want !== B.cur.get(card)) queueMicrotask(() => flyTo(card, want, false));
   const notesOpen = lesson && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
-  // a scene region is as wide as the board shows at a readable scale: the board's width, at most 980
-  const avail = isFs() ? innerWidth - 40 : Math.min(innerWidth, 1480) - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - (notesOpen ? 284 : 0) - 32;
+  // a scene region is as wide as the board shows at a readable scale: the board's width (beside the questions panel at the width
+  // the captain left it, public/review-room.js crewRoomPane), at most 980
+  const notesW = !notesOpen ? 0 : innerWidth > 1180 ? (window.crewRoomPane?.width("board") || 346) + 12 : 284;
+  const avail = isFs() ? innerWidth - 40 : innerWidth - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - notesW - 32;
   const sceneW = (x) => (phone() ? 340 : clamp(Math.round(avail), 600, x.quiz ? 760 : 980));
   const firstOf = (x) => scenes.find((y) => y.turn === x.turn) === x;
   const ctx = { threads, TN, visited, cur: B.cur.get(card), scenes, sceneW, firstOf, lastLesson: secs.at(-1)?.turn };
@@ -730,6 +732,7 @@ function view(r, scenes, i) {
       h("div", { class: "rb-zoom", role: "group", "aria-label": T("Zoom", "縮放") }, h("button", { type: "button", "data-zoom-out": "", "aria-label": T("Zoom out", "縮小"), onclick: () => { const v = vpOf(card); zoomAt(card, 0.8, v.clientWidth / 2, v.clientHeight / 2, true); } }, "−"),
         h("span", { "data-zoom-pct": "", "aria-live": "polite" }, `${Math.round(camOf(card).s * 100)}%`), h("button", { type: "button", "data-zoom-in": "", "aria-label": T("Zoom in", "放大"), onclick: () => { const v = vpOf(card); zoomAt(card, 1.25, v.clientWidth / 2, v.clientHeight / 2, true); } }, "+"),
         h("button", { type: "button", class: "fit", "data-zoom-fit": "", onclick: () => fitAll(card) }, T("Fit all", "全覽")), fsToggle(card))),
+    notesOpen && !phone() ? window.crewRoomPane?.handle("board") ?? null : null,
     notesOpen || (phone() && lesson) ? notes : null,
     phone() ? h("nav", { class: `rb-phonebar${lesson ? "" : " two"}`, "aria-label": T("The board", "白板") }, h("button", { type: "button", "data-sheet": "outline", "aria-pressed": String(sheet === "outline"), onclick: () => { B.sheet.get(card) === "outline" ? B.sheet.delete(card) : B.sheet.set(card, "outline"); rerender(); } }, T("Answers", "回答")),
       h("button", { type: "button", "data-board-next-phone": next || "", onclick: () => step(card, 1) }, next ? T("Next ▸", "下一段 ▸") : T("All", "全覽")),

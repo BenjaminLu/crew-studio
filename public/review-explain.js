@@ -311,7 +311,7 @@ function view(r) {
   if (!st) return h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"));
   // shown with its skill: a question that waited for this room's first output goes now (once; behind its confirmation)
   queueMicrotask(() => { tickStart(); syncAsk(r, st); flushQueue(id); });
-  return h("div", { class: "rx-body", "data-explain-room": id }, rail(r, st), h("main", { class: "rx-stage" }, stage(r, st)), chat(r, st), dialogs(r));
+  return h("div", { class: "rx-body", "data-explain-room": id }, rail(r, st), h("main", { class: "rx-stage" }, stage(r, st)), window.crewRoomPane?.handle("explain") ?? null, chat(r, st), dialogs(r));
 }
 /** show a version; one made by another skill switches the room to that skill (so the header, the chat and Generate agree) */
 async function showVersion(r, v) {
