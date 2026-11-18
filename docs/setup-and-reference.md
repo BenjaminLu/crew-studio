@@ -565,8 +565,10 @@ When a command fails, its exit code says why. The skill tells the agent what to 
 
 | Exit | Meaning |
 | --- | --- |
+| 2 | the command or its arguments are wrong; the right usage is printed |
 | 3 | this grant does not reach it (a kind, a project, terminals: never) |
 | 4 | the hourly budget is used up; `freesAt` says when it frees up |
+| 5 | Studio has no such thing (or not one this grant may see) |
 | 6 | Studio is not running (start it: `crew-studio launch`) |
 | 7 | no grant, or it was revoked or expired, or its file is not private |
 
