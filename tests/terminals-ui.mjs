@@ -54,7 +54,7 @@ writeFileSync(join(data, "terminals", "T-seeded-before1.json"), JSON.stringify({
   git: { start: { branch: "main", head: seededHead, commits: 0, base: "main" }, end: { branch: "agent/seeded", head: seededHead, commits: 1, base: "main" } }, review: null, transcript: null, transcriptBytes: 0, transcriptTruncated: false, remoteControl: null, sandboxed: false, evidence: false }));
 writeFileSync(join(bin, "claude"), `#!/bin/sh
 if [ "$1" = "--help" ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; exit 0; fi
-for a in "$@"; do [ "$a" = "--remote-control" ] && printf 'Remote Control active: https://claude.ai/code/rc-UIFAKE789\\r\\n'; done
+for a in "$@"; do [ "$a" = "--remote-control" ] && printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-UIFAKE789\\r\\n'; done
 while :; do printf '\\r\\n> '; IFS= read -r line || exit 0; printf 'you said %s\\r\\n' "$line"; done
 `); chmodSync(join(bin, "claude"), 0o755);
 const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bun"], { encoding: "utf8" }).trim();

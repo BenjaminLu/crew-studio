@@ -311,6 +311,24 @@ account drive the session, so it is treated as a secret:
   the link and anything link-like removed, in lists, the page's stream and the phone's meta events.
 - Never in the record, the activity log or the list a phone receives.
 
+**Which link the page shows** (`pageLink`, `bannerLink` in src/terminals.ts):
+- Only the link on Claude Code's own Remote Control banner, in the wording Claude Code 2.1.327 writes (its
+  `bridge_status` message): `/remote-control is active · Continue here, on your phone, or at <url>`.
+- Only once Remote Control is on: the flag at start, or `/remote-control` sent. In slash mode, a link already on the
+  screen when it is sent is never taken.
+- Only a link of a Remote Control link's shape (`SHOWN_LINK`): claude.ai or claude.com, `/code/<one id>`, at most an `env`
+  parameter.
+- A newer banner replaces it. "Remote Control disconnected …", "… stopped: …", "… session expired." and the process
+  ending clear it.
+- A banner or a disconnect line under Claude's tool-output mark (`⎿`) is a program's output shown by Claude, so it
+  counts for nothing. A line that only says Remote Control is on (a README, a log) is no banner either. Every link other
+  than the banner's is hidden, never shown.
+
+**What this cannot tell apart.** A program running in the terminal that prints the exact banner text itself, outside
+Claude's tool output, cannot be told apart from Claude Code's own banner in the output alone: nothing in-band
+authenticates it. The worst it can do is point the page, and its QR code, at another Claude Code session link of the
+right shape, never at a page of another site.
+
 Other agents have no such feature and show nothing; their phone view shows the output with the generic link rule.
 
 Not verified against a live Claude Code here (that would register a real session); the tests use a stub CLI that prints a

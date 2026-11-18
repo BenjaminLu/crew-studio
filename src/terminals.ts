@@ -183,17 +183,20 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
   return null;
 }
 // The Claude CLI's own Remote Control banner, as Claude Code 2.1.327 writes it (its bridge_status message:
-// "/remote-control is active · Continue here, on your phone, or at <url>"), and the shorter forms other versions print
-// ("Remote Control active: <url>", "Remote Control enabled: <url>"). What ends it: "Remote Control disconnected …",
-// "Remote Control stopped: …", "Remote Control session expired.".
-const BANNER = /\/remote-control is active|Continue here, on your phone, or at|Remote Control (?:is )?(?:active|enabled|connected)\b/i;
-const BANNER_OFF = /Remote Control (?:disconnected|stopped|session expired|is off)\b/i;
+// "/remote-control is active · Continue here, on your phone, or at <url>"); only that wording counts, not a line that
+// merely says Remote Control is on (a README, a log). What ends it: "Remote Control disconnected …", "Remote Control
+// stopped: …", "Remote Control session expired.". A line under Claude's tool-output mark (⎿) is a program's output shown
+// by Claude, never Claude's own banner. A program that prints the exact banner text itself cannot be told apart in the
+// output (docs/units/terminals.md "Remote Control"): the worst it can do is point the page at another Claude session.
+const BANNER = /\/remote-control is active\s*\u00b7?\s*Continue here, on your phone, or at\b|\/remote-control is active\s*$/;
+const BANNER_OFF = /^[\s│|║┃｜]*Remote Control (?:disconnected|stopped|session expired)\b/;
+const TOOL_OUTPUT = /^[\s│|║┃｜]*⎿/;
 /** The link on the newest Remote Control banner the output shows (the banner's own line, or the next one or two when the
  *  link wraps), or `off` when the newest banner news is that Remote Control ended; null when the output shows neither. */
 export function bannerLink(raw: string, cols: number, trailing = true): { url: string | null; off: boolean } | null {
   const lines = linkLines(raw);
   let b = -1, off = -1;
-  for (let i = 0; i < lines.length; i++) { if (BANNER.test(lines[i])) b = i; if (BANNER_OFF.test(lines[i])) off = i; }
+  for (let i = 0; i < lines.length; i++) { if (TOOL_OUTPUT.test(lines[i])) continue; if (BANNER.test(lines[i])) b = i; if (BANNER_OFF.test(lines[i])) off = i; }
   if (off > b) return { url: null, off: true };
   if (b < 0) return null;
   const from = lines[b].search(BANNER);

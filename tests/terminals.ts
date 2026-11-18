@@ -176,9 +176,9 @@ writeFileSync(join(bin, "claude"), `#!/bin/sh
 d=$(dirname "$0")
 if [ "$1" = "--help" ]; then if [ "$(cat "$d/mode")" = flag ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; else echo "  -p, --print"; fi; exit 0; fi
 echo "$$ start: $*" >> "$d/calls.log"
-for a in "$@"; do [ "$a" = "--remote-control" ] && { if [ -f "$d/print" ]; then cat "$d/print"; else printf 'Remote Control active \\342\\200\\242 https://claude.ai/code/rc-FAKEFLAG123?env=x\\r\\n'; fi; }; done
+for a in "$@"; do [ "$a" = "--remote-control" ] && { if [ -f "$d/print" ]; then cat "$d/print"; else printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-FAKEFLAG123?env=x\\r\\n'; fi; }; done
 while :; do printf '\\r\\n> '; IFS= read -r line || exit 0; echo "$$ input: $line" >> "$d/calls.log"
-  case "$line" in /remote-control*) printf 'Remote Control enabled: https://claude.ai/code/rc-FAKESLASH456\\r\\n';; quit) exit 0;; *) printf 'you said %s\\r\\n' "$line";; esac; done
+  case "$line" in /remote-control*) printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-FAKESLASH456\\r\\n';; quit) exit 0;; *) printf 'you said %s\\r\\n' "$line";; esac; done
 `); chmodSync(join(bin, "claude"), 0o755); writeFileSync(join(bin, "mode"), "flag");
 const TOKEN = "terminals-test-session-token", TAILNET = "studio.tail-term.ts.net";
 const env: any = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR"]) delete env[k];
@@ -350,10 +350,11 @@ try {
   // B1: a question that carries the link; B2: the link wrapped, coloured, upper-case, encoded, and the id alone, in a real PTY
   await sleep(300);
   const W90 = "https://claude.ai/code/rc-PTYLEAK0123456789abcdefghijkl?env=pty";
-  writeFileSync(join(bin, "print"), `Remote Control active \u00b7 ${W90.slice(0, 40)}\x1b[1m${W90.slice(40, 62)}\x1b[22m\r\n  ${W90.slice(62)}\r\n` +
+  writeFileSync(join(bin, "print"), `/remote-control is active \u00b7 Continue here, on your phone, or at ${W90.slice(0, 40)}\x1b[1m${W90.slice(40, 62)}\x1b[22m\r\n  ${W90.slice(62)}\r\n` +
     `session: rc-PTYLEAK0123456789abcdefghijkl\r\nHTTPS://CLAUDE.AI/code/rc-PTYLEAK0123456789abcdefghijkl\r\nhttps%3A%2F%2Fclaude.ai%2Fcode%2Frc-PTYLEAK0123456789abcdefghijkl\r\n` +
     `Open ${W90} now? [y/N] `);
-  const cw = await create({ preset: "claude", cols: 86 }); const idw = cw.body.terminal.id;
+  // the banner (64 columns) and 62 characters of the link fill the line, so the terminal wraps it there
+  const cw = await create({ preset: "claude", cols: 126 }); const idw = cw.body.terminal.id;
   const tw = await until(async () => { const t = await term(idw); return t?.remote?.url && t; });
   ok(tw?.remote.url === W90, "the page gets the whole link even when the terminal wrapped it", JSON.stringify(tw?.remote));
   const askW = await until(async () => { const t = await term(idw, { as: "phone", token: ptok }); return t?.state === "waiting" && t; });
