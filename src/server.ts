@@ -91,6 +91,7 @@ import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
 import { CliGrants, createGrantTools, installGrantViews, GRANT_SCOPES } from "./cli-grants";
 import { KIND_GROUPS, OBSERVE_PRESETS } from "./observe/grant-scope";
+import { clientSnippets } from "./mcp-snippets";
 import { NEVER_GRANTABLE } from "./observe/registry";
 import { amendmentsNotice } from "./runtime/refine";
 import { Terminals, TermError, terminalRoutes } from "./terminals";
@@ -547,8 +548,9 @@ installGrantViews(runtime.engine, cliGrants);
 const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants, firstmate: () => runtime.firstmate, prs: () => prWatch.tools, observe: (g) => runtime.observeFor(g) });
 /** the line the board shows to copy: the MCP helper with the grant's token file (and Studio's URL when not the default port) */
 const grantCommand = (file: string) => { const port = server?.port ?? PORT; return helperCommand("mcp", ["--grant-file", file, ...(port !== 4210 ? ["--url", `http://127.0.0.1:${port}`] : [])]); };
-const shq = (a: string) => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`;
-const grantView = (g: ReturnType<CliGrants["view"]>) => g.file ? { ...g, command: grantCommand(g.file), claudeMcpAdd: ["claude", "mcp", "add", "studio", "--", ...grantCommand(g.file)].map(shq).join(" ") } : g;
+// each client's command and config entry (src/mcp-snippets.ts): Claude Code, Codex, Cursor, VS Code
+const grantView = (g: ReturnType<CliGrants["view"]>) => { if (!g.file) return g; const cmd = grantCommand(g.file), snippets = clientSnippets(cmd);
+  return { ...g, command: cmd, claudeMcpAdd: snippets[0].command, snippets }; };
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit, o) => {
   if (main.view().state === "detached") return false;

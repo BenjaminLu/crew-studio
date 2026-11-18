@@ -1,0 +1,11 @@
+{
+  "name": "crew-studio",
+  "version": "0.1.0",
+  "description": "Read the captain's Crew Studio from Codex: the studio MCP server (an external CLI grant issued on Studio's board) and the studio skill.",
+  "author": { "name": "Crew Studio" },
+  "homepage": "https://github.com/BenjaminLu/crew-studio/blob/main/docs/units/cli-mcp-grant.md",
+  "license": "MIT",
+  "keywords": ["crew-studio", "mcp", "observe"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

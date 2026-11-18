@@ -8,6 +8,7 @@
 //   --grant-file <path>  an external CLI grant the captain issued on the board (docs/units/cli-mcp-grant.md): the token is
 //                        read from that 0600 file, never from the command line; --url <studio> when Studio is not on 4210
 //   `claude mcp add studio -- crew-studio mcp --grant-file <path>` (from source: bun src/mcp.ts --grant-file <path>)
+//   CREW_STUDIO_GRANT_FILE=<path>  the grant file when no --grant-file is given (the Claude Code and Codex plug-in, plugins/crew-studio)
 import { mcpContent } from "./tool-content";
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
@@ -18,7 +19,8 @@ import { negotiateProtocolVersion } from "./mcp-protocol";
 const byName = (tools: any) => Array.isArray(tools) ? [...tools].sort((a, b) => { const x = String(a?.name ?? ""), y = String(b?.name ?? ""); return x < y ? -1 : x > y ? 1 : 0; }) : tools;
 
 const flag = (name: string) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] ?? "" : null; };
-const GRANT_FILE = flag("--grant-file");
+// a plug-in (plugins/crew-studio/.mcp.json) cannot know the grant file: it comes from CREW_STUDIO_GRANT_FILE in the CLI's environment
+const GRANT_FILE = flag("--grant-file") ?? (!process.env.CREW_TOOL_TOKEN_FILE && !process.env.CREW_TOOL_TOKEN && !process.env.CREW_STUDIO_SOCKET ? process.env.CREW_STUDIO_GRANT_FILE || null : null);
 if (GRANT_FILE === "") { process.stderr.write("crew-studio mcp: --grant-file needs a path\n"); process.exit(2); }
 const URL_ = flag("--url") || process.env.CREW_STUDIO_URL || "http://127.0.0.1:4210";
 const readToken = (f: string) => { try { return readFileSync(f, "utf8").trim(); } catch { return ""; } };

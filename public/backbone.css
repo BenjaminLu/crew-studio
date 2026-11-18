@@ -62,4 +62,5 @@
 .bb-grant{display:grid;gap:6px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
 .bb-grant.st-revoked,.bb-grant.st-expired{opacity:.7}
 .bb-grant-h{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bb-grant-clients{display:flex;flex-wrap:wrap;gap:6px}.bb-grant-clients .btn.on{border-color:var(--accent);color:var(--accent)}
 .bb-grant-cmd{margin:0;padding:8px;border-radius:6px;background:var(--surface-3);overflow-x:auto;white-space:pre;font-size:12px;user-select:all}

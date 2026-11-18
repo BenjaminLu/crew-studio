@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "studio": {
+      "command": "crew-studio",
+      "args": ["mcp"]
+    }
+  }
+}

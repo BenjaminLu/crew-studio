@@ -138,6 +138,21 @@ function cliGrants() {
   let data = null, fresh = null;
   const needsProject = () => pick.scopes.has("project") || (pick.scopes.has("observe") && pick.preset === "project");
   const summary = (g) => { const sc = g.scopes || [g.scope || "project"]; return sc.map((x) => x === "observe" ? `${SCOPE.observe}: ${PRESET[g.observe?.preset] ?? ""}${g.observe?.untrusted ? T(" + external text", "＋外部文字") : ""}` : x === "project" ? `${SCOPE.project} · ${g.project}` : T("Pull request list", "PR 列表")).join(" · "); };
+  const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
+  // connecting a client: Claude Code, Codex, Cursor or VS Code, each its one-line command and its config file entry
+  const client = new Map();
+  const connect = (g) => {
+    const sn = g.snippets ?? [{ client: "claude", label: "Claude Code", command: g.claudeMcpAdd, file: ".mcp.json", config: "" }], on = client.get(g.id) ?? "claude", cur = sn.find((x) => x.client === on) ?? sn[0];
+    return [h("div", { class: "bb-grant-clients", role: "tablist", "aria-label": T("Connect a client", "接上 client") }, sn.map((x) => h("button", { class: `btn ${x.client === cur.client ? "on" : ""}`, role: "tab", "aria-selected": String(x.client === cur.client), "data-grant-client": x.client,
+        onclick: () => { client.set(g.id, x.client); draw(); } }, x.label))),
+      cur.command ? [h("span", { class: "faint" }, T("Run in your terminal:", "在 terminal 執行：")),
+        h("pre", { class: "bb-grant-cmd mono", ...(cur.client === "claude" ? { "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) } : { "data-grant-client-command": cur.client }) }, cur.command)] : null,
+      cur.config ? [h("span", { class: "faint" }, cur.command ? T(`Or add to ${cur.file}:`, `或加進 ${cur.file}：`) : T(`Add to ${cur.file}:`, `加進 ${cur.file}：`)),
+        h("pre", { class: "bb-grant-cmd mono", "data-grant-config": cur.client }, cur.config)] : null,
+      h("div", { class: "actions" }, cur.command ? h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(cur.command) }, T("Copy command", "複製指令")) : null,
+        cur.config ? h("button", { class: "btn", "data-grant-copy-config": cur.client, onclick: () => copy(cur.config) }, T("Copy config", "複製設定")) : null,
+        h("button", { class: "btn danger", "data-grant-revoke": g.id, onclick: async () => { try { await req(`/api/cli-grants/${g.id}/revoke`, {}); await load(); } catch (e) { toast(String(e.message || e)); } } }, T("Revoke", "撤銷授權")))];
+  };
   const draw = () => {
     const projects = data?.projects ?? [], grants = data?.grants ?? [], groups = data?.observe?.groups ?? [];
     const check = (scope) => h("label", { class: "bb-set bb-grant-pick" }, h("input", { type: "checkbox", name: "grantScope", value: scope, id: `grantScope-${scope}`, checked: pick.scopes.has(scope) || null,
@@ -159,7 +174,6 @@ function cliGrants() {
       const body = { scopes: [...pick.scopes], ttl: ttl.value, ...(needsProject() || (pick.scopes.has("observe") && project.value && pick.preset !== "review") ? { project: project.value } : {}),
         ...(pick.scopes.has("observe") ? { observe: { preset: pick.preset, untrusted: pick.untrusted, ...(pick.preset === "custom" ? { kinds: [...pick.kinds] } : {}) } } : {}) };
       try { fresh = (await req("/api/cli-grants", body)).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
-    const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
     box.replaceChildren(
       h("h2", { style: "margin:0;font-size:16px" }, T("External CLI grants", "外部 CLI 授權")),
       h("p", { class: "faint", style: "margin:4px 0 10px" }, T("Let a claude or codex you opened yourself start runs in one project (each waits for your approval) and follow them; read and edit the pull request list (Studio's own list; nothing is written to GitHub); or read Studio. Approving cards, staffing and merging stay here. The token goes into a 0600 file, never on a command line.",
@@ -172,10 +186,7 @@ function cliGrants() {
         h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
           h("span", { class: "faint", "data-grant-scope": (g.scopes || [g.scope || "project"]).join(" ") }, `${summary(g)} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)}`),
           g.budget ? h("span", { class: "faint", "data-grant-budget": "" }, T(`this hour: ${g.budget.calls}/${g.budget.maxCalls} calls, ${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`, `這一小時：${g.budget.calls}/${g.budget.maxCalls} 次、${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`)) : null),
-        g.state === "active" && g.claudeMcpAdd ? [h("span", { class: "faint" }, T("Add Studio's MCP in your terminal:", "在 terminal 加上 Studio 的 MCP：")),
-          h("pre", { class: "bb-grant-cmd mono", "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) }, g.claudeMcpAdd),
-          h("div", { class: "actions" }, h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(g.claudeMcpAdd) }, T("Copy command", "複製指令")),
-            h("button", { class: "btn danger", "data-grant-revoke": g.id, onclick: async () => { try { await req(`/api/cli-grants/${g.id}/revoke`, {}); await load(); } catch (e) { toast(String(e.message || e)); } } }, T("Revoke", "撤銷授權")))] : null)))
+        g.state === "active" && g.claudeMcpAdd ? connect(g) : null)))
         : h("div", { class: "empty" }, T("No external CLI grant yet.", "還沒有外部 CLI 授權。")));
   };
   const load = async () => { try { data = await req("/api/cli-grants"); } catch (e) { data = { grants: [], projects: [], error: String(e.message || e) }; } draw(); };

@@ -30,6 +30,14 @@ const seed = nativeFreshText("/ws");
 ok([...READING_RULES, ...OBSERVE_RULES, KINDS_LINE].every((r) => seed.includes(r)) && /do not guess/.test(seed), "the fresh primary's seed (all Codex sees) carries every reading and read-tool rule from the same source", "");
 ok(/Report status only from the turn's live status line or studio_work_status, never from memory/.test(seed) && /Proposing is not approval/.test(seed), "and keeps its behavioural rules");
 ok(STUDIO_TOOLS.every((t) => skill.includes("`" + t.name + "`")), "the skill names every tool in the index");
+// the plug-in kit's generated files: the studio skill and the tools reference page, made from the same source
+{ const { GENERATED } = await import("../scripts/observe-index");
+  const drift = GENERATED.filter((g) => { try { return readFileSync(g.path, "utf8") !== g.text(); } catch { return true; } }).map((g) => g.path.slice(root.length + 1));
+  ok(!drift.length, "every generated file (firstmate skill, studio plug-in skill, tools reference) is what scripts/observe-index.ts writes", J(drift));
+  const studio = readFileSync(join(root, "plugins/crew-studio/skills/studio/SKILL.md"), "utf8"), ref = readFileSync(join(root, "docs/reference/studio-tools.md"), "utf8");
+  const { OBSERVE_TOOLS } = await import("../src/observe/tools");
+  ok(/^---\nname: studio\ndescription: .+\n---\n/.test(studio) && IRON_RULES.every((r) => studio.includes(r)) && OBSERVE_TOOLS.every((t) => studio.includes("`" + t + "`") && ref.includes("## `" + t + "`")), "the studio skill carries the iron rules and every read tool; the reference page has a section per tool");
+  ok(!/\| `(settings|peer|terminal)` \| `/.test(studio), "the studio skill lists no never-grantable kind"); }
 
 // studio_manual {}: the manual's index page, its page list, and the same index as data
 const H = await harness([readFileSync(join(root, "workflows/v2/firstmate-proposal.wf.yaml"), "utf8")]);

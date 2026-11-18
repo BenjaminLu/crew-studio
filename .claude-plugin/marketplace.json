@@ -1,0 +1,13 @@
+{
+  "name": "crew-studio",
+  "owner": { "name": "Crew Studio" },
+  "metadata": { "description": "Crew Studio's plug-ins for agent CLIs." },
+  "plugins": [
+    {
+      "name": "crew-studio",
+      "source": "./plugins/crew-studio",
+      "description": "Read the captain's Crew Studio: the studio MCP server and the studio skill. Needs a grant issued on Studio's board (Settings, External CLI grants) and CREW_STUDIO_GRANT_FILE set to its file.",
+      "version": "0.1.0"
+    }
+  ]
+}
