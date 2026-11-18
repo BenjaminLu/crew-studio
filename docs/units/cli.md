@@ -93,7 +93,25 @@ send the token elsewhere. An address given with `--grant-file` must be loopback 
 
 ## Install
 
-Doctor's "crew-studio CLI" row installs `~/.local/bin/crew-studio` (`POST /api/cli/install`, the captain's own page on this Mac only). From the app it is a symlink to Studio's binary; from a checkout, a two-line shim that runs `bun <checkout>/src/main.ts`. Studio never overwrites a file there it did not write, and never edits a shell profile: when `~/.local/bin` is not on PATH the row says which line to add to which file (`~/.zprofile`, `~/.bash_profile`, or fish's `fish_add_path`).
+Doctor's "crew-studio CLI" row installs `~/.local/bin/crew-studio`. It goes through `POST /api/cli/install`, which only
+the captain's own page on this Mac can call.
+
+- **From the app:** a symlink to Studio's binary.
+- **From a checkout or a live release:** a small shim (`src/cli-install.ts`). Each time it runs, it finds bun (PATH first,
+  then `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin`), so a brew upgrade does not break it. It also finds the Studio
+  to run: for a release under a releases folder, the release that folder's `live.json` names now, so a deploy needs no
+  reinstall. When it finds neither, it prints the CLI's exit-6 JSON asking for a reinstall from Doctor. Its paths are
+  single-quoted, so a `$` or a backtick in a folder name is never run.
+
+Studio never overwrites a file or a link there that it did not write. A link counts as Studio's only when it points at
+Studio's binary. When something else is there, the row names it and offers no Install button. Studio never edits a shell
+profile: when `~/.local/bin` is not on PATH (as Studio sees it), the row says which line to add to which file (`~/.zprofile`,
+`~/.bash_profile`, or fish's `fish_add_path`).
+
+**The folder an agent runs in is not trusted.** An agent runs the CLI, and Studio's own MCP helpers (`helperCommand` in
+`src/self.ts`), inside a repository Studio does not own. So bun always runs them with `--no-env-file --config=/dev/null`
+(`BUN_ISOLATED`). That folder's `bunfig.toml` can then not preload code into the process that reads a grant token, and its
+`.env` cannot set `CREW_STUDIO_GRANT`. The compiled binary reads neither in any case (`scripts/build.ts`).
 
 ## Skill
 
@@ -105,7 +123,11 @@ Doctor's "crew-studio CLI" row installs `~/.local/bin/crew-studio` (`POST /api/c
 | `--claude` / `--codex` | only Claude Code's / only Codex's |
 | `--project <dir>` | `<dir>/.claude/skills/…` and/or `<dir>/.agents/skills/…` instead |
 
-It asks once on a terminal (`--yes` skips the question; piped without `--yes` it writes nothing, exit 2) and never writes over a file it did not write. `crew-studio skill show` prints it.
+It asks once on a terminal. `--yes` skips the question; piped without `--yes` it writes nothing (exit 2). `--project`
+names a folder that already exists.
+
+It never writes over a file it did not write. The skill's last line holds a hash of the rest, so a file it wrote that was
+edited since is left alone and named. `--force` replaces that one. `crew-studio skill show` prints the skill.
 
 ## Terminal output
 
