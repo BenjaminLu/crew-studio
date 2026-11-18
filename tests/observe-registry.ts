@@ -94,11 +94,17 @@ try {
   const cards: any = await O.call("studio_list", { kind: "card" });
   ok(cards.items[0].ref === `card:${F.ids.doorCard}` && cards.data.entries[0].urgency === "one-way door" && cards.data.entries[0].options.map((x: any) => x.id).join() === "go,hold", "Q4: the one-way door card comes first, with the choices the captain has", J(cards.data.entries[0]));
   ok(now1.data.waiting[0].ref === `card:${F.ids.doorCard}` && now1.data.counts.waiting === openBefore && now1.data.waiting.some((w: any) => w.kind === "failure"), "Q4: studio_now lists the same card first, then the failed Task's card", J(now1.data.waiting));
+  { const nowFull: any = await O.call("studio_now", { depth: "full" }), w = nowFull.data.waiting[0];
+    ok(!("question" in now1.data.waiting[0]) && !("options" in now1.data.waiting[0]) && now1.data.waiting[0].urgency === "one-way door", "studio_now's summary keeps urgency and door, and leaves the question and options to depth full", J(now1.data.waiting[0]));
+    ok(w.door === "one-way" && w.urgency === cards.data.entries[0].urgency && w.options?.untrusted === true && w.options.text === J(["Ship it", "Hold"]) && nowFull.untrusted.includes("data.waiting[0].options") && w.title === "Decide"
+      && w.question?.untrusted === true && /pricing page/.test(w.question.text) && nowFull.untrusted.includes("data.waiting[0].question"),
+      "Q4: studio_now (depth full) says what the door card asks, how urgent (studio_get's words) and its choices, both marked untrusted", J(w));
+    ok(new Set(nowFull.data.waiting.filter((w: any) => w.question).map((w: any) => w.question.text)).size === nowFull.data.waiting.filter((w: any) => w.question).length, "each fixture card asks its own question", J(nowFull.data.waiting.map((w: any) => w.question?.text))); }
   ok(F.E.cards.list({ open: true }).length === openBefore && specs.every((s) => !/answer|approve|prepare|start|send/.test(s.name)), "Q4: reading answered nothing, and no read tool answers, approves or prepares a card");
   const shownCard = F.E.cards.view(F.E.cards.get(F.ids.doorCard)!);
   const fullCard: any = await O.call("studio_get", { ref: `card:${F.ids.doorCard}`, depth: "full" }), C_KEYS = ["id", "run", "node", "visit", "kind", "status", "createdAt", "workflow", "door", "confirmDoor", "title", "runTitle"] as const;
   ok(J(Object.fromEntries(C_KEYS.map((k) => [k, fullCard.data[k]]))) === J(Object.fromEntries(C_KEYS.map((k) => [k, (shownCard as any)[k]])))
-    && J(fullCard.data.options) === J(shownCard.options.map((o) => ({ id: o.id, label: o.label, labelZh: o.labelZh ?? null }))) && fullCard.data.captainOnly === !!shownCard.captainOnly && fullCard.data.body.text === shownCard.body && (fullCard.data.answer ?? null) === null,
+    && J(fullCard.data.options.map((o: any) => ({ id: o.id, label: o.label?.text ?? o.label, labelZh: o.labelZh?.text ?? o.labelZh }))) === J(shownCard.options.map((o) => ({ id: o.id, label: o.label, labelZh: o.labelZh ?? null }))) && fullCard.data.captainOnly === !!shownCard.captainOnly && fullCard.data.body.text === shownCard.body && (fullCard.data.answer ?? null) === null,
     "a card reads as the Inbox shows it (engine.cards.view): every field the provider takes", J([C_KEYS.filter((k) => J(fullCard.data[k]) !== J((shownCard as any)[k])), fullCard.data.body, shownCard.body, fullCard.data.captainOnly]));
 
   // ---------- acceptance 9: what happened in the last hour ----------
@@ -164,6 +170,8 @@ try {
       ok(!J(mergeRoom).includes("IGNORE") && mergeRoom.data.withheld, "a merge card's room on a withheld Task is withheld too", J(mergeRoom).slice(0, 200));
       const fullTask: any = await O.call("studio_get", { ref: `task:${tainted.id}`, depth: "full" }), cardList: any = await O.call("studio_list", { kind: "card", filter: { run: tainted.id } });
       // (its steps' labels are the workflow's own, so the fixture's card title, its node label, may show there; the cards may not)
+      { const nw: any = (await O.call("studio_now", { depth: "full" })).data.waiting.filter((w: any) => w.task === `task:${tainted.id}`);
+        ok(nw.length > 0 && nw.every((w: any) => w.withheld && !("question" in w) && !("title" in w)) && !J(nw).includes("CARD TITLE"), "studio_now shows a withheld Task's card with no title or question", J(nw)); }
       ok(fullTask.data.cards.length > 0 && !J(fullTask.data.cards).includes("CARD TITLE") && !J(cardList.data.entries).includes("CARD TITLE") && !J(cardList.items).includes("CARD TITLE"), "a withheld Task's cards, at full depth or listed, carry no title", J(fullTask.data.cards));
       // a proposal whose execution Task is withheld: the execution's state, never its words
       const parent: any = F.E.get(F.ids.plain), w0 = parent.workflow, c0 = parent.ctx.childRun;
@@ -280,5 +288,38 @@ try {
   ok(kindDefs().every((d) => d.grantable === !(NEVER_GRANTABLE as readonly string[]).includes(d.kind)) && ["settings", "peer", "terminal"].every((k) => kinds().includes(k)), "settings, peers and terminals are kinds no grant may reach; every other kind may be granted", J(kindDefs().map((d) => [d.kind, d.grantable])));
   ok(["remote", "lan"].every((r) => byKind.get(r) === "peer") && ["terminals", "takeover"].every((r) => byKind.get(r) === "terminal") && byKind.get("settings") === "settings", "the phone, LAN, terminal and settings pages are those never-grantable kinds'", J(Object.fromEntries(byKind)));
   ok((() => { try { registerKind({ ...kindDef("terminal")!, kind: "grant", grantable: true }); return false; } catch (e: any) { return /never be grantable/.test(e.message); } })(), "a never-grantable kind that says a grant may see it never registers");
+  // ---------- option labels are someone else's words; studio_now's summary holds eight cards ----------
+  // a code-publish card names the target repository's template files as its options; a drafted or a peer's workflow its own
+  { const tpl = `.github/PULL_REQUEST_TEMPLATE/${INJECTION}.md`, flow = (id: string, n: number) => ({ id, name: id, version: 1, roles: [], edges: [{ from: "ask", to: "done", when: "go" }],
+      nodes: [{ id: "ask", kind: "card", label: "Which template?", x: 1, y: 1, card: { body: { en: `Pick a template for pull request ${n}. ${"x".repeat(400)}`, "zh-TW": "選範本" }, options: [{ id: "go", label: tpl, labelZh: tpl }, ...Array.from({ length: 7 }, (_, i) => ({ id: `o${i}`, label: `Option ${i}`, labelZh: `選項 ${i}`, hold: true }))] } },
+        { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }] });
+    const H2 = await harness([JSON.stringify(flow("tpl-fixture", 0))]), E2 = H2.engine;
+    try {
+      const runs = Array.from({ length: 11 }, (_, i) => E2.start({ workflow: "tpl-fixture", version: 1, title: `Template ${i}`, text: "x", by: "fixture", params: i === 0 ? { _tainted: "issue-text" } : {} } as any));
+      await until(() => runs.every((r) => E2.cards.list({ run: r.id, open: true }).length > 0));
+      const O2 = (await import("../src/observe/tools")).createObserve({ engine: E2, taskRow: (r: any) => taskRow(E2, r) });
+      const bare = (v: unknown) => J(v).replace(/\{"untrusted":true,"source":"[^"]*","text":"(?:[^"\\]|\\.)*"\}/g, "");
+      const n2: any = await O2.call("studio_now", {}), c2: any = await O2.call("studio_list", { kind: "card" }), held = runs[0].id;
+      ok(n2.data.counts.waiting === 11 && n2.data.waiting.length === 8 && bytes(n2) <= BUDGET.summary, "studio_now's summary holds eight waiting cards of eleven, within 4 KB", `${n2.data.waiting.length} ${bytes(n2)}`);
+      ok(!bare(n2).includes("IGNORE ALL") && !bare(c2).includes("IGNORE ALL") && (await O2.call("studio_now", { depth: "full" }) as any).data.waiting.filter((w: any) => w.options).every((w: any) => w.options.untrusted === true && JSON.parse(w.options.text).length === 6)
+        && c2.data.entries.filter((e: any) => !e.withheld).every((e: any) => e.options[0].label.untrusted === true && e.options[0].id === "go"),
+        "a template file name as an option label arrives only as untrusted text, in studio_now (six options at most) and studio_get/studio_list", bare(n2).slice(0, 300));
+      const heldNow = n2.data.waiting.concat((await O2.call("studio_now", { depth: "full" }) as any).data.waiting).filter((w: any) => w.run === held), heldCard: any = await O2.call("studio_get", { ref: `card:${E2.cards.list({ run: held, open: true })[0].id}`, depth: "full" });
+      ok(heldNow.length > 0 && heldNow.every((w: any) => w.withheld && !("options" in w) && !("question" in w)) && heldCard.data.withheld && heldCard.data.options.every((o: any) => !("label" in o) && !("labelZh" in o)) && !J(heldCard).includes("PULL_REQUEST_TEMPLATE"),
+        "a withheld Task's card emits no option labels, in studio_now or studio_get", J([heldNow, heldCard.data.options]).slice(0, 300));
+    } finally { for (const r of E2.list()) { try { await E2.cancel(r.id); } catch {} } H2.stop(); } }
+  // ---------- a confirm-door card that names a two-way door reads one-way, as the Inbox ranks it ----------
+  { const flow = { id: "two-way-fixture", name: "two-way-fixture", version: 1, roles: [], edges: [{ from: "tier", to: "ask", when: "ok" }, { from: "ask", to: "done", when: "go" }],
+      nodes: [{ id: "tier", kind: "hook", label: "Door tier", x: 0, y: 1, do: "tier" }, { id: "ask", kind: "card", label: "Decide", x: 1, y: 1, card: { body: { en: "Ship the tide alerts now?", "zh-TW": "現在上線潮汐警報？" }, door_from: "tier", confirm_door: true, options: [{ id: "go", label: "Ship it", labelZh: "上線" }, { id: "hold", label: "Hold", labelZh: "先等等", hold: true }] } },
+        { id: "done", kind: "hook", label: "Done", x: 2, y: 1 }] };
+    const H3 = await harness([JSON.stringify(flow)]), E3 = H3.engine;
+    E3.actions.tier = (x: any) => { x.ctx.tier = "two-way"; return "ok"; }; // the step before the card names the door, as a merge card's door_from does
+    try {
+      const run = E3.start({ workflow: "two-way-fixture", version: 1, title: "Tide alerts", text: "x", by: "fixture", params: {} } as any);
+      await until(() => E3.cards.list({ run: run.id, open: true }).length > 0);
+      const card = E3.cards.list({ run: run.id, open: true })[0], O3 = (await import("../src/observe/tools")).createObserve({ engine: E3, taskRow: (r: any) => taskRow(E3, r) });
+      const w: any = (await O3.call("studio_now", {}) as any).data.waiting.find((x: any) => x.card === card.id), g: any = await O3.call("studio_get", { ref: `card:${card.id}` });
+      ok(card.door === "two-way" && card.confirmDoor && w?.door === "one-way" && w.urgency === g.data.urgency && g.data.urgency === "one-way door", "a confirm-door card naming a two-way door: studio_now says one-way, with studio_get's urgency", J([card.door, w, g.data.urgency]));
+    } finally { for (const r of E3.list()) { try { await E3.cancel(r.id); } catch {} } H3.stop(); } }
 } finally { for (const r of F.E.list()) if (!["failed", "cancelled", "succeeded"].includes(r.status)) { try { await F.E.cancel(r.id); } catch {} } F.H.stop(); }
 end();
