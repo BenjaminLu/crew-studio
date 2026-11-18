@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The review room's right-hand pane (public/review-room.js crewRoomPane, review-room.css .rr-split, review-board.css): the board's
-// questions and the skill's chat read wider by default (the chat 440 px or more at 1440; the questions 272 px or more, growing past 1440 while the board keeps the width its chapter and follow-up cards need), the room uses the whole
+// conversation and the skill's chat read wider by default (the chat 440 px or more at 1440; the board's conversation 300 px or more, growing past 1440 while the board keeps the width its chapter needs), the room uses the whole
 // screen on a wide one; the splitter before the pane is a focusable separator the arrow keys, Home and End move within its
 // bounds, dragging resizes it, the width is kept per view across a reload, a double-click goes back to the default; long chat
 // scrolls inside the pane (never the page), its citations stay on one line each; a phone and a narrow window never scroll
@@ -75,9 +75,9 @@ const split = (mode) => `[data-pane-split="${mode}"]`;
 const MAIN = { board: ".rb-view > .rb-main", explain: ".rx-body > .rx-stage" };
 const mainW = (p, mode) => p.$eval(MAIN[mode], (e) => Math.round(e.getBoundingClientRect().width));
 const MIN = { board: 260, explain: 320 };
-// the default at 1440 and at 1920: the chat reads at 60 to 75 characters a line; the questions panel keeps 272 px or more and
-// leaves the board the width its camera needs to show a chapter and the follow-ups beside it, then grows on a wide screen
-const AT1440 = { board: 280, explain: 440 }, AT1920 = { board: 450, explain: 540 };
+// the default at 1440 and at 1920: the chat reads at 60 to 75 characters a line; the board's conversation keeps 300 px or more and
+// leaves the board the width its camera needs to show a chapter at 0.9, then grows on a wide screen
+const AT1440 = { board: 300, explain: 440 }, AT1920 = { board: 500, explain: 540 };
 const aria = (p, mode) => p.evaluate((sel) => { const e = document.querySelector(sel); return { min: Number(e.getAttribute("aria-valuemin")), max: Number(e.getAttribute("aria-valuemax")), now: Number(e.getAttribute("aria-valuenow")) }; }, split(mode));
 
 try {
@@ -102,7 +102,7 @@ try {
     await p.keyboard.press("Home"); await p.waitForTimeout(80); const hi = await paneW(p, mode), aHome = await aria(p, mode), mHome = await mainW(p, mode);
     const bounds = [MIN[mode], hi];
     ok(Math.abs(lo - MIN[mode]) <= 1 && hi <= 720 && hi > def && Math.abs(aEnd.now - aEnd.max) <= 1 && Math.abs(aHome.now - aHome.min) <= 1, `${mode}: End narrows the pane to its least, Home widens it to its most; the separator's value follows`, JSON.stringify({ lo, hi, aEnd, aHome }));
-    if (mode === "board") ok(mHome >= 558, "board: at its widest the questions panel leaves the board 560 px", JSON.stringify({ hi, mHome }));
+    if (mode === "board") ok(mHome >= 558, "board: at its widest the conversation leaves the board 560 px", JSON.stringify({ hi, mHome }));
     await p.keyboard.press("Enter"); await p.waitForTimeout(80);
     ok(Math.abs(await paneW(p, mode) - def) <= 1, `${mode}: Enter goes back to the default width`);
     // the room redraws (the board on a settled width, a live update): the splitter keeps the keyboard
@@ -148,26 +148,24 @@ try {
     await w.ctx.close();
   }
 
-  // ---------- the board at its default width: the chapter and the follow-up cards beside it are whole on the canvas; the zoom row
-  // and the play bar never overlap ----------
+  // ---------- the board at its default width: the chapter is whole on the canvas at a readable scale (its answers are in the
+  // pane); the zoom row and the play bar never overlap ----------
   for (const width of [1280, 1440, 1920]) {
     const { ctx, p } = await open("board", width);
     const look = () => p.evaluate(() => { const id = "SC-60", B = window.crewReviewRoom.board, L = B.layoutOf(id), cur = document.querySelector("[data-board]").dataset.scene, r = L.R[cur], cam = B.camOf(id);
       const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), inside = (b) => b.left >= vp.left - 1 && b.right <= vp.right + 1;
-      // the cards of the first column beside the chapter (the ones its camera frames; a card's side example goes further right)
-      const cards = [...document.querySelectorAll(`[data-tlayer="${cur}"] .rb-card`)].map((c) => c.getBoundingClientRect()).filter((b) => b.top < vp.bottom - 40 && b.bottom > vp.top && (b.left - vp.left - cam.x) / cam.s < r.x + r.W + 60);
       const sl = vp.left + cam.x + r.x * cam.s, sc = { left: sl, right: sl + r.W * cam.s };
       const pl = document.querySelector(".rb-play")?.getBoundingClientRect(), zm = document.querySelector(".rb-zoom")?.getBoundingClientRect();
       const meet = pl && zm && !(pl.right <= zm.left || zm.right <= pl.left || pl.bottom <= zm.top || zm.bottom <= pl.top);
-      return { cur, s: cam.s, n: cards.length, whole: cards.every(inside), scene: inside(sc), meet, vp: Math.round(vp.width), cut: cards.filter((b) => !inside(b)).map((b) => Math.round(b.right - vp.right)) }; });
+      return { cur, s: cam.s, scene: inside(sc), meet, vp: Math.round(vp.width), pane: document.querySelectorAll("[data-board-notes] .rb-card").length }; });
     const v = await look();
-    ok(v.n > 0 && v.whole && v.scene && v.s >= 0.7, `board at ${width}: the chapter and its follow-up cards are whole on the canvas, at a readable scale`, JSON.stringify(v));
+    ok(v.scene && v.s >= 0.88 && v.pane > 0, `board at ${width}: the chapter is whole on the canvas at 0.88 or more, its answers in the pane`, JSON.stringify(v));
     ok(!v.meet, `board at ${width}: the zoom row and the play bar do not overlap`, JSON.stringify(v));
-    // the questions panel at its widest: the board keeps 560 px, and its controls still do not overlap
+    // the conversation at its widest: the board keeps 560 px, the chapter still whole, and its controls still do not overlap
     await p.focus(split("board")); await p.keyboard.press("Home"); await p.waitForTimeout(800);
     const w2 = await look();
-    ok(w2.vp >= 556 && !w2.meet, `board at ${width}, the questions panel at its widest: the board keeps 560 px and its zoom row clears the play bar`, JSON.stringify(w2));
-    ok(w2.n > 0 && w2.whole && w2.scene && w2.s >= 0.7, `board at ${width}, the questions panel at its widest: the chapter and its follow-up cards are still whole`, JSON.stringify(w2));
+    ok(w2.vp >= 556 && !w2.meet, `board at ${width}, the conversation at its widest: the board keeps 560 px and its zoom row clears the play bar`, JSON.stringify(w2));
+    ok(w2.scene && w2.s >= 0.7, `board at ${width}, the conversation at its widest: the chapter is still whole`, JSON.stringify(w2));
     await ctx.close();
   }
 
@@ -187,7 +185,7 @@ try {
   // ---------- narrow: no sideways scroll, no splitter ----------
   for (const mode of ["board", "explain"]) for (const width of [390, 760, 1000]) {
     const { ctx, p } = await open(mode, width);
-    // the board's questions are closed by default on a narrow window: opened, they are an overlay with no splitter
+    // the board's conversation is closed by default on a narrow window: opened, it is an overlay with no splitter
     if (mode === "board" && width > 760) { await p.click("[data-notes-toggle]"); await p.waitForSelector("[data-board-notes]"); await p.waitForTimeout(200); }
     const n = await p.evaluate((sel) => { const s = document.querySelector(sel); return { hscroll: document.documentElement.scrollWidth > innerWidth, split: !!s && s.getBoundingClientRect().width > 0 }; }, split(mode));
     const wantSplit = mode === "explain" && width > 900;

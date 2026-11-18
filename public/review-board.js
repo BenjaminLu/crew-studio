@@ -4,26 +4,29 @@
 // map (each chapter's number, title, one line and its question counts), mid, near the whole chapter. "Next" walks the
 // chapters, flying the camera to each at a readable scale; a chapter not reached yet is a placeholder. Every sentence, a
 // drawing's node, edge or transition, a transaction or call row and a risk is a place to ask: a question is a paid turn of
-// the room (asked, then confirmed in its own card), its answer a card branching beside that place with numbered pins on it;
-// a deeper answer goes below, an example beside, a rephrasing is a version tab of the same card. Show the code is free.
-// Understood questions fold into a chip, and "tidy the board" folds them into their chapter's text (before / after shows
-// the original); the notes panel and the last region list every question. Model text only ever goes into text nodes.
+// the room (asked, then confirmed in its own card), its place marked with a numbered pin; its answers are read in the
+// conversation pane beside the board (convPane): a deeper answer or an example under its card, a rephrasing a version tab of
+// the same card. Show the code is free. Understood questions fold into a chip, and "tidy the board" folds them into their
+// chapter's text (before / after shows the original); the last region lists every question too. Model text only ever goes
+// into text nodes.
 (() => {
 window.crewReviewBoard = (D) => {
 const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody } = D;
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, figViewer, sceneBody } = D;
 /** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
  *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
 const isLesson = (x) => !!(x?.chapter && x.t?.action === "teach" && x.t.status === "done");
 // the board's own state, per room: the camera, what it is locked on, the regions read, the popover, a question waiting for
 // its confirmation, the thread in focus, the filters, the open sheet (a phone), the last layout
 const B = { cam: new Map(), lock: new Map(), cur: new Map(), visited: new Map(), pop: null, pend: new Map(), focus: new Map(), only: new Set(), before: new Set(), peek: new Set(), sheet: new Map(), ver: new Map(),
-  viewer: null, shown: new Map(), code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0, fit: new Map() };
+  viewer: null, shown: new Map(), code: new Map(), L: new Map(), tween: null, drag: null, space: false, moved: false, toast: null, reveal: new Map(), err: new Map(), busy: new Set(), lod: new Map(), focusKey: new Map(), notes: new Set(), lastScene: new Map(), quiet: false, consent: new Map(), figs: new Map(), lastLayout: 0, fit: new Map(),
+  // the conversation pane: where it was scrolled, what to scroll to after the next draw, the region it last followed, the follow-up being written
+  paneScroll: new Map(), paneTo: new Map(), paneCur: new Map(), draft: new Map() };
 const phone = () => innerWidth <= 760;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const LOD = (s) => (s < 0.42 ? "far" : s < 0.7 ? "mid" : "near");
-const CHIP = { deeper: ["Deeper ↓", "更深 ↓"], example: ["Example →", "例子 →"], rephrase: ["Say it another way", "換個說法"], why: ["Why", "為什麼"], code: ["Show the code", "看程式碼"], free: ["Ask", "問"] };
+const CHIP = { deeper: ["Deeper ↓", "更深 ↓"], example: ["Example ↓", "例子 ↓"], rephrase: ["Say it another way", "換個說法"], why: ["Why", "為什麼"], code: ["Show the code", "看程式碼"], free: ["Ask", "問"] };
 const chipName = (c) => T(...(CHIP[c] || [c, c]));
 /** the popover's chips, as the prototype words them (我不懂這句 asks for another way and marks the question 還沒懂) */
 const POP = [["deeper", "More detail", "詳細一點"], ["example", "An example", "舉個例子"], ["why", "Why this way", "為什麼這樣做"], ["code", "Show the code", "看程式碼"], ["rephrase", "I don't get this", "我不懂這句"]];
@@ -75,7 +78,7 @@ function sentences(card, x, p, m, kind, ctx) {
 }
 /** the numbered pins on a place: one per question asked there, coloured by its state */
 function pinsOf(card, ctx, key) {
-  return ctx.threads.filter((t) => t.key === key).map((t) => h("button", { type: "button", class: `rb-pin ${pinCls(card, t)}`, "data-pin": t.n, "data-pin-for": key, tabindex: -1, "aria-label": T(`Question ${t.n}`, `問題 ${t.n}`), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n); } }, String(t.n)));
+  return ctx.threads.filter((t) => t.key === key).map((t) => h("button", { type: "button", class: `rb-pin ${pinCls(card, t)}`, "data-pin": t.n, "data-pin-for": key, tabindex: -1, "aria-label": T(`Question ${t.n}`, `問題 ${t.n}`), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n, true); } }, String(t.n)));
 }
 const pinCls = (card, t) => (t.merged && !B.before.has(card) ? "mg" : t.state === "resolved" ? "done" : confusedOf(t) ? "q" : "a");
 /** a drawing's parts made places: a node, an edge's chip, a transition (its chip and its row), a transaction's field, a
@@ -113,12 +116,14 @@ function decorate(fig, x, it, ctx) {
  *  is, the risks, the roads, the questions) stays one column of numbered steps, as wide as it reads */
 const boardCite = (p) => [...(p?.cites || [])].reverse().find((c) => c?.ref?.startsWith("board:"))?.ref.slice(6) || null;
 const illustrated = (x) => !x.skip && (!!x.pic || x.points.some((p) => p.picture || boardCite(p)));
-const widthOf = (x) => (phone() ? 340 : !illustrated(x) ? 540 : x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 840 : 780);
+/*  a drawing's chapter is never wider than the board shows at 92% (ctx.regionMax: the board beside the conversation pane), so the
+ *  camera's default frames it whole at a readable scale */
+const widthOf = (x, ctx) => (phone() ? 340 : !illustrated(x) ? 540 : Math.min(ctx?.regionMax ?? 840, x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 840 : 780));
 /** a chapter's steps column on a desktop: a drawing gets the wider illustration */
 const stepsW = (x) => (x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 300 : 440);
 function regionEl(card, r, x, j, nth, ctx) {
   const key = x.key, ch = x.chapter, tone = POINTS_TONE[ch], seen = ctx.visited.has(key), ths = ctx.threads.filter((t) => t.anchor.scene === key);
-  const open = ths.filter(confusedOf).length, done = ths.filter((t) => t.state === "resolved" || t.merged).length, cards = ths.reduce((n, t) => n + t.nodes.length, 0), W = widthOf(x);
+  const open = ths.filter(confusedOf).length, done = ths.filter((t) => t.state === "resolved" || t.merged).length, W = widthOf(x, ctx);
   const head = h("div", { class: "rp-head" }, h("span", { class: "rp-num" }, String(j + 1).padStart(2, "0")),
     h("h3", {}, chapterName(ch), ch === "decisions" ? h("span", { class: "rp-of" }, ` · ${T(`Choice ${nth}`, `決定 ${nth}`)}`) : null), h("p", { class: "rp-sub", "data-section-title": "" }, x.title));
   const sent = (p, m) => sentences(card, x, p, m, ch === "watch" ? "risk" : "sentence", ctx);
@@ -140,20 +145,24 @@ function regionEl(card, r, x, j, nth, ctx) {
   const byId = (id) => (id ? r.board.find((b) => b.id === id) : null), stepPic = (p) => byId(p?.picture) || byId(boardCite(p)), own = cur != null ? stepPic(x.points[cur]) : null;
   const pic0 = !illustrated(x) ? null : own || x.pic || x.points.map(stepPic).find(Boolean) || null;
   const codes = isCode(pic0) ? [pic0] : [], pic = !pic0 ? null : isCode(pic0) ? fallbackVisual(r, x) : pic0, focus = cur != null && pic === pic0 ? focusOf(x.points[cur]) : [], SW = stepsW(x);
+  // a narrow board (the chapter capped by regionMax, its drawing's slot beside the steps under 400): the steps over the drawing,
+  // the drawing the chapter's whole width, never smaller than it was beside a wider board
+  const stacked = !phone() && W < widthOf(x) && W - SW - 64 < 400;
   // one figure per chapter: a step may cite another chapter's drawing, and a figure's question places name its own chapter
   let fig = null; if (pic) { const fk = `${card}/${x.key}/${pic.id}/${roomLang(r)}/${uiLang()}/${RR.tsel.get(`${card}/${pic.id}`) ?? 0}/${W}/${focus.join(",")}/${Object.keys(r.translations || {}).map((l) => `${l}:${Object.keys(r.translations[l]).length}`).join(",")}`;
-    fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: W - SW - 64, h: 620 }); if (!pic.synth) decorate(fig, x, pic, ctx); else fig.setAttribute("data-figure-studio", "");  if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); }
+    fig = B.figs.get(fk); if (!fig) { fig = reportFigure(card, r, pic, phone() ? { narrow: true, w: W - 30, h: 1400 } : { w: stacked ? W - 40 : W - SW - 64, h: 620 }); if (!pic.synth) decorate(fig, x, pic, ctx); else fig.setAttribute("data-figure-studio", "");  if (B.figs.size > 400) B.figs.clear(); B.figs.set(fk, fig); }
     if (focus.length) { fig.setAttribute("data-zoom-focus", focus.join(",")); queueMicrotask(zoomFocus); } else fig.removeAttribute("data-zoom-focus"); }
   const illus = fig ? h("div", { class: "rb-illus", "data-illustration-of": cur != null ? cur + 1 : "all" }, fig, stepDetail(x, cur), codeRefs(card, r, codes)) : null;
   const gist = plain(x.points[0]?.text || x.title || "");
   return h("section", { class: `rb-region${seen ? "" : " unvisited"}${ths.length ? " hasq" : ""}${ctx.cur === key ? " cur" : ""}`, "data-region": key, "data-report-section": key, "data-chapter": ch, "data-turn": x.turn, "data-open": open, "data-done": done, id: `rp-${card}-${key}`, "aria-label": `${String(j + 1).padStart(2, "0")} ${chapterName(ch)}` },
-    h("div", { class: "rb-rtitle" }, h("b", {}, String(j + 1).padStart(2, "0")), h("span", {}, chapterName(ch)), ths.length ? h("span", { class: "rb-cnt" }, T(`${cards} asked`, `問 ${cards}`), open ? h("i", {}, T(` · ${open} not understood`, ` · 未解 ${open}`)) : null) : null),
-    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, sceneBody(card, x), absorbed), illus),
+    h("div", { class: "rb-rtitle" }, h("b", {}, String(j + 1).padStart(2, "0")), h("span", {}, chapterName(ch)), ths.length ? h("button", { type: "button", class: "rb-cnt", "data-region-questions": key, title: T("Read them in the conversation", "在問答欄裡看"), onclick: (e) => { e.stopPropagation(); showConv(card, key); } }, T(`${ths.length} question${ths.length === 1 ? "" : "s"}`, `${ths.length} 個問題`), open ? h("i", {}, T(` · ${open} not understood`, ` · 未解 ${open}`)) : null) : null),
+    h("div", { class: "rb-rbody", style: `width:${W}px` }, h("div", { class: `rb-split${illus ? stacked ? " stacked" : "" : " solo"}`, style: `--steps:${SW}px` }, h("div", { class: "rp-card" }, ctx.firstOf(x) ? sceneHead(r, x) : null, head, body, sceneBody(card, x), absorbed), illus),
       // far away: only the chapter's number, its title, one line and its questions
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, String(j + 1).padStart(2, "0")), h("div", { class: "rb-mt" }, chapterName(ch)), h("div", { class: "rb-mg", "data-map-gist": "" }, gist),
         h("div", { class: "rb-mq" }, h("span", { class: "rb-badge q", "data-map-open": open }, T(`${open} not understood`, `未解 ${open}`)), h("span", { class: "rb-badge ok", "data-map-done": done }, T(`${done} understood`, `懂了 ${done}`)))),
       seen ? null : h("button", { type: "button", class: "rb-ph", "data-placeholder": key, onclick: (e) => { e.stopPropagation(); flyTo(card, key); } }, h("b", {}, `${String(j + 1).padStart(2, "0")} · ${chapterName(ch)}`), h("span", {}, T("Not covered yet · press “Next” or pick it in the outline", "還沒講到 · 按「下一段」或點左側章節")))),
-    h("div", { class: "rb-tlayer", "data-tlayer": key }, seen ? ths.flatMap((t) => threadEls(card, r, t, ctx)) : null, seen ? pendingEls(card, r, key, ctx) : null));
+    // the questions asked here are read in the conversation pane; the canvas keeps their numbered pins (layout)
+    h("div", { class: "rb-tlayer", "data-tlayer": key }));
 }
 /** the last region: the questions asked on the way */
 function endRegion(card, r, n, ctx) {
@@ -178,8 +187,8 @@ function sceneRegionEl(card, r, x, j, ctx) {
     h("div", { class: "rb-rbody", style: `width:${W}px` }, sceneCard(r, ctx.scenes, j, W),
       h("div", { class: "rb-map", "data-map": key, "aria-hidden": "true" }, h("div", { class: "rb-mn" }, num), h("div", { class: "rb-mt" }, label), h("div", { class: "rb-mg", "data-map-gist": "" }, plain(x.title || "")),
         h("div", { class: "rb-mq" }, st === "running" ? h("span", { class: "rb-badge q" }, T("being written", "撰寫中")) : st !== "done" ? h("span", { class: "rb-badge q" }, st === "interrupted" ? T("interrupted", "中斷") : T("failed", "失敗")) : h("span", { class: "rb-badge ok" }, T(`${x.points.length} point${x.points.length === 1 ? "" : "s"}`, `${x.points.length} 點`))))),
-    // the questions asked about words selected on this scene: their cards beside it, as a lesson's
-    h("div", { class: "rb-tlayer", "data-tlayer": key }, ...(key !== sceneKey(key) ? [] : [ctx.threads.filter((t) => t.anchor.scene === key).flatMap((t) => threadEls(card, r, t, ctx)), pendingEls(card, r, key, ctx)])));
+    // the questions asked about words selected on this scene are read in the conversation pane, as a lesson's
+    h("div", { class: "rb-tlayer", "data-tlayer": key }));
 }
 /** a scene region's place key as Studio keeps it: a check (t3-quiz) is asked about as its turn's scene (t3) */
 const sceneKey = (key) => String(key).replace(/-quiz$/, "");
@@ -202,7 +211,8 @@ function selectionPlace(card) {
   const rg = s.getRangeAt(0), c0 = rg.commonAncestorContainer, el = c0.nodeType === 1 ? c0 : c0.parentElement;
   if (!el || el.closest(".rb-pop, input, textarea, [contenteditable], .rr-dock, .rr-drawer")) return null;
   const sh = B.shown.get(card), reg = el.closest(`[data-board-vp="${CSS.escape(card)}"] [data-region]`), cap = el.closest(`[data-playbar="${CSS.escape(card)}"] [data-caption]`);
-  const key = reg ? reg.dataset.region : cap ? sh?.scenes[sh.i]?.key : null; if (!key || key === "end") return null;
+  const conv = !reg && !cap ? el.closest(`[data-board-notes="${CSS.escape(card)}"] [data-conv-scene]`) : null;
+  const key = reg ? reg.dataset.region : cap ? sh?.scenes[sh.i]?.key : conv ? conv.dataset.convScene : null; if (!key || key === "end") return null;
   const x = sh?.scenes.find((y) => y.key === key); if (!x || (x.t && x.t.status !== "done")) return null;
   const host = el.closest("li, p, .rb-card, .rr-point") || el, refs = [...new Set([...host.querySelectorAll("[data-cite]")].map((b) => b.dataset.cite))].slice(0, 4);
   const rects = [...rg.getClientRects()].filter((q) => q.width || q.height), last = rects.at(-1) || rg.getBoundingClientRect();
@@ -229,25 +239,18 @@ function askSelection(card, p) {
 }
 document.addEventListener("selectionchange", () => { clearTimeout(SEL.t); SEL.t = setTimeout(() => { const card = S.route?.name === "room" ? S.route.arg : null; if (card && vpOf(card)) showSelAsk(card); else hideSelAsk(); }, 120); });
 addEventListener("hashchange", hideSelAsk);
-/** the notes: every question, its place, how many cards and its state; a click focuses it */
+/** "Your questions": every question, its place, how many cards and its state; a click shows it on the board */
 function notesList(card, list, where) {
   const R = B.L.get(card)?.names || {};
-  return h("ol", { class: "rb-nlist", "data-notes-list": where }, list.map((t) => { const cf = confusedOf(t), st = t.merged ? T("folded in", "已併入") : t.state === "resolved" ? T("understood", "懂了") : cf ? T("not understood", "還沒懂") : T("answered", "已回答");
-    return h("li", {}, h("button", { type: "button", class: "rb-nitem", "data-note-thread": t.n, "data-note-state": t.merged ? "merged" : t.state === "resolved" ? "resolved" : cf ? "confused" : "answered", onclick: () => focusThread(card, t.n) },
-      h("span", { class: `rb-pin ${pinCls(card, t)}` }, String(t.n)), h("q", {}, t.anchor.text), h("small", {}, `${R[t.anchor.scene] || chapterName(t.anchor.chapter)} · ${T(`${t.nodes.length} card${t.nodes.length === 1 ? "" : "s"}`, `${t.nodes.length} 則`)} · `, h("b", { class: cf && !t.merged ? "open" : "" }, st)))); }));
+  return h("ol", { class: "rb-nlist", "data-notes-list": where }, list.map((t) => h("li", {}, noteItem(card, t, R, () => focusThread(card, t.n, true)))));
 }
-/** a thread on the board: its cards, or (understood, or folded into its chapter) one small chip */
+/** a thread in the pane shows its cards, or (understood, or folded into its chapter) one small chip that opens them */
 function chipMode(card, t) { const peek = B.peek.has(`${card}/${t.n}`) || B.focus.get(card)?.n === t.n; return (t.merged || t.state === "resolved") && !peek; }
-function threadEls(card, r, t, ctx) {
-  if (chipMode(card, t)) { const mg = t.merged && !B.before.has(card);
-    return [h("button", { type: "button", class: `rb-tchip${mg ? " merged" : ""}`, "data-group": t.key, "data-tchip": t.n, "data-thread": t.n, onclick: (e) => { e.stopPropagation(); B.peek.add(`${card}/${t.n}`); B.reveal.set(card, `${t.n}`); rerender(); } },
-      mg ? T(`Folded in #${t.n}`, `已併入 #${t.n}`) : T(`✓ #${t.n} understood`, `✓ #${t.n} 懂了`))]; }
-  const out = t.nodes.map((nd) => cardEl(card, r, t, nd, ctx)), p = B.pend.get(card);
-  if (p && p.n === t.n) out.push(pendingCard(card, r, p, t.key, p.rel === "version" ? p.node : p.node, ctx));
-  return out;
+function chipEl(card, t) {
+  const mg = t.merged && !B.before.has(card);
+  return h("button", { type: "button", class: `rb-tchip${mg ? " merged" : ""}`, "data-group": t.key, "data-tchip": t.n, "data-thread": t.n, onclick: (e) => { e.stopPropagation(); B.peek.add(`${card}/${t.n}`); B.reveal.set(card, `${t.n}`); rerender(); } },
+      mg ? T(`Folded in #${t.n}`, `已併入 #${t.n}`) : T(`✓ #${t.n} understood`, `✓ #${t.n} 懂了`));
 }
-/** a question asked on a place with no thread yet: its card waits for the confirmation at that place */
-function pendingEls(card, r, scene, ctx) { const p = B.pend.get(card); return p && p.n == null && p.anchor?.scene === scene ? [pendingCard(card, r, p, p.key, null, ctx)] : []; }
 function pendingCard(card, r, p, group, parent, ctx) {
   const o = r.offer, busy = r.running != null || B.busy.has(card), err = B.err.get(card), agree = B.consent.get(card) !== false;
   const label = p.chip === "free" ? T(`You ask: ${p.q}`, `你問：${p.q}`) : p.rel === "version" ? T("Say it another way (a new version)", "換個說法（新版本）") : popName(p.chip);
@@ -282,13 +285,18 @@ function cardEl(card, r, t, nd, ctx) {
     : h("button", { type: "button", class: "rb-btn ok", "data-resolve": t.n, onclick: (e) => { e.stopPropagation(); B.peek.delete(`${card}/${t.n}`); if (B.focus.get(card)?.n === t.n) unfocus(card); lessonOp(card, { op: "resolve", n: t.n }); } }, T("Got it ✓", "懂了 ✓")));
   if (root && (t.state === "resolved" || t.merged) && B.peek.has(`${card}/${t.n}`)) acts.push(h("button", { type: "button", class: "rb-btn", "data-fold": t.n, onclick: (e) => { e.stopPropagation(); B.peek.delete(`${card}/${t.n}`); rerender(); } }, T("Fold", "收起")));
   // the drawings and pictures this answer made (board_draw, a figure), with Studio's own renderers
-  const figs = turn && turn.status === "done" ? (r.board || []).filter((b) => b.turn === turn.n).map((it) => { try { return reportFigure(card, r, it, { narrow: true, w: 260, h: 520 }); } catch { return null; } }) : [];
+  // the drawings and pictures this answer made (board_draw, a figure), with Studio's own renderers, at the pane's width; a click (or
+  // "View drawing") opens one whole in the room's figure viewer (review-room.js figViewer): it is not on the board
+  const paneW = Math.max(240, (window.crewRoomPane?.width("board") || 320) - 70);
+  const figs = turn && turn.status === "done" ? (r.board || []).filter((b) => b.turn === turn.n).map((it) => { try { const f = reportFigure(card, r, it, { narrow: true, w: paneW, h: 900 });
+    return h("div", { class: "rb-cfig", "data-card-figure": it.id, title: T("Open this drawing whole", "打開整張圖"), onclick: (e) => { if (e.target.closest("button,a,[data-cite]")) return; e.stopPropagation(); figViewer(card, it); } }, f,
+      h("button", { type: "button", class: "rb-btn", "data-card-fig-view": it.id, onclick: (e) => { e.stopPropagation(); figViewer(card, it); } }, T("View drawing", "檢視圖"))); } catch { return null; } }).filter(Boolean) : [];
   const paid = turn && turn.model ? h("span", { class: "rb-paid", "data-paid-note": "", title: T("A paid round", "付費一回合") },
     turn.follow ? T(`follow-up ${turn.follow} started without asking · paid · ${turn.model}`, `已追問 ${turn.follow} 次 · 付費 · ${turn.model}`) : T(`paid · ${turn.model}`, `付費 · ${turn.model}`)) : null;
-  return h("article", { class: `rb-card${root ? " root" : ""}${confusedOf(t) ? " q" : ""}${nd.versions.length > 1 ? " stack" : ""}${focus ? " lit" : ""}`, "data-group": t.key, "data-tcard": `${t.n}:${nd.id}`, "data-thread": t.n, "data-tnode": nd.id, "data-parent": nd.parent ?? "", "data-rel": nd.rel, "data-chip": nd.chip },
+  return h("article", { class: `rb-card${root ? " root" : ""}${confusedOf(t) ? " q" : ""}${nd.versions.length > 1 ? " rb-versions" : ""}${focus ? " lit" : ""}`, "data-group": t.key, "data-tcard": `${t.n}:${nd.id}`, "data-thread": t.n, "data-tnode": nd.id, "data-parent": nd.parent ?? "", "data-rel": nd.rel, "data-chip": nd.chip },
     h("div", { class: "rb-ch" }, h("span", { class: `rb-pin ${pinCls(card, t)}` }, String(t.n)), h("span", { class: "rb-cq", title: label }, label),
       nd.versions.length > 1 ? h("span", { class: "rb-tabs", role: "group", "aria-label": T("Versions", "版本") }, nd.versions.map((v, i) => h("button", { type: "button", "data-version-tab": i, "aria-pressed": String(i === vi), onclick: (e) => { e.stopPropagation(); B.ver.set(vk, i); rerender(); } }, String(i + 1))), h("em", {}, `/${nd.versions.length}`)) : null,
-      root ? h("button", { type: "button", class: "rb-x", "data-focus-thread": t.n, title: T("Focus this thread (Esc returns)", "聚焦這串（Esc 返回）"), "aria-label": T(`Focus question ${t.n}`, `聚焦問題 ${t.n}`), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n); } }, "⤢") : null),
+      root ? h("button", { type: "button", class: "rb-x", "data-focus-thread": t.n, title: T("Show it on the board (Esc returns)", "在白板上看（Esc 返回）"), "aria-label": T(`Show question ${t.n} on the board`, `在白板上看問題 ${t.n}`), onclick: (e) => { e.stopPropagation(); focusThread(card, t.n); } }, "⤢") : null),
     root ? h("q", { class: "rb-anchor", title: t.anchor.text }, t.anchor.text) : null,
     nd.versions.length > 1 && vi > 0 ? h("div", { class: "rb-alttag" }, T(`Said another way (${vi + 1}/${nd.versions.length})`, `換個說法（${vi + 1}/${nd.versions.length}）`)) : null,
     h("div", { class: "rb-cbody" }, body, figs.length ? h("div", { class: "rb-cfigs", "data-card-figures": figs.length }, figs) : null), acts.length || paid ? h("div", { class: "rb-acts" }, acts, paid) : null);
@@ -304,6 +312,85 @@ function codeBody(card, r, ref) {
   const d = c.data;
   return [h("div", { class: "rb-coderef" }, h("code", {}, ref), h("button", { type: "button", class: "rb-btn", "data-open-cite": ref, onclick: (e) => { e.stopPropagation(); openCite(card, ref); } }, T("Open", "打開"))),
     c.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : c.error ? h("p", { class: "rr-err" }, c.error) : d?.kind === "diff" ? diffPre(String(d.text || "").split("\n").slice(0, 40).join("\n")) : d?.text ? h("pre", { class: "rr-pre" }, String(d.text).slice(0, 2000)) : h("p", { class: "faint" }, T("Open it to read it.", "打開來看。"))];
+}
+
+// ---------- the conversation pane: every question and the tutor's answers beside the board (the Firstmate panel's place) ----------
+const paneList = (card) => document.querySelector(`[data-board-notes="${CSS.escape(card)}"] [data-conv-list]`);
+/** the pane open: beside the board on a desktop (unless the captain closed it), over it on a narrow window, a sheet on a phone */
+function openPane(card) { if (phone()) B.sheet.set(card, "notes"); else if (innerWidth > 1180) B.notes.delete(card); else B.notes.add(card); }
+/** the questions asked about a region, in the pane: it opens and scrolls to them */
+function showConv(card, key) { openPane(card); B.paneTo.set(card, { scene: key }); rerender(); }
+/** the questions in the order they were asked (their pins' numbers): a new one at the bottom; a follow-up on an older one is
+ *  scrolled to (revealCard) */
+const convOrder = (threads) => [...threads].sort((a, b) => a.n - b.n);
+/** a thread's cards in reading order: each card, then what was asked on it (an example, then a deeper one), one step indented */
+function nodeOrder(t) {
+  const ids = new Set(t.nodes.map((nd) => nd.id)), kids = new Map(), out = [], seen = new Set();
+  for (const nd of t.nodes) { const k = nd.parent && ids.has(nd.parent) ? nd.parent : ""; if (!kids.has(k)) kids.set(k, []); kids.get(k).push(nd); }
+  const walk = (nd, d) => { if (seen.has(nd.id)) return; seen.add(nd.id); out.push([nd, d]); const ch = kids.get(nd.id) || []; for (const c of [...ch.filter((c) => c.rel === "side"), ...ch.filter((c) => c.rel !== "side")]) walk(c, d + 1); };
+  for (const nd of kids.get("") || []) walk(nd, 0);
+  return out;
+}
+/** a question's head in the pane and in "Your questions": its pin, the words asked about, its chapter, its cards and its state */
+function noteItem(card, t, R, onclick) { const cf = confusedOf(t), st = t.merged ? T("folded in", "已併入") : t.state === "resolved" ? T("understood", "懂了") : cf ? T("not understood", "還沒懂") : T("answered", "已回答");
+  return h("button", { type: "button", class: "rb-nitem", "data-note-thread": t.n, "data-note-state": t.merged ? "merged" : t.state === "resolved" ? "resolved" : cf ? "confused" : "answered", title: T("Show it on the board", "在白板上看"), onclick },
+    h("span", { class: `rb-pin ${pinCls(card, t)}` }, String(t.n)), h("q", {}, t.anchor.text), h("small", {}, `${R[t.anchor.scene] || chapterName(t.anchor.chapter)} · ${T(`${t.nodes.length} card${t.nodes.length === 1 ? "" : "s"}`, `${t.nodes.length} 則`)} · `, h("b", { class: cf && !t.merged ? "open" : "" }, st))); }
+/** a thread in the pane: its head (a click shows its place on the board), then its cards at full size, or (understood, or
+ *  folded into its chapter) one small chip that opens them */
+function convThread(card, r, t, ctx, R) {
+  const here = t.anchor.scene === ctx.cur || t.anchor.scene === sceneKey(ctx.cur || ""), lit = B.focus.get(card)?.n === t.n, p = B.pend.get(card);
+  const cards = chipMode(card, t) && !(p && p.n === t.n) ? [chipEl(card, t)] : [...nodeOrder(t).map(([nd, d]) => { const el = cardEl(card, r, t, nd, ctx); el.style.setProperty("--d", String(Math.min(d, 2))); return el; }),
+    p && p.n === t.n ? pendingCard(card, r, p, t.key, p.node, ctx) : null];
+  return h("li", { class: `rb-thread${here ? " here" : ""}${lit ? " lit" : ""}`, "data-conv-thread": t.n, "data-conv-scene": t.anchor.scene },
+    noteItem(card, t, R, () => focusThread(card, t.n)), h("div", { class: "rb-tcards" }, cards));
+}
+/** the pane's ask box: a follow-up in the captain's own words on one question (convPane picks it) (a new question
+ *  starts on the board, at its place) */
+function convAsk(card, r, target) {
+  const live = r.open && !r.snapshot, can = live && !phoneSession() && !r.offer?.error && !!target && !B.pend.has(card) && !B.busy.has(card);
+  const send = () => { const q = (B.draft.get(card) || "").trim(); if (!q || !can) return; const on = target.nodes.filter((nd) => !nd.code).at(-1) || target.nodes.at(-1);
+    B.draft.delete(card); ask(card, r, { n: target.n, node: on?.id, chip: "free", q: q.slice(0, 1000), rel: "below", key: target.key }); };
+  if (!live) return h("p", { class: "rx-ro", "data-conv-readonly": "" }, r.snapshot ? T("A saved room: reading only.", "存檔的審查室：只能閱讀。") : T("This room takes no question now.", "這個審查室現在不能提問。"));
+  return h("form", { class: "rx-ask rb-convask", "data-conv-ask": target?.n ?? "", onsubmit: (e) => { e.preventDefault(); send(); } },
+    h("label", { class: "rb-convto", for: `rb-convq-${card}` }, target ? T(`Follow up on #${target.n} · “${clip(target.anchor.text, 48)}”`, `追問 #${target.n} ·「${clip(target.anchor.text, 48)}」`)
+      : T("Click a sentence or a part of a drawing on the board to ask about it.", "點白板上的一句話或圖的一部分，就能問它。")),
+    h("textarea", { id: `rb-convq-${card}`, "data-conv-q": card, rows: 2, maxlength: 1000, disabled: !can, placeholder: phoneSession() ? T("Ask on the desktop", "在電腦上問") : T("Ask a follow-up…", "接著問…"),
+      oninput: (e) => B.draft.set(card, e.target.value), onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); B.draft.set(card, e.target.value); send(); } } }, B.draft.get(card) || ""),
+    h("div", { class: "rx-row" }, h("span", { class: "grow faint" }, T("A paid round, confirmed in its card", "付費一回合，在卡片裡確認")), h("button", { type: "submit", class: "rb-btn primary", "data-conv-send": "", disabled: !can }, T("Ask", "問"))));
+}
+/** the conversation pane: every question asked on the board, oldest first and the newest at the bottom, each with the tutor's
+ *  whole answers (their citations, their drawings), the follow-ups and "got it"; the ask box at the bottom */
+function convPane(card, r, ctx, sheet) {
+  const R = B.L.get(card)?.names || {}, list = convOrder(ctx.threads), p = B.pend.get(card), fn = B.focus.get(card)?.n;
+  // the ask box follows up on the question in focus, else the newest one about the region in view, else the newest
+  const here = (t) => t.anchor.scene === ctx.cur || t.anchor.scene === sceneKey(ctx.cur || "");
+  const target = list.find((t) => t.n === fn) || list.filter(here).at(-1) || list.at(-1) || null;
+  return h("aside", { class: `rb-notes rb-conv${sheet === "notes" ? " open" : ""}`, "data-board-notes": card, "aria-label": T("Questions and answers", "問答"),
+    onclick: (e) => { const t = e.target; if (t.closest("button,a,summary,input,textarea,select,pre,label,[data-cite]") || String(getSelection() || "")) return;
+      const c = t.closest(".rb-card[data-thread]:not([data-pending])"); if (c) focusThread(card, Number(c.dataset.thread)); } },
+    phone() ? h("button", { type: "button", class: "rb-sheetx", "aria-label": T("Close", "關閉"), onclick: () => { B.sheet.delete(card); rerender(); } }, "×") : null,
+    h("header", { class: "rb-convhead" }, h("h3", {}, T("Questions and answers", "問答")), list.length ? null : h("p", { class: "rb-hint" }, T("Click any sentence, a box, line or transition of a drawing, or a row, and ask right there. Click a question here to see its place on the board.", "點任何一句話、圖上的框、線或轉換，或一列欄位，就在那裡問。點這裡的問題會在白板上找到它的位置。"))),
+    h("div", { class: "rb-convlist", "data-conv-list": card, onscroll: (e) => { const el = e.currentTarget; B.paneScroll.set(card, { top: el.scrollTop, bottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 4 }); } },
+      list.length || p ? h("ol", { class: "rb-nlist", "data-notes-list": "side" }, list.map((t) => convThread(card, r, t, ctx, R)),
+        p && p.n == null ? h("li", { class: "rb-thread new", "data-conv-thread": "new", "data-conv-scene": p.anchor?.scene || "" }, h("div", { class: "rb-tcards" }, pendingCard(card, r, p, p.key, null, ctx))) : null)
+        : h("p", { class: "rb-empty" }, T("No question yet.", "還沒有問題。"))),
+    convAsk(card, r, target));
+}
+/** after a draw: the pane where it was (the first time, at the newest); a question in focus, or the region just picked, scrolled to */
+function paneAfter(card) {
+  const list = paneList(card); if (!list) return; const want = B.paneTo.get(card), cur = B.cur.get(card), was = B.paneCur.get(card), keep = B.paneScroll.get(card);
+  B.paneTo.delete(card); B.paneCur.set(card, cur);
+  const thread = want?.n != null ? list.querySelector(`[data-conv-thread="${want.n}"]`) : null; if (thread) return paneScrollTo(card, thread, "start");
+  const scene = want?.scene ?? (was !== undefined && was !== cur ? cur : null), first = scene && list.querySelector(`[data-conv-scene="${CSS.escape(scene)}"], [data-conv-scene="${CSS.escape(sceneKey(scene))}"]`);
+  if (first) return paneScrollTo(card, first, "start");
+  if (!keep || keep.bottom) list.scrollTop = list.scrollHeight; else list.scrollTop = keep.top;
+}
+/** the pane scrolled (never the page) so an entry's top is in view ("start"), or so it ends in view without hiding its top ("end") */
+function paneScrollTo(card, el, where) {
+  const list = paneList(card); if (!list || !list.contains(el)) return; const lr = list.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const top = list.scrollTop + er.top - lr.top - 8, end = list.scrollTop + er.bottom - lr.bottom + 8;
+  list.scrollTop = where === "end" ? Math.min(top, Math.max(list.scrollTop, end)) : top;
+  B.paneScroll.set(card, { top: list.scrollTop, bottom: list.scrollTop + list.clientHeight >= list.scrollHeight - 4 });
 }
 
 // ---------- asking: the popover, the question waiting for its confirmation, the free actions ----------
@@ -325,7 +412,7 @@ function ask(card, r, p) {
   if (th && p.n == null) { const root = th.nodes.find((n) => n.rel === "root"); Object.assign(p, { n: th.n, node: root?.id, rel: p.chip === "example" ? "side" : p.chip === "rephrase" ? "version" : "below" }); if (th.state !== "open") B.peek.add(`${card}/${th.n}`); }
   // a phone asks nothing paid: the popover stays, saying where to ask
   if (phoneSession()) return;
-  B.pend.set(card, p); B.err.delete(card); B.reveal.set(card, "pending"); B.pop = null; rerender();
+  B.pend.set(card, p); B.err.delete(card); B.reveal.set(card, "pending"); B.pop = null; openPane(card); rerender();
   // the room agreed to this plan: it starts now (the card says it is paid); otherwise the card asks once
   if (r.followUps?.current) { startPending(card); return; }
   requestAnimationFrame(() => document.querySelector("[data-board-start]")?.focus({ preventScroll: true }));
@@ -400,16 +487,13 @@ function moveCam(card, to, glide = true) {
 /** where the camera's lock says it should be: its region, its focused question, or the whole board (or its asked chapters) */
 function lockTarget(card) { const lock = B.lock.get(card), L = B.L.get(card); if (!lock || !L) return null;
   return lock.region ? regionCam(card, lock.region) : lock.focus != null ? focusCam(card, lock.focus) : lock.all ? (() => { const ks = B.only.has(card) ? Object.keys(L.R).filter((k) => L.q[k]) : []; return frameRect(card, bounds(card, ks.length ? ks : null), 1, 0.94); })() : null; }
-/** a region at a readable scale: its text at 70% or more on a desktop (above the cards' mid detail, LOD), so the chapter and the
- *  follow-ups beside it fit the board's width; its column filling a phone's width */
-const COLUMN = 368, LEAST = 0.7; // the follow-up column beside a chapter (its card and the gap); the least scale a region is framed at
-/** the board's width a region needs (the current one by default): its chapter and the follow-up column beside it at the least
- *  scale, with the camera's margins; review-room.js keeps the questions panel from taking it */
-function needW(card, key = B.cur.get(card)) { const r = B.L.get(card)?.R[key]; return r && r.w > r.W ? Math.ceil((r.W + COLUMN) * LEAST) + 34 : 0; }
+/** a region whole at a readable scale: the camera frames the chapter alone (its answers are read in the conversation pane); a
+ *  drawing's chapter is never wider than the board shows at 0.92 (regionMax), so this is 0.9 or more by default, and 0.7 at the
+ *  least when the captain widens the pane; its column filling a phone's width */
 function regionCam(card, key) {
   const L = B.L.get(card), vp = vpOf(card), r = L?.R[key]; if (!r || !vp) return null; const W = vp.clientWidth;
   if (phone()) { const s = clamp((W - 24) / r.W, 0.5, 1.15); return { s, x: (W - r.W * s) / 2 - r.x * s, y: 44 - (r.y - 34) * s }; }
-  const avail = W - 32, want = Math.min(r.w, r.W + (r.w > r.W ? COLUMN : 0)), s = clamp(avail / want, LEAST, 1), vis = Math.min(want, avail / s);
+  const avail = W - 32, want = r.W, s = clamp(avail / want, 0.7, 1), vis = Math.min(want, avail / s);
   return { s, x: 16 + (avail - vis * s) / 2 - r.x * s, y: 56 - (r.y - 34) * s };
 }
 function bounds(card, keys) { const L = B.L.get(card); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -442,70 +526,47 @@ function flyTo(card, key, glide = true) {
 /** → / ←: the next point of a scene being played or stepped through, else the next region (shown whole) */
 function step(card, dir) { if (B.cur.get(card) !== "end" && stepReveal(card, dir)) return; const L = B.L.get(card); if (!L) return; const order = L.order, i = order.indexOf(B.cur.get(card)), n = order[i + dir];
   if (n) flyTo(card, n); else if (dir > 0) fitAll(card); }
-function focusThread(card, n) {
+/** a question in focus: the camera flies to its chapter with its place in view and lit (the rest dimmed), the conversation pane
+ *  shows its thread; from the canvas (a pin) the pane opens on it */
+function focusThread(card, n, fromBoard = false) {
   const r = RR.rooms.get(card), t = (r?.lesson?.threads || []).find((x) => x.n === n); if (!t) return;
   // every lesson is on the board; one regenerated since shows the version the question was asked on
   const sh = B.shown.get(card), tn = (r.turns || []).find((x) => x.n === t.anchor.turn);
   if (sh && tn && !sh.scenes.some((x) => x.key === t.anchor.scene)) { RR.ver.set(`${card}/${tn.regenOf ?? tn.n}`, tn.n); rerender(); }
   visit(card, r, t.anchor.scene); if (!B.focus.has(card)) B.focus.set(card, { n, prev: { ...camOf(card) } }); else B.focus.get(card).n = n;
-  B.lock.set(card, { focus: n }); B.sheet.delete(card); B.pop = null; rerender(); layout(card);
+  B.lock.set(card, { focus: n }); B.pop = null; B.cur.set(card, t.anchor.scene); B.paneTo.set(card, { n });
+  // picked in the pane on a phone or a narrow window, the pane (a sheet, an overlay) closes so the board shows the place
+  if (fromBoard) openPane(card); else { B.sheet.delete(card); if (!phone() && innerWidth <= 1180) B.notes.delete(card); }
+  rerender(); layout(card);
   const to = focusCam(card, n); if (to) moveCam(card, to);
 }
-function focusCam(card, n) { const L = B.L.get(card), g = L?.groups[n]; if (!g) return null; return frameRect(card, { x: g.x - 30, y: g.y - 30, w: g.w + 60, h: g.h + 60 }, 1.1, 0.9); }
+/** the camera on a question's chapter (as its region is framed), moved up or down just enough that its place is in view */
+function focusCam(card, n) { const L = B.L.get(card), g = L?.groups[n], vp = vpOf(card); if (!g || !vp) return null; const to = regionCam(card, g.key); if (!to) return null;
+  const H = vp.clientHeight, top = to.y + g.y * to.s, bot = to.y + (g.y + g.h) * to.s; if (top < 60 || bot > H - 140) to.y += Math.round(H * 0.38 - top); return to; }
 function unfocus(card) { const f = B.focus.get(card); if (!f) return; B.focus.delete(card); B.lock.delete(card); rerender(); layout(card); moveCam(card, f.prev); }
 
-// ---------- the layout: regions in rows, each question's cards beside its place, nothing on anything ----------
-/** Every measurement first (each card's size, each place's box), then the placing (no read after a write, so the page lays
- *  itself out once), then the writes. A card slides down only past the boxes it meets across. */
+// ---------- the layout: regions in rows; a question's place gets its numbered pin (its answers are in the conversation pane) ----------
+/** Every measurement first (each region's size, each asked place's box), then the placing (no read after a write, so the page
+ *  lays itself out once), then the writes. */
 function layout(card) {
   const t0 = performance.now(), vp = vpOf(card), plane = vp?.querySelector("[data-board-plane]"); if (!plane) return;
-  const ph = phone(), C = {}, groups = {}, lines = [], q = {}, names = {}, writes = [], pins = [];
+  const ph = phone(), C = {}, groups = {}, q = {}, names = {}, pins = [];
   for (const pin of plane.querySelectorAll(".rb-pin.abs")) pin.remove();
   const r0 = RR.rooms.get(card), byKey = new Map((r0?.lesson?.threads || []).map((t) => [t.key, t]));
   // 1. read
   const regs = [...plane.querySelectorAll("[data-region]")].map((reg) => {
-    const key = reg.dataset.region, body = reg.querySelector(".rb-rbody"), layer = reg.querySelector(".rb-tlayer"), W = body.offsetWidth, H = body.offsetHeight, br = body.getBoundingClientRect(), k = br.width / (W || 1) || 1;
+    const key = reg.dataset.region, body = reg.querySelector(".rb-rbody"), W = body.offsetWidth, H = body.offsetHeight, br = body.getBoundingClientRect(), k = br.width / (W || 1) || 1;
     const box = (el) => { let ar = el.getBoundingClientRect(); if (!ar.width && !ar.height) ar = (el.closest("figure") || body).getBoundingClientRect(); return { x: (ar.left - br.left) / k, y: (ar.top - br.top) / k, r: (ar.right - br.left) / k, b: (ar.bottom - br.top) / k }; };
-    const els = [...(layer?.children || [])].filter((e) => e.dataset.group != null).map((e) => ({ e, w: e.offsetWidth, h: e.offsetHeight })).filter((x) => x.w);
-    const keys = [...new Set(els.map((x) => x.e.dataset.group))], places = new Map();
-    for (const gk of keys) { const a = body.querySelector(`[data-akey="${CSS.escape(gk)}"]`); places.set(gk, a ? box(a) : { x: 0, y: 0, r: 0, b: 0 }); }
-    // a drawing's place gets its pin at its top right (a sentence's pins are inline)
-    if (!reg.classList.contains("unvisited")) for (const [kk, t] of byKey) { if (t.anchor.scene !== key) continue; const a = body.querySelector(`[data-akey="${CSS.escape(kk)}"]`); if (a && !a.classList.contains("rb-s")) pins.push({ reg, t, b: box(a) }); }
-    return { reg, key, W, H, els, places, name: reg.querySelector(".rb-rtitle span")?.textContent || key };
+    // each question's place (a drawing's place gets its pin at its top right; a sentence's pins are inline)
+    const asked = [];
+    if (!reg.classList.contains("unvisited")) for (const [kk, t] of byKey) { if (t.anchor.scene !== key) continue; const a = body.querySelector(`[data-akey="${CSS.escape(kk)}"]`); if (!a) continue;
+      const b = box(a); asked.push({ t, b }); if (!a.classList.contains("rb-s")) pins.push({ reg, t, b }); }
+    return { reg, key, W, H, asked, name: reg.querySelector(".rb-rtitle span")?.textContent || key };
   });
-  // 2. place (numbers only)
-  for (const { reg, key, W, H, els, places, name } of regs) {
-    names[key] = name; const rects = [{ x: 0, y: 0, w: W, h: H }]; let mx = W, my = H;
-    const push = (x, y, w, hh) => { const g = 16, across = rects.filter((r) => x < r.x + r.w + g && x + w + g > r.x); let moved = true;
-      while (moved) { moved = false; for (const r of across) if (y < r.y + r.h + g && y + hh + g > r.y) { y = r.y + r.h + g; moved = true; } }
-      rects.push({ x, y, w, h: hh }); mx = Math.max(mx, x + w); my = Math.max(my, y + hh); return { x, y }; };
-    const byGroup = new Map(); for (const x of els) { const gk = x.e.dataset.group; if (!byGroup.has(gk)) byGroup.set(gk, []); byGroup.get(gk).push(x); }
-    const list = [...byGroup].map(([gk, es]) => ({ gk, es, a: places.get(gk), y: Math.max(0, places.get(gk).y) })).sort((a, b) => a.y - b.y);
-    const at = (x, p) => writes.push([x.e, p.x, p.y]);
-    // the folded chips first, each beside its own place (a card never pushes one far away)
-    for (const g of list) { const chip = g.es.find((x) => x.e.dataset.tchip); if (!chip) continue; const n = chip.e.dataset.thread;
-      const p = push(ph ? 0 : W + 24, ph ? H + 14 : g.y, chip.w, chip.h); at(chip, p); q[key] = (q[key] || 0) + 1;
-      lines.push({ key, n, d: [ph ? 24 : W, ph ? H : g.y + 10, p.x, p.y + chip.h / 2], k: "anchor" });
-      groups[n] = { key, x0: Math.min(g.a.x, p.x), y0: Math.min(g.a.y, p.y), x1: Math.max(g.a.r, p.x + chip.w), y1: Math.max(g.a.b, p.y + chip.h) }; }
-    for (const g of list) { if (g.es.some((x) => x.e.dataset.tchip)) continue;
-      const n = g.es[0].e.dataset.thread, box = { x0: g.a.x, y0: g.a.y, x1: g.a.r, y1: g.a.b }, grow = (p, w, hh) => { box.x0 = Math.min(box.x0, p.x); box.y0 = Math.min(box.y0, p.y); box.x1 = Math.max(box.x1, p.x + w); box.y1 = Math.max(box.y1, p.y + hh); };
-      q[key] = (q[key] || 0) + 1;
-      const ids = new Set(g.es.map((x) => x.e.dataset.tnode)), kids = new Map(), done = new Set(); for (const x of g.es) { const par = x.e.dataset.parent || ""; if (!kids.has(par)) kids.set(par, []); kids.get(par).push(x); }
-      const placeAt = (x, px, py, par) => { done.add(x); const p = push(px, py, x.w, x.h); at(x, p); grow(p, x.w, x.h);
-        const side = x.e.dataset.rel === "side" && !ph;
-        if (par) lines.push({ key, n, d: side ? [par.x + par.w, par.y + 22, p.x, p.y + 22] : [par.x + 24, par.y + par.h, p.x + 24, p.y], k: side ? "side" : "below" });
-        const me = { x: p.x, y: p.y, w: x.w, h: x.h }, ch = kids.get(x.e.dataset.tnode) || [];
-        for (const c of ch.filter((c) => c.e.dataset.rel === "side" && !done.has(c) && !ph)) placeAt(c, p.x + x.w + 40, p.y, me);
-        for (const c of ch.filter((c) => (c.e.dataset.rel !== "side" || ph) && !done.has(c))) placeAt(c, p.x, p.y + x.h + 18, me);
-        return me; };
-      const root = g.es.find((x) => x.e.dataset.rel === "root") || g.es.find((x) => !ids.has(x.e.dataset.parent || "")) || g.es[0];
-      const me = placeAt(root, ph ? 0 : W + 48, ph ? H + 18 : Math.max(0, g.y - 14), null);
-      lines.push({ key, n, d: [ph ? 24 : W, ph ? H : g.y + 10, ph ? me.x + 24 : me.x, ph ? me.y : me.y + 22], k: "anchor" });
-      // a card whose parent is not drawn (a pending one on a folded thread) sits under the others
-      for (const x of g.es) if (!done.has(x)) placeAt(x, ph ? 0 : W + 48, my + 18, null);
-      // the thread's frame holds its place and its cards (focus frames both)
-      groups[n] = { key, ...box }; }
-    C[key] = { W, H, w: mx, h: my, reg };
+  // 2. place (numbers only): a question's frame is its place
+  for (const { reg, key, W, H, asked, name } of regs) {
+    names[key] = name; for (const { t, b } of asked) { q[key] = (q[key] || 0) + 1; groups[t.n] = { key, x0: b.x, y0: b.y, x1: b.r, y1: b.b }; }
+    C[key] = { W, H, w: W, h: H, reg };
   }
   // the rows: three regions a row on a desktop, one on a phone, each answer (a turn) starting a row of its own; a row as tall
   // as its tallest region
@@ -516,13 +577,8 @@ function layout(card) {
   for (const [n, g] of Object.entries(groups)) { const r = R[g.key]; groups[n] = { key: g.key, x: r.x + g.x0, y: r.y + g.y0, w: g.x1 - g.x0, h: g.y1 - g.y0 }; }
   B.L.set(card, { R, order: keys, groups, q, names });
   // 3. write
-  for (const [e, x, yy] of writes) { e.style.left = `${x}px`; e.style.top = `${yy}px`; }
   for (const key of keys) { const c = C[key], r = R[key]; c.reg.style.left = `${r.x}px`; c.reg.style.top = `${r.y}px`; c.reg.style.width = `${c.w}px`; c.reg.style.height = `${c.h}px`; }
-  const svg = plane.querySelector("[data-board-links]"), fn = B.focus.get(card)?.n;
-  if (svg) svg.replaceChildren(...lines.filter((l) => R[l.key]).map((l) => { const r = R[l.key], [x1, y1, x2, y2] = [r.x + l.d[0], r.y + l.d[1], r.x + l.d[2], r.y + l.d[3]];
-    const d = l.k === "below" || (ph && l.k === "anchor") ? `M${x1} ${y1} C${x1} ${y1 + 14},${x2} ${y2 - 14},${x2} ${y2}` : `M${x1} ${y1} C${x1 + Math.max(24, (x2 - x1) / 2)} ${y1},${x2 - Math.max(24, (x2 - x1) / 2)} ${y2},${x2} ${y2}`;
-    const p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", d); p.setAttribute("class", `${l.k}${String(fn) === String(l.n) ? " lit" : ""}`); p.setAttribute("data-link", l.n); return p; }));
-  for (const { reg, t, b } of pins) reg.querySelector(".rb-tlayer").append(h("button", { type: "button", class: `rb-pin abs ${pinCls(card, t)}`, "data-pin": t.n, "data-pin-for": t.key, tabindex: -1, "aria-label": T(`Question ${t.n}`, `問題 ${t.n}`), style: `left:${b.r - 6}px;top:${b.y - 14}px`, onclick: (e) => { e.stopPropagation(); focusThread(card, t.n); } }, String(t.n)));
+  for (const { reg, t, b } of pins) reg.querySelector(".rb-tlayer").append(h("button", { type: "button", class: `rb-pin abs ${pinCls(card, t)}`, "data-pin": t.n, "data-pin-for": t.key, tabindex: -1, "aria-label": T(`Question ${t.n}`, `問題 ${t.n}`), style: `left:${b.r - 6}px;top:${b.y - 14}px`, onclick: (e) => { e.stopPropagation(); focusThread(card, t.n, true); } }, String(t.n)));
   B.lastLayout = performance.now() - t0;
 }
 function minimap(card) {
@@ -547,20 +603,18 @@ function after(card) {
   applyCam(card); if (plane.dataset.lod !== LOD(camOf(card).s)) applyCam(card);
   // the popover stays inside the screen (a phone's is a bottom sheet)
   const pop = document.querySelector(".rb-pop"); if (pop && !phone()) { const pr = pop.getBoundingClientRect(), x = clamp(pr.left, 12, innerWidth - pr.width - 12); let y = pr.top; if (pr.bottom > innerHeight - 12) y = Math.max(12, (B.pop?.y ?? pr.top) - pr.height - 18); pop.style.left = `${x}px`; pop.style.top = `${clamp(y, 12, innerHeight - pr.height - 12)}px`; }
+  const fn = B.focus.get(card)?.n, ft = fn != null ? (r?.lesson?.threads || []).find((x) => x.n === fn) : null;
+  for (const a of vp.querySelectorAll("[data-akey].lit")) a.classList.remove("lit");
+  if (ft) vp.querySelector(`[data-akey="${CSS.escape(ft.key)}"]`)?.classList.add("lit");
+  paneAfter(card);
   const rv = B.reveal.get(card); if (rv) { B.reveal.delete(card); requestAnimationFrame(() => revealCard(card, rv)); }
   const fk = B.focusKey.get(card); if (fk && !B.pop && (document.activeElement === document.body || !document.activeElement)) focusAnchor(card, fk);
 }
-/** a new card in view with its place: the camera pans just enough to show both, zooming out only when they do not fit */
+/** a new card (or the one waiting for its confirmation) in view: the conversation pane opens and scrolls to it */
 function revealCard(card, which) {
-  const vp = vpOf(card); if (!vp) return; const el = which === "pending" ? vp.querySelector("[data-pending]") : [...vp.querySelectorAll(`.rb-card[data-thread="${CSS.escape(which)}"]`)].at(-1) || vp.querySelector(`.rb-tchip[data-thread="${CSS.escape(which)}"]`) || vp.querySelector(`[data-thread="${CSS.escape(which)}"]`);
-  if (!el) return; const a = el.dataset.group && vp.querySelector(`[data-akey="${CSS.escape(el.dataset.group)}"]`), vr = vp.getBoundingClientRect(), er = el.getBoundingClientRect(), ar = a?.getBoundingClientRect(), c = camOf(card);
-  const eb = er.top + Math.min(er.height, vr.height * 0.6), u = ar && (ar.width || ar.height) ? { l: Math.min(er.left, Math.max(ar.left, ar.right - 200)), t: Math.min(er.top, ar.top), r: Math.max(er.right, ar.right), b: Math.max(eb, ar.bottom) } : { l: er.left, t: er.top, r: er.right, b: eb };
-  const P = (sx, sy) => [(sx - vr.left - c.x) / c.s, (sy - vr.top - c.y) / c.s], [pl, pt] = P(u.l, u.t), [pr, pb] = P(u.r, u.b), W = vr.width, H = vr.height;
-  const s2 = Math.max(Math.min(c.s, 0.7), Math.min(c.s, (W - 40) / Math.max(1, pr - pl), (H - 90) / Math.max(1, pb - pt)));
-  let x = (u.l - vr.left) - pl * s2, y = (u.t - vr.top) - pt * s2;
-  if (pr * s2 + x > W - 20) x = W - 20 - pr * s2; if (pl * s2 + x < 20) x = 20 - pl * s2;
-  if (pb * s2 + y > H - 70) y = H - 70 - pb * s2; if (pt * s2 + y < 20) y = 20 - pt * s2;
-  if (Math.abs(x - c.x) > 0.5 || Math.abs(y - c.y) > 0.5 || s2 !== c.s) { B.lock.delete(card); moveCam(card, { s: s2, x, y }); }
+  const pane = paneList(card); if (!pane) return;
+  const el = which === "pending" ? pane.querySelector("[data-pending]") : [...pane.querySelectorAll(`.rb-card[data-thread="${CSS.escape(which)}"]`)].at(-1) || pane.querySelector(`[data-conv-thread="${CSS.escape(which)}"]`);
+  if (el) paneScrollTo(card, el, "end");
 }
 
 // ---------- input: drag (or Space and drag) to pan, the wheel, a pinch or ± to zoom; a click asks, a drag never does ----------
@@ -681,14 +735,15 @@ function view(r, scenes, i) {
   const want = jump || (prevScene !== sc?.key ? sc?.key : null);
   if (!order.includes(B.cur.get(card))) B.cur.set(card, order.includes(want) ? want : sc?.key ?? order[0]);
   else if (want && order.includes(want) && want !== B.cur.get(card)) queueMicrotask(() => flyTo(card, want, false));
-  const notesOpen = lesson && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
-  // a scene region is as wide as the board shows at a readable scale: the board's width (beside the questions panel at the width
-  // the captain left it, public/review-room.js crewRoomPane), at most 980
+  // the conversation pane: on a lesson, or once anything was asked on the board
+  const conv = lesson || threads.length > 0 || B.pend.has(card), notesOpen = conv && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
+  // a scene region is as wide as the board shows at a readable scale: the board's width (beside the conversation pane at the width
+  // the captain left it, public/review-room.js crewRoomPane), at most 980; a drawing's chapter at most as wide as it shows at 92%
   const notesW = !notesOpen ? 0 : innerWidth > 1180 ? (window.crewRoomPane?.width("board") || window.crewRoomPane?.guess("board") || 290) + 12 : 284;
   const avail = isFs() ? innerWidth - 40 : innerWidth - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - notesW - 32;
   const sceneW = (x) => (phone() ? 340 : clamp(Math.round(avail), 600, x.quiz ? 760 : 980));
   const firstOf = (x) => scenes.find((y) => y.turn === x.turn) === x;
-  const ctx = { threads, TN, visited, cur: B.cur.get(card), scenes, sceneW, firstOf, lastLesson: secs.at(-1)?.turn };
+  const ctx = { threads, TN, visited, cur: B.cur.get(card), scenes, sceneW, firstOf, lastLesson: secs.at(-1)?.turn, regionMax: Math.max(680, Math.floor(avail / 0.92)) };
   const regions = scenes.map((x, j) => (isLesson(x) ? regionEl(card, r, x, j, x.chapter === "decisions" ? scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === "decisions").length : 0, ctx) : sceneRegionEl(card, r, x, j, ctx)));
   if (lesson) regions.push(endRegion(card, r, scenes.length + 1, ctx));
   const ci = order.indexOf(B.cur.get(card)), next = order[ci + 1], num = (j) => String(j + 1).padStart(2, "0");
@@ -712,19 +767,16 @@ function view(r, scenes, i) {
     h("h6", {}, T("Map", "小地圖")), miniSvg(card),
     lesson ? h("label", { class: "rb-filter" }, h("input", { type: "checkbox", "data-only-asked": "", checked: B.only.has(card), onchange: (e) => { if (e.target.checked) B.only.add(card); else B.only.delete(card); rerender(); if (e.target.checked) fitAll(card); } }), T("Only the chapters with questions", "只看有問題的")) : null,
     h("h6", {}, lesson ? T("Answers · chapters · asked / open", "回答 · 章節 · 問題／未解") : T("Answers", "回答")), outline);
-  const notes = h("aside", { class: `rb-notes${sheet === "notes" ? " open" : ""}`, "data-board-notes": card, "aria-label": T("Your questions", "你的問題") },
-    phone() ? h("button", { type: "button", class: "rb-sheetx", "aria-label": T("Close", "關閉"), onclick: () => { B.sheet.delete(card); rerender(); } }, "×") : null,
-    h("h3", {}, T("Your questions", "我的標註")), h("p", { class: "rb-hint" }, T("Click any sentence, a box, line or transition of a drawing, or a row of a transaction or a call, and ask right there. Click a question here to focus it.", "點任何一句話、圖上的框、線或轉換，或交易、呼叫的一列，就在那裡問。點這裡的一則會聚焦到它。")),
-    threads.length ? notesList(card, [...threads].sort((a, b) => a.n - b.n), "side") : h("p", { class: "rb-empty" }, T("No question yet.", "還沒有標註。")));
+  const notes = conv ? convPane(card, r, ctx, sheet) : null;
   const tools = h("div", { class: "rb-tools", role: "toolbar", "aria-label": T("The board", "白板") },
     live && lesson ? h("button", { type: "button", class: "rb-btn", "data-board-tidy": "", disabled: B.busy.has(`${card}/tidy`), title: T("Fold the questions you understood back into their chapters", "把懂了的問答併回章節"), onclick: () => tidy(card) }, B.busy.has(`${card}/tidy`) ? T("Tidying…", "整理中…") : T("Tidy the board", "整理白板")) : null,
     merged ? h("span", { class: "rb-seg", role: "group", "aria-label": T("Before or after tidying", "整理前或整理後") }, ["before", "after"].map((v) => h("button", { type: "button", "data-tidy-view": v, "aria-pressed": String((v === "before") === B.before.has(card)), onclick: () => { if (v === "before") B.before.add(card); else B.before.delete(card); rerender(); } }, v === "before" ? T("Before", "整理前") : T("After", "整理後")))) : null,
     live && r.followUps?.on ? h("label", { class: "rb-toolnote rb-agree" }, h("input", { type: "checkbox", "data-followups": "", checked: true, onchange: (e) => { if (!e.target.checked) lessonOp(card, { op: "consent", on: false }); } }), T(" Questions start right away", " 追問直接開始")) : null,
-    lesson && !phone() ? h("button", { type: "button", class: "rb-btn ghost", "data-notes-toggle": "", "aria-pressed": String(notesOpen), onclick: () => { if (B.notes.has(card)) B.notes.delete(card); else B.notes.add(card); rerender(); } }, T(`Questions ${threads.length}`, `標註 ${threads.length}`)) : null);
+    conv && !phone() ? h("button", { type: "button", class: "rb-btn ghost", "data-notes-toggle": "", "aria-pressed": String(notesOpen), onclick: () => { if (B.notes.has(card)) B.notes.delete(card); else B.notes.add(card); rerender(); } }, T(`Questions ${threads.length}`, `問答 ${threads.length}`)) : null);
   const vp = h("div", { class: `rb-vp${B.only.has(card) ? " only" : ""}`, "data-board-vp": card, tabindex: "-1", onpointerdown: (e) => pointerDown(card, e),
     onmousedown: (e) => { if (!B.words && e.button === 0 && !e.target.closest("input,select,textarea,button,a,summary,[contenteditable],[data-akey],.rb-pop")) e.preventDefault(); }, onwheel: (e) => wheel(card, e), onclick: (e) => click(card, r, e), onfocusin: (e) => focusIn(card, e), onscroll: (e) => { e.currentTarget.scrollTop = 0; e.currentTarget.scrollLeft = 0; } },
     h("div", { class: `rb-plane${focus ? " focusing" : ""}${B.before.has(card) ? " before" : ""}`, "data-board-plane": card, "data-lod": lod, "data-focus": focus ? focus.n : null },
-      (() => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("class", "rb-links"); s.setAttribute("data-board-links", ""); s.setAttribute("aria-hidden", "true"); return s; })(), regions));
+      regions));
   const curName = names[ctx.cur] || "";
   const el = h("section", { class: `rb-view${notesOpen ? "" : " nonotes"}`, "data-board": card, "data-scene": ctx.cur, "data-view": "board", "data-report": t?.n ?? null, "aria-label": T("The board", "白板") },
     rail,
@@ -738,18 +790,18 @@ function view(r, scenes, i) {
         h("span", { "data-zoom-pct": "", "aria-live": "polite" }, `${Math.round(camOf(card).s * 100)}%`), h("button", { type: "button", "data-zoom-in": "", "aria-label": T("Zoom in", "放大"), onclick: () => { const v = vpOf(card); zoomAt(card, 1.25, v.clientWidth / 2, v.clientHeight / 2, true); } }, "+"),
         h("button", { type: "button", class: "fit", "data-zoom-fit": "", onclick: () => fitAll(card) }, T("Fit all", "全覽")), fsToggle(card))),
     notesOpen && !phone() ? window.crewRoomPane?.handle("board") ?? null : null,
-    notesOpen || (phone() && lesson) ? notes : null,
-    phone() ? h("nav", { class: `rb-phonebar${lesson ? "" : " two"}`, "aria-label": T("The board", "白板") }, h("button", { type: "button", "data-sheet": "outline", "aria-pressed": String(sheet === "outline"), onclick: () => { B.sheet.get(card) === "outline" ? B.sheet.delete(card) : B.sheet.set(card, "outline"); rerender(); } }, T("Answers", "回答")),
+    notesOpen || phone() ? notes : null,
+    phone() ? h("nav", { class: `rb-phonebar${conv ? "" : " two"}`, "aria-label": T("The board", "白板") }, h("button", { type: "button", "data-sheet": "outline", "aria-pressed": String(sheet === "outline"), onclick: () => { B.sheet.get(card) === "outline" ? B.sheet.delete(card) : B.sheet.set(card, "outline"); rerender(); } }, T("Answers", "回答")),
       h("button", { type: "button", "data-board-next-phone": next || "", onclick: () => step(card, 1) }, next ? T("Next ▸", "下一段 ▸") : T("All", "全覽")),
-      lesson ? h("button", { type: "button", "data-sheet": "notes", "aria-pressed": String(sheet === "notes"), onclick: () => { B.sheet.get(card) === "notes" ? B.sheet.delete(card) : B.sheet.set(card, "notes"); rerender(); } }, T("Questions ", "標註 "), h("b", {}, String(threads.length))) : null) : null,
+      conv ? h("button", { type: "button", "data-sheet": "notes", "aria-pressed": String(sheet === "notes"), onclick: () => { B.sheet.get(card) === "notes" ? B.sheet.delete(card) : B.sheet.set(card, "notes"); rerender(); } }, T("Questions ", "問答 "), h("b", {}, String(threads.length))) : null) : null,
     sheet ? h("div", { class: "rb-scrim", onclick: () => { B.sheet.delete(card); rerender(); } }) : null,
     popover(card, r), h("span", { class: "sr", "aria-live": "polite", "data-board-where": "" }, T(`Now on ${curName}`, `現在在 ${curName}`)));
   queueMicrotask(() => after(card));
   return el;
 }
 /** forget everything kept for a room (it was started over) */
-function forget(card) { for (const m of [B.cam, B.lock, B.cur, B.visited, B.pend, B.focus, B.sheet, B.L, B.reveal, B.err, B.lod, B.focusKey, B.lastScene]) m.delete(card); for (const s of [B.only, B.before, B.notes]) s.delete(card);
+function forget(card) { for (const m of [B.cam, B.lock, B.cur, B.visited, B.pend, B.focus, B.sheet, B.L, B.reveal, B.err, B.lod, B.focusKey, B.lastScene, B.paneScroll, B.paneTo, B.paneCur, B.draft]) m.delete(card); for (const s of [B.only, B.before, B.notes]) s.delete(card);
   for (const s of [B.peek]) for (const k of [...s]) if (k.startsWith(`${card}/`)) s.delete(k); for (const m of [B.ver, B.code, B.figs]) for (const k of [...m.keys()]) if (k.startsWith(`${card}/`)) m.delete(k); if (B.pop?.card === card) B.pop = null; }
-return { selHeld: () => !!SEL.el, view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit, needW };
+return { selHeld: () => !!SEL.el, view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit };
 };
 })();
