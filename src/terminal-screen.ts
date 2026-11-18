@@ -79,12 +79,16 @@ export const plainScreen = (raw: string): Screen => ({ lines: screenLines(raw.sl
 const WORKER = /\$bunfs|~BUN/.test(import.meta.url) ? "./terminal-screen-worker.ts" : new URL("./terminal-screen-worker.ts", import.meta.url).href;
 // One worker for every read, its answers matched to the reads by id; started on the first read, not keeping Studio alive.
 let worker: Worker | null = null, next = 0;
-const waiting = new Map<number, (s: Screen | null) => void>();
-function stopWorker() { const w = worker; worker = null; for (const r of waiting.values()) r(null); waiting.clear(); if (w) { w.onmessage = null; w.onerror = null; try { w.terminate(); } catch {} } }
+// each read waiting for the worker: its answer, and its silence timer's start, called when the worker begins it
+const waiting = new Map<number, { answer: (s: Screen | null) => void; begun: () => void }>();
+/** At most this many reads wait for the worker; more get their plain text at once. */
+export const SCREEN_QUEUE_MAX = 4;
+function stopWorker() { const w = worker; worker = null; for (const r of waiting.values()) r.answer(null); waiting.clear(); if (w) { w.onmessage = null; w.onerror = null; try { w.terminate(); } catch {} } }
 function theWorker(): Worker {
   if (worker) return worker;
   const w = new Worker(WORKER, { smol: true } as any); (w as any).unref?.();
-  w.onmessage = (e: MessageEvent) => { const { id, screen } = (e.data ?? {}) as { id: number; screen: Screen | null }; const r = waiting.get(id); if (r) { waiting.delete(id); r(screen); } };
+  w.onmessage = (e: MessageEvent) => { const { id, screen, begun } = (e.data ?? {}) as { id: number; screen: Screen | null; begun?: boolean }; const r = waiting.get(id); if (!r) return;
+    if (begun) { r.begun(); return; } waiting.delete(id); r.answer(screen); };
   w.onerror = () => { if (worker === w) stopWorker(); };
   return (worker = w);
 }
@@ -98,11 +102,15 @@ const keyOf = (raw: string, cols: number, rows: number) => `${cols}x${rows}:${ra
 export function readScreen(raw: string, cols: number, rows: number, o: { budgetMs?: number; timeoutMs?: number } = {}): Promise<Screen> {
   const key = keyOf(raw, cols, rows);
   if (stuck.has(key)) return Promise.resolve(plainScreen(raw));
+  // the worker draws one read at a time: past a few waiting, a read is its plain text at once, not a longer queue
+  if (waiting.size >= SCREEN_QUEUE_MAX) return Promise.resolve(plainScreen(raw));
   return new Promise<Screen>((done) => {
     let w: Worker; try { w = theWorker(); } catch { done(plainScreen(raw)); return; }
     const id = ++next;
-    const timer = setTimeout(() => { if (waiting.has(id)) { workersStopped++; if (stuck.size > 256) stuck.clear(); stuck.add(key); stopWorker(); } }, o.timeoutMs ?? SCREEN_TIMEOUT_MS);
-    waiting.set(id, (s) => { clearTimeout(timer); done(s && Array.isArray(s.lines) && !s.plain ? s : plainScreen(raw)); });
+    // the silence timer runs from when the worker begins this read, not while it waits behind others
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const begun = () => { timer = setTimeout(() => { if (waiting.has(id)) { workersStopped++; if (stuck.size > 256) stuck.clear(); stuck.add(key); stopWorker(); } }, o.timeoutMs ?? SCREEN_TIMEOUT_MS); };
+    waiting.set(id, { begun, answer: (s) => { if (timer) clearTimeout(timer); done(s && Array.isArray(s.lines) && !s.plain ? s : plainScreen(raw)); } });
     w.postMessage({ id, raw, cols, rows, budgetMs: o.budgetMs ?? SCREEN_BUDGET_MS });
   });
 }

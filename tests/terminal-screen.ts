@@ -102,6 +102,12 @@ try {
     for (let i = 0; i < 50; i++) await readScreen(heavy, 500, 200);
     Bun.gc(true); await sleep(500); const r1 = rss();
     ok(r1 - r0 < 150 && screen.workersStopped === 0, `fifty costly reads: memory ${r0.toFixed(0)} -> ${r1.toFixed(0)} MB, no worker stopped`, `${r0} ${r1} ${screen.workersStopped}`); }
+  // reads queue behind costly ones without the worker being stopped: its silence timer runs from when it begins a read
+  { const heavy = `${E}[9999L`.repeat(9000), h0 = screen.workersStopped, t0 = performance.now();
+    const [a1, a2, a3, light] = await Promise.all([readScreen(heavy + "1", 500, 200), readScreen(heavy + "2", 500, 200), readScreen(heavy + "3", 500, 200), readScreen(`${E}[?1049h${E}[2;3Hbehind`, 40, 6)]);
+    ok(light.alternate && !light.plain && light.lines[1] === "  behind" && screen.workersStopped === h0 && [a1, a2, a3].every((x) => x.plain), `a light read behind three costly ones is drawn (${(performance.now() - t0).toFixed(0)} ms), and no worker is stopped`, `${screen.workersStopped - h0} ${JSON.stringify(light)}`);
+    const five = await Promise.all([1, 2, 3, 4, 5].map((i) => readScreen(heavy + String(i * 7), 500, 200)));
+    ok(screen.workersStopped === h0 && five.every((x) => x.plain), "five costly reads at once: four wait their turn (each ends by its budget), the fifth is plain at once; no worker is stopped", String(screen.workersStopped - h0)); }
   // a worker that does not answer in time is stopped once for that output, and a new one draws the next read
   { const heavy = `${E}[200S${E}[200T`.repeat(3000), h0 = screen.workersStopped;
     const a = await readScreen(heavy, 500, 200, { timeoutMs: 1 }), b = await readScreen(heavy, 500, 200, { timeoutMs: 1 }), c = await readScreen(heavy, 500, 200, { timeoutMs: 1 });
