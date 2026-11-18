@@ -22,7 +22,7 @@ looking at), `src/observe/catalog.ts` (the index of Firstmate's native tools), `
 | `studio_find {query, kinds?}` | refs whose id or Studio/captain words match, each with a `resource_link` (`studio://kind/id`) |
 | `studio_list {kind, filter?, cursor?, depth?}` | one kind's entities with each one's summary, paged |
 | `studio_get {ref, depth?}` | one entity |
-| `studio_logs {ref, tail?, since?}` | a Task's steps and events, a room's tutor rounds and Explain-with runs (cost, why each stopped), a pull request's go-live timeline, a terminal's state; oldest first, with a cursor |
+| `studio_logs {ref, tail?, since?}` | a Task's steps and events, a room's runs, its pages and its questions (cost, why each stopped), a pull request's go-live timeline, a terminal's state; oldest first, with a cursor |
 | `studio_events {since?, kinds?, ref?}` | Studio's event log (`data/events.jsonl`) read on with a cursor: the pull form of a subscription |
 
 The same six, with the same names and input schemas, reach Claude (its MCP helper, `src/mcp.ts`, over Studio's private

@@ -160,7 +160,6 @@ export function createRuntime(d: RuntimeDeps) {
   if (d.skills) defs.skillInfo = (id, v) => d.skills!.pinInfo(id, v);
   if (d.skills) defs.skillLibrary = () => d.skills!.library();
   const engine = new Engine({ dataDir: d.dataDir, agents: d.agents, provider: d.provider, defaultProvider: d.defaultProvider, selectProvider: d.selectProvider, log: d.log, send: d.send, skillText: skillTextFor(d.fmRoot), store: d.store, protectedRoots: d.protectedRoots ?? [d.fmRoot], library: d.skills ?? null }, defs);
-  // the review room's illustrations use the same image job as image steps (src/domain/review-room.ts)
   if (d.generateImage) engine.deps.generateImage = d.generateImage;
   const projects = new Projects(d.dataDir);
   installHelloWeb(engine,d.m3?.store??new ArtifactStore(d.dataDir));

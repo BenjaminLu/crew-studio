@@ -95,7 +95,7 @@ External hook waits persist a version-1 descriptor under NodeRun.data.external b
 - Policy `auth.window` may answer listed kinds as A until a deadline, and records the grant.
 - Studio's own cards show in the Inbox beside firstmate's, labelled with task, workflow and node, answered there with the same buttons and door confirmation as on the task page; the sidebar Inbox count includes them.
 - One card component (public/scard.js, `crewCard.mountCard`) renders a Studio card on the task page, in the Inbox and in the Board's Needs you, where it is answered in place. The Board keeps each card's state (ticks, note, door tick, refusal, an answer in flight) until the card is answered. One answer is in flight per card, and a card already answered with the same choice shows as answered. An authorization window never answers a merge card. A merge card carries a structured detail in en and zh-TW (intent, why, scope, done lines with their proof, before/after, how, a walk of the diff mapped to done lines, door and rollback, reviewer verdict, gates, cost); the server takes a merge only when every intent line is ticked or a note is written (docs/units/intent-merge-card.md).
-- Every merge card opens a review room (`#/room/<card>`, docs/units/review-room.md): a read-only tutor on the reviewer seat explains the pull request on a board and in a chat, each claim cited or marked as an inference, each turn a paid round the captain confirms, in the round sandbox with Studio-filtered web tools. The room never answers the card or changes its readiness; the card only shows its summary.
+- Every merge card opens a review room (`#/room/<card>`, docs/units/review-room.md): a skill's page about the change (baton, built in, by default), made on the reviewer seat in the round sandbox, and the room's tutor answering the captain's questions about it; each run is paid and confirmed (opening a room starts baton's page once per head). The room never answers the card or changes its readiness; the card only shows its summary (the page's versions and what they cost).
 - firstmate's own cards stay on the v1 board. Studio renders them and forwards the captain's answers to the board endpoint, and never answers them by itself.
 
 ### 3.5 Evidence ledger
@@ -356,7 +356,7 @@ quota is always unknown and its execution receipt admits it); a vendor that is s
 cannot be read, or whose facts expired is **held**, with the reason. A held vendor still counts for every independence
 rule: it is waited for, never worked around (as the native queue's vendor policy holds, docs/units/native-queue-vendor-policy.md).
 
-- **Verification by Studio.** Before a Board start (`POST /api/wruns`) and before a review room turn, every role (or the
+- **Verification by Studio.** Before a Board start (`POST /api/wruns`) and before a review room run, every role (or the
   tutor's member) that is signed in but not verified yet, or whose facts went stale, is verified by Studio itself
   (`autoVerify` in `src/runtime/index.ts`, `src/providers/staffing-verify.ts`): a signed-in Claude pair gets the one
   bounded request of `admitSignedInClaude` (its receipt serves half an hour), a Cursor key is checked again
@@ -365,7 +365,7 @@ rule: it is waited for, never worked around (as the native queue's vendor policy
   when every waiter has left, and an ended one leaves no backoff). A verification that does not pass is not paid for again
   for ten minutes, except when the captain presses Start again; the review room skips a model in that backoff for the next
   one. The facts are then read again and the start proceeds. What was verified is recorded on the Task's ledger
-  (`staffing-auto-verify`, for a Board start and for a tutor's turn) and in Studio's log. The Start form itself never pays: it
+  (`staffing-auto-verify`, for a Board start and for a review room run) and in Studio's log. The Start form itself never pays: it
   says which models Studio will verify on Start. A role is still blocked, with a bilingual reason, when its vendor is not
   signed in, is out of quota, cannot read its quota (Codex, a checked Cursor key: never a verification, never a backoff),
   does not offer the model or effort, or when the verification does not pass.

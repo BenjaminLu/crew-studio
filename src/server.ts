@@ -641,7 +641,7 @@ const PAGE_RELEASE = pageRelease({ compiled: COMPILED, assets: ASSETS, publicDir
 // Studio's page frames only Studio's own addresses (artifact previews /af/ and /afc/, document versions, the card's direction
 // thumbnails, skins /skin/, the review room's explainer output /rrx/): a framed page that navigates itself elsewhere (a sandboxed
 // page's `location = "https://…"`, which neither its own CSP nor its sandbox stops) is refused by this frame-src, so nothing a
-// framed page holds leaves through a navigation (docs/units/review-room.md, "Explain with your own skill")
+// framed page holds leaves through a navigation (docs/units/review-room.md, "The page and its questions")
 const PAGE_CSP = "frame-src 'self'; child-src 'self'";
 const serveStatic = (path: string) => {
   const rel = path === "/" || path === "/remote" || path === "/remote/" ? "/index.html" : path;

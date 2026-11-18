@@ -20,7 +20,7 @@ What:
   the listed order. The run step shows which skills it loaded (name@vN).
 - Each library skill's row also keeps its default instructions for the review room ("Review room: default instructions":
   what a generation with that skill should produce, the prefill of its confirmation there; Save default, Clear, Insert a
-  review checklist). Free and nothing runs; see docs/units/review-room.md, "Explain with your own skill".
+  review checklist). Free and nothing runs; see docs/units/review-room.md, "The page and its questions".
 - Re-importing a changed source makes the next version. Workflows and runs stay on the
   version they pinned, and the editor says that a newer version exists. Moving to it is an
   editor change, so it is a new workflow version.

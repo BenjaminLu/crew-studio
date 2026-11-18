@@ -5,7 +5,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // that ends before explain_done is followed by another, with its notes), with live progress, a Stop, a configurable safety limit
 // and a stall guard; the materials are read-only files in the run's workspace; each generation and each follow-up that changes
 // the output is a new version; a follow-up carries the boxed selection; a version's page is served only with its capability,
-// under a CSP with no network, with Studio's storage shim and selection helper first; every run is on the ledger with its cost.
+// under a CSP with no network, with Studio's storage shim first; every run is on the ledger with its cost.
 //        bun tests/review-room-explain.ts
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,7 +137,7 @@ const cap = X.cap(id, 1);
 let page = X.page(cap.cap, id, "1", "index.html"), html = await page.text();
 ok(page.status === 200 && page.headers.get("content-security-policy") === OUTPUT_CSP && /default-src 'none'/.test(OUTPUT_CSP) && /connect-src 'none'/.test(OUTPUT_CSP) && /^sandbox allow-scripts;/.test(OUTPUT_CSP) && !/allow-same-origin/.test(OUTPUT_CSP) && page.headers.get("x-content-type-options") === "nosniff",
   "a version's page carries the output CSP: no network, an opaque-origin sandbox", JSON.stringify(Object.fromEntries(page.headers)));
-ok(html.indexOf(STORAGE_SHIM) > 0 && html.indexOf("crew-room-select") > 0 && html.indexOf(STORAGE_SHIM) < html.indexOf("<title>") && html.includes("data-node=\"round\""), "the storage shim and the selection helper come before anything of the page's own");
+ok(html.indexOf(STORAGE_SHIM) > 0 && !html.includes("crew-room-select") && !html.includes('data-crew-studio="select"') && html.indexOf(STORAGE_SHIM) < html.indexOf("<title>") && html.includes("data-node=\"round\""), "the storage shim comes before anything of the page's own, and it is Studio's only script there (no region helper: a question is about the whole page)");
 ok((await X.page("1.0", id, "1", "index.html").text()).includes("capability") && X.page("1.0", id, "1", "index.html").status === 401 && X.page(cap.cap, id, "2", "index.html").status === 401 && X.page(cap.cap, id, "9", "index.html").status === 401 && X.page(cap.cap, "PR-000000000000-9", "1", "index.html").status === 401,
   "no capability (or another version's, or another room's) serves nothing, and says nothing about whether the version or room exists");
 ok(X.page(cap.cap, id, "1", "../state.json").status !== 200 && X.page(cap.cap, id, "1", ".notes.md").status === 404, "nothing outside the version is served");
