@@ -58,6 +58,11 @@ const temp = checkedTempDir("cloud-handoff-");
     const live = "cse_01FixtureLiveShape"; stub.set({ status: 200, body: { claude_code_session_id: live, claude_code_session_url: sessionUrl(live), type: "routine_fire" } });
     const cse: any = await p.fire(setup, "live shape"); ok(cse.ok && cse.sessionId === live && cse.url === sessionUrl(live), "the live answer's cse_ session id is taken", JSON.stringify(cse));
     ok(SESSION_LINK.test(sessionUrl(live)) && SESSION_LINK.test(sessionUrl("session_01Fixture")), "a cse_ session link counts as a session link (never published, flagged at take-back)");
+    // the id grammar the provider accepts and the links Studio strips and flags are the same: a third prefix, taken and caught
+    const third = "ses_01FixtureThirdShape"; stub.set({ status: 200, body: { type: "routine_fire", claude_code_session_id: third, claude_code_session_url: sessionUrl(third) } });
+    const t3: any = await p.fire(setup, "third shape"); ok(t3.ok && t3.sessionId === third && SESSION_LINK.test(t3.url), "an id with another prefix is taken, and its link is still a session link", JSON.stringify(t3));
+    const host = ["https://claude", "ai/code/"].join(".");
+    ok(!SESSION_LINK.test(`${host}routines`) && !SESSION_LINK.test(`${host}artifact/0f3c2b1a-1111-2222-3333-444455556666`) && !SESSION_LINK.test(`${host}routines/trig_01Abc`), "routines and artifact links are not session links");
     const before = stub.calls.length, long: any = await p.fire(setup, "x".repeat(FIRE_TEXT_MAX + 1));
     ok(!long.ok && stub.calls.length === before && /65536/.test(long.en), "text over 65,536 characters is never sent");
     stub.stop(); const lost: any = await p.fire(setup, "nobody there");

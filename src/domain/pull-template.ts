@@ -118,7 +118,7 @@ export function templateShapeProblem(templateText: string, body: string, proven:
 export const templateLanguage = (text: string) => ((String(text).match(/[぀-ヿ㐀-鿿가-힯]/g) ?? []).length > 10 ? "the language the template is written in" : "English");
 
 /** A claude.ai session link or a Claude-Session trailer never goes into text Studio pushes to GitHub (commit messages, pull request titles and bodies). */
-export const SESSION_LINK = /claude\.ai\/code\/(?:session|cse_)|Claude-Session:/i;
+export const SESSION_LINK = /claude\.ai\/code\/[a-z]{2,16}_|claude\.ai\/code\/session\b|Claude-Session:/i;
 export const withoutSessionLinks = (text: string) => String(text ?? "").split("\n").filter((l) => !SESSION_LINK.test(l)).join("\n");
 /** A Task drawn from an issue triage leaves no trace on GitHub: any reference GitHub would link back to an issue, a pull
  *  request or a discussion (#n, GH-n, owner/repo#n; an issues, pull or discussions URL, with or without https:// or www.,
