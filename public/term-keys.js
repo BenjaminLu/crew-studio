@@ -8,12 +8,22 @@
 (() => {
 // [group, action, label, mac [chord, chord-in-a-tab], win [chord, chord-in-a-tab]]
 const KEYMAP = [
+  // the terminal itself (what its header's buttons did): ⌥⌘ on a Mac, Ctrl+Alt+Shift elsewhere, chords no shell or
+  // full-screen program takes and no browser keeps (⌥⌘W, ⌥⌘M and ⌥⌘U are macOS's or Chrome's, so they are not used)
+  [["Terminal", "終端機"], "menu", ["The ⋯ menu", "⋯ 選單"], ["Meta+Period"], ["Ctrl+Shift+Period"]],
+  [["Terminal", "終端機"], "launch", ["Launch an agent or a command…", "啟動 agent 或指令…"], ["Alt+Meta+KeyN"], ["Ctrl+Alt+Shift+KeyN"]],
+  [["Terminal", "終端機"], "kill", ["Stop the terminal", "停止終端機"], ["Alt+Meta+KeyX"], ["Ctrl+Alt+Shift+KeyX"]],
+  [["Terminal", "終端機"], "restart", ["Restart it", "重新啟動"], ["Alt+Meta+KeyR"], ["Ctrl+Alt+Shift+KeyR"]],
+  [["Terminal", "終端機"], "dismiss", ["Remove an ended terminal", "移除已結束的終端機"], ["Alt+Meta+Backspace"], ["Ctrl+Alt+Shift+Backspace"]],
+  [["Terminal", "終端機"], "review", ["Send for review", "送審"], ["Alt+Meta+KeyS"], ["Ctrl+Alt+Shift+KeyS"]],
+  [["Terminal", "終端機"], "retry", ["Retry its output stream", "重試輸出串流"], ["Alt+Meta+KeyG"], ["Ctrl+Alt+Shift+KeyG"]],
   [["Tabs", "分頁"], "newTab", ["New tab", "新分頁"], ["Meta+KeyT", "Alt+KeyT"], ["Ctrl+Shift+KeyT", "Ctrl+Alt+KeyT"]],
   [["Tabs", "分頁"], "tabN", ["Go to tab 1–9", "跳到第 1–9 個分頁"], ["Meta+Digit"], ["Ctrl+Alt+Digit"]],
   [["Tabs", "分頁"], "nextTab", ["Next tab", "下一個分頁"], ["Shift+Meta+BracketRight", "Alt+Shift+BracketRight"], ["Ctrl+Tab", "Ctrl+Alt+PageDown"]],
   [["Tabs", "分頁"], "prevTab", ["Previous tab", "上一個分頁"], ["Shift+Meta+BracketLeft", "Alt+Shift+BracketLeft"], ["Ctrl+Shift+Tab", "Ctrl+Alt+PageUp"]],
   // no key: F1 and F2 are full-screen programs' own (htop, mc); a tab is renamed by double-clicking it
   [["Tabs", "分頁"], "renameTab", ["Rename tab (double-click it)", "分頁改名（雙擊分頁）"], [], []],
+  [["Tabs", "分頁"], "closeTab", ["Close tab (its terminals keep running)", "關閉分頁（終端機照常執行）"], ["Alt+Shift+Meta+KeyW"], ["Ctrl+Alt+Shift+KeyW"]],
   [["Panes", "窗格"], "splitRight", ["Split right", "向右分割"], ["Meta+KeyD"], ["Alt+Shift+Equal"]],
   [["Panes", "窗格"], "splitDown", ["Split down", "向下分割"], ["Shift+Meta+KeyD"], ["Alt+Shift+Minus"]],
   [["Panes", "窗格"], "focus", ["Move to the pane in a direction", "往某個方向換窗格"], ["Alt+Meta+Arrow", "Ctrl+Alt+Arrow"], ["Alt+Arrow"]],
@@ -27,6 +37,7 @@ const KEYMAP = [
   [["Workspaces", "工作區"], "newWs", ["New workspace", "新工作區"], ["Meta+KeyN", "Alt+KeyN"], ["Ctrl+Shift+KeyN", "Ctrl+Alt+KeyN"]],
   [["Workspaces", "工作區"], "goto", ["Go to any terminal", "跳到任一終端機"], ["Shift+Meta+KeyO"], ["Ctrl+Shift+KeyP"]],
   [["Workspaces", "工作區"], "sidebar", ["Show / hide the sidebar", "顯示 / 隱藏側欄"], ["Meta+KeyB"], ["Ctrl+Shift+KeyB"]],
+  [["Workspaces", "工作區"], "appWindow", ["Open in a Studio window (every key the terminal's)", "用 Studio 視窗開（按鍵全歸終端機）"], ["Alt+Meta+KeyO"], ["Ctrl+Alt+Shift+KeyO"]],
   [["Workspaces", "工作區"], "help", ["This table", "這張表"], ["Meta+Slash"], ["Ctrl+Shift+Slash"]],
 ];
 const ARROW = { ArrowLeft: "h", ArrowDown: "j", ArrowUp: "k", ArrowRight: "l" };
@@ -62,10 +73,10 @@ function lookup(e, plat, inTab = true) {
   for (const row of KEYMAP) { const specs = row[plat === "mac" ? 3 : 4].slice(0, inTab ? 2 : 1); if (specs.includes(c.full) || specs.includes(c.loose)) return { act: row[1], arg: c.arg }; }
   return null;
 }
-const KEYNAME = { Arrow: "←↑↓→", Digit: "1–9", BracketRight: "]", BracketLeft: "[", Bracket: "] / [", Equal: "=", Minus: "-", Slash: "/", PageDown: "PgDn", PageUp: "PgUp" };
+const KEYNAME = { Arrow: "←↑↓→", Digit: "1–9", BracketRight: "]", BracketLeft: "[", Bracket: "] / [", Equal: "=", Minus: "-", Slash: "/", Period: ".", PageDown: "PgDn", PageUp: "PgUp" };
 /** How a chord is written on a platform: ⇧⌘D on a Mac, Alt+Shift+= elsewhere. */
 function show(spec, plat) {
-  const parts = spec.split("+"), key = parts.pop(), name = KEYNAME[key] ?? (key.startsWith("Key") ? key.slice(3) : key === "Enter" ? (plat === "mac" ? "↩" : "Enter") : key);
+  const parts = spec.split("+"), key = parts.pop(), name = KEYNAME[key] ?? (key.startsWith("Key") ? key.slice(3) : key === "Enter" ? (plat === "mac" ? "↩" : "Enter") : key === "Backspace" ? (plat === "mac" ? "⌫" : "Backspace") : key);
   if (plat === "mac") return ["Ctrl", "Alt", "Shift", "Meta"].filter((m) => parts.includes(m)).map((m) => ({ Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Meta: "⌘" })[m]).join("") + name;
   return [...parts, name].join("+");
 }

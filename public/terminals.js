@@ -173,7 +173,7 @@ function pane(t) {
     try { fit.fit(); } catch {}
     // everything the shared stream brought for it so far, a tab drawn later or a pane unzoomed included
     const f = FEED.get(t.id); if (f) { if (f.trimmed) term.write(dropNote()); for (const c of f.log) term.write(c); }
-    if (TM.canWrite && focusPane()?.term === t.id && !TM.ui.picker && !TM.ui.naming && !TM.ui.help && !document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) term.focus(); // never from the list search being typed in
+    if (TM.canWrite && focusPane()?.term === t.id && !sheetOpen() && !inField() && !document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) term.focus(); // never from the list search being typed in
   }).catch((e) => { p.err = String(e.message || e); p.host.replaceChildren(h("p", { class: "faint" }, T(`The terminal view could not load: ${p.err}`, `終端機畫面無法載入：${p.err}`))); });
   return p;
 }
@@ -274,7 +274,7 @@ const studioWindow = () => { try { if (sessionStorage.getItem("crew.studioWindow
 const inTab = () => !studioWindow();
 const LAYOUT = "crew.term.layout";
 TM.lay = (() => { try { const v = JSON.parse(localStorage.getItem(LAYOUT) || "null"); if (v && Array.isArray(v.tabs) && Number.isInteger(v.uid)) return v; } catch {} return { tabs: [], cur: 0, uid: 0 }; })();
-TM.ui = { picker: null, help: false, naming: null, appwinHidden: false };
+TM.ui = { picker: null, help: false, naming: null, menu: false, remote: null };
 const saveLay = () => { try { localStorage.setItem(LAYOUT, JSON.stringify(TM.lay)); } catch {} };
 const nid = (p) => `${p}${++TM.lay.uid}`;
 const leaf = (term) => ({ t: "pane", id: nid("p"), term });
@@ -301,9 +301,14 @@ function reconcile() { const known = new Set((TM.list || []).map((t) => t.id)); 
 function syncHash() { const t = termOf(focusPane()), q = location.hash.split("?")[1], want = (t ? `#/terminals/${encodeURIComponent(t.id)}` : "#/terminals") + (q ? `?${q}` : "");
   if (location.hash !== want) { history.replaceState(null, "", want); if (S.route?.name === "terminals") S.route.arg = t?.id ?? null; } TM.lastArg = t?.id ?? null; }
 // asked again on the next frame: a sheet opened in between (a double-click's rename) keeps its field's focus
-const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help;
+const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help || TM.ui.remote || TM.ui.menu;
 // the terminal never takes the focus from the list toolbar's search the captain is typing in (public/list-tools.js)
-function focusTerm() { if (!TM.canWrite || sheetOpen() || document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(go); }
+// and the second ask (the next frame) never takes it from a field that got it in between (the launcher's command field
+// that ⌥⌘N just focused, the list's search): only from nowhere, a button or another terminal
+const inField = () => { const a = document.activeElement; return !!a && (/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) || a.isContentEditable) && !a.classList.contains("xterm-helper-textarea"); };
+function focusTerm() { if (!TM.canWrite || sheetOpen() || document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(() => { if (!inField()) go(); }); }
+// after a ⋯ item: the keys go back to the terminal, unless what it did took them (a sheet, the launcher's field, a link)
+function keysBack() { const a = document.activeElement; if (!a || a === document.body || !a.isConnected || a.closest?.(".wt-more")) focusTerm(); }
 const redo = () => { saveLay(); syncHash(); render(); focusTerm(); };
 // a click in a pane moves the focus without rebuilding the page (xterm keeps its focus and selection)
 function markFocus() { syncHash(); const tab = curTab(), t = termOf(focusPane(tab)), sec = document.querySelector("[data-term-detail]"); if (!tab || !t || !sec) return;
@@ -335,8 +340,21 @@ const startShell = (split) => start({ project: termOf(focusPane())?.project?.id 
 /** What a key (or a toolbar button) asks; false: not on this page (copy mode, workspaces), or nothing to do (one pane, no
  * such tab), so the key goes to the terminal. */
 function run(act, arg) {
-  const tab = curTab(), pn = focusPane(tab), n = TM.lay.tabs.length;
+  const tab = curTab(), pn = focusPane(tab), n = TM.lay.tabs.length, t = termOf(pn);
   switch (act) {
+    // the ⋯ menu, drawn in place; its first item takes the focus, so the arrows and Enter are the menu's while it is open
+    case "menu": TM.ui.menu = !TM.ui.menu; menuSync(TM.ui.menu ? 0 : null); if (!TM.ui.menu) focusTerm(); return true;
+    case "launch": { if (!TM.canWrite) return false; TM.showNew = !(TM.showNew ?? !(TM.list || []).some((x) => x.running)); render();
+      if (TM.showNew) document.getElementById("termCmd")?.focus(); else focusTerm(); return true; }
+    case "kill": if (!TM.canWrite || !t?.running) return false; termOp(t.id, "kill"); return true;
+    // a terminal from before Studio restarted has no command to run again here: start a new one
+    case "restart": if (!TM.canWrite || !t || t.restored) return false; termOp(t.id, "restart"); return true;
+    case "dismiss": if (!TM.canWrite || !t || t.running) return false; termOp(t.id, "dismiss"); return true;
+    case "review": { const rv = TM.canWrite && t && !t.review && reviewState(t); if (!rv) return false; if (rv.why) toast(rv.why); else termOp(t.id, "review"); return true; }
+    case "retry": if (!TM.gone.size) return false; retryMux(); return true;
+    case "remote": if (!t?.remote?.url) return false; TM.ui.remote = t.id; break;
+    case "appWindow": if (!TM.canWrite) return false; openStudioWindow(); return true;
+    case "closeTab": if (!tab) return false; closeTab(TM.lay.cur); break;
     case "newTab": if (!TM.canWrite) return false; startShell(null); return true;
     case "splitRight": case "splitDown": if (!TM.canWrite || !pn) return false; startShell(act === "splitRight" ? "row" : "col"); return true;
     case "tabN": if (arg - 1 >= n) return false; TM.lay.cur = arg - 1; break;
@@ -374,34 +392,57 @@ addEventListener("keydown", (e) => {
     return; }
   const hit = K.lookup(e, plat(), inTab());
   if (ui.help) { if (e.key === "Escape" || hit?.act === "help") { stop(); ui.help = false; redo(); } return; }
+  if (ui.remote) { if (e.key === "Escape") { stop(); ui.remote = null; redo(); } return; }
+  // the open menu has the focus: arrows move through its items, Enter is the focused item's own, ? is the key table, Esc
+  // gives the keys back to the terminal; a chord closes it and does what it says
+  if (ui.menu && !document.activeElement?.closest?.(".wt-more")) menuClose(); // the focus left it (Tab): it closes
+  if (ui.menu && !hit) {
+    const xs = menuItemsOn(), i = xs.indexOf(document.activeElement);
+    if (e.key === "Escape") { stop(); menuClose(true); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") { stop(); xs[(i + (e.key === "ArrowDown" ? 1 : -1) + xs.length) % xs.length]?.focus(); }
+    else if (e.key === "Home" || e.key === "End") { stop(); xs[e.key === "Home" ? 0 : xs.length - 1]?.focus(); }
+    else if (e.key === "?") { stop(); menuClose(); run("help"); }
+    return;
+  }
+  if (ui.menu && hit?.act !== "menu") menuClose();
   if (hit && run(hit.act, hit.arg)) stop();
 }, true);
-const chordTitle = (en, zh, act) => `${T(en, zh)} (${K.useNow(act, plat(), inTab())})`;
+// A tab is its title and one dot: the state of what it shows (waiting first, then working, exited, done). Everything else a
+// tab or a pane once carried as buttons (close, the pane's bar) is a key and an item of the ⋯ menu.
+const RANK = ["waiting", "working", "exited", "done"];
+// "waiting" also covers a shell or an agent idle at its own prompt: only one that asks (a question, a permission menu: its
+// ask, reason "question") gets the ring and the tinted name, so the real "needs you" stands out among idle shells
+const asking = (t) => !!t && t.running && t.state === "waiting" && (!!t.ask || t.reason === "question");
+const stateText = (t) => { if (t.running && t.state === "waiting" && !asking(t)) return T("Idle at its prompt", "在提示字元閒置");
+  const [, l] = STATE[t.state] || STATE.working; return l() + (t.state === "exited" ? (t.signal ? ` ${t.signal}` : t.exitCode != null ? ` ${t.exitCode}` : "") : ""); };
 function tabEls() {
-  return TM.lay.tabs.map((x, i) => { const ts = panesOf(x.root).map(termOf).filter(Boolean), ft = termOf(focusPane(x)), waits = ts.some((t) => t.running && t.state === "waiting");
-    return h("div", { class: "wt-tab", role: "tab", "data-term-tab": x.id, "aria-selected": String(i === TM.lay.cur), title: ts.map((t) => `${t.label} · ${t.project.name}`).join("\n"),
+  return TM.lay.tabs.map((x, i) => { const ts = panesOf(x.root).map(termOf).filter(Boolean), ft = termOf(focusPane(x));
+    const st = ts.map((t) => (t.running || t.state !== "waiting" ? t.state : "done")).sort((a, b) => RANK.indexOf(a) - RANK.indexOf(b))[0] || "working";
+    const asks = ts.some(asking), mark = st === "waiting" ? (asks ? "waiting" : "idle") : st;
+    const says = ts.map((t) => `${t.label} · ${t.project.name} · ${stateText(t)}${t.ask && t.state === "waiting" ? `: ${t.ask}` : ""}`).join("\n");
+    return h("div", { class: "wt-tab", role: "tab", "data-term-tab": x.id, "aria-selected": String(i === TM.lay.cur), title: says,
       onclick: () => { TM.lay.cur = i; redo(); }, ondblclick: () => { TM.ui.naming = { tab: x.id }; redo(); } },
-      h("span", { class: "wt-tn" }, String(i + 1)), h("span", { class: "wt-tname" }, x.name || ft?.label || "…"), ts.length > 1 ? h("span", { class: "faint wt-tcount" }, `×${ts.length}`) : null,
-      waits ? h("i", { class: "wt-dot waiting", title: T("Waiting for you", "等你") }) : null,
-      h("button", { type: "button", class: "wt-tx", "data-term-tab-close": x.id, "aria-label": T("Close tab (the terminals keep running)", "關閉分頁（終端機照常執行）"), onclick: (e) => { e.stopPropagation(); closeTab(i); redo(); } }, "×")); });
+      h("i", { class: `wt-dot ${mark}`, "data-term-state": st, "data-term-asks": asks ? "1" : null, role: "img", "aria-label": ts.map(stateText).join(", "), title: ts.map(stateText).join(", ") }), h("span", { class: "wt-tname" }, x.name || ft?.label || "…")); });
 }
-const tool = (act, ic, en, zh, extra = {}) => h("button", { type: "button", class: "btn ghost sm wt-tool", "data-term-act": act, title: chordTitle(en, zh, act), "aria-label": T(en, zh), onclick: () => run(act), ...extra }, icon(ic, "ic sm"), h("span", { class: "wt-tl" }, T(en, zh)));
-function paneBar(t, pn) {
-  return h("div", { class: "wt-pbar" }, h("i", { class: `wt-dot ${t.state}`, "data-pane-state": t.state, title: STATE[t.state]?.[1]() || "" }), h("b", {}, t.label), h("span", { class: "faint" }, t.project.name),
-    TM.gone.has(t.id) ? h("span", { class: "wt-gone", role: "status", "data-term-gone": t.id }, T("Open in too many places right now: its output waits. Retrying…", "這個終端機開著的地方太多，輸出暫停，正在重試…"),
-      h("button", { type: "button", class: "btn ghost sm", "data-term-gone-retry": t.id, onclick: (e) => { e.stopPropagation(); retryMux(); } }, T("Retry", "重試"))) : null,
-    h("button", { type: "button", class: "wt-tx", "data-pane-close": pn.id, "aria-label": chordTitle("Close pane (the terminal keeps running)", "關閉窗格（終端機照常執行）", "closePane"),
-      onclick: (e) => { e.stopPropagation(); const tab = curTab(); if (tab) detachPane(tab, pn); redo(); } }, "×"));
+// more tabs than the strip shows: its right edge fades and says how many are past it
+function tabsOver() {
+  const el = document.querySelector(".wt-tabs"); if (!el) return;
+  const r = el.getBoundingClientRect(), past = [...el.children].filter((c) => c.getBoundingClientRect().right > r.right + 1).length;
+  el.classList.toggle("over", past > 0); el.parentElement.dataset.more = past ? `+${past}` : "";
+  el.title = past ? T(`${past} more tab(s): scroll, ⌘1–9 or Go to`, `還有 ${past} 個分頁：捲動、⌘1–9 或「跳到」`) : "";
 }
+addEventListener("resize", () => { if (onPage()) tabsOver(); });
+// a terminal Studio will not show on this stream right now: a quiet line over its pane (Retry is in the ⋯ menu, ⌥⌘G)
+const goneNote = (t) => (TM.gone.has(t.id) ? h("div", { class: "wt-gone", role: "status", "data-term-gone": t.id }, T("Open in too many places: its output waits. Retrying…", "開著的地方太多，輸出暫停，正在重試…")) : null);
 function drawNode(n, tab) {
   if (n.t === "pane") { const t = termOf(n); if (!t) return h("div", { class: "wt-pane" });
     return h("div", { class: `wt-pane${n.id === tab.focus ? " focus" : ""}`, "data-pane": n.id, "data-term-pane": t.id,
       onmousedown: () => { if (tab.focus !== n.id) { tab.focus = n.id; saveLay(); markFocus(); } },
-      // a click on the pane around the terminal (its bar, the frame) gives the keys back to the terminal: left to the
+      // a click on the pane around the terminal (its frame, its notice) gives the keys back to the terminal: left to the
       // browser the focus stayed on the page, and Tab then moved it to the next button instead of completing in the shell.
-      // The first button only, and not after a drag that selected text (the bar's label can be selected and copied)
+      // The first button only, and not after a drag that selected text
       onclick: (e) => { if (e.button !== 0 || e.target.closest?.(".xterm, button, a, input, select, textarea")) return;
-        if (String(window.getSelection?.() ?? "")) return; focusTerm(); } }, paneBar(t, n), pane(t).host); }
+        if (String(window.getSelection?.() ?? "")) return; focusTerm(); } }, goneNote(t), pane(t).host); }
   const wrap = h("div", { class: `wt-split ${n.dir}` });
   const a = h("div", { class: "wt-slot", style: `flex:${n.ratio} 1 0` }, drawNode(n.a, tab)), b = h("div", { class: "wt-slot", style: `flex:${1 - n.ratio} 1 0` }, drawNode(n.b, tab));
   const d = h("div", { class: "wt-div", role: "separator", "aria-orientation": n.dir === "row" ? "vertical" : "horizontal", "data-split": n.id });
@@ -415,23 +456,75 @@ async function openStudioWindow() {
   try { const j = await postJ("/api/terminals/app-window", {}); toast(T(`Opened Studio in its own window (${j.used}). You can close this tab.`, `已在獨立的 Studio 視窗開啟（${j.used}）。這個分頁可以關了。`)); }
   catch (e) { toast(String(e.message || e)); }
 }
-function appBanner() {
-  if (!TM.canWrite || !inTab() || TM.ui.appwinHidden) return null;
-  const mac = plat() === "mac";
-  return h("div", { class: "wt-appwin", "data-term-appwin": "1" },
-    h("span", {}, T(`In a browser tab, ${mac ? "⌘T ⌘W ⌘N" : "Ctrl+Shift+T / W / N"} belong to the browser: here they are ${K.useNow("newTab", plat(), true)} ${K.useNow("closePane", plat(), true)} ${K.useNow("newWs", plat(), true)}. In a Studio window every key is the terminal's.`,
-      `在瀏覽器分頁裡，${mac ? "⌘T ⌘W ⌘N" : "Ctrl+Shift+T／W／N"} 歸瀏覽器：這裡改用 ${K.useNow("newTab", plat(), true)} ${K.useNow("closePane", plat(), true)} ${K.useNow("newWs", plat(), true)}。用 Studio 視窗開，按鍵全部歸終端機。`)),
-    h("button", { type: "button", class: "btn sm primary", "data-term-appwin-open": "1", onclick: openStudioWindow }, T("Open in a Studio window", "用 Studio 視窗開")),
-    h("button", { type: "button", class: "btn ghost sm", "aria-label": T("Hide", "隱藏"), onclick: () => { TM.ui.appwinHidden = true; render(); focusTerm(); } }, "×"));
+// ---------- the ⋯ menu: every action the page once had a button for, each with its key ----------
+// What the focused terminal is (its command, folder, question, branch) is the menu's head, not a header over the terminal.
+function menuInfo(t) {
+  if (!t) return null;
+  const rv = reviewState(t), url = t.remote?.url;
+  return h("div", { class: "wt-minfo" },
+    h("div", { class: "wt-mtitle" }, h("b", {}, t.label), h("span", { class: "faint" }, ` · ${t.project.name}`), badge(t)),
+    h("div", { class: "faint wt-cmd", title: `${t.command}\n${t.project.path}` }, h("code", {}, t.command), T(` in ${t.project.path}`, ` 於 ${t.project.path}`)),
+    restoredNote(t),
+    t.ask && t.state === "waiting" ? h("div", { class: "wt-ask", "data-term-ask": "1" }, T("Asks: ", "問你："), t.ask) : null,
+    rv ? h("div", { class: "faint wt-review", "data-term-review": t.id }, rv.where, rv.why ? h("span", {}, rv.why) : null) : null,
+    !url && TM.canWrite && t.remote?.enabled && t.running ? h("div", { class: "faint wt-remote-wait" }, T("Remote Control: waiting for Claude Code to print its link…", "Remote Control：等 Claude Code 印出連結…")) : null,
+    TM.canWrite ? null : h("div", { class: "faint", "data-term-readonly": "1" }, T("View only: typing, starting and stopping happen on the Mac.", "只能檢視：輸入、啟動和停止要在 Mac 上做。")));
 }
-function statusLine() {
-  const p = plat(), tab = inTab();
-  const hints = [["splitRight", "Split right", "左右分割"], ["splitDown", "Split down", "上下分割"], ["newTab", "New tab", "新分頁"], ["focus", "Move", "換窗格"], ["goto", "Go to", "跳到"], ["help", "All keys", "全部快捷鍵"]]
-    .filter(([a]) => TM.canWrite || !["splitRight", "splitDown", "newTab"].includes(a));
-  return h("div", { class: "wt-status", "data-term-status": p },
-    h("span", { class: "wt-plat" }, p === "mac" ? "macOS" : "Windows / Linux"),
-    h("span", { class: "wt-hints" }, hints.map(([a, en, zh]) => h("span", { "data-hint": a }, h("kbd", {}, K.useNow(a, p, tab)), " ", T(en, zh)))),
-    h("span", { class: `wt-where ${tab ? "tab" : "ok"}`, "data-term-where": tab ? "tab" : "window" }, tab ? T("Browser tab: some keys are the browser's", "瀏覽器分頁：部分按鍵歸瀏覽器") : T("Studio window: every key works", "Studio 視窗：快捷鍵全部可用")));
+function menuItems(t, tab) {
+  const w = TM.canWrite, p = plat(), inT = inTab(), rv = t && reviewState(t), showNew = TM.showNew ?? !(TM.list || []).some((x) => x.running);
+  const it = (act, en, zh, more = {}) => ({ act, en, zh, ...more });
+  // the harmless first (the menu opens on its first item: ⌘. ↓ ↩ must never stop an agent); Stop and Remove last, apart
+  return [
+    [w && it("newTab", "New tab", "新分頁"), w && it("splitRight", "Split right", "向右分割"), w && it("splitDown", "Split down", "向下分割"),
+      it("goto", "Go to a terminal…", "跳到終端機…"),
+      tab && it("zoom", "Zoom", "放大", { attrs: { role: "menuitemcheckbox", "aria-checked": String(!!tab.zoom) }, disabled: !tab.zoom && panesOf(tab.root).length < 2 }),
+      it("clear", "Clear the screen", "清畫面"), it("renameTab", "Rename tab…", "分頁改名…"), it("closePane", "Close pane", "關閉窗格"), it("closeTab", "Close tab", "關閉分頁")],
+    [w && it("launch", "Launch…", "啟動…", { attrs: { "data-term-new": "1", role: "menuitemcheckbox", "aria-checked": String(!!showNew) } }),
+      w && rv && !t.review && it("review", "Send for review", "送審", { attrs: { "data-term-send": t.id }, disabled: !!rv.why }),
+      t?.review && it("inReview", `In review: ${t.review.run}`, `審查中：${t.review.run}`, { href: `#/run/${encodeURIComponent(t.review.run)}`, attrs: { "data-term-review-run": t.review.run } }),
+      t?.remote?.url && it("remote", "Remote Control link…", "Remote Control 連結…", { attrs: { "data-term-remote-open": t.id } }),
+      TM.gone.size && it("retry", "Retry the output that waits", "重試暫停的輸出", { attrs: { "data-term-gone-retry": [...TM.gone.keys()].join(" ") } }),
+      w && t && !t.restored && it("restart", "Restart", "重新啟動", { attrs: { "data-term-restart": t.id } })],
+    [w && inT && it("appWindow", "Open in a Studio window", "用 Studio 視窗開"), it("sidebar", "Show / hide the sidebar", "顯示 / 隱藏側欄"),
+      it("help", "Keyboard shortcuts", "快捷鍵", { key: "?", attrs: { "data-term-keys": "1" } })],
+    [w && t?.running && it("kill", "Stop", "停止", { attrs: { "data-term-kill": t.id } }),
+      w && t && !t.running && it("dismiss", "Remove", "移除", { attrs: { "data-term-dismiss": t.id } })],
+  ].map((g) => g.filter(Boolean)).filter((g) => g.length).map((g) => g.map((x) => ({ ...x, chord: x.key ? `? · ${K.useNow(x.act, p, inT)}` : K.KEYMAP.some((r) => r[1] === x.act) ? K.useNow(x.act, p, inT) : "" })));
+}
+function menuEl(t, tab) {
+  const open = !!TM.ui.menu;
+  // something waits in the menu for the focused terminal (Send for review is ready, a Remote Control link came): a dot on ⋯
+  const rv = t && TM.canWrite && !t.review && reviewState(t), ready = rv && !rv.why ? "review" : t?.remote?.url ? "remote" : null;
+  const says = ready === "review" ? T("Send for review is ready", "可以送審了") : ready === "remote" ? T("Remote Control link is ready", "Remote Control 連結已就緒") : "";
+  const btn = h("button", { type: "button", class: "btn ghost sm wt-mbtn", "data-term-menu": "1", "aria-haspopup": "menu", "aria-expanded": String(open),
+    "aria-label": T("Terminal menu", "終端機選單") + (says ? ` · ${says}` : ""), title: `${T("Menu", "選單")} (${K.useNow("menu", plat(), inTab())})${says ? ` · ${says}` : ""}`, onclick: (e) => { e.stopPropagation(); run("menu"); } },
+    "⋯", ready ? h("i", { class: "wt-mready", "data-term-menu-ready": ready }) : null);
+  if (!open) return h("div", { class: "wt-more" }, btn);
+  const groups = menuItems(t, tab), kids = [menuInfo(t)];
+  for (const g of groups) { kids.push(h("div", { class: "wt-msep", role: "separator" }));
+    for (const x of g) { const label = [h("span", { class: "wt-ml" }, T(x.en, x.zh)), x.chord ? h("kbd", {}, x.chord) : null];
+      kids.push(x.href ? h("a", { class: "fm-item", role: "menuitem", "data-term-mi": x.act, href: x.href, ...x.attrs, onclick: () => menuClose() }, label)
+        : h("button", { type: "button", class: "fm-item", role: "menuitem", "data-term-mi": x.act, disabled: x.disabled || null, ...x.attrs, onclick: (e) => { e.stopPropagation(); menuClose(); run(x.act); keysBack(); } }, label)); } }
+  return h("div", { class: "wt-more" }, btn, h("div", { class: "fm-pop wt-pop", role: "menu", "aria-label": T("Terminal menu", "終端機選單"), "data-term-menu-pop": "1" }, kids));
+}
+const menuItemsOn = () => [...document.querySelectorAll(".wt-pop [role^=menuitem]:not([disabled])")];
+/** The menu is drawn in place (never a full render: the terminals keep their focus and selection). */
+function menuSync(focusIdx) {
+  const old = document.querySelector(".wt-bar .wt-more"); if (!old) return;
+  const tab = curTab(), nw = menuEl(termOf(focusPane(tab)), tab); old.replaceWith(nw);
+  if (TM.ui.menu && focusIdx != null) { const xs = menuItemsOn(); xs[Math.max(0, Math.min(focusIdx, xs.length - 1))]?.focus(); }
+}
+function menuClose(back = false) { if (!TM.ui.menu) return; TM.ui.menu = false; menuSync(); if (back) focusTerm(); }
+addEventListener("pointerdown", (e) => { if (TM.ui.menu && !e.target.closest?.(".wt-more")) menuClose(); }, true);
+// Tab out of the open menu (or any focus that lands outside it) closes it, so its keys never act from elsewhere
+addEventListener("focusin", (e) => { if (TM.ui.menu && !e.target.closest?.(".wt-more")) menuClose(); });
+function remoteSheet() {
+  const t = (TM.list || []).find((x) => x.id === TM.ui.remote), url = t?.remote?.url; if (!url) { TM.ui.remote = null; return null; }
+  return h("div", { class: "wt-veil", "data-term-remote-sheet": t.id, onclick: (e) => { if (e.target === e.currentTarget) { TM.ui.remote = null; redo(); } } },
+    h("div", { class: "card wt-sheet", role: "dialog", "aria-label": "Remote Control" },
+      h("div", { class: "wt-remote", "data-term-remote": "1" }, qrBox(url),
+        h("div", {}, h("b", {}, T("Remote Control is on", "Remote Control 已開啟")), h("p", { class: "faint" }, T("Open this link in the Claude app or claude.ai to take the session over. Anyone with the link and your account can drive it.", "在 Claude app 或 claude.ai 開這個連結就能接手這個 session。有這個連結又登入你帳號的人都能操作它。")),
+          h("a", { href: url, target: "_blank", rel: "noopener noreferrer", "data-term-remote-url": "1" }, url)))));
 }
 function helpSheet() {
   const p = TM.ui.helpPlat || plat(), tab = inTab(); let group = null; const kids = [];
@@ -477,21 +570,16 @@ function focusView(arg) {
   const tab = curTab(), t = termOf(focusPane(tab)); if (!tab || !t) return null;
   if (arg && arg !== t.id) queueMicrotask(syncHash); else if (!arg) queueMicrotask(syncHash);
   const showNew = TM.showNew ?? !TM.list.some((x) => x.running);
+  queueMicrotask(tabsOver);
+  // one slim strip: the tabs (a title and a state dot each) and the ⋯ menu; the rest of the window is the terminal
   return h("div", { class: "page wt-page wt-full", "data-term-focus": t.id },
     h("div", { class: "wt-bar" },
-      h("h1", { class: "wt-h" }, T("Terminals", "終端機")),
-      h("div", { class: "wt-tabs", role: "tablist", "aria-label": T("Terminal tabs", "終端機分頁") }, tabEls()),
-      h("div", { class: "wt-tools" },
-        TM.canWrite ? [tool("newTab", "plus", "Tab", "分頁"), tool("splitRight", "split-right", "Split right", "左右"), tool("splitDown", "split-down", "Split down", "上下")] : null,
-        tool("zoom", "expand", "Zoom", "放大", { "aria-pressed": String(!!tab.zoom) }), tool("goto", "search", "Go to", "跳到"), tool("help", "keyboard", "Keys", "快捷鍵"),
-        TM.canWrite ? h("button", { type: "button", class: `btn sm${showNew ? " primary" : ""}`, "data-term-new": "1", "aria-expanded": String(showNew), onclick: () => { TM.showNew = !showNew; render(); } }, T("Launch…", "啟動…"))
-          : h("span", { class: "badge", "data-term-readonly": "1", title: T("Typing, starting and stopping happen on the Mac.", "輸入、啟動和停止要在 Mac 上做。") }, T("View only", "只能檢視")))),
-    appBanner(),
+      h("div", { class: "wt-tabs", role: "tablist", "aria-label": T("Terminal tabs", "終端機分頁"), onscroll: tabsOver }, tabEls()),
+      menuEl(t, tab)),
     TM.err ? h("p", { class: "faint" }, TM.err) : null,
     TM.canWrite && showNew ? h("div", { class: "wt-launch" }, launcher(), terminalsList(t)) : null,
     h("section", { class: "wt-detail", "data-term-detail": t.id }, ...detailHead(t), h("div", { class: "wt-stage" }, drawNode(tab.zoom ? panesOf(tab.root).find((p) => p.id === tab.zoom) || tab.root : tab.root, tab))),
-    statusLine(),
-    TM.ui.help ? helpSheet() : null, TM.ui.picker ? pickerSheet() : null, TM.ui.naming ? namingSheet() : null);
+    TM.ui.help ? helpSheet() : null, TM.ui.picker ? pickerSheet() : null, TM.ui.naming ? namingSheet() : null, TM.ui.remote ? remoteSheet() : null);
 }
 
 // ---------- the page ----------
@@ -544,53 +632,40 @@ function patchPage() {
   }
   // a focus the page does not show: the page is drawn again
   if (!sec || !stage || !t || sec.dataset.termDetail !== t.id || panesOf(tab.root).some((pn) => !termOf(pn))) return soft();
-  const tabs = document.querySelector(".wt-tabs"); if (tabs) tabs.replaceChildren(...tabEls());
+  const tabs = document.querySelector(".wt-tabs"); if (tabs) { tabs.replaceChildren(...tabEls()); tabsOver(); }
   for (const k of [...sec.children]) if (k !== stage) k.remove();
   for (const k of detailHead(t)) if (k) sec.insertBefore(k, stage);
-  // a bar is replaced only when it shows something new: one drawn again unchanged would drop a selection of its text (the
-  // captain dragging across the label as the list reloads)
-  for (const el of stage.querySelectorAll(".wt-pane[data-pane]")) { const pn = panesOf(tab.root).find((x) => x.id === el.dataset.pane), tt = termOf(pn), bar = el.querySelector(":scope > .wt-pbar");
-    if (tt && bar) { const nb = paneBar(tt, pn); if (!bar.isEqualNode(nb)) bar.replaceWith(nb); } }
+  // a pane's notice is replaced only when it says something new
+  for (const el of stage.querySelectorAll(".wt-pane[data-pane]")) { const tt = termOf(panesOf(tab.root).find((x) => x.id === el.dataset.pane)); if (!tt) continue;
+    const was = el.querySelector(":scope > .wt-gone"), nb = goneNote(tt); if (was && nb) { if (!was.isEqualNode(nb)) was.replaceWith(nb); } else if (was) was.remove(); else if (nb) el.prepend(nb); }
+  // the ⋯ menu follows the focused terminal (Stop becomes Remove, Send for review becomes ready), keeping the item in focus
+  const xs = menuItemsOn(), at = xs.indexOf(document.activeElement); menuSync(TM.ui.menu && at >= 0 ? at : null);
 }
 // Send for review (docs/units/branch-intake.md): a finished terminal whose checkout is a branch with commits beyond base
-// goes to code-firstmate's "From existing branch": spec card, scope, checks at base and head, review, fixes, merge card
-function reviewRow(t) {
-  const g = t.git?.end || t.git?.start; if (!g && !t.review) return null;
-  const where = g ? h("span", { class: "faint" }, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : String(g.head ?? "").slice(0, 10)) : null;
-  if (t.review) return h("div", { class: "wt-review", "data-term-review": t.id }, where, h("a", { class: "btn sm", "data-term-review-run": t.review.run, href: `#/run/${encodeURIComponent(t.review.run)}` }, T(`In review: ${t.review.run}`, `審查中：${t.review.run}`)));
-  if (!TM.canWrite) return where ? h("div", { class: "wt-review" }, where) : null;
-  const why = t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審")
+// goes to code-firstmate's "From existing branch": spec card, scope, checks at base and head, review, fixes, merge card.
+// Where its checkout is and why it cannot go yet are the ⋯ menu's (its head and its item); null: nothing to send.
+function reviewState(t) {
+  // nothing to say while there is nothing to send: no commit beyond the base known (a running agent's end is not known yet)
+  const g = t.git?.end || t.git?.start; if (!t.review && !(g?.commits > 0)) return null;
+  const where = g ? h("span", {}, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : String(g.head ?? "").slice(0, 10)) : null;
+  const why = t.review || !TM.canWrite ? null : t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審")
     : !t.git?.end && t.stopped ? T("Studio stopped this terminal and did not record where its checkout ended: start a new terminal", "Studio 停掉這個終端機時沒記下 checkout 停在哪：請開新的終端機")
     : !t.git?.end?.commits ? T("No commits beyond the base to review: commit the work on a branch", "沒有比 base 新的 commit 可送審：先在 branch 上 commit") : null;
-  // a refusal stays here, in the captain's language, until the next try (a toast alone passed unseen on the live board)
-  const refused = TM.refused.get(t.id), [en, zh] = refused ? refused.split(" / ") : [];
-  return h("div", { class: "wt-review", "data-term-review": t.id }, where, why ? h("span", { class: "faint" }, why) : null,
-    h("button", { type: "button", class: "btn primary sm", "data-term-send": t.id, disabled: !!why, onclick: () => termOp(t.id, "review") }, T("Send for review", "送審")),
-    refused ? h("p", { class: "wt-refused", role: "alert", "data-term-review-error": t.id }, T("Send for review was refused: ", "送審被拒："), T(en, zh || en)) : null);
+  return { where, why };
+}
+// a refusal stays over the terminal, in the captain's language, until the next try (a toast alone passed unseen on the
+// live board): the one line the page adds above a terminal, and only then
+function refusedLine(t) {
+  const refused = TM.refused.get(t.id); if (!refused) return null; const [en, zh] = refused.split(" / ");
+  return h("p", { class: "wt-refused", role: "alert", "data-term-review-error": t.id }, T("Send for review was refused: ", "送審被拒："), T(en, zh || en));
 }
 // a terminal listed from its record after Studio restarted: nothing re-attached; Studio stopped it, or it had ended before
 const restoredNote = (t) => !t.restored ? null : h("p", { class: "faint wt-restored", "data-term-restored": t.stopped || "ended" },
   t.stopped === "studio-stopped" ? T("From before Studio restarted: Studio stopped it while it ran. Its output is the transcript.", "Studio 重新啟動前的終端機：它還在跑時被 Studio 停掉了。輸出是它的紀錄。")
     : T("From before Studio restarted: it had ended. Its output is the transcript.", "Studio 重新啟動前的終端機：它已經結束了。輸出是它的紀錄。"));
-function detailHead(t) {
-  const url = t.remote?.url;
-  return [
-    h("div", { class: "wt-dhead" },
-      h("div", { class: "wt-title" }, h("b", {}, t.label), h("span", { class: "faint" }, ` · ${t.project.name}`), badge(t),
-        h("div", { class: "faint wt-cmd", title: t.project.path }, h("code", {}, t.command), T(` in ${t.project.path}`, ` 於 ${t.project.path}`))),
-      TM.canWrite ? h("div", { class: "wt-actions" },
-        t.running ? h("button", { type: "button", class: "btn", "data-term-kill": t.id, onclick: () => termOp(t.id, "kill") }, T("Stop", "停止")) : null,
-        // a terminal from before Studio restarted has no command to run again here: start a new one
-        t.restored ? null : h("button", { type: "button", class: "btn", "data-term-restart": t.id, onclick: () => termOp(t.id, "restart") }, T("Restart", "重新啟動")),
-        t.running ? null : h("button", { type: "button", class: "btn ghost", "data-term-dismiss": t.id, onclick: () => termOp(t.id, "dismiss") }, T("Remove", "移除"))) : null),
-    restoredNote(t),
-    reviewRow(t),
-    t.ask && t.state === "waiting" ? h("div", { class: "wt-ask", "data-term-ask": "1" }, T("Asks: ", "問你："), t.ask) : null,
-    url ? h("div", { class: "wt-remote", "data-term-remote": "1" }, qrBox(url),
-      h("div", {}, h("b", {}, T("Remote Control is on", "Remote Control 已開啟")), h("p", { class: "faint" }, T("Open this link in the Claude app or claude.ai to take the session over. Anyone with the link and your account can drive it.", "在 Claude app 或 claude.ai 開這個連結就能接手這個 session。有這個連結又登入你帳號的人都能操作它。")),
-        h("a", { href: url, target: "_blank", rel: "noopener noreferrer", "data-term-remote-url": "1" }, url))) :
-      TM.canWrite && t.remote?.enabled && t.running ? h("div", { class: "faint wt-remote-wait" }, T("Remote Control: waiting for Claude Code to print its link…", "Remote Control：等 Claude Code 印出連結…")) : null];
-}
+// over the terminal only what needs the captain now: a refused Send for review. Its name, command, state, question,
+// branch and Remote Control link are the ⋯ menu's; Stop, Restart and Remove are its items and keys
+const detailHead = (t) => [refusedLine(t)];
 const selected = (arg) => TM.list.find((t) => t.id === arg) || (arg ? null : TM.list.filter((t) => t.running).at(-1) || TM.list.at(-1) || null);
 const listRows = (sel, list = TM.list, mark = (x) => x) => list.map((t) => h("a", { class: "wt-item", href: `#/terminals/${encodeURIComponent(t.id)}`, "data-term-row": t.id, "aria-current": sel?.id === t.id ? "page" : null },
   h("span", { class: "wt-iname" }, mark(t.label)), badge(t), h("span", { class: "faint wt-iproj" }, t.project.name),
@@ -617,8 +692,7 @@ function viewTerminals(arg) {
   const full = focusView(arg); if (full) return full;
   const sel = arg ? selected(arg) : null;
   return h("div", { class: "page wt-page" },
-    h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Terminals", "終端機")),
-      h("p", {}, T("Any agent CLI in a real terminal, in your project's folder. Working, waiting for you, done or exited, at a glance.", "在專案資料夾裡，用真的終端機跑任何 agent CLI；執行中、等你、完成或結束，一眼看見。")))),
+    h("div", { class: "phead" }, h("div", {}, h("h1", {}, T("Terminals", "終端機")))),
     TM.err ? h("p", { class: "faint" }, TM.err) : null,
     h("div", { class: "wt-grid" },
       h("aside", { class: "wt-side" }, launcher(), terminalsList(sel)),

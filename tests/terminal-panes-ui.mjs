@@ -4,9 +4,9 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   as a Mac (iTerm2's keys): ⌘D and ⇧⌘D split, each new pane its own PTY; ⌥⌘arrows move the focus, ⌃⌘arrows resize,
 //   ⇧⌘↩ zooms; a chord that is Studio's never reaches xterm, a plain key does (and reaches the shell); in a browser tab ⌥T
 //   opens a tab, ⌘1 and ⇧⌘] switch, ⌥W closes the pane (the terminal keeps running), a double-click renames, ⇧⌘O finds, ⌘/ shows the
-//   keys with the tab's struck-out chords; the layout survives render() and a reload; the banner offers a Studio window,
-//   whose button asks the server for Chrome's app window (a stand-in open(1) records argv: no browser opens);
-//   a Studio window (?window=studio, as the launch lands): no banner, hints show ⌘T, ⌘T itself opens a tab;
+//   keys with the tab's struck-out chords; the layout survives render() and a reload; the ⋯ menu shows the chords that work
+//   in a tab and offers a Studio window, which asks the server for Chrome's app window (a stand-in open(1) records argv: no
+//   browser opens); a Studio window (?window=studio, as the launch lands): the menu shows ⌘T, ⌘T itself opens a tab;
 //   as Windows (Windows Terminal's keys): Alt+Shift+= and Alt+Shift+- split, Alt+arrows move, Ctrl+Shift+T and Ctrl+Alt+T
 //   open tabs, Ctrl+Tab switches, Ctrl+Shift+W closes, Ctrl+Shift+P finds, Ctrl+Shift+/ shows Windows' chords; F1 and F2 stay the shell's.
 //   TERMINAL_PANES_SHOTS=<dir>  also write screenshots there
@@ -37,6 +37,11 @@ const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bu
 const TOKEN = "terminal-panes-ui-session";
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CREW_BROWSER", "CREW_APP_WINDOW"]) delete env[k];
 const MAC = { platform: "MacIntel", uad: "macOS" }, WIN = { platform: "Win32", uad: "Windows" };
+// the ⋯ menu: each item shows the chord that works where the page is (a browser tab or a Studio window)
+const menu = async (pg) => { if ((await pg.locator("[data-term-menu]").getAttribute("aria-expanded")) !== "true") await pg.locator("[data-term-menu]").click(); await pg.locator("[data-term-menu-pop]").waitFor({ timeout: 3000 }).catch(() => {}); };
+const unmenu = async (pg) => { if (await pg.locator("[data-term-menu-pop]").count()) await pg.keyboard.press("Escape"); };
+const chord = async (pg, act) => { await menu(pg); const k = await pg.locator(`[data-term-menu-pop] [data-term-mi="${act}"] kbd`).innerText().catch(() => null); await unmenu(pg); return k; };
+const hasItem = async (pg, act) => { await menu(pg); const n = await pg.locator(`[data-term-menu-pop] [data-term-mi="${act}"]`).count(); await unmenu(pg); return n > 0; };
 try {
   const port = await freePort(), base = `http://127.0.0.1:${port}`;
   app = spawn(BUN, ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, HOME: home, CODEX_HOME: join(home, ".codex"), PATH: `${dirname(BUN)}:/usr/bin:/bin:/usr/sbin:/sbin`, SHELL: "/bin/sh",
@@ -66,8 +71,8 @@ try {
   ok(await until(async () => (await panes(p)).length === 1 && /#\/terminals\/T-/.test(p.url())), "a shell starts in a tab of its own");
   await seen(p.locator(".wt-xterm .xterm-rows"), 10000); await p.waitForTimeout(400);
   const t1 = (await focused(p)).term;
-  ok(await p.locator("[data-term-appwin]").isVisible() && /⌥T ⌥W ⌥N/.test(await p.locator("[data-term-appwin]").innerText()), "in a browser tab a banner says ⌘T ⌘W ⌘N are the browser's and names ⌥T ⌥W ⌥N");
-  ok(await p.locator('[data-hint="newTab"] kbd').innerText() === "⌥T" && await p.locator('[data-hint="splitRight"] kbd').innerText() === "⌘D" && await p.locator('[data-term-where="tab"]').isVisible(), "the hints show the chords that work in a tab (⌥T, ⌘D)");
+  ok(await hasItem(p, "appWindow") && await chord(p, "newTab") === "⌥T" && await chord(p, "closePane") === "⌥W", "in a browser tab the menu offers a Studio window and names ⌥T ⌥W (⌘T ⌘W are the browser's)");
+  ok(await chord(p, "splitRight") === "⌘D", "and the chords no browser keeps as they are (⌘D)");
   await p.locator(".wt-xterm").click(); await spy(p);
   await p.keyboard.press("Meta+KeyD");
   ok(await until(async () => (await panes(p)).length === 2), "⌘D splits: two panes");
@@ -133,9 +138,9 @@ try {
   ok((await tabs(p)).length === 2 && (await tabs(p))[0].name === "build", "the tabs, their names and panes survive a reload", JSON.stringify(await tabs(p)));
   await p.locator('[data-term-tab]').first().click(); await p.waitForTimeout(200);
   ok((await panes(p)).length === 3, "the split tab still has its three panes after the reload");
-  // the banner's button: the server opens Studio as Chrome's app window, through the launch's own private redirect
+  // the menu's Open in a Studio window: the server opens Studio as Chrome's app window, through the launch's own private redirect
   rmSync(openLog, { force: true });
-  await p.locator("[data-term-appwin-open]").click();
+  await menu(p); await p.locator('[data-term-menu-pop] [data-term-mi="appWindow"]').click();
   const calls = await until(async () => existsSync(openLog) && readFileSync(openLog, "utf8").split("\x1e").filter(Boolean).map((c) => c.split("\0").slice(0, -1)));
   const c0 = calls?.[0] ?? [], f = c0[3]?.startsWith("--app=file://") ? decodeURIComponent(c0[3].slice(13)) : "";
   const link = f && existsSync(f) ? JSON.parse(/location\.replace\((".*?")\)/.exec(readFileSync(f, "utf8"))?.[1] ?? '""') : "";
@@ -149,8 +154,8 @@ try {
   // ---------- as a Mac, in a Studio window (how the launch lands) ----------
   const ctxW = await context(MAC), w = await ctxW.newPage(); w.on("pageerror", (e) => errors.push(`window: ${e}`));
   await w.goto(`${base}/?window=studio#/terminals/${encodeURIComponent(t1)}`); await seen(w.locator(".wt-stage .wt-pane"), 10000); await w.waitForTimeout(400);
-  ok(!(await w.locator("[data-term-appwin]").count()) && await w.locator('[data-term-where="window"]').isVisible() && await w.locator('[data-hint="newTab"] kbd').innerText() === "⌘T" && !w.url().includes("window=studio"),
-    "a Studio window: no banner, the hints show ⌘T, and the address loses the flag", w.url());
+  ok(!(await hasItem(w, "appWindow")) && await chord(w, "newTab") === "⌘T" && !w.url().includes("window=studio"),
+    "a Studio window: no Open in a Studio window, the menu shows ⌘T, and the address loses the flag", w.url());
   await w.locator(".wt-xterm").first().click();
   await w.keyboard.press("Meta+KeyT");
   ok(await until(async () => (await tabs(w)).length === 2), "⌘T opens a tab");
@@ -159,14 +164,14 @@ try {
   await spy(w); await w.keyboard.press("Alt+KeyT"); await w.keyboard.press("Alt+KeyW"); await w.waitForTimeout(200);
   ok((await tabs(w)).length === 1 && (await reached(w)).includes("KeyT+A") && (await reached(w)).includes("KeyW+A"), "in a Studio window ⌥T and ⌥W are the shell's (Option as Meta), not a tab", JSON.stringify(await reached(w)));
   await w.reload(); await w.waitForTimeout(400);
-  ok(await w.locator('[data-term-where="window"]').isVisible(), "the window remembers it is a Studio window across a reload");
+  ok(await chord(w, "newTab") === "⌘T", "the window remembers it is a Studio window across a reload");
   await shot(w, "panes-studio-window.png");
   await ctxW.close();
 
   // ---------- as Windows (Windows Terminal's keys) ----------
   const ctx2 = await context(WIN), q = await ctx2.newPage(); q.on("pageerror", (e) => errors.push(`win: ${e}`));
   await q.goto(`${base}/#/terminals/${encodeURIComponent(t1)}`); await seen(q.locator(".wt-stage .wt-pane .xterm-rows"), 10000); await q.waitForTimeout(400);
-  ok(await q.locator('[data-hint="newTab"] kbd').innerText() === "Ctrl+Alt+T" && await q.locator('[data-hint="splitRight"] kbd').innerText() === "Alt+Shift+=", "Windows: the hints show Ctrl+Alt+T and Alt+Shift+=");
+  ok(await chord(q, "newTab") === "Ctrl+Alt+T" && await chord(q, "splitRight") === "Alt+Shift+=", "Windows: the menu shows Ctrl+Alt+T and Alt+Shift+=");
   await q.locator(".wt-xterm").first().click(); await spy(q);
   await q.keyboard.press("Alt+Shift+Equal");
   ok(await until(async () => (await panes(q)).length === 2), "Alt+Shift+= splits right");
@@ -245,7 +250,8 @@ try {
     ok(await until(async () => (await panes(r)).length === 2 && /pane-42/.test(await rows(r, t3)), 5000), "unzoomed, the pane hidden since the reload shows its earlier output", await rows(r, t3));
     // a terminal the server will not show here (too many views): the pane says so, and the stream is asked for again
     await r.evaluate((id) => crewTerminals.mux.es.dispatchEvent(new MessageEvent("gone", { data: JSON.stringify({ id, code: "tooManyViews" }) })), t3);
-    ok(await seen(r.locator(`[data-term-gone="${t3}"]`), 3000) && await r.locator(`[data-term-gone-retry="${t3}"]`).isVisible(), "a terminal refused for too many views says so on its pane, with Retry");
+    ok(await seen(r.locator(`[data-term-gone="${t3}"]`), 3000) && (await menu(r), await r.locator(`[data-term-menu-pop] [data-term-gone-retry~="${t3}"]`).isVisible()), "a terminal refused for too many views says so on its pane, with Retry in the menu");
+    await unmenu(r);
     ok(await until(async () => !(await r.locator(`[data-term-gone="${t3}"]`).count()), 10000), "and recovers by itself once the stream is opened again");
     ok(await r.evaluate(() => crewTerminals.resets) === 0, "opening the stream again reset no pane (each got only what followed)", String(await r.evaluate(() => crewTerminals.resets)));
     await ctxR.close(); }

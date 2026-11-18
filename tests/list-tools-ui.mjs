@@ -73,9 +73,12 @@ const open = async (lang, width = 1440) => {
   await ctx.route((u) => Object.hasOwn(API, u.pathname), (r) => r.fulfill({ json: API[new URL(r.request().url()).pathname] }));
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message)); return { p, ctx };
 };
+// the terminals page's launcher, with its list, is Launch… in the strip's ⋯ menu (open by itself when nothing runs)
+const launcherOpen = async (p) => { await p.waitForSelector(".wt-new, [data-term-menu]", { timeout: 20000 });
+  if (!(await p.$(".wt-new"))) { await p.click("[data-term-menu]"); await p.click("[data-term-menu-pop] [data-term-new]"); } await p.waitForSelector(".wt-new"); };
 const go = async (p, hash, list) => { await p.goto(`${base}/${hash}`);
   // the terminals page shows the running terminals' tabs; its list is under Launch…
-  if (list === "terminals") { await p.waitForSelector("[data-term-new]", { timeout: 20000 }); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+  if (list === "terminals") { await launcherOpen(p); }
   await p.waitForSelector(`[data-lt-count="${list}"]`, { timeout: 20000 }); await p.waitForTimeout(150); };
 const count = (p, list) => p.$eval(`[data-lt-count="${list}"]`, (e) => e.textContent);
 const range = (p, list) => p.$eval(`[data-lt-range="${list}"]`, (e) => e.textContent).catch(() => null);
@@ -350,7 +353,7 @@ try {
     // the address changes under the composition (Back, a link): the box is dropped without a blur or a compositionend
     await p.evaluate(() => { location.hash = "#/board"; }); await p.waitForFunction(() => location.hash.startsWith("#/board")); await p.waitForTimeout(200);
     ok(await p.evaluate(() => !location.hash.includes("?")), `${list}: leaving mid-composition carries nothing to the next page`, await p.evaluate(() => location.hash));
-    await p.goto(`${base}/${hash}?`); if (list === "terminals") { await p.waitForSelector("[data-term-new]"); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+    await p.goto(`${base}/${hash}?`); if (list === "terminals") { await launcherOpen(p); }
     await p.waitForSelector(`[data-lt-count="${list}"]`); const c0 = await count(p, list);
     await p.focus(`[data-lt-q="${list}"]`); await p.keyboard.type("zzqx"); await p.waitForTimeout(list === "activity" ? 600 : 200);
     ok(await count(p, list) !== c0 && !!await p.$(`[data-lt-empty="${list}"]`), `${list}: after leaving mid-composition and coming back, typing filters again`, `${c0} -> ${await count(p, list)}`);
@@ -358,7 +361,7 @@ try {
     await p.evaluate(() => soft()); await p.click('.nav-item[data-view="board"]'); await p.waitForFunction(() => location.hash.startsWith("#/board")); await p.waitForTimeout(300);
     ok(await p.evaluate(() => location.hash === "#/board"), `${list}: typed, then a sidebar hop: the next page's address has no query`, await p.evaluate(() => location.hash));
     // 3. key: then ↓ and Enter picks the first suggestion from the keyboard; the box keeps the focus
-    await p.goto(`${base}/${hash}?`); if (list === "terminals") { await p.waitForSelector("[data-term-new]"); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+    await p.goto(`${base}/${hash}?`); if (list === "terminals") { await launcherOpen(p); }
     await p.waitForSelector(`[data-lt-count="${list}"]`); await p.waitForTimeout(list === "activity" ? 400 : 100);
     await p.focus(`[data-lt-q="${list}"]`); await p.keyboard.type(`${key}:`); await p.waitForSelector("[data-lt-sug]");
     await p.evaluate(() => soft()); // a live update arrives while typing: its redraw waits
@@ -379,7 +382,7 @@ try {
     ok(out.tag !== "BODY" && out.connected, `${list}: Tab out of the toolbar (a live redraw waiting) keeps the focus on the redrawn page`, JSON.stringify(out));
     if (out.tag === "A" && out.href?.startsWith("#/")) { const h0 = await p.evaluate(() => location.hash); await p.keyboard.press("Enter"); await p.waitForTimeout(300);
       ok(await p.evaluate((h) => location.hash !== h, h0), `${list}: Enter on that row opens it`, `${out.href}`); await p.goBack(); await p.waitForTimeout(300);
-      await p.goto(`${base}/${hash}?`); if (list === "terminals") { await p.waitForSelector("[data-term-new]"); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+      await p.goto(`${base}/${hash}?`); if (list === "terminals") { await launcherOpen(p); }
       await p.waitForSelector(`[data-lt-count="${list}"]`); await p.waitForTimeout(list === "activity" ? 400 : 100); }
     // 4. a popover open through a redraw of its list (a box ticked) stays inside the page
     await p.fill(`[data-lt-q="${list}"]`, ""); await p.waitForTimeout(list === "activity" ? 500 : 100);
@@ -405,7 +408,7 @@ try {
   for (const [list, hash] of [["runs", "#/runs"], ["inbox", "#/inbox"], ["workflows", "#/workflows"], ["skills", "#/skills"], ["projects", "#/projects"], ["crew", "#/crew"], ["terminals", "#/terminals"], ["library", "#/library"], ["room", "#/room"], ["activity", "#/activity"]]) {
     const { p, ctx } = await open("en");
     await p.goto(`${base}/${hash}`);
-    if (list === "terminals") { await p.waitForSelector("[data-term-new]", { timeout: 20000 }); if (await p.$eval("[data-term-new]", (e) => e.getAttribute("aria-expanded") !== "true")) await p.click("[data-term-new]"); }
+    if (list === "terminals") { await launcherOpen(p); }
     const q = `[data-lt-q="${list}"]`; await p.waitForSelector(q, { timeout: 20000 });
     await p.focus(q); // from the moment the captain is in the box
     await p.evaluate((s) => { window.__swaps = 0; let cur = document.querySelector(s); new MutationObserver(() => { const n = document.querySelector(s); if (n && n !== cur) { window.__swaps++; cur = n; } }).observe(document.body, { subtree: true, childList: true }); }, q);

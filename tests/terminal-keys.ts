@@ -26,10 +26,22 @@ expect("win", [
   ["Ctrl+Tab", "nextTab"], ["Ctrl+Shift+Tab", "prevTab"], ["Ctrl+Alt+PageDown", "nextTab"], ["Ctrl+Alt+PageUp", "prevTab"], ["Ctrl+Alt+Digit3", "tabN:3"],
   ["Ctrl+Shift+Enter", "zoom"], ["Ctrl+Shift+KeyK", "clear"], ["Ctrl+Shift+KeyP", "goto"], ["Ctrl+Shift+Slash", "help"], ["Ctrl+Shift+KeyB", "sidebar"],
 ]);
+// what the page's buttons did, now keys (the ⋯ menu lists them too): ⌥⌘ on a Mac, Ctrl+Alt+Shift elsewhere
+expect("mac", [
+  ["Meta+Period", "menu"], ["Alt+Meta+KeyN", "launch"], ["Alt+Meta+KeyX", "kill"], ["Alt+Meta+KeyR", "restart"], ["Alt+Meta+Backspace", "dismiss"],
+  ["Alt+Meta+KeyS", "review"], ["Alt+Meta+KeyG", "retry"], ["Alt+Shift+Meta+KeyW", "closeTab"], ["Alt+Meta+KeyO", "appWindow"],
+]);
+expect("win", [
+  ["Ctrl+Shift+Period", "menu"], ["Ctrl+Alt+Shift+KeyN", "launch"], ["Ctrl+Alt+Shift+KeyX", "kill"], ["Ctrl+Alt+Shift+KeyR", "restart"], ["Ctrl+Alt+Shift+Backspace", "dismiss"],
+  ["Ctrl+Alt+Shift+KeyS", "review"], ["Ctrl+Alt+Shift+KeyG", "retry"], ["Ctrl+Alt+Shift+KeyW", "closeTab"], ["Ctrl+Alt+Shift+KeyO", "appWindow"],
+]);
+// a Mac's chords that work in a Studio window are all ⌘ chords: a plain key, ⌃ or ⌥ alone is the shell's or a TUI's
+ok(K.KEYMAP.every((r: any) => !r[3][0] || r[3][0].split("+").includes("Meta")), "mac: every action's chord holds ⌘", K.KEYMAP.filter((r: any) => r[3][0] && !r[3][0].includes("Meta")).map((r: any) => r[1]).join(" "));
+ok(K.show("Alt+Meta+Backspace", "mac") === "⌥⌘⌫" && K.show("Meta+Period", "mac") === "⌘." && K.show("Ctrl+Shift+Period", "win") === "Ctrl+Shift+.", "⌥⌘⌫, ⌘. and Ctrl+Shift+. are written so", `${K.show("Alt+Meta+Backspace", "mac")} ${K.show("Meta+Period", "mac")}`);
 // what is not Studio's goes to the terminal: plain keys, the shell's own Ctrl chords, the browser's copy and paste, the
 // other platform's chords
-for (const [plat, chords] of [["mac", ["KeyA", "Enter", "Ctrl+KeyC", "Ctrl+KeyD", "Ctrl+KeyL", "Meta+KeyC", "Meta+KeyV", "Alt+ArrowLeft", "Ctrl+Shift+KeyT", "Shift+KeyD", "Digit1"]],
-  ["win", ["KeyA", "Enter", "Ctrl+KeyC", "Ctrl+KeyD", "Ctrl+KeyT", "Ctrl+KeyW", "Ctrl+Shift+KeyC", "Ctrl+Shift+KeyV", "Meta+KeyT", "Meta+KeyD", "Alt+KeyT", "Digit1"]]] as const)
+for (const [plat, chords] of [["mac", ["KeyA", "Enter", "Ctrl+KeyC", "Ctrl+KeyD", "Ctrl+KeyL", "Meta+KeyC", "Meta+KeyV", "Alt+ArrowLeft", "Ctrl+Shift+KeyT", "Shift+KeyD", "Digit1", "Ctrl+KeyR", "Ctrl+KeyX", "Alt+KeyR", "Alt+Backspace", "Ctrl+Period", "Period", "Shift+Slash", "Ctrl+KeyS", "Ctrl+KeyG"]],
+  ["win", ["KeyA", "Enter", "Ctrl+KeyC", "Ctrl+KeyD", "Ctrl+KeyT", "Ctrl+KeyW", "Ctrl+Shift+KeyC", "Ctrl+Shift+KeyV", "Meta+KeyT", "Meta+KeyD", "Alt+KeyT", "Digit1", "Ctrl+KeyR", "Ctrl+KeyX", "Ctrl+Backspace", "Alt+Backspace", "Ctrl+Period", "Ctrl+KeyS", "Ctrl+KeyG"]]] as const)
   for (const c of chords) ok(act(c, plat) === null, `${plat}: ${c} is left for the terminal`, String(act(c, plat)));
 // F1, F2 and Shift+F2 are full-screen programs' (htop, mc): never Studio's
 for (const plat of ["mac", "win"] as const) for (const c of ["F1", "F2", "Shift+F2", "F10"]) ok(act(c, plat) === null, `${plat}: ${c} is left for the terminal`, String(act(c, plat)));

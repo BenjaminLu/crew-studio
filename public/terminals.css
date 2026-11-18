@@ -48,25 +48,28 @@
 .wt-review{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px}
 /* focus mode (app.js pageFocus sets body[data-focus="terminal"] on #/terminals): the side bar is the rail, no chat panel or
    its button, and a shown terminal fills the rest of the window, its fit addon following every resize */
-body[data-focus="terminal"] #main{padding:12px 16px}
+body[data-focus="terminal"] #main{padding:4px 8px 6px}
 body[data-focus="terminal"] #view{height:100%}
-.wt-full{max-width:none;height:100%;min-height:0;display:flex;flex-direction:column;gap:8px}
-.wt-bar{display:flex;align-items:center;gap:10px;min-width:0;flex:none}
-.wt-h{font-size:15px;line-height:1.2;margin:0;flex:none}
+.wt-full{max-width:none;height:100%;min-height:0;display:flex;flex-direction:column;gap:4px}
+.wt-bar{display:flex;align-items:center;gap:4px;min-width:0;flex:none;height:28px}
 .wt-tabs{display:flex;flex:1;min-width:0;overflow-x:auto;gap:2px;scrollbar-width:none}
-.wt-tab{display:flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:7px;font-size:13px;color:var(--text-2);cursor:pointer;white-space:nowrap;flex:none;border:1px solid transparent}
+.wt-tab{display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:7px;font-size:12.5px;color:var(--text-2);cursor:pointer;white-space:nowrap;flex:none;border:1px solid transparent}
 .wt-tab:hover{background:var(--surface-2);color:var(--text)}
 .wt-tab[aria-selected="true"]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600}
-.wt-tn{font:11px var(--f-mono, ui-monospace, monospace);color:var(--text-3)}
 .wt-tname{max-width:180px;overflow:hidden;text-overflow:ellipsis}
-.wt-tx{border:0;background:none;color:var(--text-3);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;border-radius:4px}
-.wt-tx:hover{color:var(--text);background:var(--surface-2)}
-.wt-tools{display:flex;align-items:center;gap:2px;flex:none}
-.wt-tool[aria-pressed="true"]{color:var(--accent)}
-.wt-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--text-3)}
-.wt-dot.waiting{background:var(--human)}.wt-dot.working{background:var(--accent)}.wt-dot.done{background:var(--ok)}.wt-dot.exited{background:var(--bad)}
-.wt-appwin{display:flex;align-items:center;gap:10px;flex:none;font-size:12.5px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
-.wt-appwin>span{flex:1;min-width:0}
+/* a tab's state is a shape as well as a colour (it is read without the hue too): working a filled dot, waiting a filled dot in
+   a ring with the tab's name tinted, exited a hollow ring, done a check mark; its words are the dot's label and title */
+.wt-dot{box-sizing:border-box;width:8px;height:8px;border-radius:50%;flex:none;background:var(--text-3);display:inline-grid;place-items:center}
+.wt-dot.working{background:var(--accent)}
+.wt-dot.idle{background:var(--text-3)}
+.wt-dot.waiting{background:var(--human);box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--human);margin-inline:2px}
+.wt-tab:has(.wt-dot.waiting) .wt-tname{color:var(--human)}
+.wt-dot.exited{background:transparent;border:2px solid var(--bad)}
+.wt-dot.done{width:auto;height:auto;border-radius:0;background:none}
+.wt-dot.done::before{content:"✓";color:var(--ok);font:700 11px/1 var(--f-mono, ui-monospace, monospace)}
+.wt-tabs.over{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
+.wt-bar>.wt-tabs{order:0}.wt-bar>.wt-more{order:2}
+.wt-bar[data-more]:not([data-more=""])::after{content:attr(data-more);order:1;flex:none;font-size:11.5px;color:var(--text-2);padding:0 2px}
 .wt-launch{display:grid;grid-template-columns:minmax(260px,420px) minmax(0,1fr);gap:12px;flex:none;align-items:start}
 .wt-launch .wt-list{max-height:260px;overflow:auto}
 .wt-full .wt-detail{flex:1;min-height:0;gap:6px}
@@ -82,26 +85,10 @@ body[data-focus="terminal"] #view{height:100%}
 .wt-split.row>.wt-div::after{left:2px;width:2px;top:0;bottom:0}
 .wt-split.col>.wt-div::after{top:2px;height:2px;left:0;right:0}
 .wt-div:hover::after,.wt-div.drag::after{background:var(--accent)}
-.wt-pane{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface-2)}
+.wt-pane{position:relative;display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface-2)}
 .wt-pane.focus{border-color:color-mix(in srgb,var(--accent) 70%,var(--border));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent)}
-.wt-pbar{display:flex;align-items:center;gap:8px;padding:3px 6px 3px 10px;font-size:12px;color:var(--text-2);border-bottom:1px solid var(--border);background:var(--surface)}
-.wt-pbar b{color:var(--text);font-weight:600}
-.wt-pbar .wt-tx{margin-left:auto}
-.wt-gone{display:inline-flex;gap:6px;align-items:center;color:var(--warn);font-size:12px;min-width:0}
+.wt-gone{position:absolute;top:4px;right:8px;z-index:3;max-width:calc(100% - 16px);font-size:12px;color:var(--warn);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:2px 8px;pointer-events:none}
 .wt-full .wt-xterm{flex:1;height:auto;min-height:120px;border:0;border-radius:0}
-.wt-full .wt-cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 0;min-width:0}
-/* the focused terminal's header is one line: its pane bar already names it */
-.wt-full .wt-dhead{flex-wrap:nowrap;align-items:center}
-.wt-full .wt-title{flex-wrap:nowrap;flex:1;min-width:0}
-.wt-full .wt-title>b,.wt-full .wt-title>span.faint{display:none}
-.wt-full .wt-actions .btn{min-height:28px;padding-block:2px}
-.wt-status{display:flex;align-items:center;gap:12px;flex:none;font-size:11.5px;color:var(--text-2);min-width:0}
-.wt-plat{font-weight:600}
-.wt-hints{display:flex;gap:12px;overflow:hidden;white-space:nowrap;min-width:0;flex:1}
-.wt-status kbd,.wt-help kbd{font:11px var(--f-mono, ui-monospace, monospace);padding:1px 5px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);color:var(--text)}
-kbd.off{opacity:.4;text-decoration:line-through}
-.wt-where{white-space:nowrap;padding:1px 8px;border-radius:4px;border:1px solid var(--border)}
-.wt-where.tab{color:var(--warn)}.wt-where.ok{color:var(--ok)}
 .wt-veil{position:fixed;inset:0;z-index:80;background:rgb(0 0 0 / .45);display:grid;place-items:start center;padding-top:9vh}
 .wt-sheet{width:min(640px,calc(100vw - 32px));padding:0;overflow:hidden}
 .wt-sh{display:flex;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)}
@@ -120,13 +107,31 @@ kbd.off{opacity:.4;text-decoration:line-through}
 .wt-prow.sel{background:var(--surface-2);box-shadow:inset 2px 0 0 var(--accent)}
 @media (max-width:760px){
   body[data-focus="terminal"] .side-foot{display:none}
-  body[data-focus="terminal"] #main{padding:8px}
-  .wt-h{display:none}
+  body[data-focus="terminal"] #main{padding:4px 4px 6px}
   .wt-full .wt-xterm{min-height:200px}
-  .wt-tl,.wt-hints [data-hint]:nth-child(n+3),.wt-plat{display:none}
   .wt-launch{grid-template-columns:minmax(0,1fr)}
   .wt-help{grid-template-columns:minmax(0,1fr)}
-  .wt-appwin{flex-wrap:wrap}
 }
-@media (min-width:761px) and (max-width:1100px){.wt-tl{display:none}}
 .wt-refused{flex-basis:100%;margin:0;font-size:12px;color:var(--bad);background:var(--bad-soft);border-radius:8px;padding:6px 8px;overflow-wrap:anywhere}
+/* the slim strip's ⋯ menu (the chat head's Firstmate menu look, .fm-pop and .fm-item): the terminal's name, command and
+   state at its head, then every action with its key */
+.wt-more{position:relative;flex:none}
+.wt-bar .wt-mbtn{position:relative;min-height:26px;padding:0 10px;font-size:16px;line-height:1;letter-spacing:.05em;color:var(--text);border:1px solid var(--border)}
+.wt-mready{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 1.5px var(--surface)}
+.wt-mbtn[aria-expanded="true"]{background:var(--surface-2)}
+.wt-pop{width:min(340px,calc(100vw - 16px));max-height:calc(100dvh - 72px);overflow:auto;gap:1px}
+.wt-pop .fm-item{padding:6px 10px;font-size:13px}
+.wt-pop .fm-item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.wt-pop .fm-item[aria-checked="true"] .wt-ml::after{content:" ✓";color:var(--accent)}
+.wt-ml{flex:1;min-width:0}
+.wt-pop kbd,.wt-help kbd{font:11px var(--f-mono, ui-monospace, monospace);padding:1px 5px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);white-space:nowrap}
+kbd.off{opacity:.4;text-decoration:line-through}
+.wt-msep{height:1px;background:var(--border);margin:4px 2px}
+.wt-minfo{display:flex;flex-direction:column;gap:4px;padding:6px 10px 4px;font-size:12px;min-width:0}
+.wt-mtitle{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px}
+.wt-mtitle .badge{margin-left:auto}
+.wt-minfo .wt-cmd{flex-basis:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+.wt-minfo p{margin:0}
+.wt-minfo .wt-ask{font-size:12px;padding:4px 8px}
+.wt-minfo .wt-review{gap:4px 8px}
+.wt-sheet .wt-remote{border:0;border-radius:0;padding:16px}

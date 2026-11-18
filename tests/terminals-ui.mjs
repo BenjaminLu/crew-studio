@@ -2,7 +2,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Web terminals in a real browser (public/terminals.js, docs/units/web-terminal.md), stub CLIs only:
 //   the desktop page: the unsandboxed warning with the project's path, presets, a custom command started in xterm.js,
 //   "waiting for you" in the terminal's badge, the sidebar's Terminals item and the Firstmate panel's Terminals tab,
-//   typing answers it; Claude Code's Remote Control link and its QR code in the header;
+//   typing answers it; Claude Code's Remote Control link and its QR code in the ⋯ menu;
 //   a paired phone: the same list and states, the output drawn read only (no input element, no launcher, no controls,
 //   no link), at 390 px without a horizontal scroll; and with an xterm stub, the page asks xterm for no input on a phone.
 //   The vendored xterm.js files equal the pinned packages.
@@ -23,6 +23,10 @@ let pass = 0, fail = 0, browser, app; const errors = [], shots = process.env.TER
 const ok = (v, n, extra = "") => { if (v) { pass++; console.log("ok " + n); } else { fail++; console.log(("FAIL " + n + " " + extra).trimEnd()); } };
 const seen = async (loc, timeout = 8000) => { try { await loc.first().waitFor({ timeout }); return true; } catch { return false; } };
 const until = async (f, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await f(); if (v) return v; await new Promise((r) => setTimeout(r, 80)); } return null; };
+// the terminal's name, state, question, branch and actions are in the strip's ⋯ menu (opened, it is drawn in place)
+const menu = async (pg) => { if ((await pg.locator("[data-term-menu]").getAttribute("aria-expanded")) !== "true") await pg.locator("[data-term-menu]").click(); await seen(pg.locator("[data-term-menu-pop]"), 3000); };
+const unmenu = async (pg) => { if (await pg.locator("[data-term-menu-pop]").count()) await pg.keyboard.press("Escape"); };
+const launch = async (pg) => { await menu(pg); await pg.locator("[data-term-menu-pop] [data-term-new]").click(); };
 
 // the vendored copies are the pinned packages, byte for byte
 {
@@ -82,9 +86,11 @@ try {
   ok(await p.locator("#termRc").isChecked(), "Claude Code's Remote Control toggle is on by default");
   // a terminal that ended before Studio started is listed from its record, marked, and can still be sent for review
   await p.goto(base + "/#/terminals/T-seeded-before1");
-  ok(await seen(p.locator('[data-term-row-restored="T-seeded-before1"]')) && await seen(p.locator('[data-term-restored="ended"]')), "a terminal from before the restart is listed and marked as such");
-  ok(await seen(p.locator('[data-term-send="T-seeded-before1"]:not([disabled])')) && await p.locator('[data-term-restart="T-seeded-before1"]').count() === 0
+  await seen(p.locator(".wt-stage .wt-pane"), 10000); await menu(p);
+  ok(await seen(p.locator('[data-term-row-restored="T-seeded-before1"]')) && await seen(p.locator('[data-term-menu-pop] [data-term-restored="ended"]')), "a terminal from before the restart is listed and marked as such (in its menu)");
+  ok(await seen(p.locator('[data-term-menu-pop] [data-term-send="T-seeded-before1"]:not([disabled])')) && await p.locator('[data-term-restart="T-seeded-before1"]').count() === 0
     && /agent\/seeded · 1 commit\(s\) beyond main/.test(await p.locator('[data-term-review="T-seeded-before1"]').innerText()), "it keeps its git end and Send for review; no Restart in place");
+  await unmenu(p);
   await p.goto(base + "/#/terminals");
   await p.locator("#termCmd").fill("printf 'Proceed with deploy? [y/N] '; read a; echo answer:$a; sleep 1");
   await p.locator("[data-term-run]").click();
@@ -92,8 +98,11 @@ try {
   const firstId = decodeURIComponent(p.url().split("/terminals/")[1] || "");
   ok(await seen(p.locator(".wt-xterm .xterm-rows"), 10000), "xterm.js draws it");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText()).includes("Proceed with deploy?")), "the program's output is on screen");
-  ok(await seen(p.locator('.wt-detail [data-term-state="waiting"]'), 6000), "the badge says waiting for you");
-  ok(await seen(p.locator("[data-term-ask]")) && (await p.locator("[data-term-ask]").innerText()).includes("Proceed with deploy? [y/N]"), "with the question it asks");
+  ok(await seen(p.locator('.wt-tabs [aria-selected="true"] [data-term-state="waiting"]'), 6000), "its tab's dot says waiting for you");
+  ok(await until(async () => /Proceed with deploy\? \[y\/N\]/.test(await p.locator('.wt-tabs [aria-selected="true"]').getAttribute("title"))), "the tab's title has the question");
+  await menu(p);
+  ok(await seen(p.locator("[data-term-menu-pop] [data-term-ask]")) && (await p.locator("[data-term-ask]").innerText()).includes("Proceed with deploy? [y/N]"), "and the menu's head asks it");
+  await unmenu(p);
   ok(await until(async () => (await p.locator('.nav-item[data-view="terminals"] #navTerms').innerText().catch(() => "")) === "1"), "the sidebar's Terminals item counts one terminal waiting");
   // the terminal page is a focus page (no chat panel there): the panel's Terminals tab lists it from any other page
   await p.goto(base + "/#/board"); await p.locator('[data-chat-tab="terms"]').click();
@@ -104,19 +113,21 @@ try {
   await p.goto(`${base}/#/terminals/${encodeURIComponent(firstId)}`); await seen(p.locator(".wt-xterm .xterm-rows"), 10000);
   await p.locator(".wt-xterm").click(); await p.keyboard.type("y"); await p.keyboard.press("Enter");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText()).includes("answer:y")), "typing in the terminal reaches the program");
-  ok(await seen(p.locator('.wt-detail [data-term-state="done"]'), 8000), "exit 0: done");
+  ok(await seen(p.locator('.wt-tabs [aria-selected="true"] [data-term-state="done"]'), 8000), "exit 0: done");
   ok(await until(async () => (await p.locator("#navTerms").isHidden())), "nothing waits any more: the count goes");
 
-  // Claude Code with Remote Control: the link and its QR code in the header (with a terminal shown, New opens the launcher)
-  await p.locator("[data-term-new]").click();
+  // Claude Code with Remote Control: the link and its QR code, from the ⋯ menu (with a terminal shown, Launch… opens the launcher)
+  await launch(p);
   await p.locator('[data-preset="claude"]').click();
-  ok(await seen(p.locator("[data-term-remote-url]"), 10000), "Claude Code's Remote Control link shows in the terminal's header");
-  ok((await p.locator("[data-term-remote-url]").innerText()) === "https://claude.ai/code/rc-UIFAKE789" && await p.locator(".wt-qr svg").count() === 1, "with the link and a QR code drawn on the page");
+  ok(await until(async () => { await menu(p); const n = await p.locator('[data-term-menu-pop] [data-term-mi="remote"]').count(); if (!n) await unmenu(p); return n; }, 10000), "Claude Code's Remote Control link is an item of the menu");
+  await p.locator('[data-term-menu-pop] [data-term-mi="remote"]').click();
+  ok(await seen(p.locator("[data-term-remote-url]"), 3000) && (await p.locator("[data-term-remote-url]").innerText()) === "https://claude.ai/code/rc-UIFAKE789" && await p.locator(".wt-qr svg").count() === 1, "with the link and a QR code drawn on the page");
   const claudeId = decodeURIComponent(p.url().split("/terminals/")[1] || "");
   if (shots) await p.screenshot({ path: join(shots, "terminals-desktop-remote.png") });
+  await p.keyboard.press("Escape"); await until(async () => !(await p.locator("[data-term-remote-sheet]").count()));
 
   // ---------- Send for review: a finished terminal whose branch has commits ----------
-  await p.locator("[data-term-new]").click();
+  await launch(p);
   await p.locator("#termProject").selectOption("repo");
   const G = "git -c user.name=A -c user.email=a@example.invalid";
   // run from the command field with Enter, as the captain does, and keep a field focused while the command ends by itself
@@ -124,19 +135,25 @@ try {
   await p.locator("#termCmd").fill(`${G} checkout -q -b agent/ui && echo x > f.txt && ${G} add f.txt && ${G} commit -q -m 'feat: f' && echo COMMITTED && sleep 3`);
   await p.locator("#termCmd").press("Enter");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("COMMITTED"), 10000), "an agent commits on a branch in the project's folder", await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => ""));
-  ok(await seen(p.locator("[data-term-send][disabled]")) && /once the agent has finished/.test(await p.locator("[data-term-review]").innerText()), "Send for review waits until the agent has finished");
+  await menu(p);
+  ok(await p.locator("[data-term-menu-pop] [data-term-send], [data-term-menu-pop] [data-term-review]").count() === 0, "while the agent runs (its commits not known yet) the menu offers no Send for review");
+  await unmenu(p);
   // the captain clicks back into the command field (to type the next one) while this one is still running
-  await p.locator("[data-term-new]").click();
+  await launch(p);
   await p.locator("#termCmd").focus();
   ok(await p.evaluate(() => document.activeElement?.id) === "termCmd", "the command field has the focus while the command runs");
-  ok(await seen(p.locator("[data-term-send]:not([disabled])"), 10000) && /agent\/ui · 1 commit\(s\) beyond main/.test(await p.locator("[data-term-review]").innerText()), "when it ends, Send for review appears with the branch, with no reload", await p.locator("[data-term-review]").innerText().catch(() => ""));
-  await p.locator("[data-term-send]").click();
-  // this Studio has no approved crew for code-firstmate: the refusal stays in the review row (not only a passing toast)
+  ok(await seen(p.locator('.wt-tabs [aria-selected="true"] [data-term-state="done"]'), 10000) && await p.evaluate(() => document.activeElement?.id) === "termCmd", "when it ends, its tab says done with no reload, the field keeps the focus");
+  await menu(p);
+  ok(await seen(p.locator("[data-term-menu-pop] [data-term-send]:not([disabled])"), 3000) && /agent\/ui · 1 commit\(s\) beyond main/.test(await p.locator("[data-term-review]").innerText()), "and its menu has Send for review, ready, with the branch", await p.locator("[data-term-review]").innerText().catch(() => ""));
+  await p.locator("[data-term-menu-pop] [data-term-send]").click();
+  // this Studio has no approved crew for code-firstmate: the refusal stays over the terminal (not only a passing toast)
   const refusedText = (await seen(p.locator("[data-term-review-error]"), 8000)) ? await p.locator("[data-term-review-error]").innerText() : "";
   const toastText = (await p.locator(".toast").allInnerTexts().catch(() => [])).find((x) => !/waiting for you/.test(x)) ?? "";
-  ok(/^Send for review was refused: \S/.test(refusedText) && toastText.length > 10 && refusedText.includes(toastText.split(" / ")[0].slice(0, 30)), "a refused Send for review says why, in the review row (the server's reason, in English here)", `${refusedText} | ${toastText}`);
+  ok(/^Send for review was refused: \S/.test(refusedText) && toastText.length > 10 && refusedText.includes(toastText.split(" / ")[0].slice(0, 30)), "a refused Send for review says why, over the terminal (the server's reason, in English here)", `${refusedText} | ${toastText}`);
   await new Promise((r) => setTimeout(r, 4000));
-  ok(await p.locator("[data-term-review-error]").isVisible() && await p.locator("[data-term-send]:not([disabled])").count() === 1, "the reason stays after the toast is gone, and Send for review stays available");
+  await menu(p);
+  ok(await p.locator("[data-term-review-error]").isVisible() && await p.locator("[data-term-menu-pop] [data-term-send]:not([disabled])").count() === 1, "the reason stays after the toast is gone, and Send for review stays available");
+  await unmenu(p);
   if (shots) await p.screenshot({ path: join(shots, "terminals-send-review.png") });
 
   // ---------- a paired phone ----------
@@ -148,12 +165,14 @@ try {
   await pctx.addInitScript((t) => { try { localStorage.setItem("crew.remoteToken", t); localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} }, ptok);
   const q = await pctx.newPage(); q.on("pageerror", (e) => errors.push(`phone: ${e}`));
   await q.goto(`${phoneBase}/#/terminals/${encodeURIComponent(claudeId)}`);
-  ok(await seen(q.locator("[data-term-readonly]"), 10000), "the phone gets the page, view only");
+  await seen(q.locator(".wt-stage .wt-pane"), 10000); await menu(q);
+  ok(await seen(q.locator("[data-term-menu-pop] [data-term-readonly]"), 10000), "the phone gets the page, view only (its menu says so)");
   ok(await seen(q.locator(".wt-xterm .xterm-rows"), 10000) && await until(async () => (await q.locator(".wt-xterm .xterm-rows").innerText()).includes("not shown on a phone")), "with Remote Control on, the phone says why it shows no output");
   ok(await q.locator(".wt-xterm textarea, .wt-xterm input, .wt-xterm [contenteditable]").count() === 0, "the phone's terminal has no input element (no keyboard)");
-  ok(await q.locator("[data-term-run], [data-preset], #termCmd, [data-term-kill], [data-term-restart], [data-term-dismiss]").count() === 0, "no launcher and no Stop or Restart on the phone");
+  ok(await q.locator("[data-term-menu-pop]").count() === 1 && await q.locator("[data-term-run], [data-preset], #termCmd, [data-term-new], [data-term-kill], [data-term-restart], [data-term-dismiss], [data-term-send]").count() === 0, "no launcher and no Launch, Stop, Restart or Send for review in the phone's menu");
+  await unmenu(q);
   ok(await q.locator("[data-term-remote]").count() === 0 && !(await q.content()).includes("UIFAKE789"), "the phone never gets the Remote Control link", "");
-  ok(await seen(q.locator('.wt-detail [data-term-state="waiting"]'), 6000), "and sees the same state as the Mac (waiting at Claude's prompt)");
+  ok(await seen(q.locator('.wt-tabs [aria-selected="true"] [data-term-state="waiting"]'), 6000), "and sees the same state as the Mac (waiting at Claude's prompt)");
   ok(await q.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no horizontal scroll at 390 px");
   const q2 = await pctx.newPage(); q2.on("pageerror", (e) => errors.push(`phone2: ${e}`));
   await q2.goto(`${phoneBase}/#/terminals/${encodeURIComponent(firstId)}`);
