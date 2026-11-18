@@ -109,7 +109,7 @@ type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running"
   progress: { at: string; text: string; script?: ScriptLine }[];
   /** why it stopped or failed, as a code the page words in the captain's language (stop / error keep Studio's English detail) */
   /** a stalled run: how many rounds in a row left the output unchanged */
-  stalled?: number;
+  stalled?: number; /** rounds in a row cut at the model's output limit, when that stopped the run */ cut?: number;
   why?: "captain" | "cancelled" | "limit" | "interrupted" | "closed" | "admission" | "provider" | "outputLimit" | "stalled" | "entry" | "error" | "start";
   from: number | null; version: number | null; question?: string; selection?: Selection | null; answer?: string; cites?: string[]; summary?: string; auto?: boolean;
   /** a generation's: what the captain asked this output to contain ("" = the skill's own default), trusted, part of the confirmation */
@@ -558,10 +558,10 @@ export function installExplainer(d: ExplainerDeps) {
         // a reply cut at the model's output limit is no provider failure: the next round is told to write in parts; the same
         // cut OUTPUT_LIMIT_ROUNDS rounds in a row stops the run
         const atLimit = job.status === "failed" && job.errorCode === "outputLimit"; cut = atLimit ? cut + 1 : 0;
-        if (cut >= OUTPUT_LIMIT_ROUNDS) { Object.assign(run, { status: "failed", error: clip(`${cut} rounds in a row ended at the model's output limit: Studio stopped the run. ${String(job.error ?? "")}`, 500), why: "outputLimit" }); break; }
+        if (cut >= OUTPUT_LIMIT_ROUNDS) { Object.assign(run, { status: "failed", error: clip(job.error, 1200), why: "outputLimit", cut }); break; }
         // a provider that refused or failed (not signed in, out of quota, its CLI broke) ends the run; a round that only ran out of
         // its own time or tool budget, or was cut at the output limit, is followed by the next one
-        if (job.status === "failed" && !atLimit && !/^no result within|tool limit/.test(String(job.error ?? ""))) { Object.assign(run, { status: "failed", error: clip(job.error, 500), why: "provider" }); break; }
+        if (job.status === "failed" && !atLimit && !/^no result within|tool limit/.test(String(job.error ?? ""))) { Object.assign(run, { status: "failed", error: clip(job.error, 1200), why: "provider" }); break; }
         stalled = before === outSig(ws.out) ? stalled + 1 : 0;
         if (stalled >= STALL_ROUNDS()) { Object.assign(run, { status: "failed", error: `${stalled} rounds in a row left the output unchanged: Studio stopped the run`, why: "stalled", stalled }); break; }
         save(); d.notify(k);

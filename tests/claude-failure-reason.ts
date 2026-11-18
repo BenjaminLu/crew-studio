@@ -23,6 +23,7 @@ const errEnd = (evs: any[] | any) => [evs].flat().find((e: any) => e?.type === "
   const e = errEnd(p.line({ type: "result", subtype: "error_during_execution", is_error: true, result: "API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}" }));
   ok(e?.code === "cliError" && seen.join() === "cliError", "an error result is still cliError and still invalidates readiness", JSON.stringify({ e, seen }));
   ok(/^The Claude CLI reported an error; readiness was invalidated\. Reason: /.test(e?.message ?? "") && /error_during_execution/.test(e.message) && /529/.test(e.message), "its message says the CLI reported an error, then the subtype and the 529", e?.message);
+  ok(/ \/ Claude CLI 回報錯誤；已撤銷就緒狀態。原因：result error_during_execution: API Error: 529/.test(e?.message ?? "") && e.message.split(" / ").length === 2, "the fixed sentence is in both languages (en / zh), the CLI's reason verbatim in each", e?.message);
   ok(!/authentication/.test(e?.message ?? ""), "a non-auth failure no longer blames authentication", e?.message);
   ok(p.line({ type: "assistant", message: { model: MODEL, content: [] } }).length === 0, "after the failure the parser stays closed"); }
 
@@ -36,11 +37,11 @@ const errEnd = (evs: any[] | any) => [evs].flat().find((e: any) => e?.type === "
   ok(e?.code === "cliError" && seen.join() === "cliError", "a non-zero exit is still cliError and invalidates readiness", JSON.stringify({ e, seen }));
   ok(/Reason: exit 1, no result; stderr: /.test(e?.message ?? "") && /stream closed/.test(e.message), "its message has the exit code and the stderr tail", e?.message);
   ok(!e?.message.includes(token) && !e?.message.includes("FAKEFAKE"), "the token in stderr never reaches the message", e?.message);
-  ok(!e?.message.includes(" / "), "a \" / \" in stderr cannot split the message into two languages", e?.message); }
+  ok(e?.message.split(" / ").length === 2, "a \" / \" in stderr cannot split the message into more than its two languages", e?.message); }
 
 // a long stderr is clipped
 { const { p } = fresh(); const e = p.exit!(2, "x".repeat(5000)) as any;
-  ok(e?.code === "cliError" && e.message.length < 520 && /exit 2/.test(e.message), "a long stderr is clipped", String(e?.message.length)); }
+  ok(e?.code === "cliError" && e.message.split(" / ").every((h: string) => h.length < 520 && /exit 2/.test(h)), "a long stderr is clipped", String(e?.message.length)); }
 
 // not logged in keeps its code and its auth wording
 { const { p, seen } = fresh(); const e = errEnd(p.line({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login" }));
@@ -62,7 +63,7 @@ const errEnd = (evs: any[] | any) => [evs].flat().find((e: any) => e?.type === "
 
 // a reply past the CLI's output cap: its own code, its cap named, and readiness kept
 const CUT = { type: "result", subtype: "success", is_error: true, api_error_status: null, result: "API Error: Claude's response exceeded the 300 output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable." };
-{ const { p, seen } = fresh(); const e = errEnd(p.line(CUT));
+{ const { p, seen } = fresh(); const e = errEnd(p.line({ ...CUT, modelUsage: { [MODEL]: {} } }));
   ok(claudeFailureCode(CUT) === "outputLimit" && e?.code === "outputLimit", "a reply past the output cap is outputLimit", JSON.stringify(e));
   ok(seen.length === 0, "outputLimit never invalidates readiness", JSON.stringify(seen));
   ok(/exceeded the 300-token output limit/.test(e?.message ?? "") && /300 token 的輸出上限/.test(e.message), "its message names the cap, in both languages", e?.message);
@@ -70,7 +71,23 @@ const CUT = { type: "result", subtype: "success", is_error: true, api_error_stat
 { const saved = nativeClaude.invalidate; const calls: string[] = []; (nativeClaude as any).invalidate = (c: string) => { calls.push(c); };
   try { nativeClaude.observe(CUT); nativeClaude.observe({ type: "result", subtype: "error_during_execution", is_error: true, result: "boom" }); } finally { (nativeClaude as any).invalidate = saved; }
   ok(calls.join() === "cliError", "a host event at the output cap is observed without invalidating; a real CLI error still invalidates", JSON.stringify(calls)); }
-ok(claudeFailureCode({ ...CUT, api_error_status: 400 }) !== "outputLimit" && claudeFailureCode({ ...CUT, is_error: false }) === null && claudeFailureCode({ type: "assistant", is_error: true, result: CUT.result }) === "cliError", "only an error result with that text and no API status is outputLimit (narrow)");
+// outputLimit is decided only after every fail-closed gate: tool lock, model checks, one result
+{ const seen: string[] = []; const p = claudeParser({ model: MODEL, effort: null, invalidate: (c: string) => { seen.push(c); } } as any, TOOLS);
+  const e = errEnd(p.line({ ...CUT, modelUsage: { [MODEL]: {} } }));
+  ok(e?.code === "toolsNotLocked" && seen.join() === "toolsNotLocked", "an output-cap result with no init before it is still toolsNotLocked, and invalidates", JSON.stringify({ e, seen })); }
+{ const { p, seen } = fresh(); const e = errEnd(p.line({ ...CUT, modelUsage: { "claude-other-model": {} } }));
+  ok(e?.code === "modelMismatch" && seen.join() === "modelMismatch", "an output-cap result from another model is still modelMismatch, and invalidates", JSON.stringify({ e, seen })); }
+{ const { p, seen } = fresh(); p.line({ type: "result", subtype: "success", is_error: false, result: "done", modelUsage: { [MODEL]: {} } });
+  const e = errEnd(p.line({ ...CUT, modelUsage: { [MODEL]: {} } }));
+  ok(e?.code === "cliError" && /a second result/.test(e.message) && seen.join() === "cliError", "an output-cap result after a first result is still cliError (a second result), and invalidates", JSON.stringify({ e, seen })); }
+{ const { p, seen } = fresh(); const e = errEnd(p.line({ ...CUT, modelUsage: { [MODEL]: {} } }));
+  ok(e?.code === "outputLimit" && seen.length === 0, "with the gates passed (locked, init matched, its model, first result) it is outputLimit, nothing invalidated", JSON.stringify({ e, seen })); }
+ok(claudeFailureCode({ ...CUT, subtype: "error_during_execution" }) === "cliError" && claudeFailureCode({ ...CUT, result: `tool output: ${CUT.result}` }) === "cliError", "only a success-subtype result whose text starts with the CLI's own sentence is outputLimit");
+// the round's own secrets (its tool token, which has no known shape) never reach a reason
+{ const tok = "studio-round-token-0f3a9c1d2b"; const p = claudeParser({ model: MODEL, effort: null, invalidate: () => {} } as any, TOOLS, [tok]);
+  const e = p.exit!(1, `mcp relay failed with token ${tok}\n`) as any;
+  ok(e?.code === "cliError" && /mcp relay failed/.test(e.message) && !e.message.includes(tok), "the round's tool token in stderr is redacted from the reason", e?.message); }
+ok(claudeFailureCode({ ...CUT, api_error_status: 400 }) !== "outputLimit" &&claudeFailureCode({ ...CUT, is_error: false }) === null && claudeFailureCode({ type: "assistant", is_error: true, result: CUT.result }) === "cliError", "only an error result with that text and no API status is outputLimit (narrow)");
 
 // the spawned CLI gets Studio's output cap, overridable within bounds
 { const dir = mkdtempSync(join(tmpdir(), "crew-claude-cap-")), stub = join(dir, "stub.mjs"), tokenFile = join(dir, "token"); writeFileSync(tokenFile, "t");

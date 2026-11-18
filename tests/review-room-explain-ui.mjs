@@ -614,7 +614,8 @@ try {
     }
     ok(looks.every((l) => l.ok), "at 1440, 900 and 390, light and dark, English and 繁體中文: no sideways scroll, Full screen in reach, the field inside its dialog, Confirm in view with long instructions (the dialog's footer stays), the words in the captain's language", JSON.stringify(looks.filter((l) => !l.ok)));
     // a provider failure shows the CLI's reason, a long one with an unbroken path included, inside its box at phone width
-    { const long = `The Claude CLI reported an error; readiness was invalidated. Reason: exit 1, no result; stderr: ${"/private/var/folders/".repeat(12)}cli.js:1 | ${"fatal stream error ".repeat(14)}`.slice(0, 470);
+    { const why = `exit 1, no result; stderr: ${"/private/var/folders/".repeat(12)}cli.js:1 | ${"fatal stream error ".repeat(14)}`.slice(0, 400);
+      const long = `The Claude CLI reported an error; readiness was invalidated. Reason: ${why} / Claude CLI 回報錯誤；已撤銷就緒狀態。原因：${why}`;
       const c7 = await browser.newContext({ viewport: { width: 390, height: 844 } });
       await c7.addInitScript(() => { try { sessionStorage.setItem("keep-lang", "1"); localStorage.setItem("crew.lang", "en"); } catch {} });
       let Z = { ...X, selected: { id: "walkthrough", v: 1 }, versions: [], running: null, consent: null, runs: [run(1, "generate", "failed", { why: "provider", error: long })] };
@@ -624,18 +625,22 @@ try {
       const f = await q.$eval('[data-explain-ended="provider"]', (e) => { const r = e.getBoundingClientRect(), s = e.querySelector("small"), sr = s?.getBoundingClientRect();
         return { text: e.textContent, inBox: !!sr && sr.right <= r.right + 0.5 && sr.left >= r.left, over: document.documentElement.scrollWidth > innerWidth + 1, boxIn: r.right <= innerWidth + 0.5 }; });
       await q.screenshot({ path: join(shots, "15-provider-reason.png") });
-      ok(/The model's provider reported an error\./.test(f.text) && /Reason: exit 1, no result; stderr:/.test(f.text) && f.inBox && f.boxIn && !f.over, "a provider failure shows its reason under the headline, wrapped inside its box at 390 px", JSON.stringify({ ...f, text: f.text.slice(0, 160) }));
+      ok(/The model's provider reported an error\./.test(f.text) && /Reason: exit 1, no result; stderr:/.test(f.text) && !/readiness|CLI reported|原因/.test(f.text) && f.inBox && f.boxIn && !f.over, "a provider failure shows only its reason under the headline (no repeated sentence, no internal words), wrapped inside its box at 390 px", JSON.stringify({ ...f, text: f.text.slice(0, 160) }));
       // a run stopped because its replies kept hitting the model's output limit says so, in both languages
-      const cutErr = "2 rounds in a row ended at the model's output limit: Studio stopped the run. The model's reply exceeded the 64000-token output limit; write large files in several smaller writes. / 模型的回覆超過 64000 token 的輸出上限；大檔案請分幾次寫入。";
+      const cutErr = "The model's reply exceeded the 64000-token output limit; write large files in several smaller writes. / 模型的回覆超過 64000 token 的輸出上限；大檔案請分幾次寫入。";
       Z = { ...Z, runs: [run(1, "generate", "failed", { why: "outputLimit", error: cutErr })] };
       await q.reload(); await q.waitForSelector('[data-explain-ended="outputLimit"]', { timeout: 15000 });
       const en = await q.$eval('[data-explain-ended="outputLimit"]', (e) => e.textContent);
       const c8 = await browser.newContext({ viewport: { width: 390, height: 844 } });
       await c8.addInitScript(() => { try { sessionStorage.setItem("keep-lang", "1"); localStorage.setItem("crew.lang", "zh-TW"); } catch {} });
       await routes(c8, () => Z); const qz = await c8.newPage(); qz.on("pageerror", (e) => errors.push(e.message));
-      await qz.goto(`${base}/#/room/${ID}`); await qz.waitForSelector('[data-explain-ended="outputLimit"]', { timeout: 15000 });
+      const zhRun = Z; Z = { ...Z, runs: [run(1, "generate", "failed", { why: "provider", error: long })] };
+      await qz.goto(`${base}/#/room/${ID}`); await qz.waitForSelector('[data-explain-ended="provider"]', { timeout: 15000 });
+      const pz = await qz.$eval('[data-explain-ended="provider"]', (e) => e.textContent); Z = zhRun;
+      ok(/模型供應商回報錯誤。/.test(pz) && /原因：exit 1, no result/.test(pz) && !/就緒|Reason:|readiness/.test(pz), "in 繁體中文 the provider failure shows the headline and only 原因：…", pz.slice(0, 200));
+      await qz.reload(); await qz.waitForSelector('[data-explain-ended="outputLimit"]', { timeout: 15000 });
       const zh = await qz.$eval('[data-explain-ended="outputLimit"]', (e) => e.textContent); await c8.close();
-      ok(/hit its output limit twice in a row/.test(en) && /64000-token output limit/.test(en) && /連續兩次碰到輸出上限/.test(zh) && /64000 token 的輸出上限/.test(zh), "a run stopped at the output limit says so, with the cap, in English and 繁體中文", JSON.stringify({ en, zh }));
+      ok(/hit its output limit twice in a row/.test(en) && /64000-token output limit/.test(en) && !/rounds in a row ended/.test(en) && /連續兩次碰到輸出上限/.test(zh) && /64000 token 的輸出上限/.test(zh), "a run stopped at the output limit says so, with the cap, in English and 繁體中文", JSON.stringify({ en, zh }));
       await c7.close(); }
   }
   ok(!errors.length, "no page error", errors.join(" | "));

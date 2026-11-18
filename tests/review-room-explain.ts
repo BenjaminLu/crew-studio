@@ -214,7 +214,7 @@ ok(/cut at the model's output limit/.test(prompts.at(-1)!.text) && /out_write wi
 script.push([["out_write", { path: "a1.html", content: "1" }], ["fail", CUT]], [["out_write", { path: "a2.html", content: "2" }], ["fail", CUT]], [["explain_done", { entry: "a1.html", summary: "never reached" }]]);
 await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
 const cut2 = await waitRun(X.view(id).runs.at(-1).n); script.length = 0;
-ok(cut2.status === "failed" && cut2.why === "outputLimit" && cut2.rounds.length === 2 && /2 rounds in a row ended at the model's output limit/.test(cut2.error), "two rounds in a row cut at the output limit stop the run, with its own why", JSON.stringify(cut2));
+ok(cut2.status === "failed" && cut2.why === "outputLimit" && cut2.rounds.length === 2 && cut2.cut === 2 && cut2.error === CUT.message, "two rounds in a row cut at the output limit stop the run, with its own why", JSON.stringify(cut2));
 script.push([["fail", { code: "cliError", message: "The Claude CLI reported an error; readiness was invalidated. Reason: exit 1" }]]);
 await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
 const cliRun = await waitRun(X.view(id).runs.at(-1).n);

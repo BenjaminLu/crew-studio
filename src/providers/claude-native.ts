@@ -31,8 +31,8 @@ export function isClaudeExecutionAdmission(cap:ProviderCapability,p:ClaudePair):
 const DENIAL=/rate.?limit|usage.?limit|quota|insufficient_quota|credits.?required|credit balance|spend.?limit|billing|payment|required.*credit|429/i;
 /** The CLI's own cap on one reply's output tokens, when a result says the reply passed it (its number), else null. */
 export function claudeOutputLimit(m:any):number|null{
- if(m?.type!=='result'||m.is_error!==true||typeof m.result!=='string'||(m.api_error_status??null)!==null)return null;
- const x=/exceeded the (\d+) output token maximum/.exec(m.result);return x?Number(x[1]):null;
+ if(m?.type!=='result'||m.subtype!=='success'||m.is_error!==true||typeof m.result!=='string'||(m.api_error_status??null)!==null)return null;
+ const x=/^API Error: Claude's response exceeded the (\d+) output token maximum/.exec(m.result);return x?Number(x[1]):null;
 }
 /** A failure that is the reply's own length, not the login or the CLI: it never invalidates readiness. */
 export const CLAUDE_NON_REFUSAL=new Set(['outputLimit']);
