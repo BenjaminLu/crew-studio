@@ -57,7 +57,9 @@ rl.on("line", async (line) => {
         // a read tool (src/observe/tools.ts) declares an outputSchema: its result also goes as structuredContent, its trust note
         // (_meta["studio/trust"]) as the result's _meta; the text copy stays for a client that reads only content
         if (!r?.error && r && typeof r === "object" && (structured ??= await listStructured()).has(name)) { const { _meta, ...data } = r as any;
-          return reply({ content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data, isError: false, ...(_meta ? { _meta } : {}) }); }
+          // a search's hits also go as resource_link content blocks (studio://kind/id), the form MCP clients list as links
+          const links = (Array.isArray(data.items) ? data.items : []).map((x: any) => x?.resource_link).filter((l: any) => l?.type === "resource_link" && typeof l.uri === "string");
+          return reply({ content: [{ type: "text", text: JSON.stringify(data) }, ...links], structuredContent: data, isError: false, ...(_meta ? { _meta } : {}) }); }
         return reply({ content: mcpContent(r), isError: !!r?.error }); // a picture (a reviewer's image read) goes as an image block
       }
       default: return fail(-32601, `unknown method ${m.method}`);
