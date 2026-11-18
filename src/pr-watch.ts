@@ -161,7 +161,7 @@ export type RawRow = {
   id: string; repo: string; number: number; url: string; title: string; author: string; draft: boolean; single: boolean; base: string; headRef: string; head: string;
   createdAt: string; labels: string[]; bodyBlock: string | null; githubDeps: string[] | null; bodyMalformed: boolean;
   issues: { ref: string; url: string; title: string | null; state: string | null; external: boolean }[];
-  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[];
+  reviews: R.ReviewView[]; approvals: R.Approvals; evidence: R.Evidence | null; ci?: string | null; envs: { name: string; on: boolean | null; production: boolean; auto?: boolean; pods?: R.EnvPod[] }[];
   facts: R.PrFacts; partial: string[];
   /** each reviewer's latest review with its words (and the inline comments of that review) read by rules: the kind of
    *  request and the sentence that says it (src/pr-watch-follow.ts) */
@@ -171,7 +171,7 @@ export type RawRow = {
 };
 /** A merged pull request on its way to production: each environment is on when its commit contains the merge commit. */
 export type MergedRow = { id: string; repo: string; number: number; url: string; title: string; author: string; single: boolean; base: string; mergedAt: string; mergeSha: string;
-  envs: { name: string; on: boolean | null; production: boolean; auto?: boolean }[]; deps: string[]; body: string; partial: string[];
+  envs: { name: string; on: boolean | null; production: boolean; auto?: boolean; pods?: R.EnvPod[] }[]; deps: string[]; body: string; partial: string[];
   /** what it asks for before it goes live (src/pr-watch-release.ts), each with the address it came from */
   ops: Rel.Op[] };
 export type Snapshot = { schema: 1; at: string | null; me: string | null; rows: RawRow[]; errors: { target: string; en: string; tw: string }[]; single: Record<string, string>;
@@ -474,30 +474,34 @@ export function createPrWatch(d: PrWatchDeps) {
         const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return String(dep.sha); }
       return null; });
     /** whether an environment runs `head`; for a merged pull request (`merged`) `head` is its merge commit, and an environment
-     *  has it when the commit it runs contains it (a later deployment carries every earlier merge) */
-    const envOn = async (e: R.EnvFor, repo: string, head: string, checks: any[], merged = false): Promise<boolean | null> => {
+     *  has it when the commit it runs contains it (a later deployment carries every earlier merge). A detect of several
+     *  manifests also says, per service, the tag it runs and whether that one has it (`pods`). */
+    const envOn = async (e: R.EnvFor, repo: string, head: string, checks: any[], merged = false): Promise<{ on: boolean | null; pods?: R.EnvPod[] }> => {
       try {
         const dt = e.detect;
-        if (merged && dt.kind === "deployment") { const dep = await successful(repo, `environment=${enc(dt.environment)}`); return dep ? await contains(repo, head, dep) : false; }
-        if (dt.kind === "check") return checks.some((c) => eq(String(c.name), dt.name) && c.status === "completed" && ["success", "neutral"].includes(String(c.conclusion)));
-        if (dt.kind === "deployed") { const dep = await deployedOn(repo, dt.environment); if (!dep) return false;
-          if (++autoCompares > AUTO_COMPARES) return null; // past the cap a refresh reads no more: shown as not read, never as off
-          return await contains(repo, head, dep); }
-        if (dt.kind === "deployment") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || String(dep.sha) !== head || !Number.isSafeInteger(dep.id)) return false;
-          const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); return ["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : "")); }
-        if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep || !Number.isSafeInteger(dep.id)) return false;
+        if (merged && dt.kind === "deployment") { const dep = await successful(repo, `environment=${enc(dt.environment)}`); return { on: dep ? await contains(repo, head, dep) : false }; }
+        if (dt.kind === "check") return { on: checks.some((c) => eq(String(c.name), dt.name) && c.status === "completed" && ["success", "neutral"].includes(String(c.conclusion))) };
+        if (dt.kind === "deployed") { const dep = await deployedOn(repo, dt.environment); if (!dep) return { on: false };
+          if (++autoCompares > AUTO_COMPARES) return { on: null }; // past the cap a refresh reads no more: shown as not read, never as off
+          return { on: await contains(repo, head, dep) }; }
+        if (dt.kind === "deployment") { const dep = await latestDeploy(repo, `environment=${enc(dt.environment)}`); if (!dep || String(dep.sha) !== head || !Number.isSafeInteger(dep.id)) return { on: false };
+          const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); return { on: ["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : "")) }; }
+        if (dt.kind === "branch") { const dep = await latestDeploy(repo, `ref=${enc(dt.branch)}${dt.environment ? `&environment=${enc(dt.environment)}` : ""}`); if (!dep || !Number.isSafeInteger(dep.id)) return { on: false };
           // a failed, pending or inactive deployment of the branch runs nothing: only a successful (or active) one counts
-          const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (!["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return false;
-          return await contains(repo, head, String(dep.sha)); }
-        // one manifest, or several (a repository deployed as several services): it has the commit when every one does;
-        // a tag that ends in no commit (9.9.9) is looked up among the repository's git tags
-        let all: boolean | null = true;
-        for (const f of R.filesOf(dt)) { const text = await contents(f.repository, f.path, f.ref ?? null); if (text == null) { all = null; continue; }
-          const tag = R.tagOf(text, f.template); if (!tag) return false;
-          const sha = R.commitOfTag(tag) ?? await tagSha(repo, tag); if (!sha) { all = null; continue; }
-          const on = await contains(repo, head, sha); if (on === false) return false; if (on === null) all = null; }
-        return all;
-      } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return null; }
+          const st = await g.get(`${repoPath(repo)}/deployments/${dep.id}/statuses?per_page=1`); if (!["success", "active"].includes(String(Array.isArray(st) ? st[0]?.state : ""))) return { on: false };
+          return { on: await contains(repo, head, String(dep.sha)) }; }
+        // one manifest, or several (a repository deployed as several services): it has the commit when any one runs it
+        // (R.anyOn); a tag that ends in no commit (9.9.9) is looked up among the repository's git tags. Every manifest is
+        // read, so the row can say which services still run an older tag.
+        const pods: R.EnvPod[] = [];
+        for (const f of R.filesOf(dt)) { const pod: R.EnvPod = { service: Env.serviceOf(f.path), repository: f.repository, path: f.path, tag: null, on: null }; pods.push(pod);
+          try { const text = await contents(f.repository, f.path, f.ref ?? null); if (text == null) continue;
+            const tag = R.tagOf(text, f.template); if (!tag) { pod.on = false; continue; } pod.tag = tag;
+            const sha = R.commitOfTag(tag) ?? await tagSha(repo, tag); if (!sha) continue;
+            pod.on = await contains(repo, head, sha); }
+          catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; } }
+        return { on: R.anyOn(pods.map((x) => x.on)), ...(pods.length > 1 ? { pods } : {}) };
+      } catch (err) { if (err instanceof RateLimited || err instanceof OverBudget) throw err; return { on: null }; }
     };
     // a repository's own GitHub environments, used when the settings name none (at most 6, production last)
     const envCache = new Map<string, Promise<R.EnvFor[]>>();
@@ -598,7 +602,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const evidence = R.evidenceOf(s.settings.evidence, { comments, labels: (p.labels ?? []).map((l: any) => String(l?.name ?? "")), head, commits, headSeenAt: seen && seen.sha === head ? seen.at : null,
         checks: checks.map((c: any) => ({ name: String(c.name ?? ""), status: String(c.status ?? ""), conclusion: c.conclusion ? String(c.conclusion) : null, at: c.completed_at ? String(c.completed_at) : null, url: c.html_url ? String(c.html_url) : null })) });
       const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : R.envsFor(s.settings.environments, repo);
-      const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: await envOn(e, repo, head, checks), ...(auto ? { auto: true } : {}) })));
+      const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, ...await envOn(e, repo, head, checks), ...(auto ? { auto: true } : {}) })));
       const reviewers = new Set(reviews.map((x) => x.login.toLowerCase()));
       // without the reviews (or comments) read, reviewers cannot be told apart: such a row offers no one
       if (!partial.includes("reviews") && !partial.includes("comments")) for (const c of comments) { const k = c.login.toLowerCase(); if (!k || k === author.toLowerCase() || k === me.toLowerCase() || reviewers.has(k) || k.endsWith("[bot]") || /(?:^|[-_])bot$|^bot[-_]/.test(k) || !R.NAME.test(c.login)) continue;
@@ -623,7 +627,7 @@ export function createPrWatch(d: PrWatchDeps) {
       const n = Number(p.number), mergeSha = String(p.merge_commit_sha ?? ""), partial: string[] = [], body = String(p.body ?? "").slice(0, 65536);
       const auto = !s.settings.environments.length, envList = auto ? await repoEnvs(repo) : R.envsFor(s.settings.environments, repo);
       const checks = SHA.test(mergeSha) && envList.some((e) => e.detect.kind === "check") ? await soft(async () => (await g.get(`${repoPath(repo)}/commits/${mergeSha}/check-runs?per_page=100`))?.check_runs ?? [], [] as any[], partial, "checks") : [];
-      const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, on: SHA.test(mergeSha) ? await envOn(e, repo, mergeSha, checks, true) : null, ...(auto ? { auto: true } : {}) })));
+      const envs = await Promise.all(envList.map(async (e) => ({ name: e.name, production: e.production, ...(SHA.test(mergeSha) ? await envOn(e, repo, mergeSha, checks, true) : { on: null }), ...(auto ? { auto: true } : {}) })));
       if (!SHA.test(mergeSha)) partial.push("merge commit");
       // the changed files with their patches: what the diff adds is scanned for the release brief's items
       const files = SHA.test(mergeSha) ? await soft(async () => (await g.pages(`${repoPath(repo)}/pulls/${n}/files`, 3)).map((f: any) => ({ filename: String(f.filename ?? ""), status: String(f.status ?? ""), patch: typeof f.patch === "string" ? f.patch.slice(0, 200_000) : null })), [] as Rel.ChangedFile[], partial, "files") : [];
@@ -1574,7 +1578,7 @@ export function createPrWatch(d: PrWatchDeps) {
           // no tag: say why (none has these merges yet; every one that has them also carries a later batch; or CI failed)
           if (!after) { problem ??= !lack.contains ? "tag" : lack.laterBy.size && lack.red < lack.contains ? "order" : "ci"; prevTag.set(key, { name: "", sha: null }); }
           const [pre, post] = dt.template.split("{tag}");
-          lines.push({ env: e.name, repository: dt.repository, path: dt.path, before: before ? `${pre}${before}${post}` : null, after: after ? `${pre}${after}${post}` : null, oldTag: before, newTag: after, ci, problem, laterBy: [...lack.laterBy] }); }
+          lines.push({ env: e.name, service: Env.serviceOf(dt.path), repository: dt.repository, path: dt.path, before: before ? `${pre}${before}${post}` : null, after: after ? `${pre}${after}${post}` : null, oldTag: before, newTag: after, ci, problem, laterBy: [...lack.laterBy] }); }
         units.push({ repo, unit: repo.split("/")[1], prs: b.filter((id) => eq(row(id).repo, repo)), lines, carries: [...carries], noFile: !prodFiles.length }); }
       batches.push({ n: i + 1, of: plan.batches.length, prs: b.map((id) => ({ id: row(id).id, title: row(id).title, url: row(id).url })), units,
         added: plan.added.filter((a) => b.some((x) => eq(x, a.id))), forced: plan.forced.filter((f) => b.some((x) => eq(x, f.pr))),

@@ -250,12 +250,23 @@ function rowView(r, d) {
     h("span", { role: "cell", class: "pw-ci" }, ciBadge(r.ci)),
     h("span", { role: "cell" }, depCell(r)),
     h("span", { role: "cell" }, evBadge(r.evidence, d)),
-    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, "data-prs-env-auto": e.auto ? e.name : null, title: (e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`)) + (e.auto ? T(" (a GitHub environment of this repository: its latest successful deployment contains the head or not; set environments in Settings to choose)", "（這個 repo 的 GitHub 環境：看它最近一次成功的 deployment 有沒有包含這個 head；要自己挑環境請到設定）") : "") }, e.name)) : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, "data-prs-env-auto": e.auto ? e.name : null, title: (e.on ? T(`${e.name}: runs this head`, `${e.name}：跑著這個 head`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name}: not this head`, `${e.name}：沒有`)) + (e.pods ? `\n${podsWord(e.pods)}` : "") + (e.auto ? T(" (a GitHub environment of this repository: its latest successful deployment contains the head or not; set environments in Settings to choose)", "（這個 repo 的 GitHub 環境：看它最近一次成功的 deployment 有沒有包含這個 head；要自己挑環境請到設定）") : "") }, e.name)) : h("span", { class: "faint" }, "—")),
     h("span", { class: "pw-revs", role: "cell" }, groupChips(r), r.reviews.length || !(r.approvals?.groups || []).length ? (r.reviews.length ? r.reviews.map((x) => h("span", { class: `badge ${x.state === "APPROVED" && !x.stale ? "ok" : x.state === "CHANGES_REQUESTED" ? "bad" : ""}`, title: `${reviewWord(x.state)}${x.stale ? T(" (an older head)", "（較舊的 head）") : ""}${x.author ? T(" (the author: does not count)", "（作者本人：不算）") : ""}` },
       x.login, x.state === "CHANGES_REQUESTED" ? " ✕" : x.stale ? T(" (stale)", "（舊）") : "")) : h("span", { class: "faint" }, "—")) : null),
     h("span", { class: "pw-iss", role: "cell" }, issueCell(r)),
     h("span", { role: "cell" }, groupCell(r, d)));
   return el;
+}
+// an environment read from several manifests (one repository deployed as several services): each service, whether it
+// runs the commit (✓ ✗ ?) and the tag it runs. Live when any one runs it, so a service still on an older tag is only a
+// muted hint (docs/units/pr-watch.md "Find environments automatically").
+const podMark = (x) => x.on ? "✓" : x.on === null ? "?" : "✗";
+const podsWord = (pods) => pods.map((x) => `${x.service} ${podMark(x)} ${x.tag || T("(not read)", "（讀不到）")}`).join(" · ");
+function podsLine(e) {
+  const behind = e.on ? e.pods.filter((x) => x.on !== true) : [];
+  return h("small", { class: "faint pw-pods", "data-prs-pods": e.name, title: e.name },
+    h("span", { class: "mono" }, `${e.name}: `, ...e.pods.flatMap((x, i) => [i ? h("span", { class: "pw-podsep" }, " · ") : "", h("span", { "data-prs-pod": x.service, "data-on": x.on === null ? "unknown" : String(x.on) }, `${x.service} ${podMark(x)} ${x.tag || T("(not read)", "（讀不到）")}`)])),
+    behind.length ? h("span", { "data-prs-pods-behind": e.name }, T(`still on an older tag: ${behind.map((x) => x.service).join(", ")}`, `還在舊 tag：${behind.map((x) => x.service).join("、")}`)) : null);
 }
 // ---------- merged pull requests, followed until production ----------
 const shipRows = () => (PW.data?.merged || []).filter((r) => r.tab === PW.tab);
@@ -298,7 +309,8 @@ function shipRow(r, i) {
       : r.tab === "merged" ? h("button", { class: "btn sm pw-shipby", "data-prs-mark-live": r.id, title: T("Studio cannot see it in production? Move it to Live by hand (can be undone)", "Studio 看不到它上線？手動移到「已上線」（可撤銷）"), onclick: () => markLive([r.id]) }, T("Mark in production", "標記已上線")) : null),
     h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono", title: r.mergeSha || "" }, (r.mergeSha || "—").slice(0, 7)), h("small", {}, T(`merged ${span(Date.now() - Date.parse(r.mergedAt))} ago`, `${span(Date.now() - Date.parse(r.mergedAt))}前合併`))),
     h("span", { class: "pw-next", role: "cell" }, h("span", { class: "mono pw-unit" }, r.unit), r.deps.length ? h("small", { "data-prs-ship-deps": "" }, T("depends on ", "依賴 "), r.deps.map((x) => short(x.id, r.repo)).join(", ")) : null),
-    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: e.on ? T(`${e.name} has the merge commit`, `${e.name} 已有這個 merge commit`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name} does not have it yet`, `${e.name} 還沒有`) }, e.name)) : h("span", { class: "faint" }, "—")),
+    h("span", { class: "pw-envs", role: "cell" }, r.envs.length ? [...r.envs.map((e) => h("span", { class: `pw-env${e.on ? " on" : ""}${e.on === null ? " unk" : ""}`, title: (e.on ? T(`${e.name} has the merge commit`, `${e.name} 已有這個 merge commit`) : e.on === null ? T(`${e.name}: could not be read`, `${e.name}：讀不到`) : T(`${e.name} does not have it yet`, `${e.name} 還沒有`)) + (e.pods ? `\n${podsWord(e.pods)}` : "") }, e.name)),
+      ...r.envs.filter((e) => e.pods).map((e) => podsLine(e))] : h("span", { class: "faint" }, "—")),
     h("span", { class: "pw-revs", role: "cell", "data-prs-ops": r.id }, r.ops?.length ? opBadges(r.ops) : h("span", { class: "faint" }, "—")));
 }
 // ---------- the release brief ----------
@@ -337,7 +349,7 @@ function briefText(b, P) {
   // no production environment reads this unit's tag from a file: a neutral note for whoever reads the text (the dialog
   // offers Set up production beside it, setupProd)
   const lines = b.units.flatMap((u) => u.noFile ? [P(`${u.repo} · image tag: not tracked (no production environment reads it from a file)`, `${u.repo} · image tag：未追蹤（沒有 production 環境從檔案讀它）`)]
-    : u.lines.map((l) => `${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
+    : u.lines.map((l) => `${u.lines.length > 1 && l.service ? `${l.service}: ` : ""}${l.repository} · ${l.path}\n- ${l.before ?? (l.problem === "previous" ? P("(batch before's new tag: none could be built)", "（前一批的新 tag：還建不出來）") : P("(the current line could not be read)", "（讀不到現在那一行）"))}\n+ ${l.after ?? noTag(l, P)}${l.after && l.ci === "none" ? `\n${P(`Note: no CI ran on ${l.newTag}`, `注意：${l.newTag} 沒有跑過任何 CI`)}` : ""}${u.carries.length ? `\n${P(`Note: ${l.newTag} also carries ${u.carries.map(hash).join(", ")}, not selected`, `注意：${l.newTag} 也帶了沒勾選的 ${u.carries.map(hash).join("、")}`)}` : ""}`));
   const added = b.added.map((a) => P(`${hash(a.id)} was added: ${hash(a.for)} depends on it`, `${hash(a.id)} 是補進來的：${hash(a.for)} 依賴它`));
   const ops = b.ops.map((o) => `- [${opTag(o, P)}] ${opText(o, P)} (${o.url})`);
   return [P("Please open a deploy pull request following the team's rules", "請照團隊規範開一個部署 PR") + order, "", lines.join("\n\n"), "", P("Includes: ", "包含：") + b.prs.map((p) => title(p.id)).join(P("; ", "；")),
@@ -467,7 +479,7 @@ function detail(r) {
         h("h3", {}, T("Reviews", "Reviews")), r.reviews.length ? r.reviews.map((x) => h("div", { class: "kv" }, h("span", {}, x.login, x.author ? T(" (author)", "（作者）") : ""), h("span", {}, reviewWord(x.state), x.stale ? T(" · stale", " · 舊 head") : ""))) : h("span", { class: "faint" }, T("none", "無")),
         h("h3", {}, T("Test evidence", "測試證據")), r.evidence ? [h("div", { class: "kv" }, h("span", {}, `${r.evidence.by}${r.evidence.at ? ` · ${day(r.evidence.at)}` : ""} (${r.evidence.source})`), h("span", {}, verdictWord(r.evidence.verdict))),
           h("div", { class: "kv" }, h("span", {}, T("Covers the current head", "涵蓋目前的 head")), h("span", {}, r.evidence.covers === "head" ? T("yes", "是") : r.evidence.covers === "older" ? T(`no, it tested ${r.evidence.since || "an older head"}`, `否，驗的是 ${r.evidence.since || "較舊的 head"}`) : r.evidence.covers === "unknown" ? T("unknown: commit not named", "不確定：沒指明 commit") : T("not tied to a commit", "沒有綁定 commit")))] : h("span", { class: "faint" }, T("none", "沒有")),
-        h("h3", {}, T("Environments", "環境")), r.envs.length ? r.envs.map((e) => h("div", { class: "kv" }, h("span", {}, e.name, e.production ? T(" (production)", "（正式）") : ""), h("span", {}, e.on ? T("runs this head", "跑著這個 head") : e.on === null ? T("could not be read", "讀不到") : T("no", "沒有")))) : h("span", { class: "faint" }, T("none set", "未設定"))),
+        h("h3", {}, T("Environments", "環境")), r.envs.length ? r.envs.map((e) => h("div", { class: "kv" }, h("span", {}, e.name, e.production ? T(" (production)", "（正式）") : ""), h("span", {}, e.on ? T("runs this head", "跑著這個 head") : e.on === null ? T("could not be read", "讀不到") : T("no", "沒有")), e.pods ? podsLine(e) : null)) : h("span", { class: "faint" }, T("none set", "未設定"))),
       h("div", { class: "card x-pad pw-dl" },
         h("h3", {}, T("How the next step was found", "下一步怎麼算出來的")),
         h("ol", { class: "pw-rules", "data-prs-rules": "" }, rules.map((x, i) => h("li", { class: x.id === n.rule ? "hit" : n.matched?.[i] ? "" : "no", "data-rule": x.id }, T(x.en, x.tw), x.id === n.rule ? T(" ← this one", " ← 這條") : ""))),
@@ -693,17 +705,21 @@ function slackChecks() {
 }
 // ---------- environments (docs/units/pr-watch.md "Find environments automatically") ----------
 const MAX_ENVS = 20;
-const detectWord = (d) => !d ? "—" : d.kind === "files" ? T(`${d.files.length} manifests in ${d.files[0]?.repository} (every one must run it)`, `${d.files[0]?.repository} 的 ${d.files.length} 個 manifest（每個都要跑到）`) : d.kind === "deployment" ? T(`GitHub environment ${d.environment}`, `GitHub 環境 ${d.environment}`) : d.kind === "file" ? `${d.repository} · ${d.path}` : d.kind === "check" ? T(`check run ${d.name}`, `check run ${d.name}`) : d.kind === "branch" ? T(`branch ${d.branch}`, `branch ${d.branch}`) : d.kind;
+const detectWord = (d) => !d ? "—" : d.kind === "files" ? T(`${d.files.length} manifests in ${d.files[0]?.repository} (live when any one runs it)`, `${d.files[0]?.repository} 的 ${d.files.length} 個 manifest（任一個跑到就算上線）`) : d.kind === "deployment" ? T(`GitHub environment ${d.environment}`, `GitHub 環境 ${d.environment}`) : d.kind === "file" ? `${d.repository} · ${d.path}` : d.kind === "check" ? T(`check run ${d.name}`, `check run ${d.name}`) : d.kind === "branch" ? T(`branch ${d.branch}`, `branch ${d.branch}`) : d.kind;
 const reposWord = (n) => T(`${n} repositor${n === 1 ? "y" : "ies"}`, `${n} 個 repo`);
 const prodBadge = () => h("span", { class: "badge ok" }, T("live", "上線"));
 // the repositories the page watches (a single pull request's repository too)
 const watchedRepos = () => [...new Map([...(PW.data?.watch?.repos || []).map((w) => w.repo), ...(PW.data?.watch?.prs || []).map((x) => String(x.id || x).split("#")[0])].filter(Boolean).map((r) => [r.toLowerCase(), r])).values()];
+// what the last refresh read from one manifest of a several-service detect (its service and the tag it runs), from any
+// row of that repository
+const podSeen = (env, repo, f) => { for (const r of [...(PW.data?.rows || []), ...(PW.data?.merged || [])]) { if (String(r.repo || String(r.id || r.pr || "").split("#")[0]).toLowerCase() !== repo.toLowerCase()) continue;
+  const pod = r.envs?.find((x) => x.name === env)?.pods?.find((x) => x.repository === f.repository && x.path === f.path); if (pod) return pod; } return null; };
 // the environments as set: one card each, with every repository it covers and how
 function envSummary(envs) {
   const set = envs.filter((e) => e.name);
   if (!set.length) return [];
   return set.map((e) => { const each = e.each || [], all = e.detect?.kind && e.detect.kind !== "none";
-    const items = [...each.flatMap((x) => x.detect?.kind === "files" ? x.detect.files.map((f) => [x.repo, `${f.repository} · ${f.path}`]) : [[x.repo, detectWord(x.detect)]]), ...(all ? [[(e.repos || []).length ? (e.repos || []).join(", ") : T("every other repository", "其他所有 repo"), detectWord(e.detect)]] : [])];
+    const items = [...each.flatMap((x) => x.detect?.kind === "files" ? x.detect.files.map((f) => { const pod = podSeen(e.name, x.repo, f); return [x.repo, `${pod ? `${pod.service} · ` : ""}${f.repository} · ${f.path}${pod?.tag ? ` · ${pod.tag}` : ""}`]; }) : [[x.repo, detectWord(x.detect)]]), ...(all ? [[(e.repos || []).length ? (e.repos || []).join(", ") : T("every other repository", "其他所有 repo"), detectWord(e.detect)]] : [])];
     return h("div", { class: "pw-envcard", "data-prs-envsum": e.name },
       h("div", { class: "pw-envcard-h" }, h("b", {}, e.name), e.production ? prodBadge() : null, h("span", { class: "faint pw-small" }, each.length ? reposWord(each.length) : all && !(e.repos || []).length ? T("every repository", "所有 repo") : reposWord((e.repos || []).length))),
       items.length ? h("ul", { class: "pw-envcard-l" }, ...items.slice(0, 8).map(([r, w]) => h("li", {}, h("span", { class: "mono" }, r), " ", h("span", { class: "faint" }, w))),
@@ -725,12 +741,16 @@ function discoverModal(o = {}) {
   const base = structuredClone(PW.data?.settings || {});
   let phase = "sources", src = null, cfg = PW.data?.envConfig?.repository || "", ref = PW.data?.envConfig?.ref || "", folder = PW.data?.envConfig?.path || "", cfgOn = true, depOn = true;
   let res = null, error = null, saving = false, done = false, progress = null, asked = "", showSet = false;
-  const choice = new Map(), rowOn = new Map(), prod = {}, prod0 = {};
+  const choice = new Map(), rowOn = new Map(), prod = {}, prod0 = {}, fileOff = new Set(); // fileOff: `${candidate}|${i}` of a several-service candidate's manifests left unticked
   const box = h("div", { class: "pw-dl pw-disc-box", "data-prs-discover": "", "data-phase": "sources" }), err = h("p", { class: "pw-err", role: "alert", hidden: true });
   const usable = (c) => !c.problem;
   const groupsOf = (repo) => (res?.groups || []).filter((g) => g.repo === repo);
   const included = (g) => rowOn.get(g.repo) !== false;
-  const picks = () => (res?.groups || []).filter(included).flatMap((g) => { const c = g.candidates.find((x) => x.id === choice.get(g.id)); return c ? [{ repo: g.repo, env: g.env, detect: c.detect }] : []; });
+  // a several-service candidate saves only its ticked manifests (one left: a single file)
+  const picks = () => (res?.groups || []).filter(included).flatMap((g) => { const c = g.candidates.find((x) => x.id === choice.get(g.id)); if (!c) return [];
+    if (c.detect.kind !== "files") return [{ repo: g.repo, env: g.env, detect: c.detect }];
+    const fs = c.detect.files.filter((_, i) => !fileOff.has(`${c.id}|${i}`));
+    return fs.length ? [{ repo: g.repo, env: g.env, detect: fs.length === 1 ? { kind: "file", ...fs[0] } : { kind: "files", files: fs } }] : []; });
   const open = () => (res?.groups || []).filter((g) => included(g) && g.state === "pick" && choice.get(g.id) == null);
   const flags = () => (res?.envs || []).filter((e) => e.existing && !!prod[e.name] !== !!prod0[e.name]).length;
   // the footer: Accept with what it saves, or what is still needed (a link to the first pick)
@@ -754,7 +774,7 @@ function discoverModal(o = {}) {
     if (phase === "scan") return; error = null; asked = ref.trim(); go("scan");
     const poll = setInterval(async () => { try { progress = await getJ("/api/prs/envs/progress"); if (phase === "scan") draw(); } catch {} }, 400);
     try { const got = await postJ("/api/prs/envs/discover", { config: cfgOn ? cfg.trim() : "", ref: cfgOn ? asked : "", path: cfgOn ? folder.trim() : "", deployments: depOn }); if (closed || got.cancelled) return; res = got;
-      choice.clear(); rowOn.clear(); showSet = false;
+      choice.clear(); rowOn.clear(); fileOff.clear(); showSet = false;
       for (const g of res.groups) choice.set(g.id, g.state === "ok" ? g.candidates[0].id : g.state === "set" || !g.candidates.some(usable) ? "skip" : null);
       for (const e of res.envs) prod[e.name] = prod0[e.name] = e.production;
       go("review"); box.querySelector("[data-prs-discover-summary]")?.focus(); }
@@ -764,12 +784,21 @@ function discoverModal(o = {}) {
   // what tied this line's image and tag to the repository, right under the line
   const sigLine = (e) => e.signals?.length ? h("span", { class: "pw-small pw-disc-sig", "data-prs-discover-signals": "" }, e.signals.map(signalWord).join(" · ")) : null;
   const pathLink = (e) => h("a", { href: e.url, target: "_blank", rel: "noopener noreferrer", class: "mono pw-small pw-path" }, ...`${e.path}:${e.line}`.split("/").flatMap((x, i, a) => i < a.length - 1 ? [`${x}/`, h("wbr", {})] : [x]));
-  const evidence = (c) => h("div", { class: "pw-disc-ev" },
+  // a repository deployed as several services: a row per manifest (its service, path, the image:tag it runs now and its
+  // proof), each with its own tick when `tick` (on: it can be changed)
+  const podRows = (c, tick) => { const all = [c.evidence, ...(c.evidence.more || [])];
+    return h("div", { class: "pw-disc-pods", "data-prs-discover-pods": c.id },
+      ...all.map((m, i) => { const k = `${c.id}|${i}`;
+        return h("div", { class: "pw-disc-pod", "data-prs-discover-pod": m.path },
+          h("label", { class: "pw-disc-podh" }, tick ? h("input", { type: "checkbox", "data-prs-discover-file": k, checked: !fileOff.has(k), disabled: !tick.on, "aria-label": T(`${m.service || m.path}: count this manifest`, `${m.service || m.path}：採用這個 manifest`), onchange: (e) => { e.target.checked ? fileOff.delete(k) : fileOff.add(k); foot_(); } }) : null,
+            h("b", { class: "pw-small" }, m.service || m.path)),
+          h("span", { class: "pw-disc-ev" }, pathLink(m), m.image ? h("code", { class: "pw-disc-line", "data-prs-discover-runs": "" }, `${noHost(m.image)}:${m.tag}`) : null, sigLine(m))); }),
+      h("span", { class: "faint pw-small" }, T(`${all.length} services: live when any ticked one runs it`, `${all.length} 個服務：勾選的任一個跑到就算上線`))); };
+  const evidence = (c, tick = null) => c.evidence.more?.length ? h("div", { class: "pw-disc-ev" }, podRows(c, tick),
+    c.evidence.alsoFor?.length ? h("span", { class: "pw-small pw-warn", "data-prs-discover-also": "" }, T(`also proposed for ${c.evidence.alsoFor.join(", ")}`, `也被提議給 ${c.evidence.alsoFor.join("、")}`)) : null) : h("div", { class: "pw-disc-ev" },
     c.evidence.path ? pathLink(c.evidence) : extLink(c.evidence.url, T(c.evidence.text, c.evidence.tw || c.evidence.text), { class: "pw-small" }),
     c.evidence.path ? h("code", { class: "pw-disc-line" }, c.evidence.text) : null,
     sigLine(c.evidence),
-    ...(c.evidence.more || []).flatMap((m) => [pathLink(m), sigLine(m)]),
-    c.evidence.more?.length ? h("span", { class: "faint pw-small" }, T(`${c.evidence.more.length + 1} services: live when every one runs it`, `${c.evidence.more.length + 1} 個服務：每個都跑到才算上線`)) : null,
     c.evidence.alsoFor?.length ? h("span", { class: "pw-small pw-warn", "data-prs-discover-also": "" }, T(`also proposed for ${c.evidence.alsoFor.join(", ")}`, `也被提議給 ${c.evidence.alsoFor.join("、")}`)) : null,
     c.strength === "weak" ? h("span", { class: "pw-small pw-warn" }, c.evidence.signals?.some((x) => x.kind !== "name" && x.kind !== "label") ? T("the proofs point at more than one repository", "證據指向不只一個 repo") : T("the image's name only resembles the repository's", "image 名稱只是和 repo 名相近")) : null,
     c.problem ? h("span", { class: "pw-small pw-warn" }, PROBLEM[c.problem]()) : null);
@@ -780,13 +809,13 @@ function discoverModal(o = {}) {
     const cur = choice.get(g.id), on = included(g), need = on && g.state === "pick" && cur == null;
     const kids = [];
     if (g.state === "set") { const c = g.candidates.find((x) => JSON.stringify(x.detect) === JSON.stringify(g.current)) || g.candidates[0]; kids.push(h("span", { class: "pw-chip set" }, T("already set", "已設定")), evidence(c)); }
-    else if (g.state === "ok") { const c = g.candidates[0], rest = g.candidates.length - 1;
-      kids.push(h("label", { class: "pw-disc-cand" }, h("input", { type: "checkbox", "data-prs-discover-tick": g.id, checked: cur === c.id, disabled: !on, "aria-label": T(`${repo} ${env}: use this`, `${repo} ${env}：採用`), onchange: (e) => { choice.set(g.id, e.target.checked ? c.id : "skip"); foot_(); } }), h("span", { class: "pw-chip" }, srcWord(c))), evidence(c),
+    else if (g.state === "ok") { const c = g.candidates[0], rest = g.candidates.length - 1, several = !!c.evidence.more?.length;
+      kids.push(several ? h("span", { class: "pw-chip" }, srcWord(c)) : h("label", { class: "pw-disc-cand" }, h("input", { type: "checkbox", "data-prs-discover-tick": g.id, checked: cur === c.id, disabled: !on, "aria-label": T(`${repo} ${env}: use this`, `${repo} ${env}：採用`), onchange: (e) => { choice.set(g.id, e.target.checked ? c.id : "skip"); foot_(); } }), h("span", { class: "pw-chip" }, srcWord(c))), evidence(c, { on }),
         rest ? h("span", { class: "faint pw-small" }, rest === 1 ? T("1 other line names this image but says no commit: left out", "另有 1 行寫了這個 image 但看不出 commit：不採用") : T(`${rest} other lines name this image but say no commit: left out`, `另有 ${rest} 行寫了這個 image 但看不出 commit：不採用`)) : null); }
     else { const n = g.candidates.filter(usable).length;
       kids.push(h("span", { class: "pw-chip amb" }, n > 1 ? T(`${n} possible, pick one`, `${n} 個可能，挑一個`) : T("check and pick", "確認後挑選")),
         h("div", { class: "pw-disc-pick", role: "radiogroup", "aria-label": T(`${repo} ${env}: pick one`, `${repo} ${env}：挑一個`) },
-          ...g.candidates.map((c) => h("label", { class: "pw-disc-cand" }, h("input", { type: "radio", name: `pick-${g.id}`, value: c.id, "data-prs-discover-pick": c.id, disabled: !on || !usable(c), checked: cur === c.id, onchange: () => { choice.set(g.id, c.id); draw(); } }), h("span", { class: "pw-disc-opt" }, h("span", { class: "pw-chip" }, srcWord(c)), evidence(c)))),
+          ...g.candidates.map((c) => h("label", { class: "pw-disc-cand" }, h("input", { type: "radio", name: `pick-${g.id}`, value: c.id, "data-prs-discover-pick": c.id, disabled: !on || !usable(c), checked: cur === c.id, onchange: () => { choice.set(g.id, c.id); draw(); } }), h("span", { class: "pw-disc-opt" }, h("span", { class: "pw-chip" }, srcWord(c)), evidence(c, { on: on && usable(c) })))),
           h("label", { class: "pw-disc-cand" }, h("input", { type: "radio", name: `pick-${g.id}`, value: "skip", "data-prs-discover-skip": g.id, disabled: !on, checked: cur === "skip", onchange: () => { choice.set(g.id, "skip"); draw(); } }),
             h("span", { class: "pw-small" }, g.current ? T(`Keep what is set (${detectWord(g.current)})`, `保留現在的設定（${detectWord(g.current)}）`) : T("Leave it out", "不設定"))))); }
     return h("div", { class: `pw-disc-cell${need ? " need" : ""}`, role: "cell", "data-prs-discover-group": `${repo}|${env}`, "data-state": g.state, "data-need": need ? "" : null }, lbl, ...kids);
@@ -882,7 +911,7 @@ function settingsModal(o = {}) {
   const cb = (k, en, tw) => h("label", { class: "pw-check" }, h("input", { type: "checkbox", "data-prs-which": k, checked: !!s.which?.[k], onchange: (e) => { s.which[k] = e.target.checked; } }), " ", T(en, tw));
   const csv = (key, label, get, set) => h("label", { class: "field" }, h("span", { class: "lbl" }, label), h("input", { class: "input", "data-prs-set": key, value: get().join(", "), oninput: (e) => set(e.target.value.split(",").map((x) => x.trim()).filter(Boolean)) }));
   const envBox = h("div", { class: "pw-envset", "data-prs-envs": "" }), sumBox = h("div", { class: "pw-envsum", "data-prs-envs-summary": "" });
-  const KINDS = [["deployment", T("GitHub Deployment to an environment", "GitHub Deployment 到某個環境")], ["check", T("A check run by name on the head", "head 上某個名稱的 check run")], ["branch", T("The latest deployment of a branch containing the head", "某個 branch 最新的部署包含這個 head")], ["file", T("An image tag in a file in a repository", "某個 repo 的檔案裡的 image tag")], ["files", T("Image tags in several files (every one must run it)", "多個檔案裡的 image tag（每個都要跑到）")]];
+  const KINDS = [["deployment", T("GitHub Deployment to an environment", "GitHub Deployment 到某個環境")], ["check", T("A check run by name on the head", "head 上某個名稱的 check run")], ["branch", T("The latest deployment of a branch containing the head", "某個 branch 最新的部署包含這個 head")], ["file", T("An image tag in a file in a repository", "某個 repo 的檔案裡的 image tag")], ["files", T("Image tags in several files (live when any one runs it)", "多個檔案裡的 image tag（任一個跑到就算上線）")]];
   const NONE = ["none", T("Only each repository's own (below)", "只用下面各 repo 自己的偵測")];
   const FIELDS = { deployment: [["environment", T("environment", "環境名稱")]], check: [["name", T("check run name", "check run 名稱")]], branch: [["branch", "branch"], ["environment", T("environment (optional)", "環境名稱（可省略）")]], file: [["repository", "owner/repo"], ["path", T("path", "路徑")], ["template", "image: registry/app:{tag}"], ["ref", T("ref (optional)", "ref（可省略）")]] };
   const firstEmpty = (e) => e === added ? (FIELDS[e.detect?.kind] || []).find(([f]) => f !== "ref" && !e.detect?.[f])?.[0] ?? null : null;

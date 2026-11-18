@@ -133,10 +133,22 @@ list with the matched rule highlighted. Every text from GitHub is set as text, n
     repositories says "also proposed for"; a manifest already set for another repository is not proposed again and is
     listed as left out, with that repository. GitHub deployments are read before the image matching, so matching can
     never spend the budget they need.
-  - A repository whose image runs as several services in one environment (one image, many service folders): every one
-    of those manifests is its detect for that environment (`files`), and the environment has a merge when **every**
-    manifest runs it (one lagging service keeps it not live). A line of the same image Studio cannot read a commit from
-    (a version no git tag has, a second line read first) is shown but does not make the cell a pick.
+  - A repository whose image runs as several services in one environment (one image, many service folders, a monorepo
+    deployed as several pods): the cell shows a row per manifest, each with its own tick, its service (the file name
+    unless that is a layout word such as deployment, kustomization, values or flux-patch, or an environment; else the
+    deepest folder that is neither), its path, the image:tag it runs now and its proof. Every strong, readable row starts
+    ticked; only the ticked ones are saved (`files`, or `file` when one is left; none ticked leaves the cell out). A line
+    of the same image Studio cannot read a commit from (a version no git tag has, a second line read first) is shown as
+    its own candidate and does not make the cell a pick.
+  - **Live with several manifests** (`files`; `anyOn` in src/pr-watch-rules.ts): the environment has a merge when
+    **any** of its manifests runs it (a release often rolls out one service and leaves the others on an older tag of
+    the same repository). When none does: unknown when one of them could not be read (the file, or a tag that names
+    no commit and no git tag), else off. Each manifest is read every refresh and the environment carries each one's
+    service, tag and status (`pods`: ✓ runs it, ✗ does not, ? not read), shown as `storefront ✓ 1.2.0-abc1234 ·
+    checkout ✗ 1.1.9-def5678` in a row's environment tooltip, under a merged row's environments (with a muted "still on an
+    older tag: …" when it is live but a service is not), in the details, and on the settings card (each service with the
+    tag it runs, from the last refresh); the release brief names each line's service. A `files` detect saved by an older
+    Studio keeps working with this rule, and an older Studio still loads what this one saves.
   - Live with a version-only tag: a refresh resolves the tag through the repository's git tags (three pages, once a
     refresh) to its commit before checking that it contains the merge commit. A tag that is neither (latest, a
     version no git tag has) makes the environment "not read" (unknown), never off.
@@ -611,7 +623,14 @@ sends nothing) and `/follow/slack-dm {card,login,text,name}` (the confirmed Slac
     environments (and an interleaved one left apart), the review table (ticked, pick, set, skipped), Accept saving one
     production for two repositories, a refresh then reading production from the accepted manifest, nothing written to
     GitHub, the budget and its message, a truncated tree, a rate limit; in the page Cancel saving nothing, the picks
-    holding Accept, Advanced's per-repository rows, and screenshots at 1440 and 390, light and dark.
+    holding Accept, Advanced's per-repository rows, and screenshots at 1440 and 390, light and dark. A repository
+    deployed as several services (`bun tests/pr-watch-envs-real.ts`, `bun tests/pr-watch-envs-ui.mjs`): a row and a tick
+    per manifest with its service, path and image:tag, only the ticked one saved ("web-app staging saved with the ticked
+    manifest only"); live when one service of three runs the merge with each service's status and tag on the row ("one
+    service of three (storefront) runs the merge …", "each service's status and the tag it runs …"); unknown when none
+    runs it and one cannot be read, off when none runs it ("none runs it and one service cannot be read: unknown …", "a
+    merge no service runs: off …"); the muted hint on a live row and each service's tag on the settings card ("a merge
+    one service runs is live; …", "the settings card lists each service with the tag it runs").
 
 Touches outside the unit's own files: public/backbone.js (the sidebar item and its count), public/index.html (the script
 and stylesheet), src/server.ts (the routes, the install, the timer), src/runtime/defs.ts and tests/lan-workflows.ts (the

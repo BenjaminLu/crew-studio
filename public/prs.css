@@ -176,6 +176,9 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-disc-cand{display:flex;gap:6px;align-items:flex-start;min-width:0}.pw-disc-cand>input{margin-top:3px}
 .pw-disc-cand>*,.pw-disc-ev>:not(.pw-path){min-width:0;overflow-wrap:anywhere}
 .pw-disc-ev{display:flex;gap:4px 6px;align-items:baseline;flex-wrap:wrap;min-width:0}.pw-disc-ev a{overflow-wrap:anywhere}.pw-disc-ev a.pw-path{overflow-wrap:break-word}
+.pw-disc-pods{display:grid;gap:6px;flex-basis:100%;min-width:0}.pw-disc-pod{display:grid;gap:2px;min-width:0;border-left:2px solid var(--border);padding-left:6px}
+.pw-disc-podh{display:flex;gap:6px;align-items:center;min-width:0}.pw-disc-podh>b{overflow-wrap:anywhere}
+.pw-pods{display:block;flex-basis:100%;overflow-wrap:anywhere;line-height:1.45}.pw-pods>.mono>span,.pw-pods>[data-prs-pods-behind]{display:block}.pw-pods>.mono>.pw-podsep{display:none}
 .pw-disc-line{font:11.5px var(--f-mono);background:var(--surface-2);border-radius:4px;padding:1px 5px;overflow-wrap:anywhere;max-width:100%}
 .pw-chip{display:inline-flex;align-items:center;font:500 11px var(--f-mono);border-radius:5px;padding:1px 6px;background:var(--ok-soft);color:var(--ok);width:max-content;max-width:100%}
 .pw-chip.amb{background:color-mix(in srgb,var(--warn) 16%,var(--surface));color:var(--warn)}
