@@ -200,7 +200,8 @@ try {
       const g = grants.issue({ scopes: ["observe"], observe: { preset: "review" }, ttl: "1h" }, "captain").grant, t = tokenOf(g.id), before = audit.length;
       const admitted = Array.from({ length: 6 }, () => grants.use(t, "studio_get")).filter((x) => x.ok).length;
       assert.equal(admitted, Math.floor(100000 / RESERVE_BYTES), "only as many calls as their held bytes fit are admitted before any answers");
-      for (let i = 0; i < 4; i++) grants.use(t, "studio_get");
+      const over = grants.use(t, "studio_get"); assert.ok(!over.ok && /4 of them still answering and holding 24576 bytes each; every call holds 24576 bytes up front/.test(over.error), JSON.stringify(over));
+      for (let i = 0; i < 3; i++) grants.use(t, "studio_get");
       const refusals = audit.slice(before).filter((a) => a.type === "cli_grant_refused" && a.data.why === "hourly budget").length;
       assert.equal(refusals, 1, `one audit line for the burst of refusals, not one per call (${refusals})`);
       for (let i = 0; i < admitted; i++) grants.charge(g.id, 200);
@@ -219,6 +220,10 @@ try {
     const { observeGrant } = await import("../src/cli-grants");
     const v = observeGrant({ id: "g-00000009", project: "", scopes: ["observe"], observe: { preset: "custom", kinds: ["room", "terminal", "settings", "peer", "grant", "focus"], untrusted: false } });
     assert.deepEqual(v!.kinds, ["room"]);
+    // and the board lists the kinds it really reads, not the edited ones
+    const g = grants.issue({ scopes: ["observe"], observe: { preset: "review" }, ttl: "1h" }, "captain").grant, f = join(H.data, "cli-grants.json");
+    const all = JSON.parse(readFileSync(f, "utf8")); for (const x of all) if (x.id === g.id) x.observe.kinds = ["room", "terminal", "settings"]; writeFileSync(f, JSON.stringify(all));
+    assert.deepEqual(grants.list().find((x) => x.id === g.id)!.observe!.kinds, ["room"]); grants.revoke(g.id, "captain");
   });
 } finally { for (const r of E.list()) if (!["failed", "cancelled", "succeeded"].includes(r.status)) await E.cancel(r.id); H.stop(); }
 console.log(failed ? "\ncli-grant: FAILED" : "\ncli-grant: all passed");

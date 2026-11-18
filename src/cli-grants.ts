@@ -94,7 +94,9 @@ export class CliGrants {
   get(id: string): CliGrant | null { return this.read().find((g) => g.id === id) ?? null; }
   view(g: CliGrant): GrantView { const { tokenHash: _h, usage, ...rest } = g; const state = this.stateOf(g), u = windowOf(usage);
     const used = { calls: u.length, bytes: u.reduce((n, x) => n + x.bytes, 0) }, full = used.calls >= ROLLING.calls() || used.bytes + RESERVE_BYTES > ROLLING.bytes();
-    return { ...rest, state, file: state === "active" && existsSync(this.tokenFile(g.id)) ? this.tokenFile(g.id) : null,
+    // the kinds the grant really reads: the stored ones, filtered as the read path filters them (observeGrant)
+    const effective = rest.observe ? { ...rest.observe, kinds: observeGrant({ ...g, scopes: ["observe"] })?.kinds ?? [] } : rest.observe;
+    return { ...rest, ...(rest.observe ? { observe: effective } : {}), state, file: state === "active" && existsSync(this.tokenFile(g.id)) ? this.tokenFile(g.id) : null,
       budget: { ...used, maxCalls: ROLLING.calls(), maxBytes: ROLLING.bytes(), usedUp: full, freesAt: full && u.length ? new Date(u[0].at + ROLLING.windowMs).toISOString() : null } }; }
   list(): GrantView[] { const all = this.read(); for (const g of all) if (this.stateOf(g) !== "active") rmSync(this.tokenFile(g.id), { force: true }); return all.map((g) => this.view(g)).reverse(); }
   active(id: string) { const g = this.get(id); return !!g && this.stateOf(g) === "active"; }
@@ -147,7 +149,8 @@ export class CliGrants {
     // the bytes of calls still answering are held at RESERVE_BYTES each, so concurrent or slow callers cannot pass the budget
     const now = Date.now(), w = windowOf(g.usage, now), bytes = w.reduce((n, x) => n + x.bytes, 0);
     if (w.length >= ROLLING.calls() || bytes + RESERVE_BYTES > ROLLING.bytes()) { const again = new Date((w[0]?.at ?? now) + ROLLING.windowMs).toISOString();
-      const error = `grant ${g.id} used its hourly budget (${w.length} of ${ROLLING.calls()} calls, ${bytes} of ${ROLLING.bytes()} bytes in the last hour); it frees up from ${again}`;
+      const held = w.filter((x) => x.pending).length;
+      const error = `grant ${g.id} used its hourly budget (${w.length} of ${ROLLING.calls()} calls, ${bytes} of ${ROLLING.bytes()} bytes in the last hour${held ? `, ${held} of them still answering and holding ${RESERVE_BYTES} bytes each` : ""}; every call holds ${RESERVE_BYTES} bytes up front until its answer is counted); it frees up from ${again}`;
       // one audit line a minute per grant while it is over (with how many were not written), not one per call
       const o = this.overAt.get(g.id); if (o && now - o.at < 60_000) { o.quiet++; return { ok: false, status: 429, error }; }
       const quiet = o?.quiet ?? 0; this.overAt.set(g.id, { at: now, quiet: 0 });
