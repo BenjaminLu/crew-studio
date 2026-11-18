@@ -30,7 +30,8 @@ export const HANDOFF_HANDLER = "cloud-handoff";
 export const FIRE_TEXT_MAX = 65_536;
 export const FIRE_ORIGIN = "https://api.anthropic.com";
 const ROUTINE_ID = /^trig_[A-Za-z0-9]{6,120}$/;
-const SESSION_ID = /^session_[A-Za-z0-9]{6,120}$/;
+// the documented example is session_…; the live API answers cse_…: any short lower-case prefix, its URL checked exactly
+const SESSION_ID = /^[a-z]{2,16}_[A-Za-z0-9]{6,120}$/;
 const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const SHA = /^[a-f0-9]{40}$/;
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");

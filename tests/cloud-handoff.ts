@@ -12,7 +12,8 @@ import { CloudSetupStore, declaredTestCommands, ClaudeRoutineProvider, FIRE_TEXT
 import { redactText } from "../src/secure";
 import { SECRET_DIRS } from "../src/runtime/checks";
 import { must } from "../src/git";
-import { FIXTURE_ROUTINE, FIXTURE_TOKEN, routineFireStub } from "./lib/routine-fire-stub";
+import { FIXTURE_ROUTINE, FIXTURE_TOKEN, routineFireStub, sessionUrl } from "./lib/routine-fire-stub";
+import { SESSION_LINK } from "../src/domain/pull-template";
 
 const { ok, end } = suite("cloud-handoff");
 const temp = checkedTempDir("cloud-handoff-");
@@ -53,6 +54,10 @@ const temp = checkedTempDir("cloud-handoff-");
     }
     stub.set({ status: 200, body: { type: "routine_fire", claude_code_session_id: "session_01Fixture9999", claude_code_session_url: "https://example.invalid/x" } });
     const odd: any = await p.fire(setup, "odd"); ok(!odd.ok && odd.lost === true, "an answer without a matching claude.ai session URL is refused, and says a session may have started", JSON.stringify(odd));
+    // the live API answers cse_… ids (the documentation's example says session_…): seen in the end-to-end run against api.anthropic.com
+    const live = "cse_01FixtureLiveShape"; stub.set({ status: 200, body: { claude_code_session_id: live, claude_code_session_url: sessionUrl(live), type: "routine_fire" } });
+    const cse: any = await p.fire(setup, "live shape"); ok(cse.ok && cse.sessionId === live && cse.url === sessionUrl(live), "the live answer's cse_ session id is taken", JSON.stringify(cse));
+    ok(SESSION_LINK.test(sessionUrl(live)) && SESSION_LINK.test(sessionUrl("session_01Fixture")), "a cse_ session link counts as a session link (never published, flagged at take-back)");
     const before = stub.calls.length, long: any = await p.fire(setup, "x".repeat(FIRE_TEXT_MAX + 1));
     ok(!long.ok && stub.calls.length === before && /65536/.test(long.en), "text over 65,536 characters is never sent");
     stub.stop(); const lost: any = await p.fire(setup, "nobody there");
