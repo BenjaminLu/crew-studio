@@ -1,6 +1,6 @@
 // Tasks (task:R-162): the board's Tasks list row (src/runtime/task-row.ts) and Task page, as an agent reads them.
 // A Task whose text is withheld from Firstmate (engine.redacted: a peer's Studio, issue text) shows its state, never its words.
-import { registerKind, type Entity, type Sources } from "../registry";
+import { registerKind, sinceOf, timePage, type Entity, type Sources } from "../registry";
 import { taskRow } from "../../runtime/task-row";
 import type { Engine, Run } from "../../runtime/engine";
 
@@ -51,6 +51,19 @@ function taskData(s: Sources, r: Run, full: boolean): Record<string, unknown> {
   }
   return out;
 }
+/** studio_logs task:R-…: each step's progress (its round, model, cost, checks) and the Task's events after `since`. */
+function taskLogs(s: Sources, r: Run, o: { tail: number; since: string | null }) {
+  const engine = s.engine, withheld = withheldOf(engine, r), since = sinceOf(o.since), jobs = (engine.deps as any).agents?.jobs as Map<string, any> | undefined;
+  const label = (n: string) => r.def?.nodes?.find((x: any) => x.id === n)?.label ?? n;
+  // one timeline, steps (at their latest change) and events, paged by time: the cursor is the last entry shown
+  const steps = (r.steps ?? []).map((x) => ({ k: "step" as const, at: x.endedAt ?? x.startedAt, v: { seq: x.seq, node: x.node, label: label(x.node), kind: x.kind, visit: x.visit, state: x.state, outcome: x.outcome,
+    startedAt: x.startedAt, endedAt: x.endedAt, provider: x.provider, model: x.model, effort: x.effort ?? null, cost: (x.job && jobs?.get(x.job)?.cost) ?? null, checks: x.checks ?? [], ...(withheld ? {} : { error: x.error }) } }));
+  let ev: any[] = []; try { ev = engine.timeline(r.id, 0); } catch { ev = []; }
+  const events = ev.map((e: any) => ({ k: "event" as const, at: e.ts ?? e.at ?? null, v: { seq: e.seq, type: e.type, node: e.node ?? null, edge: e.edge ?? null, state: typeof e.state === "string" ? e.state : null, at: e.ts ?? e.at ?? null } }));
+  const pg = timePage([...steps, ...events], (x) => x.at, since.at, o.tail);
+  return { cursor: pg.cursor, updatedAt: r.updatedAt ?? null, data: { status: r.status, current: taskRow(engine, r).current ?? null, steps: pg.page.filter((x) => x.k === "step").map((x) => x.v), events: pg.page.filter((x) => x.k === "event").map((x) => x.v),
+    shown: pg.page.length, more: pg.more, ...(withheld ? { withheld } : {}) } };
+}
 const entity = (s: Sources, r: Run): Entity => {
   const withheld = withheldOf(s.engine, r);
   const row = taskRow(s.engine, r);
@@ -72,6 +85,14 @@ registerKind({
     { path: "externalTitle", trust: "untrusted", source: "a Task title an external CLI wrote" }, { path: "externalRequest", trust: "untrusted", source: "a Task request an external CLI wrote" }, { path: "cancelReason", trust: "captain" }, { path: "execution.title", trust: "captain" },
     { path: "error", trust: "untrusted", source: "the failing step's error output" },
     { path: "failure.message", trust: "untrusted", source: "the failing step's underlying message" },
+  ],
+  pages: ["change", "court"],
+  logCursor: "time",
+  logs: (s, id, o) => { const r = s.engine.get(id); if (!r) return null; return taskLogs(s, r, o); },
+  logFields: [
+    ...["status", "current", "steps[].seq", "steps[].node", "steps[].label", "steps[].kind", "steps[].visit", "steps[].state", "steps[].outcome", "steps[].startedAt", "steps[].endedAt", "steps[].provider", "steps[].model", "steps[].effort",
+      "steps[].cost", "steps[].checks", "events", "shown", "more", "withheld"].map((path) => ({ path, trust: "studio" as const })),
+    { path: "steps[].error", trust: "untrusted", source: "the step's error output" },
   ],
   list: (s, filter) => s.engine.list().filter((r) => (filter.archived === true || !r.archived) && (!filter.status || r.status === filter.status) && (filter.active !== true || !ENDED.includes(r.status)) && (!filter.workflow || r.workflow === filter.workflow)).map((r) => entity(s, r)),
   get: (s, id) => { const r = s.engine.get(id); return r ? entity(s, r) : null; },
