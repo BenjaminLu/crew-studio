@@ -143,10 +143,14 @@ export const shortSummary = (input: unknown, n = 160): string => {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 };
 
-export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean;signal?:AbortSignal;
+export type NativeMainTools={specs:{type:"function";name:string;description:string;inputSchema:unknown;/** a read tool's result schema (src/observe/registry.ts ENVELOPE_SCHEMA): the MCP helper returns its result as structuredContent */outputSchema?:unknown;/** MCP tool annotations (readOnlyHint …): hints to the client, never Studio's gate */annotations?:Record<string,unknown>}[];call(name:string,args:unknown,owner:{key:string;captain:boolean;text:string;live:()=>boolean;signal?:AbortSignal;
  /** a Studio gate-repair turn: the ref its queued item carried (never parsed from text) */ repair?:{draft:string;nonce:string}|null;
  /** an external CLI grant's start_run (src/cli-grants.ts): the proposal carries the grant's id in its `by`, never a captain decision */ origin?:{grant:string;staffing?:Record<string,string>|null}|null}):Promise<unknown>};
 
+/** Firstmate's native tools as Claude's MCP helper lists them (src/host/claude.ts, src/mcp.ts): with the read tools' outputSchema and annotations. */
+export const mcpToolList=(specs:NativeMainTools["specs"])=>specs.map(t=>({name:t.name,description:t.description,inputSchema:t.inputSchema,...(t.outputSchema?{outputSchema:t.outputSchema}:{}),...(t.annotations?{annotations:t.annotations}:{})}));
+/** The same tools as Codex's dynamic tools take them (src/host/codex.ts): the same names, descriptions and input schemas. */
+export const codexDynamicTools=(specs:NativeMainTools["specs"])=>specs.map(t=>({type:t.type,name:t.name,description:t.description,inputSchema:t.inputSchema}));
 /** Only trusted source code constructs public recovery guidance; arbitrary exceptions stay private. */
 export type NativeFailure={schema:1;code:string;reason:{en:string;'zh-TW':string};nextAction:string;retryable:boolean;correlationId?:string;diagnosticRecorded?:boolean};
 export class NativeToolFailure extends Error {

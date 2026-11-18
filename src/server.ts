@@ -80,6 +80,7 @@ import { createImprove } from "./improve";
 import { createChanges } from "./changes";
 import { createProjectOverview } from "./project-overview";
 import { createPrWatch, FOLLOW_WORKFLOW } from "./pr-watch";
+import { FocusStore, readReport } from "./observe/focus";
 import { FOLLOW_BRANCHES } from "./pr-watch-follow";
 import { createM7 } from "./m7";
 import { createDocs } from "./docs";
@@ -211,6 +212,8 @@ setInterval(() => {
 gh.onChange = s => send("github", s);
 // Pull requests (#/prs, docs/units/pr-watch.md): every pull request the captain is on, read on the shared poller under its own key
 const prWatch = createPrWatch({ dataDir: DATA, poller: githubPoller, notify: (t, d) => send(t, d) });
+// what the captain is looking at, in memory only (src/observe/focus.ts): the board reports it, studio_now reads it
+const focus = new FocusStore(DATA);
 setInterval(() => send("ping", Date.now()), 20_000);
 
 // --- the firstmate MAIN session (M2.5): Studio drives it, one input at a time ---
@@ -510,7 +513,7 @@ const gateLogins = () => {
 };
 
 const verifyOnboardingTeam=teamVerifier({dataDir:DATA,agents,select:pick=>nativeSelection({role:'worker',host:null,explicit:true,provider:pick.provider,model:pick.model,effort:pick.effort,configured:{[pick.provider]:{model:pick.model,effort:pick.effort}},fallback:[],known:[pick.provider]})});
-const runtime = createRuntime({providerLogins:()=>gateLogins(),onboardingProvider:()=>main.view().host??(codexAccount.view().authenticated?'codex':cursorAccount().key==='present'?'cursor':null),onboardingTeamVerify:verifyOnboardingTeam,onboardingTeamContext:teamProbeContext,coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},
+const runtime = createRuntime({prs:()=>prWatch,focus,providerLogins:()=>gateLogins(),onboardingProvider:()=>main.view().host??(codexAccount.view().authenticated?'codex':cursorAccount().key==='present'?'cursor':null),onboardingTeamVerify:verifyOnboardingTeam,onboardingTeamContext:teamProbeContext,coffeeVideo:coffeeTools.ready?(request=>renderCoffeeFilm(request,coffeeTools)):undefined,coffeeFilmStatus:{ready:coffeeTools.ready,reason:coffeeTools.ready?null:coffeeTools.reason},
   // the Workflows page shows pr-follow read-only: started from the Pull requests page's follow-through, off by default
   internalAbout:id=>id===FOLLOW_WORKFLOW?{label:{en:"Follow-through",zh:"跟進"},startedFrom:{href:"#/prs",en:"Pull requests → Settings → Follow-through",zh:"Pull requests → 設定 → 跟進"},enabled:!!prWatch.state.settings.follow?.enabled,branches:Object.entries(FOLLOW_BRANCHES).map(([branch,b])=>({branch,...b}))}:null,startupModel:provider=>{const settings=chatSettings();return provider==="claude"?claudePrimaryPair().model:provider==="cursor"?cursorModel(settings.models.cursor):settings.models.codex||process.env.CREW_CODEX_MODEL||runtimeCodexConfig().model;},coffeeChoice:()=>{const config=runtimeCodexConfig(),model=chatSettings().models.codex||process.env.CREW_CODEX_MODEL||config.model;return model?{provider:"codex",model,effort:config.effort}:null;}, staffingApproved:a=>{if(main.view().context==='studio'&&main.view().state!=='detached')main.enqueue('card',staffingApprovedTurn(a),'studio-native');},staffingPending:intent=>{if(main.view().context==="studio"&&main.view().state!=="detached")main.enqueue("card",`Project registered for: ${intent.work.text}. No workflow work has started. Offer one complete available default staffing plan and optional advanced customization. If the captain requests defaults, adopt them in one turn, then show the real configuration approval card before dispatch. / 專案已註冊，工作尚未開始。請提供一組可用預設配置；船長選擇採用時一次記錄整組，再顯示真正的配置核准卡。進階自訂可選，不必逐角色訪談。`,"studio-native");},staffingAdmission:role=>role.provider==='claude'&&staffingClaudeCapabilities.some(cap=>isClaudeExecutionAdmission(cap,{model:role.model,effort:role.effort})),staffingVerify,staffingFacts:async(o)=>{const settings=chatSettings(),model=settings.models.claude||process.env.CREW_CLAUDE_MODEL||'claude-sonnet-5-5',pair={model,effort:configuredClaudeEffort(model)};const cursorPick=cursorModel(settings.models.cursor);const [cap,claude,inventory,cursor]=await Promise.all([probeCodex(),probeClaudeNative(pair),nativeClaude.models({fresh:o?.fresh}),probeCursorChecked([cursorPick])]);staffingClaudeCapabilities=nativeClaude.verifiedCapabilities();const verified=new Map<string,Set<string>>();for(const cap of staffingClaudeCapabilities)for(const m of cap.models){let efforts=verified.get(m.id);if(!efforts)verified.set(m.id,efforts=new Set());for(const effort of claudeEfforts(m.id))if(isClaudeExecutionAdmission(cap,{model:m.id,effort}))efforts.add(effort);}
   // models: what passed exact execution (readiness); candidates: every model the installed CLI offers (the choices)
@@ -776,6 +779,18 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       try { rules.set({ project }, b.text, "captain"); } catch (e: any) { const m = String(e?.message ?? e); return json({ error: m, ...(/cannot be read/.test(m) ? { code: "rulesUnreadable" } : {}) }, /cannot be read/.test(m) ? 409 : 400); }
       studioLog.emit({ type: "operating_rules_changed", workflow: "studio", actor: "captain", summary: project ? `operating rules changed for ${project}` : "Studio-wide operating rules changed", data: { project } });
       return json(view());
+    }
+    // what the captain is looking at (src/observe/focus.ts, docs/units/observe.md "Focus"): only the captain's own page on this Mac
+    // (its session cookie, same origin, the loopback listener), never a tool token, a script's header or a paired phone
+    if (p === "/api/focus" || p === "/api/focus/sharing") {
+      if (via !== "loopback" || who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
+      if (req.headers.get("x-crew-tool-token") || !hasSessionCookie(req, SESSION)) return json({ error: "Only Studio's own page on this Mac reports what the captain is looking at", code: "captainOnly" }, 403);
+      if (!writing) return json({ sharing: focus.on });
+      if (req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin") return json({ error: "Only Studio's own page on this Mac reports what the captain is looking at", code: "captainOnly" }, 403);
+      let b: any; try { b = await req.json(); } catch { return json({ error: "json only" }, 400); }
+      if (p === "/api/focus/sharing") { if (!b || typeof b.on !== "boolean" || Object.keys(b).length !== 1) return json({ error: "send {on: true|false}" }, 400); return json({ sharing: focus.setSharing(b.on) }); }
+      const r = readReport(b); if (!r.ok) return json({ error: r.error }, 400);
+      return json({ sharing: focus.on, kept: focus.put(r.tab, r.report, r.visible) });
     }
     // external CLI grants: the board lists, issues and revokes them; issuing and revoking need the captain's own page
     // (its session cookie, same origin) on this Mac, never a tool token or a script's header
