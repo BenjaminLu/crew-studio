@@ -94,7 +94,8 @@ const focusLater = (sel) => { if (sel) want = sel; requestAnimationFrame(() => {
   // the control that opened it, else (gone or folded away) the stage's own: the version's line, Generate, the picker
   if (want) { const e = document.querySelector(want); want = null; e?.focus({ preventScroll: true });
     if (!e || document.activeElement !== e) for (const f of ["[data-explain-made] > summary", "[data-explain-again]", "[data-explain-open]"]) { const x = document.querySelector(f); if (x && x.getClientRects().length) { x.focus({ preventScroll: true }); if (document.activeElement === x) break; } } } }); };
-const closeDialog = () => { X.pick = null; X.confirm = null; const back = X.returnTo || "[data-explain-open]"; X.returnTo = null; render(); focusLater(back); };
+// a paid run being started is not dismissed (Esc, Cancel, the backdrop): the server is starting it whatever the dialog does
+const closeDialog = () => { if (X.confirm?.starting) return; X.pick = null; X.confirm = null; const back = X.returnTo || "[data-explain-open]"; X.returnTo = null; render(); focusLater(back); };
 addEventListener("keydown", (e) => {
   const m = document.querySelector(".rx-modal"); if (!m || e.key !== "Tab") return;
   const f = [...m.querySelectorAll("button:not([disabled]),input:not([disabled]),textarea:not([disabled]),a[href],summary,[tabindex='0']")].filter((x) => x.getClientRects().length); if (!f.length) return;
@@ -143,8 +144,11 @@ function pickerDialog(r) {
 /** the paid run's confirmation; prompt: the instructions to start from (a version's, to generate again), else the server's
  *  prefill (the skill's default instructions, else what it was last run with) */
 async function openConfirm(r, sid, kind, back, prompt) {
-  const id = r.card.id; X.pick = null; X.returnTo = back || X.returnTo; X.confirm = { id, sid, kind, offer: null, loading: true, prompt: typeof prompt === "string" ? prompt : null }; render(); focusLater();
-  try { const o = await readOffer(id, sid, kind, X.confirm.prompt); X.confirm = { ...X.confirm, offer: o, loading: false, prompt: o.prompt ? o.prompt.text : X.confirm.prompt ?? "", def: o.prompt?.default ?? null }; } catch (e) { X.confirm = { ...X.confirm, offer: { error: e.message }, loading: false }; }
+  if (X.confirm?.starting) return;
+  const id = r.card.id; X.pick = null; X.returnTo = back || X.returnTo; const mine = X.confirm = { id, sid, kind, offer: null, loading: true, prompt: typeof prompt === "string" ? prompt : null }; render(); focusLater();
+  let next; try { const o = await readOffer(id, sid, kind, mine.prompt); next = { ...mine, offer: o, loading: false, prompt: o.prompt ? o.prompt.text : mine.prompt ?? "", def: o.prompt?.default ?? null }; } catch (e) { next = { ...mine, offer: { error: e.message }, loading: false }; }
+  // closed or replaced while the offer was read: a late offer opens nothing
+  if (X.confirm !== mine) return; X.confirm = next;
   render(); focusLater();
 }
 const PROMPT_MAX = 2000;
@@ -154,7 +158,7 @@ const readOffer = (id, sid, kind, prompt) => postJ(`${base(id)}/offer`, { skill:
  *  and stays off when that read fails (the earlier offer is for another text) */
 let promptTimer = null;
 function promptEdited(id, value) {
-  const c = X.confirm; if (!c || c.id !== id) return; c.prompt = value; c.pending = true; promptUi(c);
+  const c = X.confirm; if (!c || c.id !== id || c.starting) return; c.prompt = value; c.pending = true; promptUi(c);
   clearTimeout(promptTimer); promptTimer = setTimeout(async () => {
     const want = c.prompt; let o = null, note = null; try { o = await readOffer(id, c.sid, c.kind, want); } catch (e) { note = bi(e.message); }
     if (X.confirm !== c || c.prompt !== want) return;
@@ -170,7 +174,7 @@ function promptUi(c) {
   const sv = q("[data-explain-promptsave]"); if (sv) sv.disabled = (v.trim() || null) === (c.def ?? null) || v.length > PROMPT_MAX;
   const rs = q("[data-explain-promptreset]"); if (rs) rs.hidden = c.def == null || v === c.def;
   const nt = q("[data-explain-promptnote]"); if (nt) nt.textContent = c.note || "";
-  const go = q("[data-explain-start]"); if (go) go.disabled = !!(c.pending || c.stale || c.loading || c.offer?.error || X.posting.has(`${c.id}/gen`));
+  const go = q("[data-explain-start]"); if (go) go.disabled = !!(c.pending || c.stale || c.loading || c.starting || c.offer?.error || X.posting.has(`${c.id}/gen`));
 }
 /** the built-in checklist is already in the text (either language): inserting it again would only repeat it */
 const hasExample = (v, ex) => !!ex && [ex.en, ex.zh].some((t) => t && String(v || "").includes(t));
@@ -245,11 +249,19 @@ function scriptLine(c) {
 function confirmDialog(r) {
   const c = X.confirm; if (!c || c.id !== r.card.id) return null; const o = c.offer, id = c.id;
   const row = (k, ...v) => [h("span", {}, k), h("span", {}, ...v)];
-  const start = async () => { if (c.pending || c.stale) return; X.posting.add(`${id}/gen`); render();
-    try { X.st.set(id, await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: c.offer.hash, ...(c.kind === "generate" ? { prompt: c.prompt ?? "" } : {}) })); X.confirm = null; X.shown.delete(id); X.returnTo = null; schedule(id); render(); focusLater("[data-explain-stop]"); }
-    catch (e) { if (e.offer) X.confirm = { ...c, offer: e.offer, note: bi(e.message) }; else X.confirm = { ...c, note: bi(e.message) }; render(); }
-    finally { X.posting.delete(`${id}/gen`); } };
-  const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); await openConfirm(r, c.sid, c.kind, undefined, c.kind === "generate" ? c.prompt ?? "" : undefined); } catch (e) { X.confirm = { ...c, note: bi(e.message) }; render(); } };
+  // the server answers once the run is admitted (a model it verifies again can take a minute): until then the dialog says it is
+  // starting and cannot be dismissed or sent twice. Its answer acts on this dialog only: the run started, it closes (and a redraw
+  // never brings it back); refused, this dialog shows why with Confirm on again. A redraw that throws is not a refusal.
+  const start = async () => { if (c.pending || c.stale || c.starting || X.confirm !== c) return; c.starting = true; c.note = null; X.posting.add(`${id}/gen`);
+    let view = null, err = null;
+    try { render(); view = await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: c.offer.hash, ...(c.kind === "generate" ? { prompt: c.prompt ?? "" } : {}) }); } catch (e) { err = e; }
+    finally { X.posting.delete(`${id}/gen`); c.starting = false; }
+    if (view) { X.st.set(id, view); X.err.delete(id); if (X.confirm === c) { X.confirm = null; X.returnTo = null; } X.shown.delete(id); schedule(id); render(); focusLater("[data-explain-stop]"); return; }
+    // the dialog is gone (the captain went to another page meanwhile): the room says why instead (a read would clear it)
+    const why = bi(err?.message || T("Studio gave no answer: the run did not start", "Studio 沒有回應：沒有開始執行"));
+    if (X.confirm !== c) { X.err.set(id, why); render(); return; }
+    X.confirm = { ...c, ...(err?.offer ? { offer: err.offer } : {}), note: why }; render(); focusLater(); load(id); };
+  const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); if (X.confirm === c) await openConfirm(r, c.sid, c.kind, undefined, c.kind === "generate" ? c.prompt ?? "" : undefined); } catch (e) { if (X.confirm === c) { X.confirm = { ...c, note: bi(e.message) }; render(); } } };
   const cost = o?.cost || {};
   return h("div", { class: "rx-modalbg", onclick: (e) => { if (e.target === e.currentTarget) closeDialog(); } },
     h("div", { class: "rx-modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "rx-conf-h", "data-explain-confirm": c.sid },
@@ -268,13 +280,18 @@ function confirmDialog(r) {
           row(T("Materials (read-only)", "給 skill 的材料（唯讀）"), T(o.materials.en.join(", "), o.materials.zh.join("、"))),
           row(T("Rounds", "輪數"), T(o.rounds.en, o.rounds.zh)),
           row(T("Expected time", "預計時間"), o.expected ? T(`about ${o.expected.minutes} min (from ${o.expected.from} earlier run${o.expected.from === 1 ? "" : "s"})`, `約 ${o.expected.minutes} 分鐘（依之前 ${o.expected.from} 次）`) : T("not known yet: the first run of this skill here (often 10–30 min)", "還不知道：這是這個 skill 在這裡第一次跑（常見 10–30 分鐘）")),
-          row(h("label", { for: "rx-limit" }, T("Safety limit", "安全時限")), h("span", { class: "rx-limit" }, h("input", { id: "rx-limit", type: "number", min: "1", max: "1440", value: String(o.limitMin), "data-explain-limit": "", onchange: (e) => setLimit(e.target.value) }),
+          row(h("label", { for: "rx-limit" }, T("Safety limit", "安全時限")), h("span", { class: "rx-limit" }, h("input", { id: "rx-limit", type: "number", min: "1", max: "1440", value: String(o.limitMin), "data-explain-limit": "", disabled: c.starting ? true : null, onchange: (e) => setLimit(e.target.value) }),
             T(" min of wall clock, then Studio stops it · applies to every room", " 分鐘，到了 Studio 會停下 · 所有審查室共用"))),
           row(T("Output frame", "產出顯示框"), T(o.isolation.en, o.isolation.zh)),
-          ...scriptRows(o.scripts, row)),
-        c.note ? h("p", { class: "rx-state err", role: "alert" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), c.note) : null],
-      h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn", onclick: closeDialog }, T("Cancel", "取消")),
-        h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", disabled: c.loading || c.pending || c.stale || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
+          ...scriptRows(o.scripts, row))],
+      // the footer sticks to the dialog's bottom: what is happening (starting, or why it was refused) is said there, beside Confirm,
+      // in view however far the dialog is scrolled
+      h("div", { class: "rx-foot" },
+        c.starting ? h("p", { class: "rx-state rx-footmsg", role: "status", "data-explain-starting": "" }, T("Studio is checking the model and starting the run. This can take a minute; you can wait here, it closes once it runs.", "Studio 正在確認模型並開始執行，可能要一分鐘左右；在這裡等就好，開始執行後這個視窗就會關閉。"))
+        : c.note ? h("p", { class: "rx-state err rx-footmsg", role: "alert", "data-explain-note": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), c.note) : null,
+        h("button", { type: "button", class: "btn", disabled: c.starting ? true : null, onclick: closeDialog }, T("Cancel", "取消")),
+        h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", "aria-busy": c.starting ? "true" : null, disabled: c.loading || c.pending || c.stale || c.starting || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start },
+          c.starting ? T("Starting…", "開始中…") : T("Confirm and start", "確認並開始")))));
 }
 
 /** "What should it produce?": the captain's own instructions for this generation (trusted, sent apart from the pull request's
@@ -286,17 +303,17 @@ function promptField(c, o) {
   if (was) requestAnimationFrame(() => { const ta = document.querySelector("[data-explain-prompt]"); if (ta && document.activeElement !== ta) { ta.focus({ preventScroll: true }); try { ta.setSelectionRange(was[0], was[1]); } catch {} } });
   return h("div", { class: "rx-prompt", "data-explain-promptfield": "" },
     h("label", { for: "rx-prompt" }, h("b", {}, T("What should it produce?", "要產出什麼？")), " ", h("span", { class: "faint" }, T("(optional)", "（選填）"))),
-    h("textarea", { id: "rx-prompt", rows: "5", maxlength: String(PROMPT_MAX), "data-explain-prompt": "", spellcheck: "false",
+    h("textarea", { id: "rx-prompt", rows: "5", disabled: c.starting ? true : null, maxlength: String(PROMPT_MAX), "data-explain-prompt": "", spellcheck: "false",
       placeholder: T("Empty: the skill's own default. For example: include an error-code table and an ops runbook; write it in Traditional Chinese.", "留空就照 skill 預設。例如：加上錯誤碼表和維運手冊；用繁體中文寫。"),
       oninput: (e) => { c.saved = false; promptEdited(c.id, e.target.value); } }, v),
     h("div", { class: "rx-promptfoot" },
       h("small", { class: "faint", "data-explain-promptsource": w.key, "aria-live": "polite" }, w.text),
       h("small", { class: `rx-count${v.length > PROMPT_MAX * 0.9 ? " over" : ""}`, "data-explain-promptcount": "", "aria-live": "polite" }, `${v.length} / ${PROMPT_MAX}`)),
     h("div", { class: "rx-promptacts" },
-      h("button", { type: "button", class: "btn sm", "data-explain-promptsave": "", disabled: (v.trim() || null) === (c.def ?? null) ? true : null, onclick: () => saveDefault(c) },
+      h("button", { type: "button", class: "btn sm", "data-explain-promptsave": "", disabled: c.starting || (v.trim() || null) === (c.def ?? null) ? true : null, onclick: () => saveDefault(c) },
         c.def != null && !v.trim() ? T("Clear the default for this skill", "清除這個 skill 的預設") : T("Save as default for this skill", "存成這個 skill 的預設")),
-      h("button", { type: "button", class: "btn sm", "data-explain-promptreset": "", hidden: c.def == null || v === c.def ? true : null, onclick: () => setPrompt(c, c.def) }, T("Reset to default", "還原成預設")),
-      ex ? h("button", { type: "button", class: "btn sm", "data-explain-promptexample": "", title: T(ex.en, ex.zh), disabled: hasExample(v, ex) ? true : null, onclick: () => { const t = T(ex.en, ex.zh), cur = (c.prompt ?? "").trimEnd(); setPrompt(c, cur ? `${cur}\n\n${t}` : t); } },
+      h("button", { type: "button", class: "btn sm", "data-explain-promptreset": "", disabled: c.starting ? true : null, hidden: c.def == null || v === c.def ? true : null, onclick: () => setPrompt(c, c.def) }, T("Reset to default", "還原成預設")),
+      ex ? h("button", { type: "button", class: "btn sm", "data-explain-promptexample": "", title: T(ex.en, ex.zh), disabled: c.starting || hasExample(v, ex) ? true : null, onclick: () => { const t = T(ex.en, ex.zh), cur = (c.prompt ?? "").trimEnd(); setPrompt(c, cur ? `${cur}\n\n${t}` : t); } },
         T("Insert a review checklist", "插入審查清單範例")) : null,
       c.saved ? h("small", { class: "rx-saved", "data-explain-promptsaved": "", role: "status" }, T("Saved: the next run of this skill starts from it.", "已存：這個 skill 下次就從這段開始。")) : null),
     h("small", { class: "faint" }, T("Your instructions go to the skill as yours, apart from the pull request's text. A changed text is a new confirmation.", "你的指示會以你的名義交給 skill，和 PR 的內容分開。改了內容就要重新確認。"),
