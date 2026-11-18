@@ -29,6 +29,7 @@ function scriptedTutor(H: any, script: any[][], prompts: { text: string }[]) {
       for (const [name, args] of script.shift() ?? []) {
         if (name === "say") { yield { type: "delta", text: args } as any; continue; }
         if (name === "wait") { await args; continue; }
+        if (name === "throw") throw new Error(args);
         const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json(); TOOLRES.push([name, j]);
         yield { type: "toolStart", id: name, name, args } as any; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) } as any; }
       yield { type: "turnEnd", status: "ok", usage: { usd: 0.01, inTokens: 1, outTokens: 1 } } as any; } }; } });
@@ -217,6 +218,16 @@ const TOOLRES: [string, any][] = [];
       const r = await start(); delete process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS; script.length = 0;
       ok(r.prompts === 3 && r.tq.jobs?.length === 3 && r.tq.stopped === "ceiling" && r.rec?.data.stopped === "ceiling" && /round 3 of at most 3/.test(r.follow.at(-1) ?? ""),
         "a lesson that still changes the board at the ceiling stops there, marked (CREW_REVIEW_ROOM_LESSON_ROUNDS)", JSON.stringify({ prompts: r.prompts, stopped: r.tq.stopped })); }
+    // 4. "complete" while a chapter is missing is refused, and never recorded as complete; a round that fails ends the lesson,
+    //    marked failed with its error (not shown as a lesson that simply ended)
+    { const n = (room.view(t.id) as any).turns.length + 1, r0 = TOOLRES.length;
+      script.push([["scene_show", { chapter: "what", title: "A percent helper", points: [{ text: "It adds percent [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "It rounds.", cites: [] }] }],
+        ["lesson_check", { complete: true }], ["say", "Done, I say [diff:src/percent.ts]."]], [["throw", "the vendor went away"]]);
+      const r = await start(), lc = TOOLRES.slice(r0).filter(([x]) => x === "lesson_check").map(([, j]) => j)[0];
+      ok(lc?.complete === false && /not complete: talks, change, lifecycle, sequence still missing/.test(lc?.notComplete ?? "") && !r.tq.complete && r.rec?.data.complete === false && r.tq.n === n,
+        "lesson_check {complete: true} with chapters missing is refused (saying which) and the lesson is never recorded complete", JSON.stringify({ lc, complete: r.tq.complete, rec: r.rec?.data?.complete }));
+      ok(r.tq.jobs?.length === 2 && r.tq.stopped === "failed" && /vendor went away/.test(r.tq.followUpError ?? "") && r.rec?.data.stopped === "failed" && r.tq.status === "done",
+        "a round that fails ends the lesson marked failed, its error kept, on the ledger too", JSON.stringify({ jobs: r.tq.jobs?.length, stopped: r.tq.stopped, err: r.tq.followUpError })); }
     { const M = await import("../src/domain/review-room"), env = (v: string | undefined, f: () => number) => { if (v === undefined) delete process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS; else process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS = v; const x = f(); delete process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS; return x; };
       const tm = (v: string | undefined) => { if (v === undefined) delete process.env.CREW_REVIEW_ROOM_TIMEOUT_MS; else process.env.CREW_REVIEW_ROOM_TIMEOUT_MS = v; const x = M.roundTimeoutMs(); delete process.env.CREW_REVIEW_ROOM_TIMEOUT_MS; return x; };
       ok(env(undefined, M.lessonRounds) === 12 && env("999", M.lessonRounds) === 30 && env("1", M.lessonRounds) === 2 && env("nope", M.lessonRounds) === 12 && tm(undefined) === 30 * 60_000 && tm("1") === 10_000 && tm(String(10 * 3600_000)) === 2 * 3600_000

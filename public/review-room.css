@@ -745,8 +745,34 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rr-sbody > summary { cursor: pointer; font-size: 13px; color: var(--rr-marker); list-style-position: inside; }
 .rr-sbody-text { margin-top: 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
 .rr-sbody-text > p { margin: 0 0 10px; }
-.rr-sbody-text .rr-sbody-h { margin: 14px 0 6px; font-size: 14.5px; color: var(--rr-ink); }
-.rr-sbody-text h5.rr-sbody-h { font-size: 13.5px; }
+.rr-sbody-text .rr-sbody-h { margin: 20px 0 8px; font-size: 16px; font-weight: 600; line-height: 1.35; color: var(--rr-ink); }
+.rr-sbody-text > .rr-sbody-h:first-child { margin-top: 4px; }
+.rr-sbody-text h5.rr-sbody-h { font-size: 14.5px; }
+/* the narration bar floats over the bottom of the board: an open body ends with room for it */
+.rr-sbody[open] .rr-sbody-text { padding-bottom: 110px; }
 .rr-sbody-text .rr-sbody-list { margin: 0 0 10px; padding-left: 20px; }
 .rr-sbody-text .rr-sbody-list li { margin: 2px 0; }
 .rr-sbody-text .rr-sbody-pre { margin: 0 0 10px; max-height: none; overflow-x: auto; white-space: pre; font-size: 12.5px; }
+/* a lesson that ended before its tutor said it is complete, for no fault (two rounds with nothing new, the ceiling, cancelled) */
+.rr-stopnote { margin: 6px 0; padding: 4px 8px; border-left: 3px solid var(--rr-sticky, #d9a400); background: var(--rr-inf-bg); color: var(--rr-inf-ink); font-size: 13px; border-radius: 0 6px 6px 0; }
+/* a drawing too large for its column: a preview, "View drawing" opens it at its own size; a sequence's steps listed */
+.rr-figview-btn { font-weight: 600; }
+.rr-bigbar { display: flex; justify-content: flex-end; }
+.rp-seqlist { margin: 6px 0 0; font-size: 13px; color: var(--rr-ink); }
+.rp-seqlist > summary { cursor: pointer; color: var(--rr-marker); }
+.rp-seqlist ol { margin: 6px 0 0; padding-left: 26px; max-height: 360px; overflow: auto; }
+.rp-seqlist li { margin: 1px 0; }
+.rr-figview { position: fixed; inset: 0; z-index: 1000; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--rr-paper); color: var(--rr-ink); }
+.rr-figview-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--rr-paper-edge); }
+.rr-figview-bar > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rr-figview-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+.rr-figview-z { min-width: 46px; text-align: center; font: 12px var(--f-mono); }
+.rr-figview-pane { overflow: auto; padding: 16px; cursor: grab; touch-action: pan-x pan-y; }
+.rr-figview-pane .rp-fig { margin: 0; max-width: none; overflow: visible; }
+.rr-figview-pane svg.rr-figview-svg { max-width: none !important; max-height: none !important; display: block; }
+.rr-figview-pane .rp-seqlist ol { max-height: none; }
+@media (max-width: 600px) {
+  .rr-figview-bar { flex-wrap: wrap; padding: 8px 10px; gap: 6px; }
+  .rr-figview-bar > b { flex: 1 0 100%; }
+  .rr-figview-tools { flex-wrap: wrap; }
+}

@@ -12,7 +12,7 @@
 window.crewReviewBoard = (D) => {
 const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody, figColumn } = D;
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody } = D;
 /** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
  *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
 const isLesson = (x) => !!(x?.chapter && x.t?.action === "teach" && x.t.status === "done");
@@ -114,16 +114,11 @@ function decorate(fig, x, it, ctx) {
 const boardCite = (p) => [...(p?.cites || [])].reverse().find((c) => c?.ref?.startsWith("board:"))?.ref.slice(6) || null;
 const illustrated = (x) => !x.skip && (!!x.pic || x.points.some((p) => p.picture || boardCite(p)));
 const widthOf = (x) => (phone() ? 340 : !illustrated(x) ? 540 : x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 840 : 780);
-/** a chapter with a large drawing (more than its column holds at a legible size) is as wide as the drawing needs: the board is a
- *  canvas, the captain zooms, nothing is shrunk past reading or cut */
-const regionW = (card, r, x) => { const W = widthOf(x); if (phone() || !illustrated(x)) return W; const col = W - stepsW(x) - 64;
-  const need = Math.max(0, ...[x.pic, ...x.points.map((p) => (p.picture ? r.board.find((b) => b.id === p.picture) : null))].filter(Boolean).map((it) => figColumn(card, it, col) || 0));
-  return need ? stepsW(x) + 64 + need : W; };
 /** a chapter's steps column on a desktop: a drawing gets the wider illustration */
 const stepsW = (x) => (x.pic && ["states", "arch", "sequence", "svg", "calls", "mermaid"].includes(x.pic.type) ? 300 : 440);
 function regionEl(card, r, x, j, nth, ctx) {
   const key = x.key, ch = x.chapter, tone = POINTS_TONE[ch], seen = ctx.visited.has(key), ths = ctx.threads.filter((t) => t.anchor.scene === key);
-  const open = ths.filter(confusedOf).length, done = ths.filter((t) => t.state === "resolved" || t.merged).length, cards = ths.reduce((n, t) => n + t.nodes.length, 0), W = regionW(card, r, x);
+  const open = ths.filter(confusedOf).length, done = ths.filter((t) => t.state === "resolved" || t.merged).length, cards = ths.reduce((n, t) => n + t.nodes.length, 0), W = widthOf(x);
   const head = h("div", { class: "rp-head" }, h("span", { class: "rp-num" }, String(j + 1).padStart(2, "0")),
     h("h3", {}, chapterName(ch), ch === "decisions" ? h("span", { class: "rp-of" }, ` · ${T(`Choice ${nth}`, `決定 ${nth}`)}`) : null), h("p", { class: "rp-sub", "data-section-title": "" }, x.title));
   const sent = (p, m) => sentences(card, x, p, m, ch === "watch" ? "risk" : "sentence", ctx);
@@ -415,7 +410,7 @@ function regionCam(card, key) {
 function bounds(card, keys) { const L = B.L.get(card); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const k of keys || Object.keys(L?.R || {})) { const r = L.R[k]; if (!r) continue; x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y - 40); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }; }
-function frameRect(card, b, maxS = 1, pad = 0.92) { const vp = vpOf(card); if (!vp || !isFinite(b.w)) return null; const top = 44, W = vp.clientWidth, H = vp.clientHeight - top, s = Math.min(W * pad / b.w, H * pad / b.h, maxS);
+function frameRect(card, b, maxS = 1, pad = 0.92) { const vp = vpOf(card); if (!vp || !isFinite(b.w)) return null; const top = 44, W = vp.clientWidth, H = vp.clientHeight - top, s = Math.max(0.1, Math.min(W * pad / b.w, H * pad / b.h, maxS));
   return { s, x: W / 2 - (b.x + b.w / 2) * s, y: top + H / 2 - (b.y + b.h / 2) * s }; }
 /** full screen (review-room.js FS): the viewport's size before a change of size, then the camera re-fitted to the new one. A
  *  locked camera aims at its region again (after() already did, on the redraw); one moved by hand keeps the same middle */
@@ -684,9 +679,7 @@ function view(r, scenes, i) {
   const notesOpen = lesson && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
   // a scene region is as wide as the board shows at a readable scale: the board's width, at most 980
   const avail = isFs() ? innerWidth - 40 : Math.min(innerWidth, 1480) - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - (notesOpen ? 284 : 0) - 32;
-  const sceneW = (x) => { if (phone()) return 340; const W = clamp(Math.round(avail), 600, x.quiz ? 760 : 980); if (x.quiz) return W;
-    // a large drawing: its picture column as wide as it needs, the points beside it keep their reading width (review-board.css rr-bigfig)
-    const need = Math.max(0, ...(x.visuals || []).map((it) => figColumn(card, it, Math.round(W * 0.56) - 30) || 0)); return need ? need + 30 + 22 + 380 : W; };
+  const sceneW = (x) => (phone() ? 340 : clamp(Math.round(avail), 600, x.quiz ? 760 : 980));
   const firstOf = (x) => scenes.find((y) => y.turn === x.turn) === x;
   const ctx = { threads, TN, visited, cur: B.cur.get(card), scenes, sceneW, firstOf, lastLesson: secs.at(-1)?.turn };
   const regions = scenes.map((x, j) => (isLesson(x) ? regionEl(card, r, x, j, x.chapter === "decisions" ? scenes.slice(0, j + 1).filter((y) => y.turn === x.turn && y.chapter === "decisions").length : 0, ctx) : sceneRegionEl(card, r, x, j, ctx)));

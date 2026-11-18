@@ -386,6 +386,9 @@ const segCross = (p, q, r, t) => { const d = (q[0] - p[0]) * (t[1] - r[1]) - (q[
  *  that went well). The ways back along that row, and the skips over a state on it, are arcs above it, nested by span (the
  *  shorter inside). The states that end badly or need attention sit in the lane below, the others in the lane above, each
  *  under the median of the states it meets, in the order that crosses the fewest connectors. */
+/** past these a lifecycle is laid out in rows and an architecture's layers in bands (the old caps were 10 states and 12 nodes,
+ *  so every drawing that fit them is laid out as before) */
+const STATE_ROW = 12, ARCH_BAND = 8;
 function statePlace(nodes, edges, fs) {
   const ids = nodes.map((n) => n.id), cls = new Map(nodes.map((n) => [n.id, n.cls || ""])), back = backEdges(ids, edges), { rank, pred } = longestPaths(ids, edges, back);
   const bad = (id) => /\b(seal|amber)\b/.test(cls.get(id)), ends = ids.filter((id) => !edges.some((e) => e.from === id && e.to !== id)), good = ends.filter((id) => !bad(id));
@@ -393,6 +396,12 @@ function statePlace(nodes, edges, fs) {
   const main = [end]; while (pred.has(main[0]) && !main.includes(pred.get(main[0]))) main.unshift(pred.get(main[0]));
   while (main.length > 2 && bad(main[main.length - 1])) main.pop();
   const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(110, Math.max(0, ...edges.map(chipW)) + 44)), box = new Map(), col = new Map();
+  // a large machine (more than STATE_ROW states) is not one row thousands wide: its states in rows, in the order they are
+  // reached, each row read the other way from the last (a snake), so a step forward stays a short line; the router curves the rest
+  if (ids.length > STATE_ROW) { const order = [...ids].sort((a, b) => rank.get(a) - rank.get(b) || ids.indexOf(a) - ids.indexOf(b)), K = Math.ceil(Math.sqrt(order.length * 1.6));
+    const cw = Math.max(...order.map((id) => size.get(id).w)) + gap, rh = Math.max(...order.map((id) => size.get(id).h)) + 96;
+    order.forEach((id, i) => { const row = Math.floor(i / K), c = row % 2 ? K - 1 - (i % K) : i % K, z = size.get(id); box.set(id, { x: c * cw + (cw - gap - z.w) / 2, y: row * rh, w: z.w, h: z.h, lines: z.lines }); });
+    return { box, back }; }
   const H0 = Math.max(...main.map((id) => size.get(id).h)); let x = 0;
   main.forEach((id, c) => { const z = size.get(id); col.set(id, c); box.set(id, { x, y: -z.h / 2, w: z.w, h: z.h, lines: z.lines }); x += z.w + gap; });
   // along the main row: the first step forward between two neighbours is a straight line; every other one an arc above
@@ -433,7 +442,11 @@ function archPlace(nodes, edges, fs) {
     const bc = (id) => { const ns = edges.filter((e) => e.from !== e.to && (e.to === id || e.from === id)).map((e) => (e.to === id ? e.from : e.to)).filter((o) => rank.get(o) !== r).map((o) => pos.get(o)); return ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : pos.get(id); };
     c.sort((a, b) => bc(a) - bc(b) || ids.indexOf(a) - ids.indexOf(b)); c.forEach((id, i) => pos.set(id, i - (c.length - 1) / 2)); });
   const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(100, Math.max(0, ...edges.map(chipW)) + 40)), box = new Map(); let x = 0;
-  cols.forEach((c) => { const w = Math.max(0, ...c.map((id) => size.get(id).w)), hs = c.map((id) => size.get(id).h), total = hs.reduce((a, b) => a + b, 0) + (c.length - 1) * 72; let y = -total / 2;
+  // more than ARCH_BAND layers: the layers in bands of ARCH_BAND, one under the other, so a long chain is not one row
+  // thousands wide (a band's middle is under the last band's bottom; one band is laid out exactly as before)
+  const totals = cols.map((c) => c.reduce((a, id) => a + size.get(id).h, 0) + (c.length - 1) * 72), mids = []; { let bottom = 0;
+    for (let b = 0; b * ARCH_BAND < cols.length; b++) { const hb = Math.max(...totals.slice(b * ARCH_BAND, (b + 1) * ARCH_BAND)), mid = b ? bottom + 140 + hb / 2 : 0; mids.push(mid); bottom = mid + hb / 2; } }
+  cols.forEach((c, ci) => { if (ci && ci % ARCH_BAND === 0) x = 0; const w = Math.max(0, ...c.map((id) => size.get(id).w)), hs = c.map((id) => size.get(id).h), total = totals[ci]; let y = mids[Math.floor(ci / ARCH_BAND)] - total / 2;
     c.forEach((id, i) => { const s = size.get(id); box.set(id, { x: x + (w - s.w) / 2, y, w: s.w, h: s.h, lines: s.lines }); y += hs[i] + 72; }); x += w + gap; });
   return { box, back };
 }
@@ -943,10 +956,11 @@ function mdBody(card, text, cites) {
   return out;
 }
 function sceneBody(card, sc) {
-  if (!sc?.body || sc.skip || sc.quiz) return null; const key = `${card}/${sc.key}/body`, open = RR.fold.has(key), words = sc.body.split(/\s+/).filter(Boolean).length;
+  if (!sc?.body || sc.skip || sc.quiz) return null; const key = `${card}/${sc.key}/body`, open = RR.fold.has(key), cjk = (sc.body.match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length, words = sc.body.split(/\s+/).filter(Boolean).length;
+  const size = cjk > words ? T(`${cjk} characters`, `${cjk} 字`) : T(`${words} words`, `${words} 個英文詞`);
   return h("details", { class: "rr-sbody", "data-scene-body": sc.key, open,
     ontoggle: (e) => { const was = RR.fold.has(key); if (e.target.open) RR.fold.add(key); else RR.fold.delete(key); if (was !== e.target.open) rerender(); } },
-    h("summary", { "data-scene-body-toggle": "" }, h("b", {}, T("The full explanation", "完整說明")), h("span", { class: "faint" }, ` · ${T(`${words} words`, `${sc.body.length} 字`)}${sc.bodyUntranslated ? T(" · not translated yet: as written", " · 還沒翻譯：照原文") : ""}`)),
+    h("summary", { "data-scene-body-toggle": "" }, h("b", {}, T("The full explanation", "完整說明")), h("span", { class: "faint" }, ` · ${size}${sc.bodyUntranslated ? T(" · not translated yet: as written", " · 還沒翻譯：照原文") : ""}`)),
     h("div", { class: "rr-sbody-text", "data-scene-body-text": "" }, mdBody(card, sc.body, sc.bodyCites)));
 }
 const stepDetail = (sc, cur) => { const d = cur != null ? sc.points[cur]?.detail : null; return d ? h("p", { class: "rr-stepdetail", "data-step-detail": cur + 1 }, h("b", {}, T(`Step ${cur + 1}`, `第 ${cur + 1} 步`)), " ", plain(d)) : null; };
@@ -1273,11 +1287,41 @@ function figSize(card, it) {
       const vb = svg?.viewBox?.baseVal; if (vb?.width) out = { w: vb.width, h: vb.height }; } } catch { out = null; }
   if (FIG_SIZE.size > 400) FIG_SIZE.clear(); FIG_SIZE.set(k, out); return out;
 }
-/** a large drawing is not shrunk into its column: the width its picture column needs for it to read at three quarters of its
- *  drawn size (labels about 10px at the board's 1:1; the board's camera zooms for more), at most 12000 (a lifecycle's main
- *  row of forty states is about that); null: the column fits */
+/** a drawing too large to read in its column (under three quarters of its drawn size there): the board keeps it as a preview
+ *  in a region of the usual size, and "View drawing" opens it at its own scale (figViewer) */
 const LEGIBLE = 0.75;
-const figColumn = (card, it, col) => { const z = figSize(card, it); return z && z.w * LEGIBLE > col ? Math.min(12000, Math.round(z.w * LEGIBLE)) : null; };
+const isBig = (card, it, col) => { const z = figSize(card, it); return !!z && z.w * LEGIBLE > col; };
+/** the button under a big drawing's preview */
+const viewBtn = (card, it) => h("button", { type: "button", class: "rr-mini rr-figview-btn", "data-fig-view": it.id, title: T("Open this drawing at its own size: pan and zoom", "以原尺寸打開這張圖：可拖曳、縮放"),
+  onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); figViewer(card, it); } }, T("View drawing", "檢視圖"));
+/** a sequence's steps as a list (beside a large drawing, as a lifecycle lists its transitions) */
+const seqList = (it, open) => (it?.type === "sequence" && (it.steps || []).length > 16 ? h("details", { class: "rp-seqlist", "data-seq-list": it.id, open: !!open },
+  h("summary", {}, T(`Every step (${it.steps.length})`, `每一步（${it.steps.length}）`)), h("ol", {}, it.steps.map((st, i) => h("li", { "data-seq-step": i + 1 }, h("b", {}, `${st.from} → ${st.to}`), ` · ${st.label}${st.frame ? ` [${st.frame}${st.frameLabel ? ` ${st.frameLabel}` : ""}]` : ""}`)))) : null);
+/** a big drawing at its own scale, over the room: vector, panned by scrolling or dragging, zoomed by its buttons (or ctrl +
+ *  wheel); Escape or Close ends it and gives the focus back. Its own DOM, outside the room's redraws */
+function figViewer(card, it) {
+  document.querySelector("[data-fig-viewer]")?.remove();
+  const r = RR.rooms.get(card), back = document.activeElement, fig = reportFigure(card, r, it, { w: 2400, h: 2000 }), svg = fig.querySelector("svg"), vb = svg?.viewBox?.baseVal;
+  const W = vb?.width || 800; let z = 1;
+  const pane = h("div", { class: "rr-figview-pane", "data-fig-pane": "" }, fig, seqList(r ? figIn(r, it) : it, true));
+  const zoomLbl = h("span", { class: "rr-figview-z", "data-fig-zoom": "" }, "100%");
+  const set = (nz) => { z = Math.max(0.2, Math.min(3, nz)); if (svg) { svg.style.width = `${Math.round(W * z)}px`; svg.style.height = "auto"; } zoomLbl.textContent = `${Math.round(z * 100)}%`; };
+  const close = () => { el.remove(); removeEventListener("keydown", key, true); try { (document.querySelector(`[data-fig-view="${CSS.escape(it.id)}"]`) || back)?.focus?.({ preventScroll: true }); } catch {} };
+  const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } else if ((e.key === "+" || e.key === "=") && !e.metaKey) set(z * 1.25); else if (e.key === "-" && !e.metaKey) set(z / 1.25); };
+  const btn = (label, attr, f, aria) => h("button", { type: "button", class: "rr-mini", [attr]: "", "aria-label": aria || label, onclick: f }, label);
+  const closeBtn = btn(T("Close", "關閉"), "data-fig-close", close);
+  const el = h("div", { class: "rr-figview", role: "dialog", "aria-modal": "true", "aria-label": itemTitle(it), "data-fig-viewer": it.id },
+    h("div", { class: "rr-figview-bar" }, h("b", {}, itemTitle(it)), h("span", { class: "rr-figview-tools" },
+      btn("−", "data-fig-out", () => set(z / 1.25), T("Zoom out", "縮小")), zoomLbl, btn("+", "data-fig-in", () => set(z * 1.25), T("Zoom in", "放大")),
+      btn(T("Fit", "符合"), "data-fig-fit", () => set((pane.clientWidth - 32) / W)), btn("1:1", "data-fig-one", () => set(1), T("Its own size", "原尺寸")), closeBtn)), pane);
+  // a drag on the paper pans (a click on a connector or a row still picks it)
+  let drag = null; pane.addEventListener("pointerdown", (e) => { if (e.button !== 0 || e.target.closest("button, a, summary, [data-transition-row]")) return; drag = { x: e.clientX, y: e.clientY, l: pane.scrollLeft, t: pane.scrollTop }; });
+  pane.addEventListener("pointermove", (e) => { if (!drag) return; pane.scrollLeft = drag.l - (e.clientX - drag.x); pane.scrollTop = drag.t - (e.clientY - drag.y); });
+  addEventListener("pointerup", () => (drag = null)); pane.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); set(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
+  if (svg) { svg.classList.add("rr-figview-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); }
+  document.body.append(el); set(1); addEventListener("keydown", key, true); closeBtn.focus({ preventScroll: true });
+  return el;
+}
 function reportFigure(card, r, it, box) {
   // a lesson's figure reads at its drawn size, left to right where it fits: its region's column
   BOX = box || (innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 });
@@ -1285,15 +1329,17 @@ function reportFigure(card, r, it, box) {
     : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : v.type === "svg" ? svgFigureView(card, v) : v.type === "calls" ? callsView(card, v) : itemView(card, v, null); } finally { BOX = null; }
   // never blown up: at most a little over the size it was laid out at
   for (const sg of [body, ...(body.querySelectorAll ? body.querySelectorAll("svg") : [])]) if (sg?.tagName === "svg" && sg.viewBox?.baseVal?.width) sg.style.maxWidth = `${Math.round(sg.viewBox.baseVal.width * 1.15)}px`;
-  return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
-    h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)));
+  const big = !!box && box.w < 2000 && isBig(card, it, box.w);
+  return h("figure", { class: `rp-fig rp-fig-${v.type}${big ? " rr-bigprev" : ""}`, "data-report-figure": v.id, "data-figure-type": v.type, ...(big ? { "data-big-figure": "" } : {}) }, h("div", { class: "rp-figbody" }, body),
+    h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v), big ? viewBtn(card, it) : null), big ? seqList(v) : null);
 }
 /** a lesson kept without some of its chapters (the tutor left them out after Studio's follow-ups): said so, naming them */
 function gapsNote(r, t) {
   if (t?.status !== "done" || (!t.gaps?.length && !t.stopped)) return null;
   const name = (id) => (r.subject?.kind === "dir" && DIR_CHAPTER[id]) || CHAPTER[id] || [id, id], n = t.jobs?.length || 1;
-  const why = t.stopped === "no-progress" ? T(`stopped after ${n} rounds: two rounds in a row added nothing`, `${n} 回合後停止：連續兩回合沒有新內容`) : t.stopped === "ceiling" ? T(`stopped at the ceiling of ${n} rounds`, `到上限 ${n} 回合停止`) : t.stopped === "cancelled" ? T(`stopped after ${n} rounds: cancelled`, `${n} 回合後停止：已取消`) : "";
-  if (!t.gaps?.length) return h("p", { class: "rr-err rr-gaps", role: "note", "data-lesson-stopped": t.stopped }, T(`Not marked complete by the tutor: ${why}`, `導師沒有標記完整：${why}`));
+  const why = t.stopped === "no-progress" ? T(`stopped after ${n} rounds: two rounds in a row added nothing`, `${n} 回合後停止：連續兩回合沒有新內容`) : t.stopped === "ceiling" ? T(`stopped at the ceiling of ${n} rounds`, `到上限 ${n} 回合停止`) : t.stopped === "cancelled" ? T(`stopped after ${n} rounds: cancelled`, `${n} 回合後停止：已取消`)
+    : t.stopped === "timeout" ? T(`stopped after ${n} rounds: a round ran out of time`, `${n} 回合後停止：有一回合超時`) : t.stopped === "failed" ? T(`stopped after ${n} rounds: a round failed${t.followUpError ? ` (${clip(t.followUpError, 120)})` : ""}`, `${n} 回合後停止：有一回合失敗${t.followUpError ? `（${clip(t.followUpError, 120)}）` : ""}`) : "";
+  if (!t.gaps?.length) return h("p", { class: `${t.stopped === "failed" || t.stopped === "timeout" ? "rr-err" : "rr-stopnote"} rr-gaps`, role: "note", "data-lesson-stopped": t.stopped }, T(`Not marked complete by the tutor: ${why}`, `導師沒有標記完整：${why}`));
   return h("p", { class: "rr-err rr-gaps", role: "note", "data-lesson-gaps": t.gaps.join(" "), "data-lesson-stopped": t.stopped || null }, T(`Incomplete: missing ${t.gaps.map((id) => name(id)[0]).join("; ")}${why ? ` (${why})` : ""}`, `不完整：缺少 ${t.gaps.map((id) => name(id)[1]).join("、")}${why ? `（${why}）` : ""}`));
 }
 /** a lesson is not one round: Studio hands it back to its tutor, round after round (each one paid), until it is complete, at most
@@ -1355,8 +1401,8 @@ function sceneCard(r, scenes, j, W) {
   let pic; BOX = box; try { pic = sc.quiz ? h("div", { class: "rr-quizzes" }, sc.points.map((p) => quizView(card, r, p.q, null))) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")); } finally { BOX = null; }
   const answers = (r.turns || []).some((t) => !t.studio && !t.hidden && !t.thread);
   if (focus.length) queueMicrotask(zoomFocus);
-  const big = !sc.quiz && !narrow && v && figColumn(card, v, box.w) ? " rr-bigfig" : "";
-  return h("div", { class: `rp-card rb-scard${sc.quiz ? " quiz" : ""}${big}`, "data-scene-card": sc.key, ...(big ? { "data-big-figure": v.id } : {}) },
+  const big = !sc.quiz && !!v && isBig(card, v, box.w);
+  return h("div", { class: `rp-card rb-scard${sc.quiz ? " quiz" : ""}`, "data-scene-card": sc.key },
     first ? sceneHead(r, sc) : null,
     h("div", { class: "rr-stitle" },
       h("span", { class: "rr-kicker" }, sc.studio && sc.t ? h("span", { "data-studio-scene": sc.t.action }, kicker) : kicker,
@@ -1364,6 +1410,7 @@ function sceneCard(r, scenes, j, W) {
       h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
     h("div", { class: `rr-scene${sc.quiz ? "" : " rr-steps"}` },
       h("figure", { class: "rr-visual", "data-visual": sc.quiz ? "quiz" : v?.id || "", "data-illustration-of": sc.quiz ? null : cur != null ? cur + 1 : "all", "data-zoom-focus": focus.length ? focus.join(",") : null, onclick: sc.quiz ? null : edgeClick(card, sc, v) }, pic,
+        big ? h("div", { class: "rr-bigbar", "data-big-figure": v.id }, viewBtn(card, v)) : null, big ? seqList(figIn(r, v)) : null,
         sc.quiz ? null : stepDetail(sc, cur), sc.quiz ? null : explainPop(card, r, sc, v), sc.quiz ? null : codeRefs(card, r, codes),
         pics.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, pics.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, KIND_LABEL[b.kind] ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
       h("div", { class: "rr-points" },
@@ -1727,7 +1774,7 @@ addEventListener("keydown", (e) => {
 // the board, built with the room's own helpers (public/review-board.js)
 const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody, figColumn });
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody });
 const onList = () => S.route?.name === "room" && !S.route.arg;
 /** the list read again. Only the rows are drawn again when they are there (public/list-tools.js ltItems): the search box stays the
  *  same element, a composition in it unbroken */

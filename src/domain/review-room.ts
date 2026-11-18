@@ -262,6 +262,14 @@ export function explainErrors(list: unknown, keys: string[] | null): string[] {
     if (x?.cites !== undefined && (!Array.isArray(x.cites) || x.cites.length > 4)) errors.push(`explain ${i + 1}: cites is a list of at most 4 citations`); });
   return errors;
 }
+/** a translation's bodies go in chunks of at most this many characters (a body longer than it alone), each its own job, so
+ *  no single reply has to carry them all */
+export const BODY_CHUNK = 12000;
+export function bodyChunks<T extends { body: string }>(items: T[], budget: number): T[][] {
+  const out: T[][] = []; let cur: T[] = [], size = 0;
+  for (const x of items) { if (cur.length && size + x.body.length > budget) { out.push(cur); cur = []; size = 0; } cur.push(x); size += x.body.length; }
+  if (cur.length) out.push(cur); return out;
+}
 /** what the tutor is told about a scene's full explanation, every round (Studio's frame: the pinned skills are unchanged) */
 export const FULL_EXPLANATION = `FULL EXPLANATIONS: a scene's title and points are the board's glanceable layer; its body is the complete, detailed explanation, as a trusted engineer would hand it in, never cut short to fit. In body (markdown) explain the mechanism step by step, why it is built this way, the edge cases and failure paths, what it was before and what it is now, with a citation for every claim (as in a point). There is no small cap (at most ${SCENE_LIMITS.body} characters a scene, a safety bound) and the lesson need not be finished in one round. Split a large output across several tool calls (a scene_show, then scene_body to append the rest; several board_draw calls) rather than one giant reply.`;
 /** the scene bodies of an earlier turn, for the next prompt (the understanding check asks from them too): each scene's title
@@ -338,8 +346,9 @@ type Turn = { n: number; action: string; text: string; lang: string; by: string;
   followUpError?: string;
   /** a lesson the tutor said is complete (lesson_check {complete: true} with nothing missing) */
   complete?: true;
-  /** why a lesson ended before its tutor said it is complete: two rounds in a row changed nothing, the ceiling, the captain cancelled */
-  stopped?: "no-progress" | "ceiling" | "cancelled" };
+  /** why a lesson ended before its tutor said it is complete: two rounds in a row changed nothing, the ceiling, the captain
+   *  cancelled, a round timed out or failed (its error in followUpError) */
+  stopped?: "no-progress" | "ceiling" | "cancelled" | "timeout" | "failed" };
 /** what a room is about: the merge card, a Task's reviewed local branch, or a pull request on GitHub (one room across its heads) */
 export type Subject = { kind: "merge" | "branch" | "pr" | "dir"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null; ref?: string; path?: string };
 /** a GitHub directory as Studio read it, pinned at one commit (the ref named in its address, resolved once; the room never moves) */
@@ -373,7 +382,9 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   /** the captain confirmed translating this room's explanation (once per room, for this tutor) */
   translateOk?: { hash: string; at: string };
   /** the last translation turn: its language, how it went and what was left untranslated */
-  translating?: { lang: string; status: "running" | "done" | "failed"; at: string; ended?: string | null; error?: string | null; dropped?: number[]; job?: string | null; cost?: any };
+  translating?: { lang: string; status: "running" | "done" | "failed"; at: string; ended?: string | null; error?: string | null; dropped?: number[]; job?: string | null; cost?: any;
+    /** the scenes' bodies, translated in jobs of their own after the titles and points: how many were asked, how many kept */
+    bodies?: { asked: number; kept: number; jobs: string[] } };
   /** the room's Library snapshot (one artifact, a version per save) and the change it was saved at */
   library?: { artifact: string; versions: { n: number; at: string; reason: string }[]; rev: number; ended?: boolean; sig?: string };
   /** the room finished (its merge card answered, its pull request merged or closed), recorded at that moment: only such a room is
@@ -1524,16 +1535,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
       // what this turn shows: its board items and its scenes; a round that leaves it as it was made no progress
       const print = () => sha(JSON.stringify([room.board.filter((b) => b.turn === turn.n), turn.scenes ?? []]));
       let rounds = 1, idle = 0, last = print();
+      // a round that did not finish: cancelled (the captain, the Task, the room closed), timed out, or failed otherwise
+      const roundStop = (j: any): "cancelled" | "timeout" | "failed" => !engine.owns(x) || !k.open() || engine.abortOf(s.run).signal.aborted || j?.status === "cancelled" ? "cancelled" : /no result within|timed? ?out/i.test(String(j?.error ?? "")) ? "timeout" : "failed";
       while (teach) {
         const cancelled = !engine.owns(x) || !k.open() || engine.abortOf(s.run).signal.aborted, next = lessonNext({ gaps, complete: !!turn.complete, rounds, idle, ceiling, cancelled });
         if (next !== "continue") { if (next !== "complete") turn.stopped = next; else delete turn.stopped; break; }
-        let more: any; try { more = await runJob(await followUpPrompt(k, room, turn, s, gaps, rounds + 1, ceiling), rounds + 1); } catch (e: any) { turn.followUpError = String(e?.message ?? e).slice(0, 300); break; }
+        let more: any; try { more = await runJob(await followUpPrompt(k, room, turn, s, gaps, rounds + 1, ceiling), rounds + 1); } catch (e: any) { turn.followUpError = String(e?.message ?? e).slice(0, 300); turn.stopped = roundStop(null); break; }
         rounds++; turn.jobs = [...(turn.jobs ?? [turn.job!]), more.id]; turn.cost = sumCost(turn.cost, more.cost);
         const said = String(more.answer ?? "").trim(); if (more.status === "done" && said) turn.answer = `${turn.answer}\n\n${said}`.slice(0, 20000);
         gaps = lessonGaps(turn.scenes, CHAPTERS); mark();
         const now = print(); idle = now === last ? idle + 1 : 0; last = now;
         // cancelled, timed out or refused: no further paid job, and the lesson says why it stopped
-        if (more.status !== "done") { turn.followUpError = String(more.error ?? more.status).slice(0, 300); break; }
+        if (more.status !== "done") { turn.followUpError = String(more.error ?? more.status).slice(0, 300); turn.stopped = roundStop(more); break; }
       }
       const why = k.kind === "dir" ? "a directory's lesson shows what it is and its parts, and leaves talks or sequence out only with a cited reason" : "a lesson shows what and change, and leaves talks, lifecycle or sequence out only with a cited reason";
       if (failed) Object.assign(turn, { status: "failed", error: failed });
@@ -1549,7 +1562,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   }
   /** the turns whose explanation is not in this language yet: what to translate (text only) */
   const untranslated = (room: Room, lang: string) => room.turns.filter((t) => t.status === "done" && !t.studio && t.lang !== lang && !room.translations?.[lang]?.[String(t.n)]);
-  const translateUnits = (turns: Turn[], room?: Room) => turns.map((t) => ({ n: t.n, scenes: (t.scenes ?? []).map((sc) => ({ title: sc.title, points: sc.points.map((p) => p.text), ...(sc.points.some((p) => p.detail) ? { details: sc.points.map((p) => p.detail ?? "") } : {}), ...(sc.body ? { body: sc.body } : {}) })),
+  const translateUnits = (turns: Turn[], room?: Room) => turns.map((t) => ({ n: t.n, scenes: (t.scenes ?? []).map((sc) => ({ title: sc.title, points: sc.points.map((p) => p.text), ...(sc.points.some((p) => p.detail) ? { details: sc.points.map((p) => p.detail ?? "") } : {}) })),
     claims: (t.claims ?? []).filter((c) => ["claim", "aside", "heading"].includes(c.kind)).map((c) => c.text), answer: t.answer,
     ...(room ? { figures: Object.fromEntries(room.board.filter((b) => b.turn === t.n && figureTexts(b).length).map((b) => [b.id, figureTexts(b)])) } : {}) }));
   /** roughly what a translation costs: a fifth of a turn of this room, at least a cent (shown with ~) */
@@ -1558,7 +1571,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     const units = translateUnits(turns, room), round = `room-${k.id}-tr-${lang}-${Date.now().toString(36)}`;
     const text = ["TRANSLATION ONLY. Do not read code, do not call any tool, do not explain anything new.",
       `Translate the review room's explanation below into ${LANGS[lang] ?? lang}. Keep every citation token exactly as written ([diff:…], [ledger:…], [commit:…], [source:…], [board:…], [review:…], [inference]) and in the same sentence; keep code, paths, names and numbers as they are. Keep each scene title at most ${SCENE_LIMITS.title.cjk} CJK characters or ${SCENE_LIMITS.title.latin} Latin ones and each point at most ${SCENE_LIMITS.point.cjk} CJK characters or ${SCENE_LIMITS.point.latin} Latin ones.`,
-      "Reply with JSON only, the same shape and the same number of items: {\"turns\": [{\"n\": <n>, \"scenes\": [{\"title\": \"…\", \"points\": [\"…\"], \"details\": [\"…\"] (only where the scene has details: one per point, an empty one stays empty), \"body\": \"…\" (only where the scene has a body: the whole markdown translated, its structure and every citation kept)}], \"claims\": [\"…\"], \"answer\": \"…\", \"figures\": {\"<item id>\": [\"…\"]}}]}. figures: each drawing's words in the same order and number (an empty one stays empty), each about as short as the original.",
+      "Reply with JSON only, the same shape and the same number of items: {\"turns\": [{\"n\": <n>, \"scenes\": [{\"title\": \"…\", \"points\": [\"…\"], \"details\": [\"…\"] (only where the scene has details: one per point, an empty one stays empty)}], \"claims\": [\"…\"], \"answer\": \"…\", \"figures\": {\"<item id>\": [\"…\"]}}]}. figures: each drawing's words in the same order and number (an empty one stays empty), each about as short as the original.",
       "", JSON.stringify({ turns: units })].join("\n");
     let job: any = null, dropped: number[] = [], error: string | null = null;
     try {
@@ -1578,11 +1591,26 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
           if (want.length && Array.isArray(got) && got.length === want.length && got.every((v: any, j: number) => typeof v === "string" && (!want[j] ? !v.trim() : !!v.trim() && boardLength(v, { cjk: 1, latin: 2 }) <= Math.max(8, boardLength(want[j], { cjk: 1, latin: 2 }) * 1.6 + 4))))
             figures[b.id] = got.map((v: string) => v.replace(/\s+/g, " ").trim()); }
         room.translations[lang][String(t.n)] = { scenes: x.scenes.map((y: any, m: number) => { const details = keepDetails((t.scenes?.[m]?.points ?? []).map((p) => p.detail ?? ""), y.details);
-            const body = keepBody(t.scenes?.[m]?.body, y.body);
-            return { ...(details ? { details } : {}), ...(body ? { body } : {}), title: String(y.title).replace(/\s+/g, " ").trim(), points: y.points.map((p: any) => String(p).replace(/\s+/g, " ").trim()), ...details }; }), claims: x.claims.map(String), answer: String(x.answer), figures, provider: provider.id ?? "", model: provider.model ?? "", at: new Date().toISOString() }; }
+            return { ...(details ? { details } : {}), title: String(y.title).replace(/\s+/g, " ").trim(), points: y.points.map((p: any) => String(p).replace(/\s+/g, " ").trim()), ...details }; }), claims: x.claims.map(String), answer: String(x.answer), figures, provider: provider.id ?? "", model: provider.model ?? "", at: new Date().toISOString() }; }
     } catch (e: any) { error = String(e?.message ?? e).slice(0, 300); }
-    room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost: job?.cost ?? null }; save(k, room);
-    engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost: job?.cost ?? null, status: room.translating.status } } as any);
+    // the scenes' bodies, after the titles and points are kept and never able to fail them: in jobs of their own, a chunk of
+    // bodies each (BODY_CHUNK characters), each body kept only whole (keepBody); a chunk that fails leaves its bodies as written
+    let cost = job?.cost ?? null; const bodies = { asked: 0, kept: 0, jobs: [] as string[] };
+    if (!error) { const items = turns.flatMap((t) => room.translations?.[lang]?.[String(t.n)] ? (t.scenes ?? []).map((sc, m) => ({ n: t.n, m, body: sc.skip ? "" : sc.body ?? "" })).filter((x) => x.body) : []);
+      for (const chunk of bodyChunks(items, BODY_CHUNK)) { if (!engine.owns(adm.x) || !k.open() || engine.abortOf(s.run).signal.aborted) break; bodies.asked += chunk.length;
+        const btext = ["TRANSLATION ONLY. Do not read code, do not call any tool, do not explain anything new.",
+          `Translate each scene body below (markdown) into ${LANGS[lang] ?? lang}, whole: keep its structure (headings, lists, code blocks), every citation token exactly as written and in the same sentence, code, paths, names and numbers as they are.`,
+          "Reply with JSON only: {\"bodies\": [{\"n\": <n>, \"m\": <m>, \"body\": \"…\"}]}, one for each body given.", "", JSON.stringify({ bodies: chunk })].join("\n");
+        try { const bj: any = await engine.deps.agents.run({ kind: "review-room", title: `${s.run.id} review room translation (${lang}) bodies ${bodies.jobs.length + 1}`, system: adm.system, text: btext, tools: [], provider,
+            ref: s.run.id, admissionReceipt: adm.admissionReceipt, receiptFor: adm.receipt, signal: engine.abortOf(s.run).signal, owns: () => engine.owns(adm.x) && k.open(), ...(adm.aux ? { auxOwner: adm.x } : {}),
+            project: s.run.params?.project || null, rules: adm.rules, maxTools: 0, timeoutMs: roundTimeoutMs(), sandbox: { writes: [], reads: [], allow: [] },
+            record: { dir: join(engine.rdir(s.run.id), "nodes", s.node.id, `${round}-b${bodies.jobs.length + 1}`), header: { run: s.run.id, node: s.node.id, round: `${round}-b${bodies.jobs.length + 1}`, head: s.head, base: s.base, card: k.id, subject: subjectRecord(k, s, room), translate: lang, bodies: chunk.map((x) => `${x.n}/${x.m}`), role: "review-room-tutor", skills: sk.map((x) => `${x.id}@sha256:${x.sha256}`) } } } as any);
+          bodies.jobs.push(bj.id); cost = cost && bj.cost ? sumCost(cost, bj.cost) : cost ?? bj.cost ?? null;
+          const mm = /\{[\s\S]*\}/.exec(String(bj.answer ?? "")); let parsed: any = null; try { parsed = mm ? JSON.parse(mm[0]) : null; } catch {}
+          for (const x of chunk) { const got = (Array.isArray(parsed?.bodies) ? parsed.bodies : []).find((y: any) => Number(y?.n) === x.n && Number(y?.m) === x.m), b = bj.status === "done" ? keepBody(x.body, got?.body) : null, sc = room.translations?.[lang]?.[String(x.n)]?.scenes?.[x.m];
+            if (b && sc) { sc.body = b; bodies.kept++; } } } catch {} } }
+    room.translating = { lang, status: error ? "failed" : "done", at: room.translating?.at ?? new Date().toISOString(), ended: new Date().toISOString(), error, dropped, job: job?.id ?? null, cost, ...(bodies.asked ? { bodies } : {}) }; save(k, room);
+    engine.record(adm.x, "review-room-translate", { head: s.head, data: { schema: 1, card: k.id, lang, turns: turns.map((t) => t.n), kept: turns.filter((t) => room.translations?.[lang]?.[String(t.n)]).map((t) => t.n), dropped, job: job?.id ?? null, provider: provider.id ?? null, model: provider.model ?? null, cost, ...(bodies.asked ? { bodies } : {}), status: room.translating.status } } as any);
   }
   /** What a paste of this pull request starts, from the one place both the paste box and the start read it: auto-teach as the
    *  room has it (its switch, else the Studio-wide setting), the tutor the room's offer would use (the host Task's seat when

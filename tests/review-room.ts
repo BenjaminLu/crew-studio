@@ -120,6 +120,8 @@ const scripted = (id: string, model: string) => ({ id, model, sandboxFree: true,
     yield { type: "turnEnd", status: "ok", usage: { usd: 0.02, inTokens: 10, outTokens: 5 } } as any; } }; } });
 const baseProvider = E.deps.provider; E.deps.provider = (id?: string, model?: string) => id === "tutor" || id === "codex" ? scripted(id, model ?? "") : baseProvider(id, model);
 const runArgs: any[] = []; const baseRun = E.deps.agents.run.bind(E.deps.agents); E.deps.agents.run = (o: any) => { if (o.kind === "review-room") runArgs.push(o); return baseRun(o); };
+// a scene's full explanation, long (a translation sends it in jobs of its own, after the titles and points)
+const BIGBODY = Array.from({ length: 180 }, (_, i) => `Part ${i + 1}: percent multiplies, then rounds half up [diff:src/percent.ts:L2-3].`).join("\n\n");
 const MDN = "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/round";
 script.push([
   ["say", "Let me look at the diff first."], // a preamble streamed as deltas only, then a tool call: not the answer
@@ -159,7 +161,7 @@ script.push([
   ["scene_show", { chapter: "what", title: "Rounding", picture: "B9-9", points: [{ text: "Only one." }] }],
   ["scene_show", { chapter: "what", title: "Rounding", picture: "B1-1", points: [{ text: "a".repeat(121) }, { text: "Two." }] }],
   ["scene_show", { chapter: "what", title: "四捨五入", picture: "B1-1", points: [{ text: "金".repeat(61) }, { text: "Two." }] }],
-  ["scene_show", { chapter: "what", title: "金".repeat(20), picture: "B1-2", points: [{ text: `${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, cites: ["diff:src/percent.ts:L2-3"] }, { text: "a".repeat(120), cites: ["diff:src/percent.ts"] }, { text: "It was probably for invoices." }] }],
+  ["scene_show", { chapter: "what", title: "金".repeat(20), picture: "B1-2", body: BIGBODY, points: [{ text: `${"金".repeat(60)} [diff:src/percent.ts:L2-3]`, cites: ["diff:src/percent.ts:L2-3"] }, { text: "a".repeat(120), cites: ["diff:src/percent.ts"] }, { text: "It was probably for invoices." }] }],
   // a lesson, chapter by chapter: per-item figures from one layout, a state machine, a sequence; chapters in order, risks cited
   ["board_draw", { items: [{ type: "item", title: "Rounding", name: "percent()", before: "Fractions of a cent kept", after: "Rounded to the cent", mechanism: "Math.round", cites: ["diff:src/percent.ts:L2-3"] },
     { type: "item", title: "Tests", name: "percent.test.ts", before: "No test of rounding", after: "1999 at 15% pinned to 300", cites: ["diff:test/percent.test.ts"] },
@@ -385,16 +387,23 @@ await room.start(merge.id, { action: "why", lang: "en", confirm: (room.view(merg
   ok(runArgs.length === runs0 + 1 && trArgs.tools.length === 0 && /translation/.test(trArgs.title) && /TRANSLATION ONLY/.test(prompts.at(-1)!.text) && !/THE DIFF/.test(prompts.at(-1)!.text), "the translation round gets no tool and no code: only the room's text", JSON.stringify({ tools: trArgs.tools.length, title: trArgs.title }));
   ok(!v1.translations.en?.["1"] && JSON.stringify(v1.translating.dropped) === "[1]" && v1.translate.confirmed === true, "a translation that lost a citation is not kept: the validator drops it and the original shows", JSON.stringify(v1.translating));
   figs = { "B1-20": ["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"], "B1-15": ["only one word"] };
-  script.push([["msg", tr("Rounded to the cent [diff:src/percent.ts:L2-3]")]]);
-  await room.translate(merge.id, { lang: "en" }, "captain"); await room.settle(merge.id);
-  const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"];
+  // the titles and points come back whole; the body's own job comes back without its citations: the body stays as written
+  script.push([["msg", tr("Rounded to the cent [diff:src/percent.ts:L2-3]")]], [["msg", JSON.stringify({ bodies: [{ n: 1, m: 0, body: "Lost every citation." }] })]]);
+  const pr0 = prompts.length, ra0 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain"); await room.settle(merge.id);
+  const v2 = room.view(merge.id) as any, kept = v2.translations.en?.["1"], trMain = prompts[pr0]!, trBody = prompts[pr0 + 1];
+  const bigScene = t1o.scenes.findIndex((x: any) => x.body === BIGBODY);
+  ok(bigScene >= 0 && BIGBODY.length > 10_000 && !trMain.text.includes("Part 1: percent multiplies") && /Translate each scene body/.test(trBody?.text ?? "") && (trBody?.text ?? "").includes("Part 180: percent multiplies")
+    && runArgs.length === ra0 + 2 && /bodies 1/.test(runArgs.at(-1)?.title ?? "") && kept?.scenes[0].title === "Rounding to the cent" && !kept.scenes[bigScene].body && v2.translating.status === "done" && v2.translating.bodies?.asked === 1 && v2.translating.bodies.kept === 0,
+    "a scene's long body never rides in the translation of titles and points: it goes in a job of its own after them, and one that comes back broken leaves the body as written while the titles and points are kept", JSON.stringify({ bigScene, bodies: v2.translating.bodies, title: kept?.scenes?.[0]?.title }));
+  const { bodyChunks } = await import("../src/domain/review-room");
+  ok(JSON.stringify(bodyChunks([{ body: "a".repeat(8) }, { body: "b".repeat(8) }, { body: "c".repeat(30) }, { body: "d" }], 20).map((c: any[]) => c.length)) === "[2,1,1]", "bodies are sent in chunks within a budget, a longer one alone", "bodyChunks");
   ok(kept?.scenes[0].title === "Rounding to the cent" && kept.claims.length === blocks.length && /^EN /.test(kept.answer) && JSON.stringify(v2.translate.pending.en) === "[]" && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-translate" && e.data.lang === "en" && JSON.stringify(e.data.kept) === "[1]"),
     "confirmed once, the next translation runs without asking again; a valid one is kept per turn and language, and recorded", JSON.stringify(kept));
   { const { OperatingRules } = await import("../src/operating-rules"); const sec = new OperatingRules(data).section(E.get(r.id)?.params?.project || null);
     const trJob = E.trusted(r.id).entries.filter((e: any) => e.record === "review-room-translate").at(-1)?.data?.job;
-    ok(prompts.at(-1)!.system.includes(sec.text) && !!trJob && E.deps.agents.jobs.get(trJob)?.operatingRules?.hash === sec.hash && E.deps.agents.jobs.get(trJob)?.operatingRules?.project === (E.get(r.id)?.params?.project || null),
+    ok(trMain.system.includes(sec.text) && !!trJob && E.deps.agents.jobs.get(trJob)?.operatingRules?.hash === sec.hash && E.deps.agents.jobs.get(trJob)?.operatingRules?.project === (E.get(r.id)?.params?.project || null),
       "the translation's instructions carry the captain's operating rules for the Task's project too, and its job keeps their hash", JSON.stringify({ job: trJob })); }
-  ok(JSON.stringify(kept?.figures?.["B1-20"]) === JSON.stringify(["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"]) && !kept?.figures?.["B1-15"] && /figures/.test(prompts.at(-1)!.text) && prompts.at(-1)!.text.includes('"B1-20":["Who calls percent","Cart","percent()","Math","calls","rounds"]') && prompts.at(-1)!.text.includes('"B1-15":["Rounding","percent()","Fractions of a cent kept","Rounded to the cent","Math.round"]'),
+  ok(JSON.stringify(kept?.figures?.["B1-20"]) === JSON.stringify(["Who calls it", "The cart", "percent()", "Math", "calls it", "rounds"]) && !kept?.figures?.["B1-15"] && /figures/.test(trMain.text) && trMain.text.includes('"B1-20":["Who calls percent","Cart","percent()","Math","calls","rounds"]') && trMain.text.includes('"B1-15":["Rounding","percent()","Fractions of a cent kept","Rounded to the cent","Math.round"]'),
     "a translation carries the drawings' words too (asked in order, per drawing): a drawing whose words came back whole is kept, one with a missing word stays as drawn", JSON.stringify(kept?.figures));
   const runs1 = runArgs.length; await room.translate(merge.id, { lang: "en" }, "captain");
   let over: any = null; { const { translationErrors } = await import("../src/domain/review-room"); over = translationErrors(t1o, { scenes: t1o.scenes.map((x: any, m: number) => m ? { title: x.title, points: x.points.map((q: any) => q.text) } : { title: "x".repeat(49), points: ["a", "b", "c"] }), claims: blocks, answer: t1o.answer }); }

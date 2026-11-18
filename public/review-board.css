@@ -350,6 +350,3 @@ body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
   .rb-scard .rr-scene.rr-steps { grid-template-columns: minmax(0, 1fr); }
   .rb-scard .rr-scene.rr-steps > .rr-points { order: 0; }
 }
-/* a large drawing (more than its column holds at a legible size) widens its card instead of shrinking: no 360px squeeze */
-.rb-scard.rr-bigfig .rr-scene, .rb-scard.rr-bigfig .rr-scene.rr-steps { grid-template-columns: 380px minmax(0, 1fr); }
-.rb-scard.rr-bigfig .rr-visual svg { max-height: none !important; }
