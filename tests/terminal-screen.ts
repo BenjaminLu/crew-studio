@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Terminals } from "../src/terminals";
+import * as screen from "../src/terminal-screen";
 import { clampCounts, drawScreen, readScreen, SCREEN_TIMEOUT_MS } from "../src/terminal-screen";
 import { redactText } from "../src/secure";
 
@@ -81,10 +82,21 @@ try {
   for (const [name, seq] of costly) for (const [cols, rows] of [[100, 30], [500, 200]]) {
     const payload = seq.repeat(Math.ceil(64_000 / seq.length)).slice(0, 64_000);
     const r = await stall(() => readScreen(payload, cols, rows)); const sc = r.out as any;
-    ok(r.worst < 200 && r.ms < SCREEN_TIMEOUT_MS + 700 && sc.lines.length <= 1300 && (sc.plain || sc.lines.join("").length <= (1000 + rows) * cols * 2), `${name} ×64 kB at ${cols}×${rows}: the event loop waited at most ${r.worst.toFixed(0)} ms, the read took ${r.ms.toFixed(0)} ms${sc.plain ? " (plain text after the timeout)" : ""}`, `${r.worst} ${r.ms} ${sc.lines.length}`);
+    ok(r.worst < 200 && r.ms < SCREEN_TIMEOUT_MS + 700 && sc.lines.length <= 1300 && (sc.plain || sc.lines.join("").length <= (1000 + rows) * cols * 2), `${name} ×64 kB at ${cols}×${rows}: the event loop waited at most ${r.worst.toFixed(0)} ms, the read took ${r.ms.toFixed(0)} ms${sc.plain ? " (plain text past its budget)" : ""}`, `${r.worst} ${r.ms} ${sc.lines.length}`);
   }
-  ok(clampCounts(`${E}[9999L${E}[1;9999H${E}[65535b${E}[?1049h${E}[38;2;255;0;0m${E}[2J`, 100, 30) === `${E}[100L${E}[1;100H${E}[3000b${E}[?1049h${E}[38;2;255;0;0m${E}[2J`, "counts are clamped to the screen (repeat to its cells); modes, colours and clears stay as they are");
-  { const r = await readScreen("hello\r\nworld\r\n", 80, 24, { timeoutMs: 0 }); ok(r.plain === true && r.lines.includes("hello") && r.lines.includes("world"), "past the timeout: the plain text of the output comes back", JSON.stringify(r)); }
+  ok(clampCounts(`${E}[9999L${E}[9999;9999H${E}[9999@${E}[65535b${E}[1;9999r${E}[?1049h${E}[38;2;255;0;0m${E}[2J`, 100, 30) === `${E}[30L${E}[30;100H${E}[100@${E}[3000b${E}[1;30r${E}[?1049h${E}[38;2;255;0;0m${E}[2J`, "counts are clamped to the screen: lines to its rows, cells to its columns, a position to both, a repeat to its cells; modes, colours and clears stay as they are");
+  ok(screen.workersStopped === 0, "every costly read above ended by the worker's own budget: no worker was stopped", String(screen.workersStopped));
+  // a stopped Worker's memory is never given back: fifty costly reads on the one worker leave memory where it was
+  { const heavy = `${E}[9999L`.repeat(9000), rss = () => process.memoryUsage().rss / 1e6; await readScreen(heavy, 500, 200); Bun.gc(true); const r0 = rss();
+    for (let i = 0; i < 50; i++) await readScreen(heavy, 500, 200);
+    Bun.gc(true); await sleep(500); const r1 = rss();
+    ok(r1 - r0 < 150 && screen.workersStopped === 0, `fifty costly reads: memory ${r0.toFixed(0)} -> ${r1.toFixed(0)} MB, no worker stopped`, `${r0} ${r1} ${screen.workersStopped}`); }
+  // a worker that does not answer in time is stopped once for that output, and a new one draws the next read
+  { const heavy = `${E}[200S${E}[200T`.repeat(3000), h0 = screen.workersStopped;
+    const a = await readScreen(heavy, 500, 200, { timeoutMs: 1 }), b = await readScreen(heavy, 500, 200, { timeoutMs: 1 }), c = await readScreen(heavy, 500, 200, { timeoutMs: 1 });
+    const fresh = await readScreen(`${E}[?1049h${E}[2;3Hafter`, 40, 6);
+    ok(a.plain && b.plain && c.plain && screen.workersStopped - h0 === 1 && fresh.alternate && fresh.lines[1] === "  after", "a stuck render stops one worker, once for that output (later reads of it are plain at once); a new worker draws the next output", `${screen.workersStopped - h0} ${JSON.stringify(fresh)}`); }
+  { const r = await readScreen("hello\r\nworld\r\n", 80, 24, { budgetMs: 0 }); ok(r.plain === true && r.lines.includes("hello") && r.lines.includes("world"), "past its budget: the plain text of the output comes back (the worker is not stopped)", JSON.stringify(r)); }
   { const a = await drawScreen(`${E}[?1049h${E}[2;3Hdrawn here`, 40, 6); ok(a.alternate && a.lines[1] === "  drawn here", "drawScreen (the worker's job) draws the same screen in this thread"); }
 
   // ---------- bounded cost ----------
