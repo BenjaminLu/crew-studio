@@ -85,24 +85,26 @@ try {
   // ---------- acceptance 7: what did the last explain cost, why did it stop ----------
   { const lg: any = await O.call("studio_logs", { ref: `room:${ROOM}` });
     const last = lg.data.explain.at(-1);
-    ok(last.cost.usd === 0.61 && last.why === "limit" && /10-minute safety limit/.test(last.stop) && lg.data.events.some((e: any) => e.type === "room_round_failed" && e.data.why === "limit"), "Q7: the last Explain-with run cost $0.61 and stopped at its safety limit; the log has the failed round", J(lg.data.explain));
+    ok(last.cost.usd === 0.61 && last.why === "limit" && /10-minute safety limit/.test(last.stop) && lg.data.events.some((e: any) => e.type === "room_round_failed" && e.data.why === "limit"), "Q7: the last page run cost $0.61 and stopped at its safety limit; the log has the failed round", J(lg.data.explain));
+    ok(J(lg.data.explain.map((r: any) => [r.n, r.kind])) === J([[1, "generate"], [2, "ask"], [3, "generate"]]) && lg.data.cost.usd === 1.08 && !("turns" in lg.data) && J(Object.keys(lg.data).sort()) === J(["cost", "events", "explain", "more"]),
+      "a room's log is its runs, a page or a question, oldest first, its events and what it all cost: no tutor turns", J(Object.keys(lg.data)));
     ok(!!lg.nextCursor && Number.isFinite(Date.parse(lg.nextCursor)), "studio_logs returns a cursor to read on (a room's: a time)", String(lg.nextCursor));
     const seqOnTime = await failOf(() => O.call("studio_logs", { ref: `room:${ROOM}`, since: "seq:3" }));
     ok(/since is a time here/.test(seqOnTime?.en ?? ""), "a cursor of the other kind is refused, saying which", J(seqOnTime)); }
 
   // ---------- paging a log: more new entries than tail, and a page cut to its budget, lose none ----------
-  { const rr: any = F.reviewRoom, view0 = rr.view, t0 = Date.now() - 3600_000;
-    const turns = Array.from({ length: 30 }, (_, i) => ({ n: 10 + i, action: "ask", text: `q${i}`, by: "captain", at: new Date(t0 + i * 60_000).toISOString(), ended: new Date(t0 + i * 60_000 + 1000).toISOString(), status: "failed", provider: "codex", model: "m", answer: "", error: `round ${i} failed: ` + "E".repeat(420), cost: { usd: 0.01 } }));
-    rr.view = (id: string, o?: boolean) => { const v = view0(id, o); v.turns = [...v.turns, ...turns]; return v; };
+  { const rr: any = F.reviewRoom, xview0 = rr.explain.view, t0 = Date.now() - 3600_000;
+    const asks = Array.from({ length: 30 }, (_, i) => ({ n: 10 + i, kind: "ask", skill: { id: "baton", v: 2, name: "baton" }, question: `q${i}`, at: new Date(t0 + i * 60_000).toISOString(), ended: new Date(t0 + i * 60_000 + 1000).toISOString(), status: "failed", provider: "codex", model: "m", rounds: [], error: `round ${i} failed: ` + "E".repeat(420), cost: { usd: 0.01 } }));
+    rr.explain.view = (id: string) => { const x = xview0(id); x.runs = [...x.runs, ...asks]; return x; };
     try {
-      const all = new Set<number>(); let cur: string | undefined = new Date(t0 - 1).toISOString(), pages = 0, over = false, cut = false;
-      do { const pg: any = await O.call("studio_logs", { ref: `room:${ROOM}`, tail: 20, since: cur }); pages++; over ||= Buffer.byteLength(J(pg)) > BUDGET.summary; cut ||= pg.data.turns.length < 20 && pg.data.more;
-        pg.data.turns.forEach((t: any) => all.add(t.n)); if (!pg.data.more) break; cur = pg.nextCursor; } while (pages < 40);
-      ok([...Array(30).keys()].every((i) => all.has(10 + i)) && !over && cut, "30 new rounds with tail 20, pages cut to 4 KB: every round comes once, none skipped", `${all.size} in ${pages} pages`);
+      const all = new Set<number>(), seen: number[] = []; let cur: string | undefined = new Date(t0 - 1).toISOString(), pages = 0, over = false, cut = false;
+      do { const pg: any = await O.call("studio_logs", { ref: `room:${ROOM}`, tail: 20, since: cur }); pages++; over ||= Buffer.byteLength(J(pg)) > BUDGET.summary; cut ||= pg.data.explain.length + pg.data.events.length < 20 && pg.data.more;
+        pg.data.explain.forEach((r: any) => { seen.push(r.n); all.add(r.n); }); if (!pg.data.more) break; cur = pg.nextCursor; } while (pages < 40);
+      ok([...Array(30).keys()].every((i) => all.has(10 + i)) && seen.length === all.size && !over && cut, "30 new questions with tail 20, pages cut to 4 KB: every run comes once, none skipped", `${all.size} in ${pages} pages`);
       const latest: any = await O.call("studio_logs", { ref: `room:${ROOM}`, tail: 5 });
-      const times = [...latest.data.turns.map((t: any) => t.ended ?? t.at), ...latest.data.explain.map((r: any) => r.ended ?? r.at), ...latest.data.events.map((e: any) => e.at)].map((x: string) => Date.parse(x));
-      ok(latest.data.turns.length + latest.data.explain.length + latest.data.events.length === 5 && Date.parse(latest.nextCursor) === Math.max(...times), "without since: the newest five, and the cursor is the last one shown", J([latest.data.turns.map((t: any) => t.n), latest.nextCursor]));
-    } finally { rr.view = view0; } }
+      const times = [...latest.data.explain.map((r: any) => r.ended ?? r.at), ...latest.data.events.map((e: any) => e.at)].map((x: string) => Date.parse(x));
+      ok(latest.data.explain.length + latest.data.events.length === 5 && Date.parse(latest.nextCursor) === Math.max(...times), "without since: the newest five, and the cursor is the last one shown", J([latest.data.explain.map((r: any) => r.n), latest.nextCursor]));
+    } finally { rr.explain.view = xview0; } }
 
   // ---------- studio_logs: a Task's steps and events; a pull request's go-live timeline; errors ----------
   { const t: any = await O.call("studio_logs", { ref: `task:${F.ids.failed}` });

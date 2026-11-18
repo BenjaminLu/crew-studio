@@ -32,7 +32,7 @@ const def = readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf
   .replace('- { id: reviewer, label: Reviewer, seat: reviewer, skill: "pack:firstmate/skills/reviewer.md" }', '- { id: reviewer, label: Reviewer, seat: reviewer, provider: tutor, model: t-1, skill: "pack:firstmate/skills/reviewer.md" }');
 const H = await harness([def], { data, checkRoots: [] });
 const E = H.engine;
-installCode(E, { dataDir: data, projects: new Projects(data), reviewWeb: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
+installCode(E, { dataDir: data, projects: new Projects(data) });
 E.policies.setProject("sandbox", { install: false });
 
 // ---------- Studio's egress proxy, with a made-up public host that lands on a local server (no real network in a test) ----------

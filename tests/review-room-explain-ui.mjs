@@ -575,7 +575,7 @@ try {
     const withMade = versions.map((v) => (v.n === 1 ? { ...v, prompt: P1 } : v.n === 2 ? { ...v, question: "Why round here?" } : v.n === 4 ? { ...v, prompt: "" } : v));
     const hashOf = (t) => (t ? `c0ffee${sha(t).slice(0, 10)}` : OFFER.hash);
     // the offer is for the text it was asked with (none: the skill's last instructions, the prefill), as the server's is
-    const offerReqs = [], gens = [], defs = []; let DEF = null, failSelect = false;
+    const offerReqs = [], gens = [], defs = [], selects = []; let DEF = null, failSelect = false;
     const EX = { en: "For this pull request, include:\n- an architecture diagram", zh: "這個 PR 請包含：\n- 架構圖" };
     const prefill = () => (DEF != null ? { text: DEF, source: "default" } : LAST ? { text: LAST, source: "last" } : { text: "", source: "none" });
     const routes = async (c, Y) => {
@@ -591,7 +591,7 @@ try {
       await c.route(/\/api\/review-room\/explain\/prompts$/, (r) => { if (r.request().method() !== "POST") return r.continue(); const b = JSON.parse(r.request().postData() || "{}"); defs.push(b); DEF = b.text || null; r.fulfill({ json: { skill: b.skill, default: DEF } }); });
       await c.route(new RegExp(`/api/review-room/${ID}/explain/generate$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); gens.push(b);
         r.fulfill(b.confirm === hashOf(b.prompt ?? "") ? { json: { ...Y(), running: 7, runs: [run(7, "generate", "running", { prompt: b.prompt })] } } : { status: 409, json: { error: "confirm / 確認", code: "confirm_required", offer: { ...OFFER, hash: hashOf(b.prompt), prompt: { text: b.prompt, max: 2000, last: LAST } } } }); });
-      await c.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => failSelect ? r.fulfill({ status: 400, json: { error: "That skill is not in the library / 技能庫裡沒有這個 skill", code: "bad_skill" } }) : r.fulfill({ json: Y() })); };
+      await c.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => { selects.push(r.request().postData()); return failSelect ? r.fulfill({ status: 400, json: { error: "That skill is not in the library / 技能庫裡沒有這個 skill", code: "bad_skill" } }) : r.fulfill({ json: Y() }); }); };
     let Y = { ...X, selected: { id: "walkthrough", v: 1 }, versions: withMade, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })] };
     const c5 = await browser.newContext({ viewport: { width: 1440, height: 900 } }); await routes(c5, () => Y);
     const w = await c5.newPage(); w.on("pageerror", (e) => errors.push(e.message));
@@ -689,9 +689,13 @@ try {
     ok(back2.body === before2.body && back2.y === before2.y && !back2.cls && back2.onSlot && back2.headOk, "Esc closes it: the same scroll position, the output on its stage, the header clickable again", JSON.stringify({ before2, back2 }));
     await w.evaluate(() => { Element.prototype.requestFullscreen = window.__realFs; });
     // a video: its own player's native full screen
-    failSelect = true; await pickVersion(w, 3); await w.waitForSelector("[data-explain-error]", { timeout: 5000 }); failSelect = false;
+    // a version another skill made (v3, explainer-video) is shown as it is: the room's skill stays the one it generates with
+    const sel0 = selects.length, skill0 = await w.evaluate(() => window.crewRoomExplain.state(S.route.arg)?.selected?.id ?? null);
+    await pickVersion(w, 3); await w.waitForSelector('[data-explain-video], video', { timeout: 5000 }).catch(() => {}); await w.waitForTimeout(300);
+    const skill3 = await w.evaluate(() => window.crewRoomExplain.state(S.route.arg)?.selected?.id ?? null);
+    ok(selects.length === sel0 && skill3 === skill0 && !(await w.$("[data-explain-error]")), "showing a version another skill made never changes the room's selected skill (no /select is sent)", JSON.stringify({ sent: selects.slice(sel0), skill0, skill3 }));
     await pickVersion(w, 1); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(150);
-    ok(!(await w.$("[data-explain-error]")), "an error from showing one version is gone once another version is shown");
+    ok(!(await w.$("[data-explain-error]")) && selects.length === sel0, "and back to v1: still nothing sent");
     await pickVersion(w, 3); await w.waitForSelector("[data-explain-video]");
     await w.click("[data-explain-full]"); await w.waitForFunction(() => !!window.crewRoomExplain.full() && !!document.fullscreenElement, null, { timeout: 5000 });
     ok(await w.evaluate(() => document.fullscreenElement?.tagName === "VIDEO" && document.fullscreenElement.hasAttribute("data-explain-video")), "a video goes full screen in its own player", await w.evaluate(() => document.fullscreenElement?.tagName));

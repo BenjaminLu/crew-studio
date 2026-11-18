@@ -24,7 +24,7 @@ const def = readFileSync(join(root, "packs/firstmate/workflows/code-firstmate.wf
   .replace('- { id: reviewer, label: Reviewer, seat: reviewer, skill: "pack:firstmate/skills/reviewer.md" }', '- { id: reviewer, label: Reviewer, seat: reviewer, provider: tutor, model: t-1, skill: "pack:firstmate/skills/reviewer.md" }');
 const H = await harness([def], { data, checkRoots: [] });
 const E = H.engine;
-installCode(E, { dataDir: data, projects: new Projects(data), reviewWeb: { search: async () => ({ configured: false }), fetch: async () => { throw new Error("no web in this test"); } } });
+installCode(E, { dataDir: data, projects: new Projects(data) });
 E.policies.setProject("sandbox", { install: false });
 
 // ---------- a made-up Task to its merge card ----------
@@ -95,6 +95,7 @@ e = await refused(() => X.generate(id, { skill: lib.id, confirm: "00000000000000
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>percent, step by step</title></head><body>
 <h1>How percent works</h1><h2>Step 1 · rounding</h2>
 <svg width="400" height="120"><g data-node="round"><rect x="10" y="10" width="160" height="60"></rect><text x="20" y="45">Math.round</text></g></svg>
+<div style="display: none">HIDDEN-a</div><template><p>HIDDEN-b</p></template><noscript>HIDDEN-c</noscript><section hidden><p>HIDDEN-d</p></section>
 <p id="lang"></p><script>localStorage.setItem('walk-lang','en');document.getElementById('lang').textContent='lang='+localStorage.getItem('walk-lang');</script></body></html>`;
 script.push([["explain_progress", { text: "reading the diff and the commits" }], ["mat_read", { path: "README.md" }], ["mat_read", { path: "diff.txt" }], ["mat_list", {}], ["skill_read", { path: "templates/page.html" }],
   ["mat_read", { path: "../../out/x.md" }], ["mat_read", { path: "head/src/percent.ts" }], ["out_write", { path: ".notes.md", content: "todo: the figure" }], ["msg", "I read the change; the page comes next round."]]);
@@ -158,8 +159,8 @@ const ask = prompts.at(-1)!, qres = results.slice(nq), page0 = String(qres[0]?.[
 ok(/^ROOM EXPLAIN ASK/.test(ask.text) && ask.text.includes("Why round here?") && /version\/page\.txt/.test(ask.text) && !/Headings:|boxed/.test(ask.text) && ask.system.includes(QA_FRAME.slice(0, 200)) && !ask.system.includes("Write index.html: one section per step"),
   "the question's prompt: Studio's question frame on the tutor's seat (not the skill), the page to read first, no boxed region", ask.text);
 ok(ask.tools.includes("explain_answer") && ask.tools.includes("mat_read") && !ask.tools.some((t) => /^out_|^skill_|explain_done/.test(t)), "a question's tools: the materials and the answer; nothing that writes, no skill, no script", JSON.stringify(ask.tools));
-ok(/How percent works/.test(page0) && /Step 1 · rounding/.test(page0) && !/localStorage/.test(page0) && /<untrusted/.test(page0) && /return Math\.round/.test(String(qres[1]?.[1]?.text ?? "")),
-  "version/page.txt is the version's visible text (never its code), fenced as untrusted; the code is there too", page0.slice(0, 300));
+ok(/How percent works/.test(page0) && /Step 1 · rounding/.test(page0) && !/localStorage/.test(page0) && !/HIDDEN-/.test(page0) && /<untrusted/.test(page0) && /return Math\.round/.test(String(qres[1]?.[1]?.text ?? "")),
+  "version/page.txt is the version's visible text (never its code, nothing hidden: display:none, hidden, <template>, <noscript>), fenced as untrusted; the code is there too", page0.slice(0, 300));
 v = X.view(id);
 ok(v.versions.length === 1 && !readFileSync(join(vdir, "index.html"), "utf8").includes("changed"), "the page is unchanged and no version was made, whatever the model tried", JSON.stringify(v.versions.map((x: any) => x.n)));
 ok(v.consent?.plan === askOffer.hash, "the captain agreed to ask the next questions on this plan without confirming each");
@@ -186,8 +187,8 @@ ok(run3.status === "done" && run3.auto === true && run3.version === null && run3
 script.push([["explain_progress", { text: "working" }], ["hang", null]]);
 v = await X.generate(id, { skill: lib.id, confirm: X.offer(id, lib.id, "generate").hash }, "captain");
 await until(() => !!X.view(id).runs.at(-1).rounds[0]?.job && X.view(id).log.length > 0, 10000);
-e = await refused(() => room.start(id, { action: "how", confirm: (room.view(id) as any).offer.hash }, "captain"));
-ok(e?.code === "busy", "while the skill works, the tutor takes no turn in this room", e?.message);
+e = await refused(() => X.ask(id, { question: "Meanwhile?", version: 1, confirm: askOffer.hash }, "captain"));
+ok(e?.code === "busy", "while the skill works, the tutor takes no question in this room", e?.message);
 ok(X.view(id).log.some((l: any) => /explain_progress/.test(l.text)), "the live log shows the round's tool calls", JSON.stringify(X.view(id).log));
 X.stop(id);
 const run4 = await waitRun(6, 20000);

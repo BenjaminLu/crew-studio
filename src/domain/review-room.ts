@@ -90,7 +90,9 @@ export const roomZone = (f: ZoneFacts): RoomZone => ZONE_RULES.find(([, holds]) 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const SHA = /^[a-f0-9]{40}$/;
 /** the pull request reads a check makes at most (pages of 100 per list) and how big its cached objects may grow */
-const PR_PAGES = 3, PR_CACHE_BYTES = () => (Number(process.env.CREW_REVIEW_PR_CACHE_MB) > 0 ? Number(process.env.CREW_REVIEW_PR_CACHE_MB) : 1024) * 1024 ** 2, PR_FETCH_MS = 120_000, PR_RECHECK_MS = 60_000;
+const PR_PAGES = 3, PR_CACHE_BYTES = () => (Number(process.env.CREW_REVIEW_PR_CACHE_MB) > 0 ? Number(process.env.CREW_REVIEW_PR_CACHE_MB) : 1024) * 1024 ** 2, PR_FETCH_MS = 120_000, PR_RECHECK_MS = 60_000,
+  /** a paid run on a pull request read longer ago than this reads it again first (a merged or closed one then refuses the run) */
+  PR_FRESH_MS = () => (process.env.CREW_REVIEW_PR_FRESH_MS !== undefined && Number(process.env.CREW_REVIEW_PR_FRESH_MS) >= 0 ? Number(process.env.CREW_REVIEW_PR_FRESH_MS) : 5 * 60_000);
 const refuse = (message: string, code: string, extra: Record<string, any> = {}) => Object.assign(new Error(message), { code, ...extra });
 export const TUTOR_SEAT = "review-room-tutor", TUTOR_ROLE = "reviewer";
 /** a pull request's address, exactly https://github.com/<owner>/<repo>/pull/<n>: no other host, path, query or fragment */
@@ -118,6 +120,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   /** the captain's GitHub token for a private repository's directory (production: `gh auth token`; tests stub it) */
   ghToken?: () => string | null }) {
   const live = new Map<string, number>();
+  /** the rooms reading their repository's cache now (a host being made, a run going): an over-cap cache is not removed under them */
+  const busyRooms = (): string[] => [...live.keys(), ...(explainer?.runningRooms?.() ?? [])];
   /** The tutor's seat: the reviewer's member (its own read-only role and skill), on a different model from the maker. */
   const reviewNode = (run: any) => run.def.nodes.find((n: any) => n.kind === "agent" && (n.mode === "review" || n.role === "reviewer"));
   const prDir = join(o.dataDir, "review-room", "pr"), cacheDir = (repository: string) => join(o.dataDir, "review-room", "cache", `${sha(repository.toLowerCase()).slice(0, 16)}.git`);
@@ -397,6 +401,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
         try { const h = engine.start({ workflow: HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { project: String(project ?? ""), pr: String(room0.subject?.url ?? "") }, by } as any); room0.host = h.id; save(k, room0); }
         catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_crew"); }
       }
+      // the host is one hook node: it ends at once, and its end aborts what listens to its signal. The page's round starts only
+      // after that end (an auxiliary owner holds an ended host), so the first page is never cancelled by its own host finishing
+      const hid = load(k)?.host, t0 = Date.now();
+      while (hid && Date.now() - t0 < 10_000 && !["succeeded", "failed", "cancelled"].includes(String(engine.get(hid)?.status ?? "succeeded"))) await new Promise((r) => setTimeout(r, 25));
     } finally { live.delete(k.id); }
   }
   /** instr: the seat on the tutor's member and its pinned texts (the explainer's: Studio's frame and the skill, or the question
@@ -464,7 +472,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
         try { fetched = await a!.fetchPull(n, pull.base.ref, wt, { signal: ac.signal, timeoutMs: PR_FETCH_MS, maxBytes: PR_CACHE_BYTES() }); }
         catch (e: any) { failed = e?.overCap ? String(e.message) : "Studio could not fetch the pull request's commits from GitHub (authentication, the network or the time limit)";
           // over the cap the cache goes, unless a room of this repository is reading it right now (a turn running)
-          const rooms = `PR-${sha(repository.toLowerCase()).slice(0, 12)}-`; if (e?.overCap && ![...live.keys()].some((x) => x.startsWith(rooms))) rmSync(wt, { recursive: true, force: true }); }
+          const rooms = `PR-${sha(repository.toLowerCase()).slice(0, 12)}-`; if (e?.overCap && !busyRooms().some((x) => x.startsWith(rooms))) rmSync(wt, { recursive: true, force: true }); }
         // the head moved while Studio read: read it once more; still different, the commits fetched are not this head's
         if (fetched && fetched.head !== pull.head.sha) { pull = await read(); if (fetched.head !== pull.head.sha) { failed = "The pull request moved while Studio read it: check again"; fetched = null; } }
         const base = fetched ? git(wt, ["merge-base", fetched.head, fetched.base]).out || fetched.base : prior?.pr?.base ?? "";
@@ -527,7 +535,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       const got = await remoteGit(wt, ["fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--depth=200", "--", remote, `+${target}:refs/crew/dir/${id}`], token, PR_FETCH_MS);
       if (!got.ok) throw refuse(`Studio could not fetch github.com/${p.repository} at ${glyph(ref).slice(0, 80)} (the network, the time limit or access) / Studio 抓不到這個目錄`, "no_access");
       const size = git(wt, ["count-objects", "-v"]).out.split("\n").reduce((t, l) => { const m = /^(size|size-pack): (\d+)$/.exec(l); return t + (m ? Number(m[2]) * 1024 : 0); }, 0);
-      if (size > PR_CACHE_BYTES()) { if (![...live.keys()].some((x) => x.startsWith(`DIR-${sha(p.repository.toLowerCase()).slice(0, 12)}-`))) rmSync(wt, { recursive: true, force: true }); throw refuse(`github.com/${p.repository} is larger than the review room keeps (${Math.round(PR_CACHE_BYTES() / 1024 ** 2)} MB)`, "too_large"); }
+      if (size > PR_CACHE_BYTES()) { if (!busyRooms().some((x) => x.startsWith(`DIR-${sha(p.repository.toLowerCase()).slice(0, 12)}-`))) rmSync(wt, { recursive: true, force: true }); throw refuse(`github.com/${p.repository} is larger than the review room keeps (${Math.round(PR_CACHE_BYTES() / 1024 ** 2)} MB)`, "too_large"); }
       const at = git(wt, ["rev-parse", "--verify", `refs/crew/dir/${id}^{commit}`]).out; if (!SHA.test(at)) throw refuse("The fetched commit is not one Studio can read", "no_access");
       if (path && git(wt, ["cat-file", "-t", `${at}:${path}`]).out !== "tree") throw refuse(`${glyph(path)} is not a directory at ${at.slice(0, 8)}: paste a directory's address (a file's /blob/ address is not one)`, "not_a_directory");
       // what it holds: its files by part (each folder and file right under it), sizes, and its README if it has one
@@ -650,11 +658,16 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   // "Explain with": the room presented by a skill (src/domain/review-explain.ts), on the room tutor's seat; questions are the tutor's
   const explainer = installExplainer({ engine, dataDir: o.dataDir, role: TUTOR_ROLE, keyOf, load, subjectOf, offerOf, tutorFor, admit, ensureHost: (k, _offer, by) => ensureHost(k, by),
     tutorBusy: () => false, subjectRecord,
+    beforePaid: async (k) => { if (k.kind !== "pr") return; const r0 = load(k);
+      if (r0?.subject?.url && Date.now() - Date.parse(r0.pr?.checkedAt ?? "0") >= PR_FRESH_MS()) { try { await readPr(r0.subject.url); } catch (e: any) { throw refuse(`Studio could not read the pull request again on GitHub before this paid run: ${String(e?.message ?? e).slice(0, 200)} / Studio 在這次付費執行前沒辦法再讀一次 GitHub 上的 pull request`, "stale"); } }
+      const r1 = load(k); if (r1?.pr?.stale && r1.pr.state === "open") throw refuse("GitHub shows newer commits Studio could not fetch yet: check for new commits before a paid run / GitHub 上有 Studio 還沒抓到的新 commit：付費執行前請先檢查新的 commit", "stale"); },
     // its own live event: a run's progress redraws the explainer's parts, never the whole room (whose output frame would reload);
     // a run that ends in a finished room saves its pages to the Library then (autoSave waits for it)
     notify: (k) => { try { engine.deps.send("review-explain", { card: k.id }); } catch {}
       // a room's first page gives it its file (the room list reads rooms by their files)
       try { if (!load(k) && explainer.pages(k.id).length) { save(k, fresh(k, subjectOf(k))); notify(k); } } catch {}
+      // a page made at the room's head is the captain's look at it: "new commits since you last looked" counts from there
+      try { if (!explainer.running(k.id)) { const r = load(k), b = explainer.brief(k.id), h = r && b?.heads.length ? subjectOf(k).head : null; if (r && h && b?.heads.includes(h) && r.seen?.head !== h) { r.seen = { head: h, at: new Date().toISOString() }; save(k, r); } } } catch {}
       try { if (self && !explainer.running(k.id)) autoSave(self, k); } catch {} },
     github: (k, room) => { const repo = room?.subject?.repository; let p: any = repo ? connected(repo) : null;
       if (!p) { const run = k.run ? engine.get(k.run) : null, pid = run?.params?.project; if (pid && run?.ctx?.pr?.adapter === "github") p = (o.projects as any)?.get?.(pid) ?? null; }

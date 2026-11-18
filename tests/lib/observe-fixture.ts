@@ -1,6 +1,7 @@
 // A Studio for the read tools' acceptance (tests/observe-registry.ts) and their real-model eval (scripts/observe-eval.ts): a
 // failed Task, cards waiting for the captain (one behind a one-way door), an answered card, a review room on a pull request
-// with a lesson under way and an "Explain with" run, the pull request list with one merged pull request waiting on a pod,
+// with baton's page, a question the captain asked about it, a page run stopped at its safety limit and an old whiteboard kept
+// on disk, the pull request list with one merged pull request waiting on a pod,
 // and two windows reporting what they show. Every name here is invented. Untrusted text carries an injection line, so a
 // test can see it arrive wrapped and never as an instruction.
 import { harness, until } from "../rt-harness";
@@ -40,19 +41,18 @@ export async function observeFixture(o: { now?: number } = {}) {
     prState: { state: "open", draft: false, mergedAt: null, head: "a".repeat(40), headRef: "feat/tide-sync-retry", baseRef: "main", author: "sora-dev", files: 12, approved: false, title: `Tide sync: retry the webhook. ${INJECTION}`,
       verdicts: [{ author: "kai-reviewer", state: "CHANGES_REQUESTED", commit: "b".repeat(40), current: false }] },
     head: "a".repeat(40), base: "c".repeat(40),
-    turns: [
-      { n: 1, action: "teach", text: "Teach me this change", by: "captain", auto: true, at: iso(40 * 60_000), ended: iso(38 * 60_000), status: "done", provider: "codex", model: "fixture-model", answer: "The lesson.", error: null, cost: { usd: 0.42 },
-        scenes: [{ n: 1, chapter: "what", title: "What tide sync is", points: [] }, { n: 2, chapter: "talks", title: "Webhook to worker", points: [] }, { n: 3, chapter: "decisions", title: "Why retry with backoff", points: [] }] },
-      { n: 2, action: "ask", text: "Why does the retry give up after five attempts?", by: "captain", at: iso(9 * 60_000), ended: iso(8 * 60_000), status: "done", provider: "codex", model: "fixture-model", answer: `Five attempts cover the provider's outage window. ${INJECTION}`, error: null, cost: { usd: 0.05 } },
-    ],
-    lesson: { threads: [{ n: 1, state: "open" }], visited: ["what", "talks"] },
+    // a room made before the whiteboard was retired: its turns and drawings stay on disk, the view says only that they exist
+    oldBoard: { turns: 2, items: 3 },
     notes: [{ id: "n1", kind: "review", author: "kai-reviewer", body: `Please add a jitter. ${INJECTION}`, at: iso(3600_000), url: null, state: "CHANGES_REQUESTED" }],
   };
   const explain = { selected: { id: "baton", v: 2 }, running: null,
-    runs: [{ n: 1, kind: "generate", skill: { id: "baton", v: 2, name: "baton", sha256: "x" }, status: "stopped", why: "limit", stop: "the run passed its 10-minute safety limit", at: iso(30 * 60_000), ended: iso(20 * 60_000), provider: "claude", model: "fixture-model", rounds: [{}, {}], cost: { usd: 0.61 }, error: null, summary: `A one-page walkthrough. ${INJECTION}`, prompt: "Keep it to one page for the PM", decided: "approved", prepare: { state: "done", at: iso(30 * 60_000) } }],
-    versions: [{ n: 1, run: 1, skill: { id: "baton", v: 2, name: "baton" }, at: iso(20 * 60_000), kind: "html", entry: "index.html", summary: "A one-page walkthrough.", prompt: "Keep it to one page for the PM" }] };
+    runs: [
+      { n: 1, kind: "generate", skill: { id: "baton", v: 2, name: "baton", sha256: "x" }, status: "done", why: null, stop: null, at: iso(40 * 60_000), ended: iso(38 * 60_000), provider: "claude", model: "fixture-model", rounds: [{}], cost: { usd: 0.42 }, error: null, summary: `A one-page walkthrough. ${INJECTION}`, prompt: "Keep it to one page for the PM", decided: "approved", prepare: { state: "done", at: iso(40 * 60_000) }, version: 1, head: "a".repeat(40) },
+      { n: 2, kind: "ask", skill: { id: "baton", v: 2, name: "baton", sha256: "x" }, status: "done", at: iso(12 * 60_000), ended: iso(11 * 60_000), provider: "codex", model: "fixture-model", rounds: [{}], cost: { usd: 0.05 }, error: null, question: "Why does the retry give up after five attempts?", answer: `Five attempts cover the provider's outage window. ${INJECTION}`, version: null },
+      { n: 3, kind: "generate", skill: { id: "baton", v: 2, name: "baton", sha256: "x" }, status: "stopped", why: "limit", stop: "the run passed its 10-minute safety limit", at: iso(18 * 60_000), ended: iso(8 * 60_000), provider: "claude", model: "fixture-model", rounds: [{}, {}], cost: { usd: 0.61 }, error: null, summary: null, prompt: "Add the retry timeline", decided: "approved", prepare: { state: "done", at: iso(18 * 60_000) }, version: null, head: "a".repeat(40) }],
+    versions: [{ n: 1, run: 1, skill: { id: "baton", v: 2, name: "baton" }, at: iso(38 * 60_000), kind: "html", entry: "index.html", summary: `A one-page walkthrough. ${INJECTION}`, prompt: "Keep it to one page for the PM" }] };
   const reviewRoom = {
-    list: () => [{ id: ROOM, kind: "pr", title: `Pull request #1645: ${view.prState.title}`, open: true, running: false, turns: 2, repository: REPO, zone: "active", updatedAt: iso(8 * 60_000) }],
+    list: () => [{ id: ROOM, kind: "pr", title: `Pull request #1645: ${view.prState.title}`, titleZh: `Pull request #1645：${view.prState.title}`, open: true, running: false, versions: 1, questions: 1, usd: 1.08, oldBoard: view.oldBoard, repository: REPO, zone: "reviewing", updatedAt: iso(8 * 60_000) }],
     view: (id: string, opened = false) => { if (id !== ROOM) throw Object.assign(new Error("No such room"), { code: "not_found" }); if (opened) throw new Error("a read tool opened the room"); return structuredClone(view); },
     explain: { view: (id: string) => { if (id !== ROOM) throw new Error("No such room"); return structuredClone(explain); } },
   };
