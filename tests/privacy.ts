@@ -37,7 +37,7 @@ const publicAttribution = new Map<string,string>([
  ["THIRD_PARTY_NOTICES.md:20","05f7cb99f32d4f77f76be79d233ceb70cf0b92fc526b8a2da58718d982891383"],
  ["packs/core/skills/studio-baton/NOTICE.md:5","862c401d3a519ef5fe127c832f18f1330dedbbc56896acd2ec757cc339d0f107"],
  ["packs/core/skills/studio-baton/NOTICE.md:23","765b91112284b6626e5743d21b152bef37ab40e749aad16cac3cdbfd33d71639"],
- ["src/domain/review-baton.ts:15","9e2950801105c865fd43a3a57f653a5a59617cc195a9eb8b0e93570cb2b15a98"],
+ ["src/domain/review-baton.ts:18","9e2950801105c865fd43a3a57f653a5a59617cc195a9eb8b0e93570cb2b15a98"],
 ]);
 const publicLine=(f:string,n:number,line:string)=>publicAttribution.get(`${f}:${n}`)===createHash("sha256").update(line).digest("hex");
 function violations(f:string,n:number,line:string,checks:Rule[]=rules){return checks.filter(([,re,kind])=>re.test(line)&&!(kind==="local-user"&&publicLine(f,n,line))).map(([what])=>`${f}:${n} ${what}`);}
