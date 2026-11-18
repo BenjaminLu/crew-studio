@@ -88,7 +88,9 @@ const GUARD = ['#!/bin/sh', 'skip=0', 'for a in "$@"; do', '  if [ "$skip" = 1 ]
 writeFileSync(join(guardDir, "crew-studio"), GUARD, { mode: 0o755 });
 const PATH = `${guardDir}:${process.env.PATH}`;
 const runtime = join(work, "runtime"); mkdirSync(runtime, { recursive: true, mode: 0o700 });
-spawnSync("git", ["init", "-q"], { cwd: project });
+// No git repository here: Codex writes a trust decision for every new repository root into the captain's own
+// ~/.codex/config.toml. The folder sits in the system's temporary folder, and the trust is given on the command line for
+// this run only (-c projects."<dir>".trust_level), so nothing is written there. Claude Code keeps no auto memory here.
 const sk = spawnSync(cli.bin, ["skill", "install", "--project", project, ...(provider === "claude" ? ["--claude"] : ["--codex"]), "--yes"], { env: { ...process.env, HOME: home, PATH }, encoding: "utf8" });
 if (sk.status !== 0) { console.error(`skill install failed: ${sk.stdout}${sk.stderr}`); process.exit(1); }
 const skillFile = JSON.parse(sk.stdout).data.written[0];
@@ -122,7 +124,7 @@ const run = (cmd: string, args: string[], env: Record<string, string>, timeout: 
   const t = setTimeout(() => { stderr += `\n${cmd} timed out after ${timeout} ms`; p.kill("SIGKILL"); }, timeout);
   p.on("close", () => { clearTimeout(t); done({ stdout, stderr }); }); });
 async function ask(q: Q) {
-  const env: Record<string, string> = { PATH, CREW_STUDIO_HOME: q.home, CREW_RUNTIME_DIR: runtime, CREW_DATA: join(work, "no-data"), ...(q.grant ? { CREW_STUDIO_GRANT: q.grant } : {}) };
+  const env: Record<string, string> = { PATH, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1", CREW_STUDIO_HOME: q.home, CREW_RUNTIME_DIR: runtime, CREW_DATA: join(work, "no-data"), ...(q.grant ? { CREW_STUDIO_GRANT: q.grant } : {}) };
   // Codex signs in from its own folder (CODEX_HOME), so its shell can run with a temporary HOME; Claude Code signs in from
   // the captain's HOME, so it keeps it and is held to the read commands by --allowedTools as well as the guard
   if (provider === "codex") { env.CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex"); env.HOME = home; }
@@ -137,7 +139,7 @@ async function ask(q: Q) {
       if (e.type === "result") { answer = String(e.result ?? ""); u = e.usage ?? null; } }
     return { answer, commands, tokens: u ? { input: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), output: u.output_tokens ?? 0, cached: u.cache_read_input_tokens ?? 0 } : null, raw: r.stderr.slice(-1500) };
   }
-  const r = await run("codex", ["exec", "--json", "--ephemeral", "--ignore-user-config", "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true", ...(model ? ["-m", model] : []), `${SYSTEM}\n\nThe captain asks: ${q.text}`], env, 300_000);
+  const r = await run("codex", ["exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "-c", `projects.${JSON.stringify(project)}.trust_level="trusted"`, "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true", ...(model ? ["-m", model] : []), `${SYSTEM}\n\nThe captain asks: ${q.text}`], env, 300_000);
   let answer = "", input = 0, output = 0, cached = 0, seen = false;
   for (const line of r.stdout.split("\n")) { let e: any; try { e = JSON.parse(line); } catch { continue; }
     if (e.type === "item.completed" && e.item?.type === "agent_message") answer = String(e.item.text ?? answer);
