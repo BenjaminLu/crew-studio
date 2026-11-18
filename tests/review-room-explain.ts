@@ -47,6 +47,14 @@ E.skillLibrary().importFolder(sk, "captain");
 const lib = E.skillLibrary().library().find((s: any) => s.id === "walkthrough" || s.name === "walkthrough")!;
 ok(!!lib, "fixture: the skill is in Studio's library", JSON.stringify(E.skillLibrary().library().map((s: any) => s.id)));
 
+// ---------- the captain's own baton, imported from a skills home before Studio shipped its own (the live library's shape): it
+// keeps the id "baton"; the built-in seeds beside it as studio-baton, and the room's default is always the built-in ----------
+{ const home = mkdtempSync(join(tmpdir(), "crew-home-baton-")), src = join(root, "packs/core/skills/studio-baton");
+  const { cpSync } = await import("node:fs"); cpSync(src, join(home, "baton"), { recursive: true }); writeFileSync(join(home, "baton", "README.md"), "the captain's copy\n");
+  E.skillLibrary().importFolder(join(home, "baton"), "captain");
+  const ls = E.skillLibrary().library(), own = ls.find((s: any) => s.id === "baton"), bi = ls.find((s: any) => s.id === "studio-baton");
+  ok(own?.sourceKind === "folder" && bi?.sourceKind === "builtin" && own.filesSha256 !== bi.filesSha256, "fixture: the captain's own baton (another version) and the built-in, side by side", JSON.stringify({ own: own?.sourceKind, bi: bi?.sourceKind })); }
+
 // ---------- a scripted provider: each round runs the next script, through the real tool route ----------
 const script: any[][] = [], prompts: { system: string; text: string; tools: string[] }[] = [], results: [string, any][] = [];
 let release: (() => void) | null = null;
@@ -70,9 +78,9 @@ const waitRun = async (n: number, ms = 60000) => { await until(() => { const v =
 
 // ---------- the picker: the built-in tutor (selected: null) and the library's skills; picking costs nothing ----------
 let v: any = X.view(id);
-ok(v.selected === null && v.skills.some((s: any) => s.id === lib.id && s.name === "walkthrough" && /walkthrough of a change/.test(s.description)) && v.versions.length === 0 && v.runs.length === 0, "the picker: the tutor by default, and the captain's library skill listed", JSON.stringify(v.skills));
+ok(v.selected?.id === "studio-baton" && v.tutor === false && v.auto?.due === true && v.auto.skill === "studio-baton" && v.skills.some((s: any) => s.id === "studio-baton" && s.name === "baton (built in)" && s.source === "builtin") && v.skills.some((s: any) => s.id === "baton" && s.own) && v.skills.some((s: any) => s.id === lib.id && s.name === "walkthrough" && /walkthrough of a change/.test(s.description)) && v.versions.length === 0 && v.runs.length === 0, "the picker: baton by default (Studio's default skill, due to start by itself when the room opens), and the captain's library skill listed", JSON.stringify(v.skills));
 v = X.select(id, lib.id); ok(v.selected?.id === lib.id && v.runs.length === 0, "selecting a skill is free: nothing runs");
-v = X.select(id, null); ok(v.selected === null, "the built-in tutor again (unchanged behaviour)");
+v = X.select(id, null); ok(v.selected === null && v.tutor === true && v.auto.due === false && v.auto.why === "picked", "the built-in tutor, picked: nothing starts by itself (unchanged behaviour)");
 let e: any = await refused(() => X.select(id, "no-such-skill")); ok(e?.code === "bad_skill", "a skill that is not in the library is refused", e?.message);
 
 // ---------- a generation is paid: the confirmation names the model, the materials, the time and the isolation ----------
@@ -305,6 +313,38 @@ delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
   ok(inner.status === 200 && inner.headers.get("content-security-policy") === OUTPUT_CSP && (await inner.text()).includes(STORAGE_SHIM), "the framed page is served exactly as in the room: the output CSP, Studio's scripts first");
   ok(X.tab("1.0", id, String(ver.n)).status === 401 && X.tab(c.cap, id, "1").status === 401 && X.tab(c.cap, "PR-000000000000-9", String(ver.n)).status === 401, "without its capability (or with another version's or room's) the tab serves nothing");
 }
+
+// ---------- baton, the default skill: opening the room starts its generation by itself, once per head ----------
+{ const { BATON_ADAPTER } = await import("../src/domain/review-baton");
+  script.length = 0; X.select(id, null);
+  const n0 = X.view(id).runs.length;
+  let w: any = await X.auto(id, "captain");
+  ok(w.runs.length === n0 && w.running == null && w.auto.why === "picked", "the captain picked the tutor for this room: opening it starts nothing", JSON.stringify(w.auto));
+  w = X.select(id, "studio-baton"); const head = w.auto.head;
+  ok(w.auto.due === true && /^[0-9a-f]{40}$/.test(head) && w.runs.length === n0, "picking baton (the default skill) costs nothing; its generation is due for this head", JSON.stringify(w.auto));
+  X.setSettings({ autoRun: false }); ok(X.view(id).auto.due === false && X.view(id).auto.why === "off" && X.view(id).settings.autoRun === false, "the captain can turn starting by itself off");
+  w = await X.auto(id, "captain"); ok(w.runs.length === n0, "off: opening the room starts nothing");
+  X.setSettings({ autoRun: true });
+  let e2: any = await refused(() => X.setSettings({ defaultSkill: "no-such-skill" })); ok(e2?.code === "bad_request", "the default skill is one of the library's (or null, the tutor)");
+  // the first one fails at the provider: no retry by itself, a reason, and the captain's Try again
+  script.push([["explain_progress", { text: "reading the materials" }], ["fail", { code: "cliError", message: "The CLI reported an error. Reason: the vendor is down" }]]);
+  const [a1, a2] = await Promise.all([X.auto(id, "captain (opened the room)"), X.auto(id, "captain (opened the room)")]);
+  ok(X.view(id).runs.length === n0 + 1 && (a1.running != null || a2.running != null), "opening it twice at once starts one run, with no paid confirmation", JSON.stringify({ a: a1.running, b: a2.running, n: X.view(id).runs.length - n0 }));
+  const f1 = await waitRun(n0 + 1);
+  ok(f1.status === "failed" && f1.why === "provider" && f1.opened === true && f1.head === head && f1.skill.id === "studio-baton" && /vendor is down/.test(f1.error) && f1.confirm === X.offer(id, "studio-baton", "generate", null, "").hash,
+    "the run Studio started: baton at this head, marked as started on opening, its offer's own hash as the confirmation; it failed with its reason", JSON.stringify(f1));
+  const sys = prompts.at(-1)!;
+  ok(sys.system.includes(BATON_ADAPTER.slice(0, 300)) && sys.system.includes(EXPLAINER_FRAME.slice(0, 200)) && /^ROOM EXPLAIN\n/.test(sys.text) && /Skill: baton \(built in\) \(studio-baton v1\)/.test(sys.text),
+    "baton runs with Studio's frame and its review-room adapter (the room's materials, never git, gh or a transcript)", sys.text.slice(0, 200));
+  w = await X.auto(id, "captain"); ok(w.runs.length === n0 + 1 && w.auto.due === false && w.auto.why === "done", "a failed one is never retried by itself: opening again starts nothing", JSON.stringify(w.auto));
+  script.push([["out_write", { path: ".baton/packet.json", content: "{}" }], ["out_write", { path: "index.html", content: PAGE }], ["explain_done", { entry: "index.html", summary: "baton: what percent does" }], ["msg", "Done."]]);
+  w = await X.auto(id, "captain", true); ok(w.running === n0 + 2, "Try again starts it once more, still without a paid confirmation", JSON.stringify(w.running));
+  const f2 = await waitRun(n0 + 2), vb = X.view(id).versions.at(-1);
+  ok(f2.status === "done" && f2.opened === true && vb?.skill.id === "studio-baton" && vb.entry === "index.html" && !vb.files.some((f: any) => f.path.startsWith(".baton")), "it made a version (its .baton/ workspace not kept in it)", JSON.stringify({ f2: f2.status, vb }));
+  w = await X.auto(id, "captain"); ok(w.runs.length === n0 + 2 && w.auto.why === "done", "reopening the room (a reload, a revisit) starts nothing more for this head");
+  w = await X.auto(id, "captain", true); ok(w.runs.length === n0 + 2, "Try again after one that finished does nothing");
+  const st = E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain-start" && x.data?.explain === n0 + 2).at(-1)?.data as any;
+  ok(st?.opened === true && st.skill?.id === "studio-baton", "the ledger says the run was started on opening the room", JSON.stringify(st)); }
 
 const started = X.view(id).runs.filter((x: any) => x.rounds.length).length;
 ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === started && E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain-start").length === started,

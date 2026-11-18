@@ -25,7 +25,7 @@ export function cliSkill(commands: Cmd[], exitMeaning: Record<number, string>): 
     "# Reading the captain's Studio",
     "",
     "1. Asked what waits, what runs or what changed? `crew-studio now` answers that in one call. Asked about one Task, card, room, pull request or skill? Read it straight away with `get` (or `find` it first when you only have a name or a number): `now` is not needed then.",
-    "   Each command is one call of the grant's hourly budget: most answers take two or three, rarely more.",
+    "   Each command is one call of the grant's hourly budget: most answers take two or three, rarely more. Several of one kind: one `list <kind>` (`list card` shows the cards with their options; follow its cursor for more), not a `get` for each.",
     "2. Read one thing with `crew-studio get <ref>` (refs are kind:id: task:R-012, room:PR-<hash>-12, pr:owner/repo#12, skill:baton@v2). Search with `crew-studio find <text>`, list with `crew-studio list <kind>`, follow a Task or room with `crew-studio logs <ref>` and what changed with `crew-studio events --since <nextCursor>`.",
     "3. Unsure what you may use or how? `crew-studio help --json` lists every command, its flags and what this grant reaches.",
     "4. Piped, every command prints one JSON object `{ok, data, untrusted, nextCursor, quota}`. Cite the refs your answer rests on.",
@@ -46,7 +46,19 @@ export function cliSkill(commands: Cmd[], exitMeaning: Record<number, string>): 
     "",
     "## Commands",
     "",
-    ...commands.map((c) => `- \`${c.usage}\`: ${c.summary}`),
+    // grouped by what a grant must reach for them: an agent reading Studio never needs the other two groups, and a pull
+    // request is read with `list pr` / `get pr:…`, not with the captain's pull request list (`prs …`)
+    "Reading Studio (a grant that reads Studio; pull requests too: `crew-studio list pr`, merged ones with `--tab merged`):",
+    "",
+    ...commands.filter((c) => !/^crew-studio (prs|run|cards) /.test(c.usage)).map((c) => `- \`${c.usage}\`: ${c.summary}`),
+    "",
+    "The captain's pull request list (only a grant with that scope; `whoami` says):",
+    "",
+    ...commands.filter((c) => /^crew-studio prs /.test(c.usage)).map((c) => `- \`${c.usage}\`: ${c.summary}`),
+    "",
+    "Runs in one project (only a grant with that scope):",
+    "",
+    ...commands.filter((c) => /^crew-studio (run|cards) /.test(c.usage)).map((c) => `- \`${c.usage}\`: ${c.summary}`),
     "",
   ].join("\n");
 }

@@ -625,6 +625,8 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-line > .rx-vhead { flex: 1; border: 0; background: none; }
 .rx-line > .rx-vhead > summary { padding: 5px 4px; }
 .rx-linefill { flex: 1; }
+.rx-autonote { flex: none; display: inline-flex; align-items: center; gap: 6px; max-width: 46%; padding: 3px 8px; border-radius: 6px; font-size: 12px; background: var(--warn-soft); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { .rx-autonote { max-width: 100%; white-space: normal; } }
 .rx-vermenu { position: absolute; top: calc(100% + 4px); left: 8px; z-index: 30; width: min(340px, calc(100% - 16px)); box-sizing: border-box; max-height: min(65vh, 560px); overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.16)); }
 .rx-verscrim { position: fixed; inset: 0; z-index: 29; }
 .rx-vermenu h6 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
@@ -778,6 +780,14 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
   .rx-msgs { overflow: visible; min-height: 160px; flex: none; }
   .rx-ask { flex: none; }
 }
+/* a phone: the output is what it reads, so it takes most of the screen (the chat follows below) */
+@media (max-width: 640px) { .rx-body { grid-template-rows: minmax(78vh, auto) auto; } }
+/* a new head's generation over the version still shown: one strip above the output, the output kept */
+.rx-genstrip { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--accent-soft); font-size: 12.5px; }
+.rx-genstrip b { font-weight: 600; }
+.rx-vfacts { flex: none; font: 500 11px var(--f-mono, ui-monospace, monospace); white-space: nowrap; }
+.rx-genstrip .rx-genstrip-fill { flex: 1; }
+.rx-stagein.gen { grid-template-rows: auto minmax(0, 1fr) auto; }
 /* a link in Studio's toast (dark on light, light on dark) reads as part of it */
 .toast a[href] { color: inherit; text-decoration: underline; font-weight: 600; }
 /* a scene's full explanation (its body): under its points, folded to one line until the captain opens it; markdown as text */
