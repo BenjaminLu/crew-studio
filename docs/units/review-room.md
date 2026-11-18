@@ -725,7 +725,9 @@ The room can be presented by one of the captain's own skills instead of the tuto
   (a model it verifies again can take a minute): until then Confirm reads "Starting…" / 開始中… (`aria-busy`), a line says Studio
   is checking the model and starting the run (`[data-explain-starting]`), and the dialog is not dismissed (Esc, Cancel, the
   backdrop) nor sent twice. Its answer acts on that dialog only: started, it closes, and a push or poll never brings it back;
-  refused, it stays with why and Confirm on again.
+  refused, it stays with why (`[data-explain-note]`, an alert) and Confirm on again; gone meanwhile, the room says why. Both
+  lines sit in the dialog's sticky footer beside Confirm, in view however long the dialog. A limit saved or an offer read after
+  the dialog closed opens nothing.
 - **What it should produce** (the confirmation's first field, `[data-explain-prompt]`, "What should it produce?" / 要產出什麼？):
   the captain's own instructions for this generation, multi-line, at most 2000 characters (`PROMPT_MAX`, a counter under it,
   warning past 90%); empty is the skill's own default. It is prefilled with the skill's **default instructions** when the

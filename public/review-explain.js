@@ -256,8 +256,9 @@ function confirmDialog(r) {
     finally { X.posting.delete(`${id}/gen`); c.starting = false; }
     if (view) { X.st.set(id, view); X.err.delete(id); if (X.confirm === c) { X.confirm = null; X.returnTo = null; } X.shown.delete(id); schedule(id); render(); focusLater("[data-explain-stop]"); return; }
     // the dialog is gone (the captain went to another page meanwhile): the room says why instead (a read would clear it)
-    if (X.confirm !== c) { X.err.set(id, bi(err.message)); render(); return; }
-    X.confirm = { ...c, ...(err.offer ? { offer: err.offer } : {}), note: bi(err.message) }; render(); load(id); };
+    const why = bi(err?.message || T("Studio gave no answer: the run did not start", "Studio 沒有回應：沒有開始執行"));
+    if (X.confirm !== c) { X.err.set(id, why); render(); return; }
+    X.confirm = { ...c, ...(err?.offer ? { offer: err.offer } : {}), note: why }; render(); focusLater(); load(id); };
   const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); if (X.confirm === c) await openConfirm(r, c.sid, c.kind, undefined, c.kind === "generate" ? c.prompt ?? "" : undefined); } catch (e) { if (X.confirm === c) { X.confirm = { ...c, note: bi(e.message) }; render(); } } };
   const cost = o?.cost || {};
   return h("div", { class: "rx-modalbg", onclick: (e) => { if (e.target === e.currentTarget) closeDialog(); } },
@@ -280,10 +281,13 @@ function confirmDialog(r) {
           row(h("label", { for: "rx-limit" }, T("Safety limit", "安全時限")), h("span", { class: "rx-limit" }, h("input", { id: "rx-limit", type: "number", min: "1", max: "1440", value: String(o.limitMin), "data-explain-limit": "", disabled: c.starting ? true : null, onchange: (e) => setLimit(e.target.value) }),
             T(" min of wall clock, then Studio stops it · applies to every room", " 分鐘，到了 Studio 會停下 · 所有審查室共用"))),
           row(T("Output frame", "產出顯示框"), T(o.isolation.en, o.isolation.zh)),
-          ...scriptRows(o.scripts, row)),
-        c.note ? h("p", { class: "rx-state err", role: "alert" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), c.note) : null],
-      c.starting ? h("p", { class: "rx-state", role: "status", "data-explain-starting": "" }, T("Studio is checking the model and starting the run. This can take a minute; this closes once it runs.", "Studio 正在確認模型並開始執行，可能要一分鐘左右；開始執行後這個視窗就會關閉。")) : null,
-      h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn", disabled: c.starting ? true : null, onclick: closeDialog }, T("Cancel", "取消")),
+          ...scriptRows(o.scripts, row))],
+      // the footer sticks to the dialog's bottom: what is happening (starting, or why it was refused) is said there, beside Confirm,
+      // in view however far the dialog is scrolled
+      h("div", { class: "rx-foot" },
+        c.starting ? h("p", { class: "rx-state rx-footmsg", role: "status", "data-explain-starting": "" }, T("Studio is checking the model and starting the run. This can take a minute; you can wait here, it closes once it runs.", "Studio 正在確認模型並開始執行，可能要一分鐘左右；在這裡等就好，開始執行後這個視窗就會關閉。"))
+        : c.note ? h("p", { class: "rx-state err rx-footmsg", role: "alert", "data-explain-note": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), c.note) : null,
+        h("button", { type: "button", class: "btn", disabled: c.starting ? true : null, onclick: closeDialog }, T("Cancel", "取消")),
         h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", "aria-busy": c.starting ? "true" : null, disabled: c.loading || c.pending || c.stale || c.starting || o?.error || X.posting.has(`${id}/gen`) ? true : null, onclick: start },
           c.starting ? T("Starting…", "開始中…") : T("Confirm and start", "確認並開始")))));
 }
