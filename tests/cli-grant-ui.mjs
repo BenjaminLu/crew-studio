@@ -35,6 +35,7 @@ try {
     await p.goto(`${base}/#/settings`); await p.waitForSelector("[data-cli-grants] #grantProject option[value=sandbox]", { state: "attached" });
     ok(await p.locator("[data-cli-grants] h2", { hasText: language === "en" ? "External CLI grants" : "外部 CLI 授權" }).isVisible(), `${key}: the section is titled in the page language`);
     ok(await p.locator("#grantScope-project").isChecked() && !(await p.locator("#grantScope-prs").isChecked()) && !(await p.locator("#grantScope-observe").isChecked()), `${key}: a new grant reaches runs in a project, by default`);
+    ok(!/\bnull\b|undefined/.test(await p.locator("[data-cli-grants]").innerText()), `${key}: no stray "null" or "undefined" in the section`);
     await p.selectOption("#grantProject", "sandbox"); await p.selectOption("#grantTtl", "1h");
     await p.click("#grantIssue");
     const cmd = p.locator("[data-cli-grants] [data-grant-command][data-fresh]"); await cmd.waitFor({ timeout: 10000 });

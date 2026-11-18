@@ -179,7 +179,7 @@ function cliGrants() {
       h("p", { class: "faint", style: "margin:4px 0 10px" }, T("Let a claude or codex you opened yourself start runs in one project (each waits for your approval) and follow them; read and edit the pull request list (Studio's own list; nothing is written to GitHub); or read Studio. Approving cards, staffing and merging stay here. The token goes into a 0600 file, never on a command line.",
         "讓你自己開的 claude 或 codex 在一個專案裡發起 run（每個都等你核准）並追蹤；讀取、編輯 PR 列表（只改 Studio 自己的清單，不寫 GitHub）；或讀取 Studio。核准卡片、staffing、merge 都只能在這裡做。token 寫進 0600 檔案，不出現在指令列。")),
       h("div", { class: "bb-grant-scopes", "data-grant-scopes": "" }, h("span", { class: "faint" }, T("Reaches", "可以做")), check("project"), check("prs"), check("observe")),
-      observe,
+      ...(observe ? [observe] : []),
       h("div", { class: "bb-grant-form" }, projLabel, h("label", {}, h("span", { class: "faint" }, T("Expires", "有效期")), ttl), issue,
         !needsProject() || projects.length ? null : h("span", { class: "faint", "data-grant-need-project": "" }, T("Register a project first.", "請先登錄專案。"))),
       grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
