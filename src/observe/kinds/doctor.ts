@@ -3,11 +3,11 @@
 // (~/…), never with a URL's credentials; a row's detail and version quote the tool (untrusted). Reading never installs, signs in or changes anything.
 import { homedir } from "node:os";
 import { registerKind, type Entity, type Sources } from "../registry";
-import { URL_USERINFO, REDACTED } from "../../secure";
+import { scrubUrlUserinfo } from "../../secure";
 
 const HOME = homedir();
 /** A row's text as shown: home paths from ~, and never a URL's userinfo (an endpoint written https://user:pass@host). */
-const home = (v: unknown) => { if (typeof v !== "string") return v ?? null; const t = HOME.length > 1 ? v.split(HOME).join("~") : v; return t.replace(URL_USERINFO, (_w, scheme: string) => `${scheme}${REDACTED}@`); };
+const home = (v: unknown) => { if (typeof v !== "string") return v ?? null; const t = HOME.length > 1 ? v.split(HOME).join("~") : v; return scrubUrlUserinfo(t); };
 const items = (s: Sources): any[] => { try { return s.doctor?.() ?? []; } catch { return []; } };
 /** One Doctor row as an agent reads it. */
 export function doctorRow(i: any) {

@@ -51,10 +51,11 @@ const CODE = ["password: true", "secret: null", "token: 12345", "token: \"\"", "
   ok(!changed.length, "the kept values under a credential name (true/false/null/undefined, small numbers, empty strings), comparisons, other names and hashes stay unchanged", JSON.stringify(changed.map((k) => [k, sec.redactText(k)]))); }
 
 // ---------- a URL's userinfo is a credential: https://user:pass@host and https://<token>@host lose it, the host stays ----------
-{ const cases: [string, string][] = [["endpoint https://ops:hunter2pass@api.example.invalid/v1", "endpoint https://" + M + "@api.example.invalid/v1"], ["clone https://tok9secret@git.example.invalid/o/r.git", "clone https://" + M + "@git.example.invalid/o/r.git"]];
+{ const cases: [string, string][] = [["endpoint https://ops:hunter2pass@api.example.invalid/v1", "endpoint https://" + M + "@api.example.invalid/v1"], ["clone https://tok9secret@git.example.invalid/o/r.git", "clone https://" + M + "@git.example.invalid/o/r.git"],
+    ["https://git@:hunter3pass@h.example.invalid/x", "https://" + M + "@h.example.invalid/x"], ["https://git@hunter4tok@h.example.invalid/y", "https://" + M + "@h.example.invalid/y"]];
   const bad = cases.filter(([i, o]) => sec.redactText(i) !== o);
-  const kept = ["https://host.example.invalid/a@b", "ssh://git@github.com/o/r.git", "mail a@b.example"].filter((k) => sec.redactText(k) !== k);
-  ok(!bad.length && !kept.length, "a URL's userinfo (user:password, a token) is removed; a path's @, git@ and an address stay", JSON.stringify([bad.map(([i]) => sec.redactText(i)), kept])); }
+  const kept = ["https://host.example.invalid/a@b", "ssh://git@github.com/o/r.git", "https://git@github.com/o/r.git", "git@github.com:o/r.git", "mail a@b.example", "https://" + M + "@h.example.invalid/x"].filter((k) => sec.redactText(k) !== k);
+  ok(!bad.length && !kept.length, "a URL's userinfo (user:password, a token, one hidden behind git@) is removed up to its last @; a path's @, a userinfo of exactly git and an address stay", JSON.stringify([bad.map(([i]) => sec.redactText(i)), kept])); }
 
 // ---------- rule 3: under a credential name security wins: code expressions, dotted tokens and bracketed values go too ----------
 { const UNDER: [string, string][] = [["token: getToken(),", "getToken()"], ["apiKey: process.env.API_KEY,", "process.env.API_KEY"], ["session: req.session,", "req.session"], ["token: v1.abcdef123", "v1.abcdef123"],

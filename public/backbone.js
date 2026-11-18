@@ -185,7 +185,7 @@ function cliGrants() {
       grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
         h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
           h("span", { class: "faint", "data-grant-scope": (g.scopes || [g.scope || "project"]).join(" ") }, `${summary(g)} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)}`),
-          g.budget ? h("span", { class: "faint", "data-grant-budget": "" }, T(`this hour: ${g.budget.calls}/${g.budget.maxCalls} calls, ${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`, `這一小時：${g.budget.calls}/${g.budget.maxCalls} 次、${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`)) : null),
+          g.budget && g.state === "active" ? h("span", { class: "faint", "data-grant-budget": "" }, T(`this hour: ${g.budget.calls}/${g.budget.maxCalls} calls, ${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`, `這一小時：${g.budget.calls}/${g.budget.maxCalls} 次、${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`)) : null),
         g.state === "active" && g.claudeMcpAdd ? connect(g) : null)))
         : h("div", { class: "empty" }, T("No external CLI grant yet.", "還沒有外部 CLI 授權。")));
   };
