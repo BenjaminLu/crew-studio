@@ -1,7 +1,7 @@
 // The index of Studio's native Firstmate tools: one list, in one order, that every place naming them is made from (the fresh
 // primary's seed, src/host/main.ts nativeFreshText; the server instructions, the firstmate skill and studio_manual's index).
 // A tool registered but missing here, or listed here as always registered but missing, fails tests/observe-registry.ts.
-export type ToolGroup = "observe" | "work" | "manual" | "projects" | "staffing" | "drafts" | "questions" | "github" | "issues" | "crew";
+export type ToolGroup = "observe" | "work" | "manual" | "projects" | "staffing" | "drafts" | "questions" | "github" | "issues" | "crew" | "notes";
 export type ToolEntry = { name: string; group: ToolGroup; /** registered in every Studio (false: only where its example is installed) */ always: boolean; about: string };
 
 export const STUDIO_TOOLS: ToolEntry[] = [
@@ -34,6 +34,7 @@ export const STUDIO_TOOLS: ToolEntry[] = [
   { name: "studio_work_package", group: "issues", always: true, about: "an issue triage's work package" },
   { name: "studio_crew_assignments", group: "crew", always: true, about: "who runs each workflow's agent nodes" },
   { name: "studio_propose_crew_change", group: "crew", always: true, about: "propose a crew change (captain approves)" },
+  { name: "studio_note_issue", group: "notes", always: true, about: "write down an issue the captain raised, for the next retro" },
   { name: "studio_startup_workflow_contract", group: "work", always: false, about: "the startup competition example's contract" },
 ];
 /** The names a fresh primary is told about when the live specs cannot be read: every tool always registered, in index order. */

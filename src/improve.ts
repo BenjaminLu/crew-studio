@@ -12,7 +12,9 @@ import { Agents, folderTools, type AgentTool } from "./agent";
 import { diffLines, diffStat, hunks } from "./diff";
 import { Evals, type EvalCase, type SuiteResult } from "./evals";
 import { beforeAfter, detect, Retros, type Detector, type Hit, type Report, type RetroConfig } from "./retro";
-import type { RawEv } from "./rawlog";
+import type { RawEv, StudioLog } from "./rawlog";
+import { candidates, studioRetro } from "./retro-candidates";
+import { oneLine, RetroStore, signal } from "./retro-signals";
 import { insertRule, Skills } from "./skills";
 import type { Workflows } from "./workflows";
 import type { Provider } from "./providers";
@@ -33,11 +35,12 @@ const SKILL_EDITOR = `You edit ONE skill file (SKILL.md: a role's working instru
 - When done, call skill_report once with a one-line summary and the effect you expect, then answer in 2 short lines.`;
 
 export function createImprove(o: { dataDir: string; flows: Workflows; agents: Agents; events: (src: "firstmate" | "studio") => RawEv[]; provider: (id?: string, model?: string) => Provider;
-  send: (type: string, data: unknown) => void }) {
+  send: (type: string, data: unknown) => void; log?: StudioLog }) {
   const dir = join(o.dataDir, "improve"); mkdirSync(join(dir, "edits"), { recursive: true });
   const skills = new Skills(o.dataDir, o.flows);
   const evals = new Evals(o.dataDir, o.agents);
   const retros = new Retros(o.dataDir);
+  const notes = new RetroStore(o.dataDir);
   const file = (id: string) => join(dir, "edits", `${id.replace(/[^\w-]/g, "")}.json`);
   const get = (id: string): Edit | null => { try { return JSON.parse(readFileSync(file(id), "utf8")); } catch { return null; } };
   const save = (e: Edit) => { writeFileSync(file(e.id), JSON.stringify(e, null, 1)); o.send("improve", { edit: e.id, status: e.status }); };
@@ -217,6 +220,26 @@ export function createImprove(o: { dataDir: string; flows: Workflows; agents: Ag
     let b: any = {}; if (writing) { try { b = await req.json(); } catch {} }
     const by = "captain";
     try {
+      // the retro's candidates (workflows/studio.retro.yaml over Studio's log) and the captain's quick notes
+      if (p === "/api/improve/candidates" && !writing) return json(candidates(studioRetro(), o.events("studio"), notes));
+      if ((p === "/api/improve/candidates/dismiss" || p === "/api/improve/candidates/undismiss") && writing) {
+        // one key, or every group of a recurring class at once (keys): the verdict is kept per class|group
+        const keys = (Array.isArray(b?.keys) ? b.keys : [b?.key]).map((k: unknown) => String(k ?? "")).filter(Boolean).slice(0, 200), v = candidates(studioRetro(), o.events("studio"), notes);
+        if (!keys.length) return json({ error: "no candidate named" }, 400);
+        if (p.endsWith("/undismiss")) { if (!keys.every((key: string) => v.dismissed.some((c) => c.key === key))) return json({ error: "no such dismissed candidate" }, 404); for (const key of keys) notes.undismiss(key); }
+        else { const cs = keys.map((key: string) => v.rows.find((x) => x.key === key)); if (cs.some((c: any) => !c)) return json({ error: "no such candidate" }, 404); for (const c of cs) notes.dismiss(c!.key, c!.count); }
+        o.send("improve", { candidates: true }); return json(candidates(studioRetro(), o.events("studio"), notes));
+      }
+      if (p === "/api/improve/notes" && writing) {
+        const route = typeof b?.route === "string" && /^#\/(prs|room|run)(\/|$)/.test(b.route) ? b.route.slice(0, 200) : null;
+        const ref = typeof b?.ref === "string" && /^[\w.\/#:@-]{1,160}$/.test(b.ref) ? b.ref : null;
+        const n = notes.addNote({ text: oneLine(b?.text), by: "captain", kind: "note", route, ref, sel: b?.sel ? oneLine(b.sel, 200) : null });
+        // the event names the note; its words stay in the store, and any selection (page text) beside them at page trust
+        signal(o.log, "captain_note", { route, ref, ...(n.context ? { sel: true } : {}), note: n.id, by: "captain" }, { actor: "captain" });
+        o.send("improve", { candidates: true }); return json({ ok: true, note: n.id });
+      }
+      let mn = /^\/api\/improve\/notes\/(N-\d+)\/undo$/.exec(p);
+      if (mn && writing) { if (!notes.dropNote(mn[1])) return json({ error: "no such note" }, 404); o.send("improve", { candidates: true }); return json({ ok: true }); }
       if (p === "/api/improve" && !writing) {
         const flows = o.flows.list().map((f) => ({ id: f.id, name: f.name, pack: f.pack ?? null, roles: f.roles, retro: !!o.flows.retro(f.id) }));
         return json({ flows, skills: skills.overview(), edits: list().map((e) => view(e)), reports: retros.list().map((r) => ({ id: r.id, workflow: r.workflow, createdAt: r.createdAt, trigger: r.trigger,

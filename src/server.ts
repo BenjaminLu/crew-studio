@@ -211,7 +211,9 @@ setInterval(() => {
 }, 3000);
 gh.onChange = s => send("github", s);
 // Pull requests (#/prs, docs/units/pr-watch.md): every pull request the captain is on, read on the shared poller under its own key
-const prWatch = createPrWatch({ dataDir: DATA, poller: githubPoller, notify: (t, d) => send(t, d) });
+// Studio's own event log (data/events.jsonl): read by the retro; pull requests write their go-live signals to it
+const studioLog = new StudioLog(join(DATA, "events.jsonl"));
+const prWatch = createPrWatch({ dataDir: DATA, poller: githubPoller, notify: (t, d) => send(t, d), log: studioLog });
 // what the captain is looking at, in memory only (src/observe/focus.ts): the board reports it, studio_now reads it
 const focus = new FocusStore(DATA);
 setInterval(() => send("ping", Date.now()), 20_000);
@@ -410,7 +412,6 @@ try { const ra = join(DATA, "round-auth.json"); if (existsSync(ra)) { const j = 
 agents.egress = egress; agents.toolUrl = () => `http://127.0.0.1:${toolListener.port}`; agents.protect = () => PROTECTED;
 agents.onChange = (j) => send("agent", { id: j.id, kind: j.kind, status: j.status, ref: j.ref, tools: j.tools });
 const fmRaw = new RawLog(join(STATE, "events.jsonl"));
-const studioLog = new StudioLog(join(DATA, "events.jsonl"));
 // web terminals (src/terminals.ts): unsandboxed agent CLIs in a project's folder, input from this Mac's page only
 const terminals = new Terminals({ dataDir: DATA,
   // the terminal page's "Open in a Studio window": the same authenticated launch as `crew-studio launch`, as an app window
@@ -469,7 +470,7 @@ const nativePick = async (x: any, pick: any, context?: { role: string; explicit:
 
 };
 agents.providerAdmission = createNativeProviderAdmission({certified,engine:()=>nativeEngineForPolicy,select:nativeSelection,pick:nativePick});
-const improve = createImprove({ dataDir: DATA, flows, agents, events: (src) => (src === "studio" ? studioLog.poll() : fmRaw.poll()), provider: pickProvider, send });
+const improve = createImprove({ dataDir: DATA, flows, agents, events: (src) => (src === "studio" ? studioLog.poll() : fmRaw.poll()), provider: pickProvider, send, log: studioLog });
 const changes = createChanges({ dataDir: DATA, flows, skills: improve.skills, agents, log: studioLog, provider: pickProvider, send });
 // the trivial lane's cards carry their door too (README.md + one asset: normally trivial)
 { const orig = m3.lane.cards.bind(m3.lane);

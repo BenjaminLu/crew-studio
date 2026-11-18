@@ -352,11 +352,11 @@ try {
     const pop = await p.evaluate(() => ({ q: document.querySelector(".rb-pop [data-pop-selection]")?.textContent ?? null, scene: document.querySelector(".rb-pop [data-pop-selection]")?.dataset.popSelection ?? null, input: !!document.querySelector(".rb-pop [data-pop-input]") }));
     ok(/Ask about the words you selected: “rounded to whole cents”/.test(pop.q || "") && pop.scene === "t1" && pop.input, "it opens the board's ask popover on those words, quoted, with the chips and a question of one's own", JSON.stringify(pop));
     await p.fill(".rb-pop [data-pop-input]", "Why whole cents?"); await p.press(".rb-pop [data-pop-input]", "Enter"); await p.waitForTimeout(250);
-    const pend = await p.evaluate(() => ({ inRegion: !!document.querySelector('[data-region="t1"] [data-pending]'), q: document.querySelector('[data-region="t1"] [data-pending] .rb-cq')?.textContent ?? null }));
-    await tap(p, '[data-region="t1"] [data-board-start]'); await p.waitForTimeout(300);
+    const pend = await p.evaluate(() => ({ inRegion: !!document.querySelector('[data-board-notes] [data-conv-scene="t1"] [data-pending]'), q: document.querySelector('[data-board-notes] [data-conv-scene="t1"] [data-pending] .rb-cq')?.textContent ?? null }));
+    await tap(p, '[data-board-notes] [data-conv-scene="t1"] [data-board-start]'); await p.waitForTimeout(300);
     const sent = S.posts.at(-1)?.thread;
     ok(pend.inRegion && /Why whole cents\?/.test(pend.q || "") && sent?.anchor?.kind === "selection" && sent.anchor.scene === "t1" && sent.anchor.text === "rounded to whole cents" && /^sel:[0-9a-f]+$/.test(sent.anchor.part || "") && sent.chip === "free" && sent.q === "Why whole cents?" && !!S.posts.at(-1)?.confirm,
-      "the question waits for its confirmation in a card on that answer, then goes as a board question anchored to the selected words", JSON.stringify({ pend, sent: S.posts.at(-1) }));
+      "the question waits for its confirmation in a card in the conversation pane, under that answer, then goes as a board question anchored to the selected words", JSON.stringify({ pend, sent: S.posts.at(-1) }));
     // the caption's words too: their scene is the one the play bar reads
     await tap(p, "[data-playbar] [data-replay]"); await p.waitForTimeout(150); await tap(p, "[data-playbar] [data-play]"); await p.waitForTimeout(100);
     // paused where it is (the voice stub reads fast), then the first word the caption shows
@@ -390,10 +390,10 @@ try {
     await selectIn(p, '[data-region="t1"] .rr-ptext', "whole cents"); await p.waitForTimeout(3600); // the running turn's poll redraws every 2.5 s
     const kept = await p.evaluate(() => getSelection().toString()), b2 = await selBtn(p);
     await p.evaluate(() => getSelection().removeAllRanges()); await p.waitForTimeout(400);
-    const cards = await p.$$eval('[data-tcard^="1:"]', (els) => els.map((e) => e.closest("[data-region]")?.dataset.region));
+    const cards = await p.$$eval('[data-tcard^="1:"]', (els) => els.map((e) => e.closest("[data-board-notes] [data-conv-thread]")?.dataset.convScene));
     ok(one === "w" && !!b1, "a selection of one character offers “Ask about this” too", JSON.stringify({ one, b1 }));
     ok(kept === "whole cents" && !!b2, "a background redraw while a turn runs waits for the selection: the words stay selected and their “Ask about this” stays", JSON.stringify({ kept, b2 }));
-    ok(JSON.stringify(cards) === '["t1"]', "a question on an answer whose turn also has a check is drawn once, beside the answer", JSON.stringify(cards));
+    ok(JSON.stringify(cards) === '["t1"]', "a question on an answer whose turn also has a check is drawn once, in the conversation pane under that answer's scene", JSON.stringify(cards));
     await ctx.close(); }
   { const { ctx: c2, p } = await open(390, clone(BASE)); await tap(p, "[data-board-rail] .rb-sheetx"); await p.waitForTimeout(300);
     const got = await selectIn(p, ".rb-region.cur .rr-ptext", "whole cents"); await p.waitForTimeout(350); const b = await selBtn(p);
