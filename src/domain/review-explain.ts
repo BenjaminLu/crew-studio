@@ -397,8 +397,9 @@ export function installExplainer(d: ExplainerDeps) {
     if (text.length > PROMPT_MAX) return { error: `Keep what it should produce to at most ${PROMPT_MAX} characters / 「要產出什麼」最多 ${PROMPT_MAX} 字`, code: "bad_text" };
     // the whole package is pinned (SKILL.md and every file, so a changed script is a new version), and so is what its scripts get;
     // a generation's instructions too (another prompt is another paid run: it asks again)
-    const hash = sha(JSON.stringify({ room: k.id, tutor: t.hash, kind, skill: p.id, v: p.v, sha256: p.sha256, filesSha256: p.filesSha256, limitMin,
-      scripts: planKey(scripts), decide: decideKey(dec), ...(kind === "generate" ? { prompt: sha(text) } : {}) })).slice(0, 16);
+    // a question is the room tutor's, whichever skill made the page it is about: its plan is the tutor and the limit only
+    const hash = sha(JSON.stringify(kind === "ask" ? { room: k.id, tutor: t.hash, kind, frame: sha(QA_FRAME), limitMin }
+      : { room: k.id, tutor: t.hash, kind, skill: p.id, v: p.v, sha256: p.sha256, filesSha256: p.filesSha256, limitMin, scripts: planKey(scripts), decide: decideKey(dec), prompt: sha(text) })).slice(0, 16);
     return { kind, skill: { id: p.id, v: p.v, name: p.name }, provider: t.provider, model: t.model, effort: t.effort ?? null, independence: t.independence ?? null, paid: true, hash, limitMin,
       ...(kind === "generate" ? { prompt: { text, max: PROMPT_MAX, last, default: def, source, example: PROMPT_EXAMPLE } } : {}),
       rounds: kind === "ask" ? { en: "The room's tutor answers in the chat. It never changes the page and never makes a new version: Generate again does that.", zh: "審查室的導師在對話框回答，不會改頁面、也不會產生新版本；要改頁面請按重新產生。" }
@@ -414,7 +415,8 @@ export function installExplainer(d: ExplainerDeps) {
   /** the default skill at its current version (null: none, or Studio's tutor) */
   const defaultSel = () => { const id = settings().defaultSkill; if (!id) return null; const s = library().find((x) => x.id === id); return s ? { id: s.id, v: s.current as number } : null; };
   /** the skill a room is explained with: the captain's pick, else (no pick, and not the tutor's board) Studio's default skill */
-  const selectedOf = (st: XState) => st.selected ?? (st.tutor ? null : defaultSel());
+  // the tutor's board is gone from the page: a room once set to it (tutor) is explained with the default skill like any other
+  const selectedOf = (st: XState) => st.selected ?? defaultSel();
   /** The built-in baton, exactly as pinned (src/domain/review-baton.ts): its scripts are approved in advance, the captain's
    *  decision, recorded once in the signed approvals ledger (via builtin-pin). A changed file or another skill decides as before. */
   const preapproved = new Set<string>();
@@ -813,7 +815,7 @@ export function installExplainer(d: ExplainerDeps) {
     { const s0 = d.subjectOf(k); if ((!s0.run || !s0.node) && (k.kind === "pr" || k.kind === "dir")) { await d.ensureHost(k, d.offerOf(k), by); k = d.keyOf(id); } }
     const s = d.subjectOf(k); if (!s.run || !s.node) throw refuse("No Task hosts this room's paid rounds / 沒有任務能承載這間審查室的付費回合", "no_host");
     const { pin, body, dir: skillDir, files: skillFiles } = pinOf(skill);
-    if (pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
+    if (kind === "generate" && pin.v !== o0.skill.v) throw refuse("The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", "confirm_required", { offer: offer(k, skill, kind, prompt) });
     // what its scripts run with, as confirmed: read once here and used for the whole run (a change since the offer asks again)
     let plan = kind === "ask" ? null : planOf(pin);
     if (kind === "generate" && decideKey(decisionOf(pin)) !== decKey0)
@@ -900,7 +902,7 @@ export function installExplainer(d: ExplainerDeps) {
       return x ? offer(k, x.skill.id, "ask") : { error: "There is no output to ask about yet / 還沒有可以追問的產出", code: "not_found" }; },
     /** the room's way of explaining: the built-in tutor (null) or a library skill; free, nothing runs */
     select(id: string, skill: unknown) { const k = d.keyOf(id), st = read(k);
-      if (skill === null || skill === "tutor") { st.selected = null; st.tutor = true; } else { preapprove(String(skill)); const p = pinOf(skill).pin; st.selected = { id: p.id, v: p.v }; delete st.tutor; }
+      if (skill === null || skill === "tutor") { st.selected = null; delete st.tutor; } else { preapprove(String(skill)); const p = pinOf(skill).pin; st.selected = { id: p.id, v: p.v }; delete st.tutor; }
       write(k, st); d.notify(k); return viewOf(k); },
     generate(id: string, a: any, by: string) { return start(id, "generate", { skill: a?.skill, confirm: a?.confirm, prompt: a?.prompt, skillDecision: a?.skillDecision }, by); },
     /** the captain opened the room: the default skill's generation for this head starts by itself when it is due; retry: once more

@@ -565,3 +565,15 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-oldboard .btn { flex: none; white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
 .rr-oldboard .rr-ic { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
 @media (max-width: 640px) { .rr-oldboard { flex-wrap: wrap; } .rr-oldboard .btn { width: 100%; justify-content: center; } }
+
+/* an answer's Markdown in the chat: lists, a table that scrolls inside the message, headings, code */
+.rx-md > * { margin: 0 0 8px; }
+.rx-md > *:last-child { margin-bottom: 0; }
+.rx-md ul, .rx-md ol { padding-left: 20px; }
+.rx-md li { margin: 2px 0; }
+.rx-md h4 { font-size: 14px; margin: 10px 0 4px; }
+.rx-md code { font: 12.5px var(--f-mono, ui-monospace, monospace); background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
+.rx-tablewrap { overflow-x: auto; max-width: 100%; }
+.rx-table { border-collapse: collapse; font-size: 13px; }
+.rx-table th, .rx-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+.rx-table th { background: var(--surface-2); font-weight: 600; }

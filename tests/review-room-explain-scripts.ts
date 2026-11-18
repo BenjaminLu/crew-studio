@@ -344,8 +344,10 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
   // a question is the room tutor's own: it runs no script, so a new, undecided version of the skill that made the page asks
   // nothing about scripts, prepares nothing, and the captain's consent for questions holds
   const from = X.view(id).versions.filter((x: any) => x.skill.id === dep.id).at(-1)!;
+  const o5q: any = X.offer(id, null, "ask", from.n);
   const dF = dirs["dep-kit"]; writeFileSync(join(dF, "scripts", "use-py.py"), "print('v2')\n"); rmSync(join(dF, "requirements.txt")); E.skillLibrary().importFolder(dF, "captain");
   const o6: any = X.offer(id, null, "ask", from.n), nF = n0(), pq = prompts.length;
+  ok(o6.hash === o5q.hash, "a question's plan is the tutor's, not the skill's: a new version of the skill that made the page changes nothing to confirm", JSON.stringify({ before: o5q.hash, after: o6.hash }));
   ok(o6.kind === "ask" && o6.decide === null && o6.scripts === null, "a question on a page whose skill has a new, undecided version asks nothing about scripts", JSON.stringify({ d: o6.decide, s: o6.scripts }));
   script.push([["explain_answer", { answer: "Because of the lock.", cites: [] }]]);
   await X.ask(id, { question: "Why this lock?", version: from.n, confirm: o6.hash, consent: true }, "captain"); const runF = await waitRun(nF);

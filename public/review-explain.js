@@ -472,7 +472,7 @@ function verMenu(r, st) {
       madeFrom(v) ? h("small", { class: "rx-verprompt", "data-explain-verprompt": v.n, title: madeFrom(v).full }, madeFrom(v).short) : null)),
     // one Generate: here once an output exists; before that the stage has it
     sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => { X.verMenu = null; openConfirm(r, sid, "generate", "[data-explain-versions]", cur.skill.id === sid && typeof cur.prompt === "string" ? cur.prompt : undefined); } }, T("Generate a new version", "重新產生一版")) : null,
-    h("p", { class: "faint rx-note" }, T("Every generation, and every follow-up that changes the output, is kept as a version: pick an older one to compare.", "每次產生、每次追問改了產出，都留一版；點舊版可以對照。")));
+    h("p", { class: "faint rx-note" }, T("Every generation is kept as a version (a question never changes one): pick an older one to compare.", "每次產生都留一版（提問不會改任何一版）；點舊版可以對照。")));
 }
 /** what a version was made from, in a line: a generation's instructions (or the skill's default), a follow-up's question */
 function madeFrom(v) {
@@ -634,6 +634,27 @@ function scope(r, st) {
 const clearSel = (id) => { X.sel.delete(id); refresh(id); };
 /** what a question was about, as the chat shows it: the paused frame or the boxed region's last heading */
 const thumb = (sel) => (sel ? h("span", { class: "rx-thumb" }, sel.time != null ? `⏸ ${ts(sel.time)}` : `▭ ${sel.headings?.slice(-1)[0] || T("boxed region", "框選的區域")}`) : null);
+/** an answer's Markdown as the chat shows it, built from text nodes only (never HTML from the model): paragraphs, lists,
+ *  tables, headings, **bold** and `code` */
+const mdInline = (t) => { const out = [], re = /\*\*([^*\n]+?)\*\*|`([^`\n]+)`/g; let i = 0, m; const s = String(t);
+  while ((m = re.exec(s))) { if (m.index > i) out.push(s.slice(i, m.index)); out.push(m[1] != null ? h("b", {}, m[1]) : h("code", {}, m[2])); i = m.index + m[0].length; }
+  if (i < s.length) out.push(s.slice(i)); return out; };
+function answerView(text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n"), out = []; let i = 0;
+  const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, "|").trim());
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    if (/^\s*\|/.test(l)) { const rows = []; while (i < lines.length && /^\s*\|/.test(lines[i])) { if (!/^\s*\|?\s*:?-{2,}/.test(lines[i])) rows.push(cells(lines[i])); i++; }
+      out.push(h("div", { class: "rx-tablewrap" }, h("table", { class: "rx-table" }, rows.map((r, k) => h("tr", {}, r.map((c) => h(k ? "td" : "th", {}, mdInline(c)))))))); continue; }
+    if (/^\s*([-*+]|\d+\.)\s+/.test(l)) { const ord = /^\s*\d+\./.test(l), items = []; while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, "")); i++; }
+      out.push(h(ord ? "ol" : "ul", {}, items.map((x) => h("li", {}, mdInline(x))))); continue; }
+    const hd = /^\s*#{1,6}\s+(.*)$/.exec(l); if (hd) { out.push(h("h4", {}, mdInline(hd[1]))); i++; continue; }
+    const para = []; while (i < lines.length && lines[i].trim() && !/^\s*(\||[-*+]\s|\d+\.\s|#{1,6}\s)/.test(lines[i])) { para.push(lines[i].trim()); i++; }
+    out.push(h("p", {}, mdInline(para.join(" "))));
+  }
+  return h("div", { class: "rx-md", "data-explain-md": "" }, out);
+}
 function msgs(r, st) {
   const id = r.card.id, a = X.ask && X.ask.id === id ? X.ask : null, out = [];
   out.push(h("div", { class: "rx-m sys" }, T("Ask about this page: the room's tutor answers here, from the page shown and the change's code. It never changes the page; Generate again does.", "問這一頁：審查室的導師在這裡回答，依據目前這一版頁面和改動的程式碼。它不會改頁面；要改頁面請按重新產生。")));
@@ -648,7 +669,7 @@ function msgs(r, st) {
     out.push(h("div", { class: `rx-m ${run.status === "done" || run.status === "running" ? "ai" : run.status === "stopped" ? "warn" : "err"}`, "data-explain-answer": run.n, "data-status": run.status },
       run.status === "running" ? [h("span", { class: "faint" }, T("Working on it…", "處理中…")), ...(run.progress || []).slice(-3).map((p) => { if (p.script) { const s = scriptLine(p.script); return h("div", { class: `rx-callrow ${s.cls}` }, h("span", { class: "d" }, s.mark), " ", s.body); } return h("div", { class: "faint" }, `· ${p.text}`); }),
         readOnly() ? null : h("div", {}, h("button", { type: "button", class: "btn sm", "data-explain-stop": "", onclick: () => stop(id) }, T("Stop", "停止")))]
-      : run.status === "done" ? [...String(run.answer || "").split(/\n{2,}/).map((p) => h("p", {}, p)),
+      : run.status === "done" ? [answerView(run.answer),
         run.cites?.length ? h("div", { class: "rx-cites" }, run.cites.map((c) => h("span", { class: "rx-cite", "data-explain-cite": "" }, c))) : null,
         spent ? h("small", { class: "faint" }, spent) : null]
       : (() => { const w = whyOf(run); return [h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), w.text, w.detail ? h("small", { class: "faint" }, ` ${w.detail}`) : null]; })()));
