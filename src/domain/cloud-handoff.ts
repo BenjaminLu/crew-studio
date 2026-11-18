@@ -23,6 +23,7 @@ import { registerSecretValues, redactText } from "../secure";
 import { OperatingRules } from "../operating-rules";
 import { Policies } from "../runtime/checks";
 import { SESSION_LINK } from "./pull-template";
+import { matches } from "../doors";
 import type { Engine, Run, WNode, X } from "../runtime/engine";
 
 export const HANDOFF_HANDLER = "cloud-handoff";
@@ -224,6 +225,19 @@ export function declaredTestCommands(c: { test: string[] | null; testSource: str
   return [c.test.map((a) => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`).join(" ")];
 }
 
+/** The existing test files a range changed (modified, deleted, a type change, or renamed away), by the repository's test
+ *  globs; files the range added are not counted. */
+export function changedTests(repo: string, from: string, to: string, globs: string[]): string[] {
+  if (!globs.length) return [];
+  const r = git(repo, ["diff", "--name-status", "-M", "--no-color", `${from}..${to}`]); if (!r.ok) return [];
+  const out: string[] = [];
+  for (const line of r.out.split("\n").filter(Boolean)) {
+    const [st, a] = line.split("\t"); if (!st || !a || st.startsWith("A")) continue; // added: fine; R/C: the old path
+    if (globs.some((g) => matches(g, a))) out.push(a);
+  }
+  return [...new Set(out)].sort();
+}
+
 // ---------- the external wait ----------
 export type HandoffWait = { version: 1; handler: typeof HANDOFF_HANDLER; grant: string; repository: string; branch: string; baseHead: string; baseCommit: string;
   attempt: number; sessionId: string; sessionUrl: string; firedAt: number; branches: Record<string, string> };
@@ -276,7 +290,9 @@ export function installCloudHandoff(engine: Engine, o: { dataDir: string; adapte
   /** the worktree side of a take-back (src/domain/code.ts): the Task's worktree moves from its head to the cloud head */
   acceptCloudHead: (x: X, a: GitHubPrAdapter, from: string, to: string) => Promise<void>;
   /** the repository's declared test commands for the completion condition */
-  testCommands: (x: X) => string[] }): CloudHandoffApi {
+  testCommands: (x: X) => string[];
+  /** the repository's declared test file globs (what counts as an existing test the cloud must not change) */
+  testGlobs?: (x: X) => string[] }): CloudHandoffApi {
   const store = new CloudSetupStore(o.dataDir), poller = o.poller ?? new GitHubPoller();
   const providerOf = () => o.provider ?? new ClaudeRoutineProvider(process.env.CREW_CLOUD_FIRE_ORIGIN && /^http:\/\/127\.0\.0\.1:[0-9]{2,5}$/.test(process.env.CREW_CLOUD_FIRE_ORIGIN) ? process.env.CREW_CLOUD_FIRE_ORIGIN : FIRE_ORIGIN);
   const owners = new Map<string, { wake: (r: any) => void; cancel: () => void; adapter: GitHubPrAdapter }>();
@@ -463,6 +479,9 @@ export function installCloudHandoff(engine: Engine, o: { dataDir: string; adapte
         const bodies = git(repo, ["log", "--format=%H%x00%B%x01", `${d.baseHead}..${cloud}`]).out.split("\x01").map((s) => s.trim()).filter(Boolean);
         const linked = bodies.filter((b) => SESSION_LINK.test(b.split("\x00")[1] ?? "")).map((b) => b.split("\x00")[0].slice(0, 8));
         if (linked.length) findings.push({ class: "session-trailer", en: `Commits carry a Claude-Session trailer or a session link: ${linked.join(", ")}. Studio will not publish them; rewriting them is not in this release, so discard the hand-off.`, zh: `有 commit 帶 Claude-Session trailer 或 session 連結：${linked.join("、")}。Studio 不會發布它們；這一版還不能改寫，請丟棄這次交接。` });
+        // existing tests the cloud changed or deleted (the prompt forbids it); new test files are fine
+        const touched = changedTests(repo, d.baseHead, cloud, o.testGlobs?.(x) ?? []);
+        if (touched.length) findings.push({ class: "tests-changed", en: `The cloud changed or deleted existing tests: ${touched.slice(0, 10).join(", ")}${touched.length > 10 ? ` and ${touched.length - 10} more` : ""}. The prompt told it not to; look at the diff before you take it back.`, zh: `雲端改了或刪了既有的測試：${touched.slice(0, 10).join("、")}${touched.length > 10 ? ` 等 ${touched.length} 個` : ""}。指示裡要它不要改；收回前請先看 diff。` });
         const refused = findings.some((f) => f.class === "session-trailer" || f.class === "rewritten");
         r.nodes[WORKER].data.cloudPostcheck = { cloudHead: cloud, findings, red: findings.length > 0, refused, at: new Date().toISOString() }; engine.commit(r, "cloud hand-off post checks");
         engine.record(x, "cloud-handoff-postcheck", { head: d.baseHead, verdict: findings.length ? "fail" : "pass", actor: by, data: { cloudHead: cloud, findings } } as any);

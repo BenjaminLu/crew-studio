@@ -148,11 +148,13 @@ try {
   const q = await api().preview(id2), f3 = await api().fire(id2, { branch: q.confirm.branch, by: "captain" });
   ok(f3.status === 200 && E.get(id2)!.nodes.build.waiting === "external", "a second Task is handed off", JSON.stringify(f3.body).slice(0, 200));
   const base2 = q.confirm.baseHead, visits = E.get(id2)!.nodes.build.visits;
-  cloudCommit(q.confirm.branch, { "src/percent.ts": "export const percent = (a: number, p: number) => Math.round((a * p) / 100);\n" }, `feat: percent\n\nHandoff-Status: done\nClaude-Session: ${sessionUrl("session_01FixtureLeak")}`);
+  cloudCommit(q.confirm.branch, { "src/percent.ts": "export const percent = (a: number, p: number) => Math.round((a * p) / 100);\n", "test/money.test.ts": "// the cloud rewrote an existing test\n", "test/percent-new.test.ts": "// a new test file is fine\n" }, `feat: percent\n\nHandoff-Status: done\nClaude-Session: ${sessionUrl("session_01FixtureLeak")}`);
   await until(() => !!E.get(id2)!.nodes.build.data.cloudObserved?.status, 10000);
   const tb2 = await api().takeBack(id2, "captain");
   ok(tb2.status === 409 && tb2.body.findings.some((f: any) => f.class === "session-trailer") && /Claude-Session/.test(tb2.body.error) && E.get(id2)!.nodes.build.waiting === "external" && E.get(id2)!.ctx.head === base2,
     "a commit with a Claude-Session trailer is caught: the take-back stops, the Task head stays at the base", JSON.stringify(tb2.body).slice(0, 300));
+  const tc = tb2.body.findings.find((f: any) => f.class === "tests-changed");
+  ok(!!tc && tc.en.includes("test/money.test.ts") && !tc.en.includes("percent-new"), "an existing test the cloud rewrote is flagged red; the test file it added is not", JSON.stringify(tc));
   const d = await api().discard(id2, "captain");
   await until(() => E.get(id2)!.nodes.build.visits > visits && E.get(id2)!.nodes.build.state === "running", 30000);
   const r2 = E.get(id2)!;

@@ -376,6 +376,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     // the command as the repository declares it (a package.json script as written, a .crew/gates.json argv shell-quoted),
     // never Studio's own wrapper around it: the cloud agent runs it in its own shell
     testCommands: (x) => { try { return declaredTestCommands(cfgOf(x)); } catch { return []; } },
+    testGlobs: (x) => { try { return cfgOf(x).tests; } catch { return ["tests/**", "**/*.test.*", "test/**"]; } },
     acceptCloudHead: async (x, a, from, to) => {
       if (!x.ctx.wt) throw new Error("the Task has no worktree");
       const key = wkey(x), round = await W.startRound(key.project, key.task, `${x.run.id}/cloud-take-back#${x.visit}`, { write: true, skipInstall: true, remote: () => a.remoteGit() });

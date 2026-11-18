@@ -5,10 +5,10 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 // answer: one request each, never retried), the blocking rules, the one prompt (snapshot: branch and completion condition
 // as the confirm view shows them), the Handoff-Status trailer (untrusted), the sessionUrl check and the Doctor rows.
 //   bun tests/cloud-handoff.ts        (UPDATE_SNAPSHOT=1 rewrites tests/fixtures/cloud-handoff/prompt.txt)
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { suite } from "./rt-harness";
-import { CloudSetupStore, declaredTestCommands, ClaudeRoutineProvider, FIRE_TEXT_MAX, handoffBlockers, handoffPrompt, handoffStatus, sessionUrlOff, type HandoffFacts, type BlockerInput } from "../src/domain/cloud-handoff";
+import { CloudSetupStore, declaredTestCommands, changedTests, ClaudeRoutineProvider, FIRE_TEXT_MAX, handoffBlockers, handoffPrompt, handoffStatus, sessionUrlOff, type HandoffFacts, type BlockerInput } from "../src/domain/cloud-handoff";
 import { redactText } from "../src/secure";
 import { SECRET_DIRS } from "../src/runtime/checks";
 import { must } from "../src/git";
@@ -120,5 +120,13 @@ const temp = checkedTempDir("cloud-handoff-");
   ok(!sessionUrlOff(repo, must(repo, ["rev-parse", "HEAD"])), "no .claude/settings.json: session links are on");
   mkdirSync(join(repo, ".claude")); writeFileSync(join(repo, ".claude", "settings.json"), JSON.stringify({ attribution: { sessionUrl: false } })); must(repo, ["add", "."]); must(repo, ["commit", "-qm", "settings"]);
   ok(sessionUrlOff(repo, must(repo, ["rev-parse", "HEAD"])), "a committed attribution.sessionUrl: false turns them off");
+  // existing tests the cloud changed: modified, deleted or renamed away count; a new test file does not
+  mkdirSync(join(repo, "test")); for (const f of ["keep", "edit", "drop", "move"]) writeFileSync(join(repo, "test", `${f}.test.ts`), `// ${f}\n`);
+  must(repo, ["add", "."]); must(repo, ["commit", "-qm", "tests"]); const before = must(repo, ["rev-parse", "HEAD"]);
+  writeFileSync(join(repo, "test", "edit.test.ts"), "// edited\n"); rmSync(join(repo, "test", "drop.test.ts")); must(repo, ["mv", "test/move.test.ts", "test/moved.test.ts"]);
+  writeFileSync(join(repo, "test", "new.test.ts"), "// new\n"); writeFileSync(join(repo, "a"), "b"); must(repo, ["add", "-A", "."]); must(repo, ["commit", "-qm", "cloud"]);
+  const touched = changedTests(repo, before, must(repo, ["rev-parse", "HEAD"]), ["test/**"]);
+  ok(JSON.stringify(touched) === JSON.stringify(["test/drop.test.ts", "test/edit.test.ts", "test/move.test.ts"]), "the post check finds the existing tests the cloud edited, deleted or renamed, never the ones it added", JSON.stringify(touched));
+  ok(changedTests(repo, before, must(repo, ["rev-parse", "HEAD"]), []).length === 0, "no declared test globs: nothing is called a test");
 }
 end();

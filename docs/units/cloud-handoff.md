@@ -63,7 +63,8 @@ pace. The trailer, its reason and the commit messages are untrusted data: shown,
 ## Take back and discard
 
 Take back records the cloud head (`cloud-handoff-head`), then checks on GitHub: other branches changed since the fire,
-pull requests opened or merged since the fire, Claude-Session trailers or session links in the cloud's commits, and that
+pull requests opened or merged since the fire, existing tests (by the repository's test globs) the cloud changed or
+deleted, Claude-Session trailers or session links in the cloud's commits, and that
 the head descends from the hand-off base (`cloud-handoff-postcheck`; any finding is red). A session trailer or a
 rewritten branch stops the take-back (rewriting the commits is H2): discard instead. Other red flags (branches, pull
 requests) need the captain's second, explicit confirm. Otherwise the cloud head is checked

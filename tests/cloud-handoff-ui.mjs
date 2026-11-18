@@ -57,7 +57,10 @@ try {
   // state: what the hand-off endpoints answer in this context (the server's own answers, as tests/cloud-handoff-flow.ts proves them)
   const page = async (width, scheme, st) => {
     const c = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: scheme }); await c.route(/^https?:\/\/(?!127\.0\.0\.1)/, (x) => x.abort());
-    await c.route(new RegExp(`/api/tasks/${ID}(\\?.*)?$`), async (route) => { const res = await route.fetch(); const j = await res.json(); route.fulfill({ response: res, json: { ...j, handoff: st.taken ? { available: false, active: null, taken: st.taken, history: [] } : st.active ? { available: false, active: st.active, history: [] } : { available: true, active: null, history: [] } } }); });
+    await c.route(new RegExp(`/api/tasks/${ID}(\\?.*)?$`), async (route) => { const res = await route.fetch(); const j = await res.json();
+      // while handed off, the node the cloud has waits(external) on the hand-off descriptor (as the server keeps it)
+      if (st.active && j.nodes?.q) j.nodes = { ...j.nodes, q: { ...j.nodes.q, state: "running", waiting: "external", note: "owned round admitted", data: { ...(j.nodes.q.data ?? {}), external: { version: 1, handler: "cloud-handoff" } } } };
+      route.fulfill({ response: res, json: { ...j, handoff: st.taken ? { available: false, active: null, taken: st.taken, history: [] } : st.active ? { available: false, active: st.active, history: [] } : { available: true, active: null, history: [] } } }); });
     await c.route(new RegExp(`/api/wruns/${ID}/handoff(/.*)?$`), async (route) => {
       const u = new URL(route.request().url()); st.calls.push(`${route.request().method()} ${u.pathname}`);
       if (u.pathname.endsWith("/handoff")) return route.fulfill({ json: st.blocked ? BLOCKED : CONFIRM });
@@ -114,6 +117,8 @@ try {
       ok(await seen(p, `[data-handoff-active="${ID}"]`), `${tag}: the waiting Task shows the hand-off`);
       const h3 = await text(p, `[data-handoff-active="${ID}"] h3`);
       ok((await p.getAttribute(`[data-handoff-session="${SID}"]`, "href")) === sessionUrl(SID) && !/waiting\(external\)/.test(h3) && (zh ? /交給雲端了/ : /With the cloud agent/).test(h3), `${tag}: plain words, and the session link`, h3);
+      const stage = await text(p, "[data-current-graph-stage]");
+      ok((zh ? /雲端接手中/ : /With the cloud agent/).test(stage) && !/Working|工作中|owned round admitted/.test(stage), `${tag}: the flow graph's status says the cloud has the step, not "Working"`, stage);
       const fired = await text(p, "[data-handoff-fired]");
       ok(zh ? /2026年11月18日/.test(fired) : /Nov 18, 2026/.test(fired), `${tag}: the time in the page's language`, fired);
       ok((zh ? /完成/ : /done/).test(await text(p, "[data-handoff-observed]")) && (zh ? /未驗證/ : /unverified/).test(await text(p, "[data-handoff-reason]")), `${tag}: what the cloud says, from GitHub; its words marked unverified`);
