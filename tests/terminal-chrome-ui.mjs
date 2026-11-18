@@ -108,12 +108,34 @@ try {
 
   // ⌘. opens the menu with its first item focused; arrows move; Esc gives the keys back to the terminal
   await p.keyboard.press("Meta+Period");
-  ok(await seen(p.locator("[data-term-menu-pop]"), 3000) && await p.evaluate(() => document.activeElement?.dataset.termMi === "launch"), "⌘. opens the ⋯ menu, its first item focused");
+  ok(await seen(p.locator("[data-term-menu-pop]"), 3000) && await p.evaluate(() => document.activeElement?.dataset.termMi === "newTab"), "⌘. opens the ⋯ menu, its first item (New tab) focused");
   await p.keyboard.press("ArrowDown");
-  ok(await p.evaluate(() => document.activeElement?.dataset.termMi) === "kill", "↓ moves to the next item");
+  ok(await p.evaluate(() => document.activeElement?.dataset.termMi) === "splitRight", "↓ moves to the next item (Split right)");
+  const order = await p.$$eval("[data-term-menu-pop] [data-term-mi]", (es) => es.map((e) => e.dataset.termMi));
+  ok(order.at(-1) === "kill" && order.indexOf("kill") > order.indexOf("help") && order.indexOf("launch") > order.indexOf("closeTab"), "Stop is the last item, past a separator; pane and tab actions come first", JSON.stringify(order));
   await shot(p, "chrome-menu-1440.png");
   await p.keyboard.press("Escape");
   ok(await until(async () => !(await p.locator("[data-term-menu-pop]").count()) && await p.evaluate(() => !!document.activeElement?.closest(".wt-xterm"))), "Esc closes it and the terminal has the keys again");
+  // Tab out of the open menu closes it: its keys never act from elsewhere
+  await p.keyboard.press("Meta+Period"); await seen(p.locator("[data-term-menu-pop]"), 3000);
+  await p.evaluate(() => document.querySelector(".wt-xterm textarea").focus());
+  ok(await until(async () => !(await p.locator("[data-term-menu-pop]").count())), "a focus that leaves the open menu closes it");
+  // after choosing an item (by keys, by a click) the keys go back to the shell
+  for (const how of ["keys", "click"]) {
+    await p.locator(".wt-xterm").click();
+    if (how === "keys") { await p.keyboard.press("Meta+Period"); await seen(p.locator("[data-term-menu-pop]"), 3000);
+      while (await p.evaluate(() => document.activeElement?.dataset.termMi) !== "clear") await p.keyboard.press("ArrowDown");
+      await p.keyboard.press("Enter"); }
+    else { await menu(p); await p.locator('[data-term-menu-pop] [data-term-mi="clear"]').click(); }
+    await p.waitForTimeout(150);
+    await p.keyboard.type(`echo after-${how}-$((3*3))`); await p.keyboard.press("Enter");
+    ok(await until(async () => new RegExp(`after-${how}-9`).test(await rows(p, t1))), `choose Clear in the menu by ${how}, then type: the shell gets it`, await p.evaluate(() => `${document.activeElement?.tagName}.${document.activeElement?.className}`));
+  }
+  // a shell with no commit beyond main: nothing about Send for review in its menu, no dot on ⋯
+  await menu(p);
+  ok(!(await p.locator("[data-term-menu-pop] [data-term-review], [data-term-menu-pop] [data-term-send]").count()) && !(await p.locator("[data-term-menu-ready]").count()), "0 commits beyond main: no review line, no Send for review, no dot on ⋯");
+  ok(await p.evaluate(() => { const c = document.querySelector("[data-term-menu-pop] .wt-cmd"); return c && c.scrollWidth > c.clientWidth - 1 && getComputedStyle(c).whiteSpace === "nowrap" && /\n/.test(c.title); }), "the command and folder are one line, in full in its title");
+  await p.keyboard.press("Escape");
   // the menu's ? lists every key, the new ones too
   await menu(p); await p.keyboard.press("Shift+Slash");
   ok(await seen(p.locator("[data-term-help]"), 3000), "? in the menu opens the key table");
@@ -157,6 +179,11 @@ try {
   let lid = null;
   await p.keyboard.press("Alt+Meta+KeyN");
   ok(await until(async () => (await p.locator(".wt-new #termCmd").count()) && await p.evaluate(() => document.activeElement?.id === "termCmd")), "launch: Alt+Meta+KeyN opens the launcher, its command field focused");
+  // and it keeps the focus: no terminal takes it back a frame later
+  await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 300)))));
+  await p.keyboard.type("abc");
+  ok(await p.evaluate(() => document.activeElement?.id === "termCmd" && document.activeElement.value === "abc"), "two frames and 300 ms later the field still has it, and what is typed lands there");
+  await p.locator("#termCmd").fill("");
   await p.keyboard.press("Alt+Meta+KeyN");
   ok(await until(async () => !(await p.locator(".wt-new").count())), "and again closes it");
   await viaMenu(p, "launch");
@@ -166,6 +193,9 @@ try {
   await p.locator("#termCmd").press("Enter");
   ok(await until(async () => { lid = urlId(p); return lid && (await list(p)).some((t) => t.id === lid && !t.running && t.git?.end?.commits === 1); }, 15000), "a command run from the launcher commits on a branch and ends");
   ok(await until(async () => (await tabs(p)).find((x) => x.sel)?.state === "done"), "its tab's dot says done");
+  const dot = await p.evaluate(() => { const d = document.querySelector('.wt-tabs [aria-selected="true"] .wt-dot'); return { label: d.getAttribute("aria-label"), check: getComputedStyle(d, "::before").content }; });
+  ok(/Done/.test(dot.label) && /✓/.test(dot.check), "done is a check mark with its word as the label, not a colour alone", JSON.stringify(dot));
+  ok(await until(async () => (await p.locator('[data-term-menu-ready="review"]').count()) === 1), "Send for review is ready: a dot on ⋯ says so");
   const after = await items(p);
   ok(["dismiss", "restart", "review"].every((a) => after.includes(a)) && !after.includes("kill"), "an ended terminal's menu: Remove, Restart, Send for review (no Stop)", JSON.stringify(after));
   await menu(p);

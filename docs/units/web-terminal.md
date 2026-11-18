@@ -27,25 +27,30 @@ The sidebar has a **Terminals** item (its own icon, right after Firstmate, also 
 
 The state is on `<body>` and in `PAGE_FOCUS`, outside `#view`, so a `render()` changes nothing.
 
-With a terminal shown, the page is the terminal: one slim strip of tabs (each a title and one dot for its state: waiting,
-working, exited or done, the panes' worst first; each pane's name, state and question in its title) and a **⋯** menu, and
+With a terminal shown, the page is the terminal: one slim strip of tabs (each a title and one mark for its state, the
+panes' most pressing first: working a filled dot, waiting a dot in a ring with the tab's name tinted, exited a hollow ring,
+done a check mark, so it reads without the colour; the words are its label and title, each pane's name, state and
+question in the tab's title; more tabs than fit fade out with a +N count) and a **⋯** menu, and
 the tab's panes fill the rest, width and height (at 1440 x 900 the terminal is the window's height less at most 48 px). No
 pane has a bar or a button, and there is no header, key hint line or banner: people who use a terminal drive it from the
 keyboard. Each pane's fit addon follows every resize, and its PTY gets the new size (`…/resize`).
 
 The ⋯ menu (⌘., Ctrl+Shift+. elsewhere; the chat head's Firstmate menu look) holds every action, each with the chord that
-works where the page is: Launch…, Stop, Restart, Remove, Send for review (disabled with its reason while it cannot go), In
-review, Remote Control link…, Retry the output that waits; new tab, split right and down, zoom, clear, close pane, close tab,
-rename tab, go to; Open in a Studio window (in a browser tab), the sidebar, and **?** Keyboard shortcuts. Its head is the
-focused terminal: its name, state, command and folder, the question it asks, its branch and commits, Remote Control
-waiting for its link, a terminal from before a restart, view only. Opened, its first item has the focus; the arrows,
-Home and End move, Enter runs, ? opens the key table, Esc closes it and gives the keys back to the terminal, a click
-outside closes it. It is drawn in place, never with a full render, so the terminals keep their focus and selection.
+works where the page is, the harmless first (opened, its first item has the focus, so ⌘. ↓ ↩ never stops an agent): new
+tab, split right and down, go to, zoom, clear, rename tab, close pane, close tab; Launch…, Send for review (disabled with its
+reason while it cannot go), In review, Remote Control link…, Retry the output that waits, Restart; Open in a Studio window
+(in a browser tab), the sidebar, **?** Keyboard shortcuts; and last, past a separator, Stop or Remove. Its head is the
+focused terminal: its name, state, command and folder on one line (in full in its title), the question it asks, its branch
+and commits (only once there is a commit beyond the base to send), Remote Control waiting for its link, a terminal from
+before a restart, view only. A dot on ⋯ says when something waits there: Send for review is ready, or a Remote Control link
+came. The arrows, Home and End move, Enter runs, ? opens the key table, Esc closes it; a click outside or a focus that
+leaves it (Tab) closes it. After an item the keys go back to the terminal, unless the item opened a sheet or the
+launcher's field. It is drawn in place, never with a full render, so the terminals keep their focus and selection.
 Over the terminal the page adds one line only when it needs the captain: a refused Send for review (it stays until the
 next try), and on a pane a quiet notice while its output waits (too many views). **Launch…** opens the launcher (agent
 presets, a command, every terminal listed) above the panes with its command field focused; starting a terminal closes it;
 it starts open while nothing is running. Remote Control's link and QR code open from the menu as a sheet. A phone sees the
-same strip; its menu leaves out what starts, stops or sends; at 760 px and below the sidebar stays the top bar (its theme
+same strip; a phone allowed to drive keeps every item, and a view-only device's menu leaves out what starts, stops or sends; at 760 px and below the sidebar stays the top bar (its theme
 and gear row is hidden on this page), the panes take the screen's width and the menu fits it. With no tab at all, the page
 is the launcher and the list, as before.
 
@@ -79,7 +84,9 @@ The keys are the platform's own terminal's (`public/term-keys.js`, the prototype
 
 Every Mac chord holds ⌘ (a plain key, ⌃ or ⌥ alone is the shell's or a full-screen program's); the terminal's own actions,
 once buttons, are ⌥⌘ chords no browser keeps and no TUI gets (⌥⌘W, ⌥⌘M and ⌥⌘U are macOS's or Chrome's, so they are not
-used).
+used). On Windows and Linux they are Ctrl+Alt+Shift chords: Windows reports AltGr as Ctrl+Alt, so on a layout where
+AltGr+Shift on one of those keys types a character, that key is read as text for the shell and the chord does nothing (the
+⋯ menu still does it); a program that binds Ctrl+Alt+Shift+letter itself loses those few letters to the page.
 
 Chords are matched on `KeyboardEvent.code` (the physical key: an input method or a keyboard layout does not move them),
 in the capture phase ahead of xterm, with `preventDefault`, so a chord that is Studio's never also reaches the shell.

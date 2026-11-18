@@ -136,7 +136,7 @@ try {
   await p.locator("#termCmd").press("Enter");
   ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("COMMITTED"), 10000), "an agent commits on a branch in the project's folder", await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => ""));
   await menu(p);
-  ok(await seen(p.locator("[data-term-menu-pop] [data-term-send][disabled]")) && /once the agent has finished/.test(await p.locator("[data-term-review]").innerText()), "Send for review waits until the agent has finished");
+  ok(await p.locator("[data-term-menu-pop] [data-term-send], [data-term-menu-pop] [data-term-review]").count() === 0, "while the agent runs (its commits not known yet) the menu offers no Send for review");
   await unmenu(p);
   // the captain clicks back into the command field (to type the next one) while this one is still running
   await launch(p);

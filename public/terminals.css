@@ -57,8 +57,18 @@ body[data-focus="terminal"] #view{height:100%}
 .wt-tab:hover{background:var(--surface-2);color:var(--text)}
 .wt-tab[aria-selected="true"]{background:var(--surface);border-color:var(--border);color:var(--text);font-weight:600}
 .wt-tname{max-width:180px;overflow:hidden;text-overflow:ellipsis}
-.wt-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--text-3)}
-.wt-dot.waiting{background:var(--human)}.wt-dot.working{background:var(--accent)}.wt-dot.done{background:var(--ok)}.wt-dot.exited{background:var(--bad)}
+/* a tab's state is a shape as well as a colour (it is read without the hue too): working a filled dot, waiting a filled dot in
+   a ring with the tab's name tinted, exited a hollow ring, done a check mark; its words are the dot's label and title */
+.wt-dot{box-sizing:border-box;width:8px;height:8px;border-radius:50%;flex:none;background:var(--text-3);display:inline-grid;place-items:center}
+.wt-dot.working{background:var(--accent)}
+.wt-dot.waiting{background:var(--human);box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--human);margin-inline:2px}
+.wt-tab:has(.wt-dot.waiting) .wt-tname{color:var(--human)}
+.wt-dot.exited{background:transparent;border:2px solid var(--bad)}
+.wt-dot.done{width:auto;height:auto;border-radius:0;background:none}
+.wt-dot.done::before{content:"✓";color:var(--ok);font:700 11px/1 var(--f-mono, ui-monospace, monospace)}
+.wt-tabs.over{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
+.wt-bar>.wt-tabs{order:0}.wt-bar>.wt-more{order:2}
+.wt-bar[data-more]:not([data-more=""])::after{content:attr(data-more);order:1;flex:none;font-size:11.5px;color:var(--text-2);padding:0 2px}
 .wt-launch{display:grid;grid-template-columns:minmax(260px,420px) minmax(0,1fr);gap:12px;flex:none;align-items:start}
 .wt-launch .wt-list{max-height:260px;overflow:auto}
 .wt-full .wt-detail{flex:1;min-height:0;gap:6px}
@@ -105,7 +115,8 @@ body[data-focus="terminal"] #view{height:100%}
 /* the slim strip's ⋯ menu (the chat head's Firstmate menu look, .fm-pop and .fm-item): the terminal's name, command and
    state at its head, then every action with its key */
 .wt-more{position:relative;flex:none}
-.wt-mbtn{min-height:26px;padding:0 10px;font-size:16px;line-height:1;letter-spacing:.05em}
+.wt-bar .wt-mbtn{position:relative;min-height:26px;padding:0 10px;font-size:16px;line-height:1;letter-spacing:.05em;color:var(--text);border:1px solid var(--border)}
+.wt-mready{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 1.5px var(--surface)}
 .wt-mbtn[aria-expanded="true"]{background:var(--surface-2)}
 .wt-pop{width:min(340px,calc(100vw - 16px));max-height:calc(100dvh - 72px);overflow:auto;gap:1px}
 .wt-pop .fm-item{padding:6px 10px;font-size:13px}
@@ -118,7 +129,7 @@ kbd.off{opacity:.4;text-decoration:line-through}
 .wt-minfo{display:flex;flex-direction:column;gap:4px;padding:6px 10px 4px;font-size:12px;min-width:0}
 .wt-mtitle{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px}
 .wt-mtitle .badge{margin-left:auto}
-.wt-minfo .wt-cmd{flex-basis:auto}
+.wt-minfo .wt-cmd{flex-basis:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
 .wt-minfo p{margin:0}
 .wt-minfo .wt-ask{font-size:12px;padding:4px 8px}
 .wt-minfo .wt-review{gap:4px 8px}

@@ -173,7 +173,7 @@ function pane(t) {
     try { fit.fit(); } catch {}
     // everything the shared stream brought for it so far, a tab drawn later or a pane unzoomed included
     const f = FEED.get(t.id); if (f) { if (f.trimmed) term.write(dropNote()); for (const c of f.log) term.write(c); }
-    if (TM.canWrite && focusPane()?.term === t.id && !sheetOpen() && !document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) term.focus(); // never from the list search being typed in
+    if (TM.canWrite && focusPane()?.term === t.id && !sheetOpen() && !inField() && !document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) term.focus(); // never from the list search being typed in
   }).catch((e) => { p.err = String(e.message || e); p.host.replaceChildren(h("p", { class: "faint" }, T(`The terminal view could not load: ${p.err}`, `終端機畫面無法載入：${p.err}`))); });
   return p;
 }
@@ -303,7 +303,12 @@ function syncHash() { const t = termOf(focusPane()), q = location.hash.split("?"
 // asked again on the next frame: a sheet opened in between (a double-click's rename) keeps its field's focus
 const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help || TM.ui.remote || TM.ui.menu;
 // the terminal never takes the focus from the list toolbar's search the captain is typing in (public/list-tools.js)
-function focusTerm() { if (!TM.canWrite || sheetOpen() || document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(go); }
+// and the second ask (the next frame) never takes it from a field that got it in between (the launcher's command field
+// that ⌥⌘N just focused, the list's search): only from nowhere, a button or another terminal
+const inField = () => { const a = document.activeElement; return !!a && (/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) || a.isContentEditable) && !a.classList.contains("xterm-helper-textarea"); };
+function focusTerm() { if (!TM.canWrite || sheetOpen() || document.activeElement?.matches?.("[data-lt-q], [data-lt-fq]")) return; const id = focusPane()?.term, go = () => { if (!sheetOpen()) TM.panes.get(id)?.term?.focus(); }; go(); requestAnimationFrame(() => { if (!inField()) go(); }); }
+// after a ⋯ item: the keys go back to the terminal, unless what it did took them (a sheet, the launcher's field, a link)
+function keysBack() { const a = document.activeElement; if (!a || a === document.body || !a.isConnected || a.closest?.(".wt-more")) focusTerm(); }
 const redo = () => { saveLay(); syncHash(); render(); focusTerm(); };
 // a click in a pane moves the focus without rebuilding the page (xterm keeps its focus and selection)
 function markFocus() { syncHash(); const tab = curTab(), t = termOf(focusPane(tab)), sec = document.querySelector("[data-term-detail]"); if (!tab || !t || !sec) return;
@@ -390,6 +395,7 @@ addEventListener("keydown", (e) => {
   if (ui.remote) { if (e.key === "Escape") { stop(); ui.remote = null; redo(); } return; }
   // the open menu has the focus: arrows move through its items, Enter is the focused item's own, ? is the key table, Esc
   // gives the keys back to the terminal; a chord closes it and does what it says
+  if (ui.menu && !document.activeElement?.closest?.(".wt-more")) menuClose(); // the focus left it (Tab): it closes
   if (ui.menu && !hit) {
     const xs = menuItemsOn(), i = xs.indexOf(document.activeElement);
     if (e.key === "Escape") { stop(); menuClose(true); }
@@ -411,8 +417,16 @@ function tabEls() {
     const says = ts.map((t) => `${t.label} · ${t.project.name} · ${stateText(t)}${t.ask && t.state === "waiting" ? `: ${t.ask}` : ""}`).join("\n");
     return h("div", { class: "wt-tab", role: "tab", "data-term-tab": x.id, "aria-selected": String(i === TM.lay.cur), title: says,
       onclick: () => { TM.lay.cur = i; redo(); }, ondblclick: () => { TM.ui.naming = { tab: x.id }; redo(); } },
-      h("i", { class: `wt-dot ${st}`, "data-term-state": st, role: "img", "aria-label": ts.map(stateText).join(", ") }), h("span", { class: "wt-tname" }, x.name || ft?.label || "…")); });
+      h("i", { class: `wt-dot ${st}`, "data-term-state": st, role: "img", "aria-label": ts.map(stateText).join(", "), title: ts.map(stateText).join(", ") }), h("span", { class: "wt-tname" }, x.name || ft?.label || "…")); });
 }
+// more tabs than the strip shows: its right edge fades and says how many are past it
+function tabsOver() {
+  const el = document.querySelector(".wt-tabs"); if (!el) return;
+  const r = el.getBoundingClientRect(), past = [...el.children].filter((c) => c.getBoundingClientRect().right > r.right + 1).length;
+  el.classList.toggle("over", past > 0); el.parentElement.dataset.more = past ? `+${past}` : "";
+  el.title = past ? T(`${past} more tab(s): scroll, ⌘1–9 or Go to`, `還有 ${past} 個分頁：捲動、⌘1–9 或「跳到」`) : "";
+}
+addEventListener("resize", () => { if (onPage()) tabsOver(); });
 // a terminal Studio will not show on this stream right now: a quiet line over its pane (Retry is in the ⋯ menu, ⌥⌘G)
 const goneNote = (t) => (TM.gone.has(t.id) ? h("div", { class: "wt-gone", role: "status", "data-term-gone": t.id }, T("Open in too many places: its output waits. Retrying…", "開著的地方太多，輸出暫停，正在重試…")) : null);
 function drawNode(n, tab) {
@@ -444,7 +458,7 @@ function menuInfo(t) {
   const rv = reviewState(t), url = t.remote?.url;
   return h("div", { class: "wt-minfo" },
     h("div", { class: "wt-mtitle" }, h("b", {}, t.label), h("span", { class: "faint" }, ` · ${t.project.name}`), badge(t)),
-    h("div", { class: "faint wt-cmd", title: t.project.path }, h("code", {}, t.command), T(` in ${t.project.path}`, ` 於 ${t.project.path}`)),
+    h("div", { class: "faint wt-cmd", title: `${t.command}\n${t.project.path}` }, h("code", {}, t.command), T(` in ${t.project.path}`, ` 於 ${t.project.path}`)),
     restoredNote(t),
     t.ask && t.state === "waiting" ? h("div", { class: "wt-ask", "data-term-ask": "1" }, T("Asks: ", "問你："), t.ask) : null,
     rv ? h("div", { class: "faint wt-review", "data-term-review": t.id }, rv.where, rv.why ? h("span", {}, rv.why) : null) : null,
@@ -454,33 +468,38 @@ function menuInfo(t) {
 function menuItems(t, tab) {
   const w = TM.canWrite, p = plat(), inT = inTab(), rv = t && reviewState(t), showNew = TM.showNew ?? !(TM.list || []).some((x) => x.running);
   const it = (act, en, zh, more = {}) => ({ act, en, zh, ...more });
+  // the harmless first (the menu opens on its first item: ⌘. ↓ ↩ must never stop an agent); Stop and Remove last, apart
   return [
+    [w && it("newTab", "New tab", "新分頁"), w && it("splitRight", "Split right", "向右分割"), w && it("splitDown", "Split down", "向下分割"),
+      it("goto", "Go to a terminal…", "跳到終端機…"),
+      tab && it("zoom", "Zoom", "放大", { attrs: { role: "menuitemcheckbox", "aria-checked": String(!!tab.zoom) }, disabled: !tab.zoom && panesOf(tab.root).length < 2 }),
+      it("clear", "Clear the screen", "清畫面"), it("renameTab", "Rename tab…", "分頁改名…"), it("closePane", "Close pane", "關閉窗格"), it("closeTab", "Close tab", "關閉分頁")],
     [w && it("launch", "Launch…", "啟動…", { attrs: { "data-term-new": "1", role: "menuitemcheckbox", "aria-checked": String(!!showNew) } }),
-      w && t?.running && it("kill", "Stop", "停止", { attrs: { "data-term-kill": t.id } }),
-      w && t && !t.restored && it("restart", "Restart", "重新啟動", { attrs: { "data-term-restart": t.id } }),
-      w && t && !t.running && it("dismiss", "Remove", "移除", { attrs: { "data-term-dismiss": t.id } }),
       w && rv && !t.review && it("review", "Send for review", "送審", { attrs: { "data-term-send": t.id }, disabled: !!rv.why }),
       t?.review && it("inReview", `In review: ${t.review.run}`, `審查中：${t.review.run}`, { href: `#/run/${encodeURIComponent(t.review.run)}`, attrs: { "data-term-review-run": t.review.run } }),
       t?.remote?.url && it("remote", "Remote Control link…", "Remote Control 連結…", { attrs: { "data-term-remote-open": t.id } }),
-      TM.gone.size && it("retry", "Retry the output that waits", "重試暫停的輸出", { attrs: { "data-term-gone-retry": [...TM.gone.keys()].join(" ") } })],
-    [w && it("newTab", "New tab", "新分頁"), w && it("splitRight", "Split right", "向右分割"), w && it("splitDown", "Split down", "向下分割"),
-      tab && it("zoom", "Zoom", "放大", { attrs: { role: "menuitemcheckbox", "aria-checked": String(!!tab.zoom) }, disabled: !tab.zoom && panesOf(tab.root).length < 2 }),
-      it("clear", "Clear the screen", "清畫面"), it("closePane", "Close pane", "關閉窗格"), it("closeTab", "Close tab", "關閉分頁"),
-      it("renameTab", "Rename tab…", "分頁改名…"), it("goto", "Go to a terminal…", "跳到終端機…")],
+      TM.gone.size && it("retry", "Retry the output that waits", "重試暫停的輸出", { attrs: { "data-term-gone-retry": [...TM.gone.keys()].join(" ") } }),
+      w && t && !t.restored && it("restart", "Restart", "重新啟動", { attrs: { "data-term-restart": t.id } })],
     [w && inT && it("appWindow", "Open in a Studio window", "用 Studio 視窗開"), it("sidebar", "Show / hide the sidebar", "顯示 / 隱藏側欄"),
       it("help", "Keyboard shortcuts", "快捷鍵", { key: "?", attrs: { "data-term-keys": "1" } })],
+    [w && t?.running && it("kill", "Stop", "停止", { attrs: { "data-term-kill": t.id } }),
+      w && t && !t.running && it("dismiss", "Remove", "移除", { attrs: { "data-term-dismiss": t.id } })],
   ].map((g) => g.filter(Boolean)).filter((g) => g.length).map((g) => g.map((x) => ({ ...x, chord: x.key ? `? · ${K.useNow(x.act, p, inT)}` : K.KEYMAP.some((r) => r[1] === x.act) ? K.useNow(x.act, p, inT) : "" })));
 }
 function menuEl(t, tab) {
   const open = !!TM.ui.menu;
+  // something waits in the menu for the focused terminal (Send for review is ready, a Remote Control link came): a dot on ⋯
+  const rv = t && TM.canWrite && !t.review && reviewState(t), ready = rv && !rv.why ? "review" : t?.remote?.url ? "remote" : null;
+  const says = ready === "review" ? T("Send for review is ready", "可以送審了") : ready === "remote" ? T("Remote Control link is ready", "Remote Control 連結已就緒") : "";
   const btn = h("button", { type: "button", class: "btn ghost sm wt-mbtn", "data-term-menu": "1", "aria-haspopup": "menu", "aria-expanded": String(open),
-    "aria-label": T("Terminal menu", "終端機選單"), title: `${T("Menu", "選單")} (${K.useNow("menu", plat(), inTab())})`, onclick: (e) => { e.stopPropagation(); run("menu"); } }, "⋯");
+    "aria-label": T("Terminal menu", "終端機選單") + (says ? ` · ${says}` : ""), title: `${T("Menu", "選單")} (${K.useNow("menu", plat(), inTab())})${says ? ` · ${says}` : ""}`, onclick: (e) => { e.stopPropagation(); run("menu"); } },
+    "⋯", ready ? h("i", { class: "wt-mready", "data-term-menu-ready": ready }) : null);
   if (!open) return h("div", { class: "wt-more" }, btn);
   const groups = menuItems(t, tab), kids = [menuInfo(t)];
   for (const g of groups) { kids.push(h("div", { class: "wt-msep", role: "separator" }));
     for (const x of g) { const label = [h("span", { class: "wt-ml" }, T(x.en, x.zh)), x.chord ? h("kbd", {}, x.chord) : null];
       kids.push(x.href ? h("a", { class: "fm-item", role: "menuitem", "data-term-mi": x.act, href: x.href, ...x.attrs, onclick: () => menuClose() }, label)
-        : h("button", { type: "button", class: "fm-item", role: "menuitem", "data-term-mi": x.act, disabled: x.disabled || null, ...x.attrs, onclick: (e) => { e.stopPropagation(); menuClose(); run(x.act); } }, label)); } }
+        : h("button", { type: "button", class: "fm-item", role: "menuitem", "data-term-mi": x.act, disabled: x.disabled || null, ...x.attrs, onclick: (e) => { e.stopPropagation(); menuClose(); run(x.act); keysBack(); } }, label)); } }
   return h("div", { class: "wt-more" }, btn, h("div", { class: "fm-pop wt-pop", role: "menu", "aria-label": T("Terminal menu", "終端機選單"), "data-term-menu-pop": "1" }, kids));
 }
 const menuItemsOn = () => [...document.querySelectorAll(".wt-pop [role^=menuitem]:not([disabled])")];
@@ -492,6 +511,8 @@ function menuSync(focusIdx) {
 }
 function menuClose(back = false) { if (!TM.ui.menu) return; TM.ui.menu = false; menuSync(); if (back) focusTerm(); }
 addEventListener("pointerdown", (e) => { if (TM.ui.menu && !e.target.closest?.(".wt-more")) menuClose(); }, true);
+// Tab out of the open menu (or any focus that lands outside it) closes it, so its keys never act from elsewhere
+addEventListener("focusin", (e) => { if (TM.ui.menu && !e.target.closest?.(".wt-more")) menuClose(); });
 function remoteSheet() {
   const t = (TM.list || []).find((x) => x.id === TM.ui.remote), url = t?.remote?.url; if (!url) { TM.ui.remote = null; return null; }
   return h("div", { class: "wt-veil", "data-term-remote-sheet": t.id, onclick: (e) => { if (e.target === e.currentTarget) { TM.ui.remote = null; redo(); } } },
@@ -544,10 +565,11 @@ function focusView(arg) {
   const tab = curTab(), t = termOf(focusPane(tab)); if (!tab || !t) return null;
   if (arg && arg !== t.id) queueMicrotask(syncHash); else if (!arg) queueMicrotask(syncHash);
   const showNew = TM.showNew ?? !TM.list.some((x) => x.running);
+  queueMicrotask(tabsOver);
   // one slim strip: the tabs (a title and a state dot each) and the ⋯ menu; the rest of the window is the terminal
   return h("div", { class: "page wt-page wt-full", "data-term-focus": t.id },
     h("div", { class: "wt-bar" },
-      h("div", { class: "wt-tabs", role: "tablist", "aria-label": T("Terminal tabs", "終端機分頁") }, tabEls()),
+      h("div", { class: "wt-tabs", role: "tablist", "aria-label": T("Terminal tabs", "終端機分頁"), onscroll: tabsOver }, tabEls()),
       menuEl(t, tab)),
     TM.err ? h("p", { class: "faint" }, TM.err) : null,
     TM.canWrite && showNew ? h("div", { class: "wt-launch" }, launcher(), terminalsList(t)) : null,
@@ -605,7 +627,7 @@ function patchPage() {
   }
   // a focus the page does not show: the page is drawn again
   if (!sec || !stage || !t || sec.dataset.termDetail !== t.id || panesOf(tab.root).some((pn) => !termOf(pn))) return soft();
-  const tabs = document.querySelector(".wt-tabs"); if (tabs) tabs.replaceChildren(...tabEls());
+  const tabs = document.querySelector(".wt-tabs"); if (tabs) { tabs.replaceChildren(...tabEls()); tabsOver(); }
   for (const k of [...sec.children]) if (k !== stage) k.remove();
   for (const k of detailHead(t)) if (k) sec.insertBefore(k, stage);
   // a pane's notice is replaced only when it says something new
@@ -618,7 +640,8 @@ function patchPage() {
 // goes to code-firstmate's "From existing branch": spec card, scope, checks at base and head, review, fixes, merge card.
 // Where its checkout is and why it cannot go yet are the ⋯ menu's (its head and its item); null: nothing to send.
 function reviewState(t) {
-  const g = t.git?.end || t.git?.start; if (!g && !t.review) return null;
+  // nothing to say while there is nothing to send: no commit beyond the base known (a running agent's end is not known yet)
+  const g = t.git?.end || t.git?.start; if (!t.review && !(g?.commits > 0)) return null;
   const where = g ? h("span", {}, g.branch ? `${g.branch} · ` : "", g.commits != null ? T(`${g.commits} commit(s) beyond ${g.base}`, `比 ${g.base} 多 ${g.commits} 個 commit`) : String(g.head ?? "").slice(0, 10)) : null;
   const why = t.review || !TM.canWrite ? null : t.running ? T("Send for review once the agent has finished", "agent 做完後才能送審")
     : !t.git?.end && t.stopped ? T("Studio stopped this terminal and did not record where its checkout ended: start a new terminal", "Studio 停掉這個終端機時沒記下 checkout 停在哪：請開新的終端機")
