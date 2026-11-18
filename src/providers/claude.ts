@@ -11,6 +11,7 @@ import {claudeFailureCode,claudeOutputLimit,nativeClaude} from './claude-native'
 import { processSession, type LineParser } from "./proc";
 import { redactText } from "../secure";
 import { LOGIN_RE, errorOf, rowsOf, type NEvent, type Provider, type ProviderCtx, type ToolSpec, type Usage } from "./types";
+import { scriptArgv } from "../self";
 
 /** Claude's result usage: inTokens is input plus cache reads and writes (as Studio counted it), cache reads also apart */
 export function claudeUsage(m: any): Usage {
@@ -37,7 +38,7 @@ export function claudeProvider(model = process.env.CREW_CLAUDE_MODEL ?? "claude-
         // settings, so none of its CLAUDE.md memory, hooks, plugins or permission rules load (src/providers/needs.ts)
         "--setting-sources", "", "--settings", JSON.stringify(claudeSettings(approved ?? { model, effort: null }))];
       if(approved)args.push('--permission-mode','dontAsk','--permission-prompts','none','--no-chrome',...(approved.effort?['--effort',approved.effort]:[]));
-      const run = exe(), cmd = () => (/\.(mjs|js|ts)$/.test(run) ? [process.execPath, run, ...args] : [run, ...args]);
+      const run = exe(), cmd = () => scriptArgv(run, args);
       const env={...ctx.env};if(approved){for(const k of['ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_EFFORT_LEVEL'])delete env[k];const login=approved.login();if(!login.ok)throw new Error('Claude isolated login unavailable');Object.assign(env,login.env,approved.effort?{CLAUDE_CODE_EFFORT_LEVEL:approved.effort}:{});}
       env.CLAUDE_CODE_MAX_OUTPUT_TOKENS=String(claudeMaxOutputTokens()); // after the login's env: Studio's cap, never the account's
       // the CLI announces itself (its init) within seconds; one that has not within the bound never will (a launcher looping, a

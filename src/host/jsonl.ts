@@ -1,4 +1,5 @@
 import { claudeCredentialFds } from "../providers/credential-fds";
+import { scriptArgv } from "../self";
 // A child process speaking newline-delimited JSON on stdin/stdout.
 export type JsonProc = {
   pid: number;
@@ -45,7 +46,7 @@ export function spawnJsonl(argv: string[], cwd: string, env: Record<string, stri
 }
 
 export const isScript = (bin: string) => /\.(mjs|js|ts)$/.test(bin);
-export const binArgv = (bin: string, args: string[]) => (isScript(bin) ? [process.execPath, bin, ...args] : [bin, ...args]);
+export const binArgv = (bin: string, args: string[]) => scriptArgv(bin, args);
 /** A cursor-agent child's environment without what ties it to another cursor-agent or terminal session: Studio started inside a
  *  persistent session (CURSOR_AGENT_PERSIST_SESSION, tmux's TMUX*) would make cursor-agent ignore SIGINT and SIGTERM (its y1())
  *  and rebind chats in the user's /tmp/cursor-agent-persist-<uid>; started by a cursor-agent, its CURSOR_AGENT and CURSOR_AGENT_*

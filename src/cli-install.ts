@@ -22,16 +22,18 @@ export type CliInstallState = { bin: string; dir: string; installed: boolean; cu
 const sq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const exit6 = JSON.stringify({ ok: false, exit: 6, error: "the crew-studio CLI cannot find Studio or bun: install it again from Studio's Doctor (crew-studio CLI row)", meaning: "Studio is not answering: start it with `crew-studio launch`" });
 export function shimText(e: CliInstallEnv): string {
-  const releases = dirname(e.srcRoot);
+  // only a release of scripts/live-release.ts (a folder named by its full commit under the releases folder) follows that
+  // folder's live.json; a plain checkout runs itself, whatever its parent folder holds
+  const releases = dirname(e.srcRoot), release = /^[0-9a-f]{40}$/.test(basename(e.srcRoot));
   return [
     "#!/bin/sh",
     MARK,
     `root=${sq(e.srcRoot)}`,
-    // a release of scripts/live-release.ts: the one live now
-    `live=${sq(join(releases, "live.json"))}`,
-    `if [ -f "$live" ]; then sha=$(sed -n 's/.*"sha": *"\\([0-9a-f]\\{7,40\\}\\)".*/\\1/p' "$live" | head -n 1); if [ -n "$sha" ] && [ -f ${sq(releases)}/"$sha"/src/main.ts ]; then root=${sq(releases)}/"$sha"; fi; fi`,
-    `bun=$(command -v bun 2>/dev/null)`,
-    `for b in "$bun" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun ${sq(e.execPath)}; do if [ -n "$b" ] && [ -x "$b" ]; then bun="$b"; break; fi; bun=; done`,
+    ...(release ? [`live=${sq(join(releases, "live.json"))}`,
+      `if [ -f "$live" ]; then sha=$(sed -n 's/.*"sha": *"\\([0-9a-f]\\{40\\}\\)".*/\\1/p' "$live" | head -n 1); if [ -n "$sha" ] && [ -f ${sq(releases)}/"$sha"/src/main.ts ]; then root=${sq(releases)}/"$sha"; fi; fi`] : []),
+    // the bun Studio was installed with while it still runs, else the one on PATH, else the usual places
+    `bun=`,
+    `for b in ${sq(e.execPath)} "$(command -v bun 2>/dev/null)" "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do if [ -n "$b" ] && [ -x "$b" ]; then bun="$b"; break; fi; done`,
     `if [ -z "$bun" ] || [ ! -f "$root/src/main.ts" ]; then printf '%s\\n' ${sq(exit6)}; exit 6; fi`,
     `exec "$bun" ${BUN_ISOLATED.join(" ")} "$root/src/main.ts" "$@"`,
     "",
