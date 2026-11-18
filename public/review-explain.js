@@ -250,13 +250,14 @@ function confirmDialog(r) {
   // the server answers once the run is admitted (a model it verifies again can take a minute): until then the dialog says it is
   // starting and cannot be dismissed or sent twice. Its answer acts on this dialog only: the run started, it closes (and a redraw
   // never brings it back); refused, this dialog shows why with Confirm on again. A redraw that throws is not a refusal.
-  const start = async () => { if (c.pending || c.stale || c.starting || X.confirm !== c) return; c.starting = true; c.note = null; X.posting.add(`${id}/gen`); render();
+  const start = async () => { if (c.pending || c.stale || c.starting || X.confirm !== c) return; c.starting = true; c.note = null; X.posting.add(`${id}/gen`);
     let view = null, err = null;
-    try { view = await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: c.offer.hash, ...(c.kind === "generate" ? { prompt: c.prompt ?? "" } : {}) }); } catch (e) { err = e; }
+    try { render(); view = await postJ(`${base(id)}/generate`, { skill: c.sid, confirm: c.offer.hash, ...(c.kind === "generate" ? { prompt: c.prompt ?? "" } : {}) }); } catch (e) { err = e; }
     finally { X.posting.delete(`${id}/gen`); c.starting = false; }
     if (view) { X.st.set(id, view); X.err.delete(id); if (X.confirm === c) { X.confirm = null; X.returnTo = null; } X.shown.delete(id); schedule(id); render(); focusLater("[data-explain-stop]"); return; }
-    if (X.confirm === c) X.confirm = { ...c, ...(err.offer ? { offer: err.offer } : {}), note: bi(err.message) }; else X.err.set(id, bi(err.message));
-    render(); load(id); };
+    // the dialog is gone (the captain went to another page meanwhile): the room says why instead (a read would clear it)
+    if (X.confirm !== c) { X.err.set(id, bi(err.message)); render(); return; }
+    X.confirm = { ...c, ...(err.offer ? { offer: err.offer } : {}), note: bi(err.message) }; render(); load(id); };
   const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); if (X.confirm === c) await openConfirm(r, c.sid, c.kind, undefined, c.kind === "generate" ? c.prompt ?? "" : undefined); } catch (e) { if (X.confirm === c) { X.confirm = { ...c, note: bi(e.message) }; render(); } } };
   const cost = o?.cost || {};
   return h("div", { class: "rx-modalbg", onclick: (e) => { if (e.target === e.currentTarget) closeDialog(); } },
@@ -303,10 +304,10 @@ function promptField(c, o) {
       h("small", { class: "faint", "data-explain-promptsource": w.key, "aria-live": "polite" }, w.text),
       h("small", { class: `rx-count${v.length > PROMPT_MAX * 0.9 ? " over" : ""}`, "data-explain-promptcount": "", "aria-live": "polite" }, `${v.length} / ${PROMPT_MAX}`)),
     h("div", { class: "rx-promptacts" },
-      h("button", { type: "button", class: "btn sm", "data-explain-promptsave": "", disabled: (v.trim() || null) === (c.def ?? null) ? true : null, onclick: () => saveDefault(c) },
+      h("button", { type: "button", class: "btn sm", "data-explain-promptsave": "", disabled: c.starting || (v.trim() || null) === (c.def ?? null) ? true : null, onclick: () => saveDefault(c) },
         c.def != null && !v.trim() ? T("Clear the default for this skill", "清除這個 skill 的預設") : T("Save as default for this skill", "存成這個 skill 的預設")),
-      h("button", { type: "button", class: "btn sm", "data-explain-promptreset": "", hidden: c.def == null || v === c.def ? true : null, onclick: () => setPrompt(c, c.def) }, T("Reset to default", "還原成預設")),
-      ex ? h("button", { type: "button", class: "btn sm", "data-explain-promptexample": "", title: T(ex.en, ex.zh), disabled: hasExample(v, ex) ? true : null, onclick: () => { const t = T(ex.en, ex.zh), cur = (c.prompt ?? "").trimEnd(); setPrompt(c, cur ? `${cur}\n\n${t}` : t); } },
+      h("button", { type: "button", class: "btn sm", "data-explain-promptreset": "", disabled: c.starting ? true : null, hidden: c.def == null || v === c.def ? true : null, onclick: () => setPrompt(c, c.def) }, T("Reset to default", "還原成預設")),
+      ex ? h("button", { type: "button", class: "btn sm", "data-explain-promptexample": "", title: T(ex.en, ex.zh), disabled: c.starting || hasExample(v, ex) ? true : null, onclick: () => { const t = T(ex.en, ex.zh), cur = (c.prompt ?? "").trimEnd(); setPrompt(c, cur ? `${cur}\n\n${t}` : t); } },
         T("Insert a review checklist", "插入審查清單範例")) : null,
       c.saved ? h("small", { class: "rx-saved", "data-explain-promptsaved": "", role: "status" }, T("Saved: the next run of this skill starts from it.", "已存：這個 skill 下次就從這段開始。")) : null),
     h("small", { class: "faint" }, T("Your instructions go to the skill as yours, apart from the pull request's text. A changed text is a new confirmation.", "你的指示會以你的名義交給 skill，和 PR 的內容分開。改了內容就要重新確認。"),

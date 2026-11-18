@@ -645,10 +645,11 @@ try {
     await push(); await w.waitForTimeout(300); await w.keyboard.press("Escape"); await w.waitForTimeout(150);
     await w.click(".rx-modalbg", { position: { x: 5, y: 5 } }).catch(() => {}); await push(); await w.waitForTimeout(300);
     const busy = await w.evaluate(() => { const b = document.querySelector("[data-explain-start]"), cancel = document.querySelector(".rx-modal .rx-foot .btn:not(.primary)");
-      return { open: !!document.querySelector("[data-explain-confirm]"), disabled: !!b?.disabled, text: b?.textContent || "", busy: b?.getAttribute("aria-busy"), cancel: !!cancel?.disabled, said: document.querySelector("[data-explain-starting]")?.textContent || "" }; });
+      return { open: !!document.querySelector("[data-explain-confirm]"), disabled: !!b?.disabled, text: b?.textContent || "", busy: b?.getAttribute("aria-busy"), cancel: !!cancel?.disabled, said: document.querySelector("[data-explain-starting]")?.textContent || "",
+        locked: [...document.querySelectorAll("[data-explain-confirm] :is([data-explain-prompt], [data-explain-limit], [data-explain-promptsave], [data-explain-promptreset], [data-explain-promptexample])")].map((e) => e.disabled) }; });
     const starting = from === "again" ? /開始中…/.test(busy.text) && /正在確認模型並開始執行/.test(busy.said) : /Starting…/.test(busy.text) && /starting the run/.test(busy.said);
-    ok(gens.length === 1 && busy.open && busy.disabled && starting && busy.busy === "true" && busy.cancel,
-      `${from}: while the server starts the run the dialog says it is starting, on its button; Esc, the backdrop and Cancel do not dismiss it, and it is sent once`, JSON.stringify({ busy, gens: gens.length }));
+    ok(gens.length === 1 && busy.open && busy.disabled && starting && busy.busy === "true" && busy.cancel && busy.locked.length >= 3 && busy.locked.every(Boolean),
+      `${from}: while the server starts the run the dialog says it is starting, on its button; its instructions are locked; Esc, the backdrop and Cancel do not dismiss it, and it is sent once`, JSON.stringify({ busy, gens: gens.length }));
     release?.();
     if (from === "refused") {
       await w.waitForSelector("[data-explain-confirm] .rx-state.err", { timeout: 5000 }).catch(() => {});
