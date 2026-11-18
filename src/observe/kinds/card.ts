@@ -35,10 +35,13 @@ registerKind({
   scope: (e) => e.project ?? null, grantable: true, viewer: "desktop",
   filters: { open: { type: "boolean", description: "true (default): only cards waiting for the captain; false: every card" }, run: { type: "string", description: "a Task id (R-…)" } },
   fields: [
-    ...["id", "run", "node", "visit", "kind", "status", "createdAt", "workflow", "door", "confirmDoor", "captainOnly", "urgency", "options", "title", "links", "withheld",
+    ...["id", "run", "node", "visit", "kind", "status", "createdAt", "workflow", "door", "confirmDoor", "captainOnly", "urgency", "options[].id", "title", "links", "withheld",
       "answer.choice", "answer.by", "answer.at", "failure.class", "failure.code", "failure.title", "failure.meaning", "failure.fix"].map((path) => ({ path, trust: "studio" as const })),
     { path: "runTitle", trust: "captain" }, { path: "answer.note", trust: "captain" },
     { path: "body", trust: "untrusted", source: "the card's body, written by the Task's agents" },
+    // an option's label can be someone else's words: a target repository's template file name, a peer's or a drafted workflow's
+    { path: "options[].label", trust: "untrusted", source: "the card's option label, written by its workflow or a Task's agents" },
+    { path: "options[].labelZh", trust: "untrusted", source: "the card's option label, written by its workflow or a Task's agents" },
   ],
   list: (s, filter) => s.engine.cards.list(filter.open === false ? {} : { open: true }).filter((c) => (!filter.run || c.run === filter.run) && (() => { const r = s.engine.get(c.run); return !!r && !r.archived; })()).sort(byUrgency).map((c) => entity(s, c)),
   get: (s, id) => { const c = s.engine.cards.get(id); return c ? entity(s, c) : null; },

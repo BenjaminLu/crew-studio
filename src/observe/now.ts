@@ -16,9 +16,12 @@ export function nowSummary(s: Sources, o: { focus?: boolean; recent?: boolean } 
   const open = engine.cards.list({ open: true }).filter((c) => { const r = engine.get(c.run); return !!r && !r.archived; }).sort(byUrgency);
   const waiting = open.map((c) => { const r = engine.get(c.run)!, withheld = withheldOf(engine, r);
     return { ref: refOf("card", c.id), card: c.id, kind: c.kind, task: refOf("task", r.id), run: r.id, workflow: r.workflow, since: c.createdAt, captainOnly: !!c.captainOnly,
-      // the door as the Inbox ranks it (kinds/card.ts urgency): a confirm-door card is a one-way door even with no door of its own
-      door: c.door ?? (c.confirmDoor ? "one-way" : null), urgency: urgencyLabel(c), options: (c.options ?? []).map((o) => o.label),
-      ...(withheld ? { withheld } : { title: c.title.en, question: String(engine.cards.view(c).body ?? "").slice(0, 300), ...(engine.externalOrigin?.(r) ? { external: true } : { taskTitle: taskTitle(r) }) }) }; });
+      // the door as the Inbox ranks it (kinds/card.ts urgency): a confirm-door card is a one-way door, whatever door it names
+      door: c.confirmDoor ? "one-way" : c.door ?? null, urgency: urgencyLabel(c),
+      // what it asks and its choices: someone else's words (an agent's body, a template's file name as a label), none of it on a
+      // withheld Task; studio_now's summary leaves both out so eight cards fit its 4 KB (tools.ts now)
+      ...(withheld ? { withheld } : { title: c.title.en, question: String(engine.cards.view(c).body ?? "").slice(0, 300), options: (c.options ?? []).slice(0, 6).map((o) => String(o.label ?? "").slice(0, 60)),
+        ...(engine.externalOrigin?.(r) ? { external: true } : { taskTitle: taskTitle(r) }) }) }; });
   const busy = new Set(open.map((c) => c.run));
   const runningRuns = engine.list().filter((r) => !r.archived && !busy.has(r.id) && RUNNING.includes(r.status));
   const jobs = (engine.deps as any).agents?.jobs as Map<string, any> | undefined;
@@ -55,6 +58,6 @@ function focusPart(s: Sources, t: number) {
 export const NOW_FIELDS: FieldDecl[] = [
   ...["waiting[].ref", "waiting[].card", "waiting[].kind", "waiting[].task", "waiting[].run", "waiting[].workflow", "waiting[].since", "waiting[].captainOnly", "waiting[].door", "waiting[].urgency", "waiting[].withheld", "waiting[].title",
     "running[].ref", "running[].run", "running[].workflow", "running[].status", "running[].updatedAt", "running[].nodes", "running[].withheld", "waiting[].external", "running[].external", "recent", "focus", "counts"].map((path) => ({ path, trust: "studio" as const })),
-  { path: "waiting[].taskTitle", trust: "captain" }, { path: "waiting[].options", trust: "captain" },
+  { path: "waiting[].taskTitle", trust: "captain" }, { path: "waiting[].options", trust: "untrusted", source: "option labels (workflow or agent)" },
   { path: "waiting[].question", trust: "untrusted", source: "the card's body, written by the Task's agents" }, { path: "running[].title", trust: "captain" },
 ];
