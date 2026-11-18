@@ -158,7 +158,9 @@ export class SecretWindow {
  * link over lines, each continuation indented or inside a box border). `trailing`: a link at the very end counts too.
  */
 export function findLink(raw: string, cols: number, trailing = true): string | null {
-  const lines = screenLines(raw), edge = (l: string) => l.replace(/[\s│|]+$/, "");
+  // a cursor move to another row (CUP, HVP, VPA) starts a new line: a box whose rows a program placed that way (ratatui,
+  // Codex) is read row by row like one drawn with line breaks
+  const lines = screenLines(raw.replace(/\x1b\[\d*(?:;\d*)?[Hf]|\x1b\[\d*d/g, "\r\n")), edge = (l: string) => l.replace(/[\s│|]+$/, "");
   for (let i = lines.length - 1; i >= 0; i--) {
     const ms = [...lines[i].matchAll(REMOTE_URL)]; const m = ms.at(-1); if (!m) continue;
     // a wrapped line is one the terminal filled to its width: within [cols - 4, cols] (a box border or padding may take

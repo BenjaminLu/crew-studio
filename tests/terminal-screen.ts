@@ -56,6 +56,17 @@ try {
   const box = (w: number, parts: string[]) => [`╭${"─".repeat(w)}╮`, ...parts.map((p) => `│ ${p.padEnd(w - 2)} │`), `╰${"─".repeat(w)}╯`].join("\r\n") + "\r\n";
   r = await shown("F", box(42, [LINK.slice(0, 40), LINK.slice(40)]), { know: LINK });
   ok(!leaks(r.lines).length, "F: a known remote-control link wrapped inside a box narrower than the terminal is removed whole", JSON.stringify(r.lines));
+  // a link Studio was never told, in a box: drawn with line breaks (Ink), or with its rows placed by cursor moves (ratatui,
+  // Codex). Studio learns it from the drawn rows, whole, and removes it through the box's borders, in both ways
+  const UNKNOWN = "https://claude.ai/code/" + "rc-01QRSTUVWXYZABCDEFGHIJKLMNOP";
+  const cupBox = (w: number, parts: string[]) => `${E}[2J` + parts.map((p, i) => `${E}[${i + 1};1H│ ${p.padEnd(w - 2)} │`).join("") + `${E}[${parts.length + 2};1Hlast`;
+  const unknownLeaks = (l: string[]) => [UNKNOWN.slice(26, 40), UNKNOWN.slice(40)].filter((x) => l.join("\n").includes(x));
+  for (const [style, payload] of [["line breaks (Ink)", box(42, [UNKNOWN.slice(0, 40), UNKNOWN.slice(40)]) + "last\r\n"], ["cursor moves (ratatui)", cupBox(42, [UNKNOWN.slice(0, 40), UNKNOWN.slice(40)])]] as const) {
+    r = await shown(`unknown-${style}`, payload);
+    ok(!unknownLeaks(r.lines).length && r.lines.some((l) => l.includes("last")), `a link Studio was not told, in a box drawn by ${style}, is removed whole`, JSON.stringify(r.lines)); }
+  // the same through the plain-text fallback (the worker out of budget): cursor-placed rows are still rows there
+  { const plain = (await import("../src/terminal-screen")).plainScreen(cupBox(42, [UNKNOWN.slice(0, 40), UNKNOWN.slice(40)]));
+    ok(plain.lines.length >= 2 && plain.lines.some((l) => l.includes(UNKNOWN.slice(0, 40))) && plain.lines.some((l) => l.includes(UNKNOWN.slice(40))), "the plain fallback keeps cursor-placed rows apart, so the same link reading applies", JSON.stringify(plain.lines)); }
   r = await shown("F2", box(42, ["key " + TOK.slice(0, 30), TOK.slice(30) + " end"]));
   ok(!leaks(r.lines).length, "F2: a token wrapped inside a box goes too", JSON.stringify(r.lines));
   r = await shown("glued", `prefix${TOK} and xoxb${"-12345678901"}AKIAABCDEFGHIJKLMNOP\r\n`);
