@@ -109,6 +109,85 @@ The open captain cards of a run this grant started.
 
 Tool: `read_cards`.
 
+### `crew-studio prs list`
+
+Studio's pull request list: every watched open pull request in the captain's order, with CI, approvals (what is still missing, per required team), reviews, test evidence, environments, dependencies, linked issues and the next step; the merged ones followed until production (merged or live, with each environment).
+
+Tool: `prs_list`.
+
+### `crew-studio prs get <pr>`
+
+One pull request of the list in full: everything prs_list has plus the merge-box facts Studio read.
+
+Tool: `prs_get`.
+
+### `crew-studio prs refresh`
+
+Read GitHub again now (Studio also refreshes every 5 minutes), then return the list.
+
+Tool: `prs_refresh`.
+
+### `crew-studio prs watch <url>`
+
+Watch a repository (its open pull requests the captain opened or is assigned to) or one pull request, by its GitHub address.
+
+Tool: `prs_watch`.
+
+### `crew-studio prs unwatch [--repo …] [--pr …]`
+
+Stop watching a repository ({repo: owner/repo}) or leave one pull request out of the list ({pr: owner/repo#N}).
+
+Tool: `prs_unwatch`.
+
+| Flag | Type | |
+| --- | --- | --- |
+| `--repo` | string |  |
+| `--pr` | string |  |
+
+### `crew-studio prs restore [--pr …]`
+
+Bring back a pull request left out of the list ({pr}), or all of them ({}).
+
+Tool: `prs_restore`.
+
+| Flag | Type | |
+| --- | --- | --- |
+| `--pr` | string |  |
+
+### `crew-studio prs settings [--settings …]`
+
+Change the list's settings.
+
+Tool: `prs_settings`.
+
+| Flag | Type | |
+| --- | --- | --- |
+| `--settings` | object |  |
+
+### `crew-studio prs order <order>`
+
+Set the release order: pull request ids first to last (owner/repo#N).
+
+Tool: `prs_order`.
+
+### `crew-studio prs deps <pr> <on>`
+
+Set what one pull request waits for: {pr, on: [ids]} (an empty list clears it).
+
+Tool: `prs_deps`.
+
+### `crew-studio prs group <pr> <group>`
+
+Put a pull request in one of the release groups from the settings ({pr, group}); an empty group takes it out.
+
+Tool: `prs_group`.
+
+### `crew-studio prs accept`
+
+Accept Studio's proposed order and dependencies as the captain's.
+
+Tool: `prs_accept`.
+
 ### `crew-studio help [--json]`
 
 Every command, its arguments, the kinds, the exit codes and what this grant can use (--json for agents).

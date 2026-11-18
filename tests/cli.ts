@@ -17,6 +17,7 @@ import { sessionCookieName } from "../src/csrf";
 import { observeSpecs } from "../src/observe/tools";
 import { grantableKinds } from "../src/observe/grant-scope";
 import { GRANT_TOOLS } from "../src/cli-grants";
+import { PR_TOOL_SPECS } from "../src/pr-watch";
 import { verbs } from "../src/cli";
 
 const REPO = join(import.meta.dir, "..");
@@ -93,7 +94,7 @@ try {
     const r = g(["now"]); assert.equal(r.code, 4, r.stdout); assert.ok(Date.parse(r.json.freesAt) > Date.now(), r.stdout); assert.match(r.json.error, /holds 24576 bytes up front/);
   });
   await step("exit 6: Studio not answering at the grant's address", () => {
-    const h = mkdtempSync(join(tmpdir(), "crew-cli-dead-")); mkdirSync(join(h, "grants"));
+    const h = mkdtempSync(join(tmpdir(), "crew-cli-dead-")); mkdirSync(join(h, "grants"), { mode: 0o700 });
     const gf = JSON.parse(readFileSync(join(GRANTS, `${R.id}.json`), "utf8")); writeFileSync(join(h, "grants", "dead.json"), JSON.stringify({ ...gf, url: "http://127.0.0.1:9" }), { mode: 0o600 });
     const r = cli(["now"], { CREW_STUDIO_HOME: h }); assert.equal(r.code, 6, r.stdout); assert.match(r.json.error, /crew-studio launch/); assert.ok(!r.stdout.includes(gf.token));
   });
@@ -108,7 +109,7 @@ try {
     assert.equal(none.exitCode, 7); assert.match(none.stderr.toString(), /no grant/);
   });
   await step("drift: every read tool is a command, every command's flags are its tool's inputs, help --json and the grant's tools agree", () => {
-    const reads = observeSpecs({ id: "g", kinds: grantableKinds(), project: null, untrusted: false }), tools = new Map([...reads, ...GRANT_TOOLS].map((t) => [t.name, t]));
+    const reads = observeSpecs({ id: "g", kinds: grantableKinds(), project: null, untrusted: false }), tools = new Map([...reads, ...GRANT_TOOLS, ...(PR_TOOL_SPECS as readonly any[])].map((t) => [t.name, t]));
     const vs = verbs(); assert.ok(reads.every((t) => vs.some((v) => v.tool === t.name)), "a read tool with no command");
     for (const v of vs) { const props = Object.keys((tools.get(v.tool) as any)?.inputSchema?.properties ?? {}); assert.ok(tools.has(v.tool), v.tool); for (const f of v.flags) if (v.verb !== "run start") assert.ok(props.includes(f.key), `${v.verb} --${f.name}`); }
     const h = cli(["help", "--json", "--grant", R.id]).json; assert.deepEqual(h.commands.map((c: any) => c.command), vs.map((v) => v.verb));

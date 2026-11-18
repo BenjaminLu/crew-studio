@@ -42,6 +42,12 @@ The command table is made from the tools' specs (`verbs()` in `src/cli.ts`); a c
 
 Any word that is no command is a usage error. Only `crew-studio` with no argument starts Studio, so a mistyped command never binds Studio's port.
 
+A grant with the pull request list's scope (`prs`) gets one command per tool of that list: `crew-studio prs list`,
+`prs get <pr>`, `prs order <a,b,…>` and so on, made from the same specs (`PR_TOOL_SPECS` in `src/pr-watch.ts`).
+
+Only `crew-studio` with no argument, or `crew-studio serve`, starts Studio. Any other argument is the CLI, a flag first
+included (`crew-studio --grant review-bot whoami`), so a mistyped command never starts a server on Studio's port.
+
 ## Output and exit codes
 
 On a terminal, `crew-studio` prints a summary for a person:
@@ -76,6 +82,13 @@ The CLI and `crew-studio mcp` find a grant in this order:
 
 The token is read from that file only. It is never printed, never on a command line, never in an environment value.
 
+A grant file is used only when it and its folder are the user's own, are not links and are private: 0600 in a 0700 folder
+(`privateProblem` in `src/instance.ts`, the check Studio's launch files use). Otherwise the command exits 7 and names the fix
+(`chmod 600 …`, or remove the link and issue the grant again). Its address must be this Mac: `http://127.0.0.1`,
+`http://[::1]` or `http://localhost`. A token is never sent anywhere else (`request` in `src/studio-client.ts` refuses).
+When `crew-studio mcp` finds its grant itself, `--url` and `CREW_STUDIO_URL` are ignored, so a project's MCP config cannot
+send the token elsewhere. An address given with `--grant-file` must be loopback too (exit 2).
+
 `GET /api/tools?whoami=1` (`crew-studio whoami`) answers which grant a token is. It counts no call.
 
 ## Install
@@ -93,6 +106,14 @@ Doctor's "crew-studio CLI" row installs `~/.local/bin/crew-studio` (`POST /api/c
 | `--project <dir>` | `<dir>/.claude/skills/…` and/or `<dir>/.agents/skills/…` instead |
 
 It asks once on a terminal (`--yes` skips the question; piped without `--yes` it writes nothing, exit 2) and never writes over a file it did not write. `crew-studio skill show` prints it.
+
+## Terminal output
+
+On a terminal, every line goes through `forTerminal` (`src/cli.ts`) first. It removes C0 control characters (except newline
+and tab), DEL and C1, so text from somewhere else cannot clear the screen, set the window title (OSC 0), plant a link
+(OSC 8) or write the clipboard (OSC 52). Table cells are cut to width only after that. JSON output keeps the text as it is;
+JSON escapes control characters itself. A tool's hint that names an MCP tool (`studio_find`) names the command instead
+(`crew-studio find`).
 
 ## Transport
 
