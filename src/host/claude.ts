@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { binArgv, spawnJsonl, type JsonProc } from "./jsonl";
 import { claudeContent, readAttachment } from "../attachments";
 import { nativeToolError } from "./native-errors";
-import { NativeToolFailure, cleanEnv, resultText, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type HostRefusalCode, type SessionInfo } from "./types";
+import { NativeToolFailure, mcpToolList, cleanEnv, resultText, shortSummary, type AttachOpts, type AttachedSession, type Host, type HostEvent, type HostRefusalCode, type SessionInfo } from "./types";
 
 const QUOTA = /rate.?limit|usage.?limit|quota|insufficient_quota|credit balance|spend.?limit|billing|payment/i;
 const AUTH = /not logged in|please run \/login|authentication|invalid.*(?:token|key)|unauthori[sz]ed|oauth token|credential/i;
@@ -161,7 +161,7 @@ export function claudeHost(bin = process.env.CREW_HOST_CLAUDE_BIN ?? "claude", p
       const priv = privateDir();
       const dropPrivate = () => { endpoint?.close(); dropPrivateDir(priv); };
       const endpoint = native ? nativeEndpoint(priv, async (name, args) => {
-        if (name === null) return native.specs.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+        if (name === null) return mcpToolList(native.specs);
         const t = turn, seq = turnSeq, p = proc;
         const live = () => !!t && turn === t && turnSeq === seq && !interrupting && !!p && proc === p;
         try {
