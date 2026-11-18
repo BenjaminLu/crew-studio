@@ -866,12 +866,14 @@ export function createRuntime(d: RuntimeDeps) {
           if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm, prompt: b?.prompt, skillDecision: b?.skillDecision }, by));
           return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent, skillDecision: b?.skillDecision }, by));
         } catch (e: any) { return fail(e); } }
-      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings)(?:\/([A-Za-z0-9-]+\.png))?)?$/.exec(p);
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings|export)(?:\/([A-Za-z0-9-]+\.png))?)?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         if (!writing && (room[2] === "reset" || room[2] === "archive" || room[2] === "lesson" || room[2] === "arrive" || room[2] === "tutor")) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405);
+        // a room's whole record as kept (an old room's whiteboard turns and drawings included), as a file to keep: read only
+        if (!writing && room[2] === "export") { if (who.kind !== "desktop") return json({ error: "The room's whole record downloads on this Mac only / 房間的完整紀錄只能在這台 Mac 上下載", code: "desktopOnly" }, 403); try { return new Response(JSON.stringify(rr.exportRoom(room[1]), null, 1), { headers: { "content-type": "application/json; charset=utf-8", "content-disposition": `attachment; filename="${room[1]}.json"`, "cache-control": "no-store", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
         // the room's open questions on its lesson board, as findings of the shared locator schema (?all=1: every one)
         if (!writing && room[2] === "findings") { try { return json(rr.findings(room[1], url.searchParams.get("all") === "1")); } catch (e: any) { return fail(e); } }
         if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }

@@ -2093,6 +2093,10 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     async arrive(id: string, by = "captain", lang?: unknown, plan?: unknown) {
       const r = await autoTeach(this, id, by, LANGS[String(lang)] ? String(lang) : "en", typeof plan === "string" ? plan.slice(0, 32) : "", "arrival");
       return { room: this.view(id), ...(r?.changed ? { plan: r.changed } : {}) }; },
+    /** A room's record exactly as kept (an old room's whiteboard: its turns, scenes and drawings), for the captain to download.
+     *  Read only; nothing in the file is changed or removed. */
+    exportRoom(id: string) { const k = keyOf(id), r = load(k); if (!r) throw refuse("No such review room", "not_found");
+      return { schema: 1, exportedAt: new Date().toISOString(), room: k.id, note: "Crew Studio review room record, as kept on disk (read only)", record: r }; },
     /** Studio-wide settings of the review room (autoTeach: a room's full analysis starts by itself on arrival or on paste) */
     settings() { return settings(); },
     /** what pasting this pull request's address would start (the paste box shows it before the paste): auto-teach on or off,
