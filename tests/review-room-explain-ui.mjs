@@ -282,6 +282,38 @@ try {
   await p.fill("[data-explain-q]", "Again?"); await p.click("[data-explain-send]"); await p.waitForSelector("[data-explain-error]");
   const er = await p.$eval("[data-explain-error]", (e) => ({ text: e.textContent, err: e.classList.contains("err") }));
   ok(er.err && /A turn is already running in this room/.test(er.text) && !/這個審查室/.test(er.text), "a refusal shows in the captain's language only, as an error", JSON.stringify(er));
+  // ---------- the question shows at once, before /ask answers (it waits for admission); refused, it stays; no duplicate ----------
+  const mine = (t) => p.$$eval("[data-x-msgs] .rx-m.me", (es, t) => es.filter((e) => e.textContent.includes(t)).map((e) => ({ run: e.dataset.explainQRun ?? null, pend: e.dataset.explainPending ?? null, text: e.textContent })), t);
+  const refused = await p.$eval('[data-explain-pending="refused"]', (e) => e.textContent).catch(() => null);
+  ok(/Again\?/.test(refused || "") && !!(await p.$("[data-explain-error] [data-explain-retry]")), "a refused question stays in the chat with what it was about, why, and Retry", String(refused));
+  await p.click("[data-explain-pendx]"); await p.waitForTimeout(60);
+  ok((await p.$eval("[data-explain-q]", (e) => e.value)) === "Again?" && !(await p.$("[data-explain-pending]")), "set aside, a refused question goes back into the ask box (nothing is lost)");
+  const slow = (ms, then) => (r) => { posts.push(["ask", JSON.parse(r.request().postData() || "{}")]); setTimeout(() => then(r), ms); };
+  onAsk = slow(1500, (r) => r.fulfill({ status: 409, json: { error: "A turn is already running in this room / 這個審查室已有一回合在進行", code: "busy" } }));
+  await p.click("[data-explain-pause]"); await p.waitForSelector('[data-explain-scope="frame"]');
+  await p.fill("[data-explain-q]", "What moves here?"); const t0 = Date.now(); await p.click("[data-explain-send]");
+  const shown = await p.waitForSelector('[data-explain-pending="sending"]', { timeout: 500 }).then(() => Date.now() - t0, () => null);
+  const view = await p.$eval("[data-explain-pending]", (e) => { const b = e.getBoundingClientRect(), m = e.closest(".rx-msgs").getBoundingClientRect(); return { text: e.textContent, busy: e.getAttribute("aria-busy"), inView: b.top >= Math.max(0, m.top) - 1 && b.bottom <= Math.min(innerHeight, m.bottom) + 1 && b.height > 0, box: document.querySelector("[data-explain-q]").value }; }).catch(() => null);
+  ok(shown != null && shown < 500 && /What moves here\?/.test(view?.text) && /⏸ 00:00/.test(view.text) && /Sending…/.test(view.text) && view.busy === "true" && view.inView && view.box === "",
+    "pressing Ask puts the question (and what it is about) in the chat at once, marked Sending…, in view, before /ask answers", JSON.stringify({ shown, view }));
+  ok(await p.waitForFunction(() => /Starting…/.test(document.querySelector('[data-explain-pending="starting"]')?.textContent || ""), null, { timeout: 1000 }).then(() => true, () => false), "while /ask waits for admission, the question reads Starting…");
+  await p.waitForSelector('[data-explain-pending="refused"]', { timeout: 3000 }).catch(() => {});
+  const late = await mine("What moves here?"), lateWhy = await p.$eval("[data-explain-error]", (e) => e.textContent).catch(() => "");
+  ok(late.length === 1 && late[0].pend === "refused" && /A turn is already running in this room/.test(lateWhy) && /Retry/.test(lateWhy), "refused after a slow start, the question stays with the reason and Retry", JSON.stringify({ late, lateWhy }));
+  // Retry: the run is pushed (the server tells the page) before /ask itself answers; the question is in the chat once
+  onAsk = slow(2000, (r) => r.fulfill({ json: X }));
+  await p.click("[data-explain-retry]"); await p.waitForSelector('[data-explain-pending="sending"]', { timeout: 500 });
+  const rb = posts.at(-1)[1];
+  ok(rb.question === "What moves here?" && rb.selection?.time === 0 && rb.version === 3, "Retry asks the same question about the same frame", JSON.stringify(rb));
+  X = { ...X, running: 4, runs: [...X.runs, run(4, "ask", "running", { question: rb.question, selection: rb.selection, from: 3 })] };
+  await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector('[data-explain-q-run="4"]', { timeout: 3000 });
+  const pushed = await mine("What moves here?");
+  ok(pushed.length === 1 && pushed[0].run === "4" && /⏸ 00:00/.test(pushed[0].text), "the push brings the real run: it takes the pending question's place, no duplicate", JSON.stringify(pushed));
+  await p.waitForTimeout(2300);
+  const after = await mine("What moves here?");
+  ok(after.length === 1 && after[0].run === "4" && !(await p.$("[data-explain-pending]")), "when /ask answers after the push, still one entry", JSON.stringify(after));
+  X = { ...X, running: null, runs: [...X.runs.slice(0, -1), run(4, "ask", "done", { question: rb.question, selection: rb.selection, from: 3, answer: "The bar moves." })] };
+  await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector('[data-explain-answer="4"][data-status="done"]', { timeout: 5000 });
 
   // ---------- a page that tries to navigate itself out of Studio ----------
   onSelect = (r) => { const b = JSON.parse(r.request().postData() || "{}"); X = { ...X, selected: b.skill ? { id: b.skill, v: 1 } : null }; answer(r, X); };
