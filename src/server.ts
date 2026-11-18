@@ -90,9 +90,9 @@ import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
 import { CliGrants, createGrantTools, installGrantViews, GRANT_SCOPES } from "./cli-grants";
-import { KIND_GROUPS, OBSERVE_PRESETS } from "./observe/grant-scope";
+import { KIND_GROUPS, KIND_LABELS, OBSERVE_PRESETS } from "./observe/grant-scope";
+import { NEVER_GRANTABLE, STUDIO_WIDE } from "./observe/registry";
 import { clientSnippets } from "./mcp-snippets";
-import { NEVER_GRANTABLE } from "./observe/registry";
 import { amendmentsNotice } from "./runtime/refine";
 import { Terminals, TermError, terminalRoutes } from "./terminals";
 import { EXEMPT, guardWrite, hasSession, hasSessionCookie, sessionCookie, sessionToken } from "./csrf";
@@ -806,7 +806,7 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     if (p === "/api/cli-grants" || /^\/api\/cli-grants\/g-[0-9a-f]{8}\/revoke$/.test(p)) {
       if (who.kind !== "desktop") return json({ error: "do this on the Mac", code: "desktopOnly" }, 403);
       if (!hasSession(req, SESSION)) return json({ error: "Studio session required" }, 401);
-      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], scopes: [...GRANT_SCOPES], observe: { presets: [...OBSERVE_PRESETS], groups: KIND_GROUPS, never: [...NEVER_GRANTABLE] }, projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
+      if (!writing) { if (p !== "/api/cli-grants") return json({ error: "POST required" }, 405); return json({ grants: cliGrants.list().map(grantView), ttls: ["1h", "8h", "eod"], scopes: [...GRANT_SCOPES], observe: { presets: [...OBSERVE_PRESETS], groups: KIND_GROUPS, labels: KIND_LABELS, studioWide: [...STUDIO_WIDE], never: [...NEVER_GRANTABLE] }, projects: runtime.projects.list().filter((x: any) => x.enabled !== false).map((x) => ({ id: x.id, name: x.name })) }); }
       if (req.headers.get("x-crew-tool-token") || !hasSessionCookie(req, SESSION) || req.headers.get("origin") !== url.origin || req.headers.get("sec-fetch-site") !== "same-origin")
         return json({ error: "Only the captain issues or revokes an external CLI grant, from Studio's page on this Mac / 只有船長能在這台 Mac 的 Studio 頁面發出或撤銷外部 CLI 授權", code: "captainOnly" }, 403);
       let b: any; try { b = await req.json(); } catch { return json({ error: "json only" }, 400); }

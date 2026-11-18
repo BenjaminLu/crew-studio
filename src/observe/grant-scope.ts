@@ -14,6 +14,12 @@ export const KIND_GROUPS: { id: string; en: string; zh: string; kinds: string[] 
   { id: "team", en: "Crew and skills", zh: "團隊與技能", kinds: ["crew", "skill"] },
   { id: "system", en: "System", zh: "系統", kinds: ["doctor"] },
 ];
+/** Each grantable kind's name on the board, en and zh-TW (the grant dialog's custom groups and each grant's row). */
+export const KIND_LABELS: Record<string, { en: string; zh: string }> = {
+  task: { en: "Tasks", zh: "任務" }, card: { en: "Cards", zh: "卡片" }, workflow: { en: "Workflows", zh: "流程" }, project: { en: "Projects", zh: "專案" },
+  room: { en: "Review rooms", zh: "審查室" }, pr: { en: "Pull requests", zh: "Pull requests" }, artifact: { en: "Artifacts", zh: "成品" }, doc: { en: "Documents", zh: "文件" },
+  crew: { en: "Crew", zh: "船員" }, skill: { en: "Skills", zh: "技能" }, doctor: { en: "Doctor", zh: "健康檢查" },
+};
 export const OBSERVE_PRESETS = ["project", "review", "custom"] as const;
 export type ObservePreset = (typeof OBSERVE_PRESETS)[number];
 export type ObserveScope = { preset: ObservePreset; kinds: string[]; untrusted: boolean };
