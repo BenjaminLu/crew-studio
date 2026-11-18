@@ -369,5 +369,20 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
   ok(runI?.status === "done" && runI.auto === true, "the next follow-up after an approval and its prepare goes without asking", JSON.stringify({ s: runI?.status, auto: runI?.auto, e: runI?.error }));
 }
 
+// ---------- the built-in baton, exactly as pinned: its scripts approved in advance (the captain's decision), recorded once ----------
+{ const { BATON_PIN, isPinnedBaton } = await import("../src/domain/review-baton");
+  const pk = E.deps.skillPackages, bt = E.skillLibrary().library().find((s: any) => s.id === "baton");
+  ok(isPinnedBaton(bt) && pk.approvals.all("baton").length === 0, "fixture: the library's baton is the pinned built-in, undecided");
+  const ob: any = X.offer(id, "baton", "generate"), ob2: any = X.offer(id, "baton", "generate"), ap = pk.approvals.all("baton");
+  ok(ap.length === 1 && ap[0].scripts === "approved" && ap[0].via === "builtin-pin" && /^captain\b/.test(ap[0].by) && ap[0].sha256 === BATON_PIN.sha256 && ap[0].filesSha256 === BATON_PIN.filesSha256 && ob.decide?.state === "approved" && ob2.hash === ob.hash,
+    "its scripts are approved in advance: one signed decision bound to both pinned hashes, via builtin-pin; the offer asks nothing about them", JSON.stringify({ ap, d: ob.decide }));
+  // the captain's own copy of baton (another version): an ordinary skill, its scripts asked about
+  const own = mkdtempSync(join(tmpdir(), "crew-own-baton-")); mkdirSync(join(own, "baton", "scripts"), { recursive: true });
+  writeFileSync(join(own, "baton", "SKILL.md"), "---\nname: baton\ndescription: The captain's own baton, changed.\n---\n# baton\n\nRun scripts/render.py.\n");
+  writeFileSync(join(own, "baton", "scripts", "render.py"), "print('mine')\n");
+  E.skillLibrary().importFolder(join(own, "baton"), "captain");
+  const oc: any = X.offer(id, "baton", "generate");
+  ok(oc.skill.v === 2 && oc.decide?.state === "pending" && pk.approvals.all("baton").length === 1, "the captain's own baton is not the pinned one: nothing is approved in advance for it", JSON.stringify({ v: oc.skill?.v, d: oc.decide?.state })); }
+
 upstream.stop(true); egress.stop(); prepEgress.stop(); fx.stop(); H.stop();
 end();

@@ -390,7 +390,9 @@ const textName = (rel: string) => { const n = rel.split("/").pop() ?? ""; const 
  */
 export type SkillFits = { kinds?: string[]; roles?: string[]; formats?: string[] };
 /** fits for built-in skills whose text predates metadata.fits (new text would be a new version under every existing pin) */
-const BUILTIN_FITS: Record<string, SkillFits> = { "plain-writing": { kinds: ["agent", "loop"], roles: ["writer", "coordinator", "reviewer", "author"], formats: ["document"] } };
+const BUILTIN_FITS: Record<string, SkillFits> = { "plain-writing": { kinds: ["agent", "loop"], roles: ["writer", "coordinator", "reviewer", "author"], formats: ["document"] },
+  // upstream baton, copied byte for byte (its SKILL.md carries no metadata.fits): the review room's default explainer
+  baton: { kinds: ["agent"], roles: ["reviewer", "tutor", "explainer", "writer"], formats: ["web", "document"] } };
 const FIT_WORD = /^[a-z][a-z0-9-]{0,30}$/;
 function readFits(meta: unknown): SkillFits | null {
   const f = meta && typeof meta === "object" ? (meta as any).fits : null; if (!f || typeof f !== "object" || Array.isArray(f)) return null;

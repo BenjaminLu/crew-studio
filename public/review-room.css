@@ -627,6 +627,8 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-line > .rx-vhead { flex: 1; border: 0; background: none; }
 .rx-line > .rx-vhead > summary { padding: 5px 4px; }
 .rx-linefill { flex: 1; }
+.rx-autonote { flex: none; display: inline-flex; align-items: center; gap: 6px; max-width: 46%; padding: 3px 8px; border-radius: 6px; font-size: 12px; background: var(--warn-soft); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) { .rx-autonote { max-width: 100%; white-space: normal; } }
 .rx-vermenu { position: absolute; top: calc(100% + 4px); left: 8px; z-index: 30; width: min(340px, calc(100% - 16px)); box-sizing: border-box; max-height: min(65vh, 560px); overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.16)); }
 .rx-verscrim { position: fixed; inset: 0; z-index: 29; }
 .rx-vermenu h6 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }

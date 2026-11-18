@@ -836,7 +836,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing) return json(rr.explain.prompts());
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac sets a skill's default instructions", code: "desktopOnly" }, 403);
         try { return json(rr.explain.setDefaultPrompt(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
-      const xr = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/explain(?:\/(offer|cap|select|generate|ask|stop|media))?(?:\/(\d{1,6})\/(.{1,400}))?$/.exec(p);
+      const xr = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/explain(?:\/(offer|cap|select|generate|ask|stop|media|auto))?(?:\/(\d{1,6})\/(.{1,400}))?$/.exec(p);
       if (xr) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); const X = rr.explain, id = xr[1], op = xr[2] ?? "";
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         try {
@@ -847,12 +847,14 @@ export function createRuntime(d: RuntimeDeps) {
             if (op === "media" && xr[3]) return X.media(id, xr[3], decodeURIComponent(xr[4]), req.headers.get("range"));
             return json({ error: "not found" }, 404);
           }
-          if (req.method !== "POST" || xr[3] || !["select", "generate", "ask", "stop", "offer"].includes(op)) return json({ error: "POST /api/review-room/<room>/explain/(select|generate|ask|stop|offer)" }, 405);
+          if (req.method !== "POST" || xr[3] || !["select", "generate", "ask", "stop", "offer", "auto"].includes(op)) return json({ error: "POST /api/review-room/<room>/explain/(select|generate|ask|stop|offer|auto)" }, 405);
           if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac runs the room's skill / 只有這台 Mac 上的船長能執行審查室的 skill", code: "desktopOnly" }, 403);
           // a generation's offer for the captain's instructions: only ever in a body (never a URL, so never in a log); the GET is the prefill's
           if (op === "offer") return json(X.offer(id, b?.skill ?? null, b?.kind ?? null, b?.v ?? null, typeof b?.prompt === "string" ? b.prompt : null));
           if (op === "select") return json(X.select(id, b?.skill ?? null));
           if (op === "stop") return json(X.stop(id));
+          // the captain opened the room: the default skill's generation for this head starts by itself when it is due (retry: "Try again")
+          if (op === "auto") return json(await X.auto(id, by, b?.retry === true));
           if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm, prompt: b?.prompt, skillDecision: b?.skillDecision }, by));
           return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent, skillDecision: b?.skillDecision }, by));
         } catch (e: any) { return fail(e); } }

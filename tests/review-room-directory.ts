@@ -11,6 +11,8 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, suite } from "./rt-harness";
+// the tutor's lesson on arrival (the board): this suite runs with no default skill (baton is the default otherwise)
+process.env.CREW_REVIEW_EXPLAIN_DEFAULT_SKILL = "";
 const { ok, end } = suite("review-room-directory");
 const { bundledText } = await import("../src/bundled");
 const { installStaffingGuard, StaffingStore } = await import("../src/domain/staffing");

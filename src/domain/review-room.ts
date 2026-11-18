@@ -1665,6 +1665,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
   const arrivalOf = (k: Key, room: Room | null, s: S | null) => {
     // an archived room opened to look something up starts nothing by itself
     if (room?.archived || !autoHead(k, room, s) || (k.kind === "pr" && !room?.pr) || (k.kind === "dir" && !room?.dir)) return null;
+    // a room explained with a skill (picked, or the default one: baton) starts that skill on arrival, never the tutor's lesson
+    if (explainer.bySkill(k.id)) return null;
     const { hash: _h, ...plan } = planOf(k, room, room?.subject?.project) as any; return "error" in plan ? plan : { ...plan, plan: planPrint(plan) };
   };
   /** A room's full analysis (its lesson), started by Studio: the captain's paste of a pull request, or their arrival in any room
@@ -1679,6 +1681,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string; web?: We
     let s: S | null = null; try { s = subjectOf(k); } catch {}
     let room = load(k); if (!room && (k.kind === "pr" || k.kind === "dir")) return;
     if (room?.archived && from === "arrival") return;
+    if (explainer.bySkill(k.id)) return;
     const head = autoHead(k, room, s); if (!head) return;
     const plan = planOf(k, room, room?.subject?.project);
     // only the plan the page showed: changed since (a new tutor, pictures, a host), nothing starts and the page shows the new one
