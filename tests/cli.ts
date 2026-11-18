@@ -58,6 +58,8 @@ try {
     const none = cli(["now"]); assert.equal(none.code, 7); assert.match(none.json.error, /2 grants .* say which with --grant/);
     assert.equal(cli(["whoami", "--grant", D.id]).json.data.id, D.id);
     assert.equal(cli(["whoami"], { CREW_STUDIO_GRANT: D.id }).json.data.id, D.id);
+    // a flag first is still the CLI, never Studio's server (the board's test line is `crew-studio --grant <name> whoami`)
+    const first = cli(["--grant", D.id, "whoami"]); assert.equal(first.code, 0, first.stdout + first.stderr); assert.equal(first.json.data.id, D.id);
     assert.equal(cli(["whoami"], { CREW_STUDIO_GRANT: join(GRANTS, `${R.id}.json`) }).json.data.id, R.id);
   });
   const g = (args: string[]) => cli([...args, "--grant", D.id]);
