@@ -11,6 +11,7 @@ import { refusesRulesPatch } from "../operating-rules";
 import { taskTitle } from "../task-title";
 import { taskRow } from "./task-row";
 import { createObserve } from "../observe/tools";
+import { captainAskedForScreen } from "../observe/kinds/terminal";
 import { NativeToolFailure } from "../host/types";
 import { PolicyUnreadable } from "./checks";
 import { failure, fromError, type FailureCode } from "./failures";
@@ -34,7 +35,7 @@ import {installIssueTriage} from '../issue-triage-workflow';
 import {IssueCategoriesStore} from '../issue-categories-store';
 import {installIssueCategories} from '../issue-categories-workflow';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
-import {installFirstmate,heldNotice} from "../firstmate";
+import {installFirstmate,heldNotice,captainWords} from "../firstmate";
 import {installNoteTool} from "../retro-note-tool";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
 import {installReadiness} from "../readiness";
@@ -114,6 +115,8 @@ export type RuntimeDeps = {
   prs?: () => { view(): any } | null;
   /** what the captain is looking at, for studio_now (src/observe/focus.ts) */
   focus?: import('../observe/focus').FocusStore | null;
+  /** the rest of what Studio's read tools read that only the server holds (terminals, Doctor, settings, peers, projects page) */
+  observe?: Partial<import('../observe/registry').Sources>;
 
   selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean; adaptive?: boolean; picked?: boolean }) => Promise<Provider>;
   /** the readiness gate (src/readiness): false inside the gate's own dry run */
@@ -312,8 +315,10 @@ export function createRuntime(d: RuntimeDeps) {
   // the retro's quick note: the captain's own words, written down for the next retro (src/retro-note-tool.ts)
   const noteTool=installNoteTool(d.dataDir,d.log);
   // Studio's read tools (src/observe/tools.ts): studio_now, studio_find, studio_list, studio_get, the same for Claude and Codex
-  const observe=createObserve({engine,taskRow:(r:any)=>taskRow(engine,r),prs:d.prs,focus:d.focus??null});
-  const firstmate={specs:[...observe.specs,...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs,...noteTool.specs],call:(name:string,args:any,owner:any)=>observe.has(name)?(owner?.live?.()===false?Promise.reject(new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。')):observe.call(name,args)):name==='studio_note_issue'?noteTool.call(name,args,owner):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  const observe=createObserve({engine,taskRow:(r:any)=>taskRow(engine,r),prs:d.prs,focus:d.focus??null,log:d.log,dataDir:d.dataDir,skills:()=>d.skills??null,packages:()=>skillPackages??null,crew:()=>crewStore.current(),artifacts:()=>d.m3?.store??null,...(d.observe??{})});
+  // a terminal's screen only when the captain's own message in this turn asks for it (never a card, a wake, a grant or a repair)
+  const observeCtx=(owner:any)=>({captainAskedTail:!!owner?.captain&&!owner?.origin?.grant&&!owner?.repair&&captainAskedForScreen(captainWords(String(owner?.text??'')))});
+  const firstmate={specs:[...observe.specs,...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs,...noteTool.specs],call:(name:string,args:any,owner:any)=>observe.has(name)?(owner?.live?.()===false?Promise.reject(new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。')):observe.call(name,args,observeCtx(owner))):name==='studio_note_issue'?noteTool.call(name,args,owner):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def,defs.ownCrew);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};

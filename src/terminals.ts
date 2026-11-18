@@ -259,6 +259,13 @@ export class Terminals {
   }
   list(desktop = true): TermView[] { return [...this.terms.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt)).map((t) => this.view(t, desktop)); }
   get(id: string) { return this.terms.get(id) ?? null; }
+  /** The last `n` non-empty lines of a terminal's screen as plain text, the remote-control link and secrets removed: what
+   *  studio_logs gives Firstmate when the captain asks for a terminal's output (src/observe/kinds/terminal.ts). */
+  tail(id: string, n: number): string[] | null {
+    const t = this.terms.get(id); if (!t) return null;
+    const text = t.redactor.scrub(new TextDecoder().decode(t.ring.bytes()).slice(-64_000));
+    return screenLines(text).filter((l) => l.trim()).slice(-Math.max(1, Math.min(200, n))).map((l) => redactText(l).slice(0, 400));
+  }
   projects(): TermProject[] { return this.o.projects().map((p) => ({ id: p.id, name: p.name, path: p.path, base: p.base })); }
   private changed() { try { this.o.changed?.(this.list(false)); } catch {} }
 

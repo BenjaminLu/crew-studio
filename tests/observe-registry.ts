@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { harness, suite, until } from "./rt-harness";
 import { createRuntime } from "../src/runtime/index";
 import { observeFixture, INJECTION, ROOM, REPO } from "./lib/observe-fixture";
-import { BUDGET, ENVELOPE_SCHEMA, kinds, kindDefs, parseRef, shape, type KindDef } from "../src/observe/registry";
+import { BUDGET, ENVELOPE_SCHEMA, kinds, kindDef, kindDefs, parseRef, registerKind, shape, NEVER_GRANTABLE, TOOL_PAGES, type KindDef } from "../src/observe/registry";
 import { FocusStore, readReport } from "../src/observe/focus";
 import { OBSERVE_TOOLS } from "../src/observe/tools";
 import { NATIVE_TOOL_NAMES, STUDIO_TOOLS } from "../src/observe/catalog";
@@ -41,9 +41,9 @@ const F = await observeFixture();
 const O = F.observe;
 try {
   // ---------- the registry ----------
-  ok(J(kinds()) === J(["task", "card", "room", "pr"]), "P1's kinds are task, card, room and pr, in registration order", J(kinds()));
+  ok(J(kinds()) === J(["task", "card", "room", "pr", "workflow", "project", "skill", "crew", "terminal", "artifact", "doc", "doctor", "settings", "peer"]), "the kinds (P1's four, then P2's), in registration order", J(kinds()));
   const specs = O.specs;
-  ok(J(specs.map((s) => s.name)) === J([...OBSERVE_TOOLS]), "the four read tools, in a fixed order", J(specs.map((s) => s.name)));
+  ok(J(specs.map((s) => s.name)) === J([...OBSERVE_TOOLS]) && OBSERVE_TOOLS.length === 6, "the six read tools, in a fixed order", J(specs.map((s) => s.name)));
   ok(specs.every((s) => s.annotations?.readOnlyHint === true && s.annotations?.destructiveHint === false && s.outputSchema === ENVELOPE_SCHEMA), "every read tool is annotated readOnlyHint and returns the one envelope schema");
   const listKinds = (specs.find((s) => s.name === "studio_list")!.inputSchema as any).properties.kind.enum, findKinds = (specs.find((s) => s.name === "studio_find")!.inputSchema as any).properties.kinds.items.enum;
   ok(J(listKinds) === J(kinds()) && J(findKinds) === J(kinds()), "studio_list's and studio_find's kind enums are made from the registry", J([listKinds, findKinds]));
@@ -208,8 +208,8 @@ try {
     ok(r1.ok && r1.report.route === "#/inbox/SC-12" && r2.ok && r2.report.route === "#/runs" && r3.ok && r3.report.route === "#/run", "a route keeps its page and a Studio id only: a search box's query and other path text are dropped", J([r1, r2, r3])); }
   const wrongCursor = await failOf(() => O.call("studio_list", { kind: "card", cursor: p1.nextCursor }));
   ok(wrongCursor?.code === "invalid_params" && /without cursor/.test(wrongCursor.en), "a cursor from another list is refused, saying how to go on", J(wrongCursor));
-  const badKind = await failOf(() => O.call("studio_list", { kind: "terminal" }));
-  ok(/Valid kinds: task, card, room, pr/.test(badKind?.en ?? ""), "an unknown kind names the valid ones", J(badKind));
+  const badKind = await failOf(() => O.call("studio_list", { kind: "nope" }));
+  ok(/Valid kinds: task, card, room, pr, workflow/.test(badKind?.en ?? ""), "an unknown kind names the valid ones", J(badKind));
   const badRef = await failOf(() => O.call("studio_get", { ref: "R-162" }));
   ok(/kind:id/.test(badRef?.en ?? "") && /task:R-162/.test(badRef?.en ?? ""), "a malformed ref says the format, with examples", J(badRef));
   const missing = await failOf(() => O.call("studio_get", { ref: "task:R-999" }));
@@ -226,7 +226,7 @@ try {
   const line = liveStatus(F.E);
   const order = [...line.matchAll(/card (SC-\d+)/g)].map((m) => m[1]), summary = (await import("../src/observe/now")).nowSummary({ engine: F.E }).waiting.slice(0, 8).map((w: any) => w.card);
   ok(order[0] === F.ids.doorCard && J(order) === J(summary) && /studio_now/.test(line), "the live status line renders studio_now's summary (same cards, same order)", J([order, summary]));
-  ok(J(NATIVE_TOOL_NAMES.slice(0, 4)) === J([...OBSERVE_TOOLS]) && new Set(STUDIO_TOOLS.map((t) => t.name)).size === STUDIO_TOOLS.length, "the native tool index starts with the read tools and names each tool once");
+  ok(J(NATIVE_TOOL_NAMES.slice(0, OBSERVE_TOOLS.length)) === J([...OBSERVE_TOOLS]) && new Set(STUDIO_TOOLS.map((t) => t.name)).size === STUDIO_TOOLS.length, "the native tool index starts with the read tools and names each tool once");
   const seed = nativeFreshText("/ws");
   ok(OBSERVE_TOOLS.every((n) => seed.includes(n)) && /Where studio_now is listed, call it first/.test(seed) && /Report status only from the turn's live status line or studio_work_status, never from memory/.test(seed), "the seed names the read tools from the index and keeps its status rule", "");
 
@@ -234,7 +234,7 @@ try {
   const both = [...O.specs, { type: "function" as const, name: "studio_manual", description: "x", inputSchema: { type: "object" } }];
   const claude = mcpToolList(both), codex = codexDynamicTools(both);
   ok(J(claude.map((t) => [t.name, t.inputSchema])) === J(codex.map((t) => [t.name, t.inputSchema])), "Claude's MCP list and Codex's dynamic tools carry the same names and input schemas");
-  ok(claude.filter((t: any) => t.outputSchema && t.annotations?.readOnlyHint).length === 4 && codex.every((t) => J(Object.keys(t).sort()) === J(["description", "inputSchema", "name", "type"])), "Claude's list adds the read tools' outputSchema and annotations; Codex gets the four keys it takes");
+  ok(claude.filter((t: any) => t.outputSchema && t.annotations?.readOnlyHint).length === OBSERVE_TOOLS.length && codex.every((t) => J(Object.keys(t).sort()) === J(["description", "inputSchema", "name", "type"])), "Claude's list adds the read tools' outputSchema and annotations; Codex gets the four keys it takes");
   const priv = mkdtempSync(join(tmpdir(), "crew-obs-mcp-"));
   const ep = nativeEndpoint(priv, async (name, args) => { if (name === null) return mcpToolList(O.specs); try { return await O.call(name, args); } catch (e: any) { return { error: e.message, failure: e.publicFailure }; } });
   const mcp = Bun.spawn(["bun", join(import.meta.dir, "..", "src", "mcp.ts")], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, CREW_STUDIO_SOCKET: ep.socket, CREW_TOOL_TOKEN_FILE: ep.tokenFile } });
@@ -242,7 +242,7 @@ try {
   const rpc = async (id: number, method: string, params: unknown) => { mcp.stdin.write(J({ jsonrpc: "2.0", id, method, params }) + "\n"); await mcp.stdin.flush(); await until(() => lines.some((l) => l.id === id), 15000); return lines.find((l) => l.id === id); };
   try {
     const listed = await rpc(1, "tools/list", {});
-    ok(listed.result.tools.length === 4 && listed.result.tools.every((t: any) => t.outputSchema && t.annotations?.readOnlyHint), "over MCP, tools/list carries outputSchema and readOnlyHint", J(listed.result.tools.map((t: any) => t.name)));
+    ok(listed.result.tools.length === OBSERVE_TOOLS.length && listed.result.tools.every((t: any) => t.outputSchema && t.annotations?.readOnlyHint), "over MCP, tools/list carries outputSchema and readOnlyHint", J(listed.result.tools.map((t: any) => t.name)));
     const got = await rpc(2, "tools/call", { name: "studio_get", arguments: { ref: `pr:${REPO}#1645` } });
     ok(got.result.isError === false && got.result.structuredContent?.ref === `pr:${REPO}#1645` && J(JSON.parse(got.result.content[0].text)) === J(got.result.structuredContent) && got.result._meta?.["studio/trust"]?.untrusted?.includes("data.title") && !("_meta" in got.result.structuredContent),
       "over MCP, a read returns structuredContent, the same JSON as text, and the trust note as _meta", J(got.result).slice(0, 300));
@@ -256,7 +256,7 @@ try {
   { const H2 = await harness([]), root = join(import.meta.dir, "..");
     try { const rt = createRuntime({ dataDir: H2.data, agents: H2.agents, provider: H2.engine.deps.provider, defaultProvider: () => ({ provider: "stub", model: null }), log: H2.engine.deps.log, send() {}, fmRoot: root, protectedRoots: [root], studioUrl: () => H2.toolUrl } as any);
       const live = rt.firstmate.specs.map((x: any) => x.name), index = STUDIO_TOOLS.map((t) => t.name);
-      ok(live.every((n: string) => index.includes(n)) && NATIVE_TOOL_NAMES.every((n) => live.includes(n)) && J(live.slice(0, 4)) === J([...OBSERVE_TOOLS]), "every registered Firstmate tool is in the index, every always-registered one is registered, the read tools first", J(live.filter((n: string) => !index.includes(n))));
+      ok(live.every((n: string) => index.includes(n)) && NATIVE_TOOL_NAMES.every((n) => live.includes(n)) && J(live.slice(0, OBSERVE_TOOLS.length)) === J([...OBSERVE_TOOLS]), "every registered Firstmate tool is in the index, every always-registered one is registered, the read tools first", J(live.filter((n: string) => !index.includes(n))));
       (rt.engine as any).reviewRoom = F.reviewRoom;
       const res = await rt.handle(new Request(`http://127.0.0.1/api/review-room/${ROOM}`), new URL(`http://127.0.0.1/api/review-room/${ROOM}`), { kind: "desktop" }, false);
       const routeView: any = await res!.json(), viaTool: any = await rt.observe.call("studio_get", { ref: `room:${ROOM}` });
@@ -272,19 +272,20 @@ try {
       ok(!!notOpened, "reading a room never opens it (the fixture refuses opened=true)");
     } finally { H2.stop(); } }
 
-  // ---------- coverage: every board route is a kind's, or on the pending list (which shrinks each phase) ----------
-  const PENDING = ["activity", "artifact", "board", "change", "changes", "compare", "court", "crew", "doc", "docs", "doctor", "edit", "event", "fileorg", "first-workflow", "firstmate", "gates", "improve", "lan", "library", "pack", "pack-genesis", "packs", "pro", "project", "projects", "remote", "retro", "review", "roadmap", "settings", "skill", "skills", "skins", "takeover", "team", "terminals", "workflow", "workflows"];
-  const NEVER = ["settings", "remote", "lan", "takeover", "terminals"]; // never grantable; terminals: status only, P2
+  // ---------- coverage: every board route is a kind's (its route, its list or one of its pages) or a read tool's; none is pending ----------
   const routes = new Set<string>();
   for (const f of readdirSync(join(import.meta.dir, "..", "public")).filter((f) => f.endsWith(".js"))) { const src = readFileSync(join(import.meta.dir, "..", "public", f), "utf8");
     for (const m of src.matchAll(/\broutes\.([\w$]+)\s*=(?!=)/g)) routes.add(m[1]); for (const m of src.matchAll(/\broutes\[\s*["']([^"']+)["']\s*\]\s*=(?!=)/g)) routes.add(m[1]);
     for (const m of src.matchAll(/Object\.assign\(\s*routes\s*,\s*\{/g)) for (const k of keys(src, m.index! + m[0].length - 1)) routes.add(k);
     for (const m of src.matchAll(/\bconst routes\s*=\s*\{/g)) for (const k of keys(src, m.index! + m[0].length - 1)) routes.add(k); }
-  const covered = new Set(kindDefs().flatMap((d) => [d.route, d.listRoute]).map((r) => /^#\/([\w-]+)/.exec(r)?.[1]).filter(Boolean) as string[]);
-  for (const alias of ["run", "runs", "task"]) if (covered.has("run")) covered.add(alias);
-  const uncovered = [...routes].filter((r) => !covered.has(r) && !PENDING.includes(r));
-  ok(routes.size > 30 && !uncovered.length, "every board route has a kind or is on the pending list", J(uncovered));
-  ok(PENDING.every((r) => routes.has(r)) && PENDING.every((r) => !covered.has(r)), "the pending list names only real routes that no kind covers yet", J(PENDING.filter((r) => !routes.has(r) || covered.has(r))));
-  ok(NEVER.every((r) => PENDING.includes(r)) && kindDefs().every((d) => d.grantable === !NEVER.includes(d.kind)), "settings, remote, peers and terminals have no grantable kind");
+  const byKind = new Map<string, string>();
+  for (const d of kindDefs()) for (const r of [...[d.route, d.listRoute].map((x) => /^#\/([\w-]+)/.exec(x)?.[1]), ...(d.pages ?? [])]) if (r) byKind.set(r, d.kind);
+  for (const alias of ["run", "runs", "task"]) if (byKind.has("run")) byKind.set(alias, "task");
+  const uncovered = [...routes].filter((r) => !byKind.has(r) && !TOOL_PAGES[r]);
+  ok(routes.size > 30 && !uncovered.length, "every board route is a kind's or a read tool's: the pending list is empty", J(uncovered));
+  ok(Object.values(TOOL_PAGES).every((t) => [...OBSERVE_TOOLS, "studio_manual"].includes(t as any)) && Object.keys(TOOL_PAGES).every((r) => routes.has(r)), "the tool pages name real routes and real read tools", J(TOOL_PAGES));
+  ok(kindDefs().every((d) => d.grantable === !(NEVER_GRANTABLE as readonly string[]).includes(d.kind)) && ["settings", "peer", "terminal"].every((k) => kinds().includes(k)), "settings, peers and terminals are kinds no grant may reach; every other kind may be granted", J(kindDefs().map((d) => [d.kind, d.grantable])));
+  ok(["remote", "lan"].every((r) => byKind.get(r) === "peer") && ["terminals", "takeover"].every((r) => byKind.get(r) === "terminal") && byKind.get("settings") === "settings", "the phone, LAN, terminal and settings pages are those never-grantable kinds'", J(Object.fromEntries(byKind)));
+  ok((() => { try { registerKind({ ...kindDef("terminal")!, kind: "grant", grantable: true }); return false; } catch (e: any) { return /never be grantable/.test(e.message); } })(), "a never-grantable kind that says a grant may see it never registers");
 } finally { for (const r of F.E.list()) if (!["failed", "cancelled", "succeeded"].includes(r.status)) { try { await F.E.cancel(r.id); } catch {} } F.H.stop(); }
 end();
