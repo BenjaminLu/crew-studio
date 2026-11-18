@@ -19,6 +19,10 @@ import { guardedLookup, isLoopbackAddress, localAddresses } from "./egress-guard
 export type EgressMeta = { purpose?: "round" | "skill" | "prepare"; run?: string; node?: string; visit?: number; skill?: string; script?: string; strict?: boolean;
   /** any public host name (the explainer's skill scripts): only Studio's own code sets it, never a policy's host list */ anyHost?: boolean };
 export type EgressEvent = { at: string; host: string; port: number; allowed: boolean; method: string; round: string | null; why?: string; run?: string; node?: string; skill?: string; script?: string; purpose?: string };
+/** How long an open tunnel may carry no bytes before the proxy closes it: 30 minutes (CREW_EGRESS_TUNNEL_IDLE_MS, 1 s to
+ *  2 h). A model streaming a reply can go quiet for minutes while it thinks; at the old 120 s the proxy cut Claude rounds
+ *  mid-reply, which the CLI reported as an API error. A round's tunnels still close when its credential is revoked. */
+export const tunnelIdleMs = () => { const v = Number(process.env.CREW_EGRESS_TUNNEL_IDLE_MS); return Number.isFinite(v) && v >= 1000 && v <= 7_200_000 ? v : 30 * 60_000; };
 export class Egress {
   private server: Server | null = null;
   private starting: Promise<number> | null = null;
@@ -109,7 +113,7 @@ export class Egress {
         this.record(host, port, true, method, round, undefined, meta);
         const up = this.dial(port, to.address); up.once("connect", () => {
           if (client.destroyed || !token || !this.rounds.has(token)) { up.destroy(); return; }
-          client.setTimeout(120000, () => { client.destroy(); up.destroy(); }); up.setTimeout(120000, () => { client.destroy(); up.destroy(); });
+          const idle = tunnelIdleMs(); client.setTimeout(idle, () => { client.destroy(); up.destroy(); }); up.setTimeout(idle, () => { client.destroy(); up.destroy(); });
           if (method === "CONNECT") { client.write("HTTP/1.1 200 Connection Established\r\n\r\n"); const rest = head.slice(end + 4); if (rest.length) up.write(rest); }
           else { // a plain request: send it on as origin-form
             const u = new URL(target); lines[0] = `${method} ${u.pathname}${u.search} ${lines[0].split(" ")[2] ?? "HTTP/1.1"}`;
