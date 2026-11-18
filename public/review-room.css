@@ -706,7 +706,7 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-chat { min-width: 0; min-height: 0; border-left: 1px solid var(--border); display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 .rx-msgs { overflow: auto; overscroll-behavior: contain; padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
 .rx-m { overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; border-radius: 10px; padding: 10px 13px; }
-.rx-m p { margin: 0 0 8px; } .rx-m p:last-of-type { margin-bottom: 4px; }
+.rx-m p { margin: 0 0 8px; max-width: 72ch; } .rx-m p:last-of-type { margin-bottom: 4px; }
 .rx-m.me { background: var(--accent-soft); justify-self: end; max-width: 88%; }
 .rx-m.ai { background: var(--surface-2); border: 1px solid var(--border); }
 .rx-m.sys { font-size: 12px; line-height: 1.5; color: var(--text-3); text-align: center; padding: 2px; }

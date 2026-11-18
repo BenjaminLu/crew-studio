@@ -400,11 +400,12 @@ function moveCam(card, to, glide = true) {
 /** where the camera's lock says it should be: its region, its focused question, or the whole board (or its asked chapters) */
 function lockTarget(card) { const lock = B.lock.get(card), L = B.L.get(card); if (!lock || !L) return null;
   return lock.region ? regionCam(card, lock.region) : lock.focus != null ? focusCam(card, lock.focus) : lock.all ? (() => { const ks = B.only.has(card) ? Object.keys(L.R).filter((k) => L.q[k]) : []; return frameRect(card, bounds(card, ks.length ? ks : null), 1, 0.94); })() : null; }
-/** a region at a readable scale: its text at 92% or more on a desktop, its column filling a phone's width */
+/** a region at a readable scale: its text at 70% or more on a desktop (above the cards' mid detail, LOD), so the chapter and the
+ *  follow-ups beside it fit the board's width; its column filling a phone's width */
 function regionCam(card, key) {
   const L = B.L.get(card), vp = vpOf(card), r = L?.R[key]; if (!r || !vp) return null; const W = vp.clientWidth;
   if (phone()) { const s = clamp((W - 24) / r.W, 0.5, 1.15); return { s, x: (W - r.W * s) / 2 - r.x * s, y: 44 - (r.y - 34) * s }; }
-  const avail = W - 32, want = Math.min(r.w, r.W + (r.w > r.W ? 368 : 0)), s = clamp(avail / want, 0.88, 1), vis = Math.min(want, avail / s);
+  const avail = W - 32, want = Math.min(r.w, r.W + (r.w > r.W ? 368 : 0)), s = clamp(avail / want, 0.7, 1), vis = Math.min(want, avail / s);
   return { s, x: 16 + (avail - vis * s) / 2 - r.x * s, y: 56 - (r.y - 34) * s };
 }
 function bounds(card, keys) { const L = B.L.get(card); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -679,7 +680,7 @@ function view(r, scenes, i) {
   const notesOpen = lesson && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
   // a scene region is as wide as the board shows at a readable scale: the board's width (beside the questions panel at the width
   // the captain left it, public/review-room.js crewRoomPane), at most 980
-  const notesW = !notesOpen ? 0 : innerWidth > 1180 ? (window.crewRoomPane?.width("board") || 346) + 12 : 284;
+  const notesW = !notesOpen ? 0 : innerWidth > 1180 ? (window.crewRoomPane?.width("board") || window.crewRoomPane?.guess("board") || 290) + 12 : 284;
   const avail = isFs() ? innerWidth - 40 : innerWidth - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - notesW - 32;
   const sceneW = (x) => (phone() ? 340 : clamp(Math.round(avail), 600, x.quiz ? 760 : 980));
   const firstOf = (x) => scenes.find((y) => y.turn === x.turn) === x;
