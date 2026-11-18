@@ -539,6 +539,37 @@ Never `--dangerously-skip-permissions` or a bypass mode. The host process gets n
   default 120 s) is a deny. These are separate from firstmate's decision cards; merge cards stay
   board-only.
 
+## Your own agent reads Studio: the crew-studio CLI
+
+Claude Code, Codex or any agent with a shell can read your Studio through a grant you issue. It can read what waits for
+you, Tasks, review rooms, pull requests, workflows, skills and documents. It never sees your screen. It never answers a
+card, merges or pays. Those stay on the board. How it works: docs/units/cli.md.
+
+1. **Install the CLI.** Open Doctor and press **Install the CLI** on the crew-studio CLI row. Studio writes
+   `~/.local/bin/crew-studio` and nothing else. If the row then says `~/.local/bin` is not on PATH, add the line it shows to
+   your shell profile (for zsh: `export PATH="$HOME/.local/bin:$PATH"` in `~/.zprofile`) and open a new terminal.
+2. **Issue a grant.** Go to Settings → External CLI grants. Tick **Read Studio**, pick what it reads (this project, review
+   only, or a custom set; external text stays out unless you tick it) and an expiry. Give it a name such as `review-bot`,
+   then press **Issue grant**. The token lands in `~/.crew-studio/grants/review-bot.json` (0600). The page never shows it.
+3. **Test it.** Copy the dialog's line into a terminal: `crew-studio --grant review-bot whoami`. It names the grant, what it
+   reads and its hourly budget.
+4. **Teach your agent.** Run `crew-studio skill install`. It asks once, then writes a short skill for Claude Code
+   (`~/.claude/skills/crew-studio/`) and Codex (`~/.agents/skills/crew-studio/`). Use `--claude` or `--codex` for one of
+   them, or `--project <dir>` for one repository only. Then ask your agent, for example "what is waiting for me in Studio?".
+   It runs `crew-studio now` and cites what it read.
+5. **Stop it.** Press **Revoke** on the grant. The next command exits 7 and the grant file is gone.
+
+A client that speaks only MCP uses `crew-studio mcp` as its whole server command. It finds the grant the same way.
+
+When a command fails, its exit code says why. The skill tells the agent what to do about each one:
+
+| Exit | Meaning |
+| --- | --- |
+| 3 | this grant does not reach it (a kind, a project, terminals: never) |
+| 4 | the hourly budget is used up; `freesAt` says when it frees up |
+| 6 | Studio is not running (start it: `crew-studio launch`) |
+| 7 | no grant, or it was revoked or expired, or its file is not private |
+
 ## Phones over Tailscale
 
 Studio keeps listening on `127.0.0.1` only. When the captain enables phone access, `tailscale serve

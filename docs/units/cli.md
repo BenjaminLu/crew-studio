@@ -115,6 +115,32 @@ and tab), DEL and C1, so text from somewhere else cannot clear the screen, set t
 JSON escapes control characters itself. A tool's hint that names an MCP tool (`studio_find`) names the command instead
 (`crew-studio find`).
 
+## Acceptance
+
+`scripts/cli-eval.ts` is the real-model eval: a real Claude Code or Codex answers the captain's questions with nothing
+but a shell, the CLI and the skill. It gets no MCP server and no hint about which command to run:
+
+    bun scripts/cli-eval.ts --provider claude [--model <id>] [--runs 3] [--questions 1,2,8a,e4]
+    bun scripts/cli-eval.ts --provider codex
+
+- **Studio.** The observe fixture (`tests/lib/observe-p2-fixture.ts`, invented names only), behind the real grant code:
+  grants come from `src/cli-grants.ts`, and every call goes through its budget and `createGrantTools`.
+- **The CLI.** The shim Doctor writes (`src/cli-install.ts`), in a temporary HOME.
+- **The skill.** Written by `crew-studio skill install --project` into a temporary project folder.
+- **What the agents do not load.** Claude runs with `--setting-sources project` (the temporary project), `--strict-mcp-config`
+  and `--no-session-persistence`. Codex runs with `--ignore-user-config` and `--ephemeral`, in its workspace-write sandbox
+  with network on. Neither loads the captain's settings, hooks or plugins, and neither keeps a transcript.
+- **Questions.**
+  - 1 to 7 are Firstmate's questions, through an everything-readable grant with external text in. Question 6, a terminal
+    waiting for input, has to be answered "this grant cannot see terminals" (exit 3).
+  - 8a to 8c go through a review-only grant without external text.
+  - e4, e6 and e7 are failures the agent has to explain: e4 is the budget used up (with `freesAt`), e6 is Studio not
+    answering, e7 is no grant.
+- **Each answer is checked for:** at least one CLI call and only CLI calls; at most 3 Studio tool calls; the facts the
+  question needs; no injected text; a cited ref, or, for a failure question, the CLI exit it had to see.
+
+It calls a paid model on the captain's own login. Studio's tests never run it.
+
 ## Transport
 
 The CLI uses the address in the grant file (`http://127.0.0.1:<port>`; local only), through the client the MCP helper also uses (`src/studio-client.ts`). The client takes a private unix socket too. Studio does not yet listen on one for grants, so a grant file names the http address.
