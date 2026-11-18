@@ -13,7 +13,7 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { SERVER_INSTRUCTIONS } from "./observe/instructions";
 import { negotiateProtocolVersion } from "./mcp-protocol";
-import { findGrant, NoGrant, request, type Conn } from "./studio-client";
+import { findGrant, loopbackUrl, NoGrant, request, type Conn } from "./studio-client";
 
 // one fixed order whatever order Studio answers in, so a client's prompt cache sees the same tool list every time
 const byName = (tools: any) => Array.isArray(tools) ? [...tools].sort((a, b) => { const x = String(a?.name ?? ""), y = String(b?.name ?? ""); return x < y ? -1 : x > y ? 1 : 0; }) : tools;
@@ -29,8 +29,11 @@ const SOCKET = process.env.CREW_STUDIO_SOCKET ?? "";
 // a plain client (no token, no socket): its grant is found as the crew-studio CLI finds one (--grant, CREW_STUDIO_GRANT, the
 // only file in ~/.crew-studio/grants), so a client's whole config is `command: crew-studio, args: ["mcp"]`
 let URL_ = flag("--url") || process.env.CREW_STUDIO_URL || "http://127.0.0.1:4210";
-if (!TOKEN && !SOCKET) { try { const g = findGrant(flag("--grant") || null).grant; TOKEN = g.token; if (!flag("--url") && !process.env.CREW_STUDIO_URL) URL_ = g.url; }
+// its token goes only to the address in its own (private, loopback) grant file: --url and CREW_STUDIO_URL are ignored then, so a
+// project's MCP config cannot send it elsewhere
+if (!TOKEN && !SOCKET) { try { const g = findGrant(flag("--grant") || null).grant; TOKEN = g.token; URL_ = g.url; }
   catch (e: any) { process.stderr.write(`crew-studio mcp: ${e instanceof NoGrant ? e.message : String(e?.message ?? e)}\n`); process.exit(7); } }
+if (!SOCKET && !loopbackUrl(URL_)) { process.stderr.write(`crew-studio mcp: Studio is reached only at http://127.0.0.1, http://[::1] or http://localhost, not ${URL_.replace(/\/\/[^/@]*@/, "//")}\n`); process.exit(2); }
 const conn: Conn = { url: URL_, socket: SOCKET || null, token: TOKEN };
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 const call = async (path: string, body?: unknown) => {
