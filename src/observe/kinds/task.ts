@@ -40,14 +40,14 @@ function taskData(s: Sources, r: Run, full: boolean): Record<string, unknown> {
     // an external CLI grant's Task: its title and request are the CLI's words, not the captain's (src/cli-grants.ts)
     ...(withheld ? {} : external ? { externalTitle: row.title, externalRequest: full ? row.request : String(row.request ?? "").slice(0, 200), origin: { grant: (row.origin as any)?.grant ?? null } }
       : { title: row.title, request: full ? row.request : String(row.request ?? "").slice(0, 200) }),
-    ...(r.workflow === PROPOSAL ? { dispatched: !!child, execution: child ? { ...runState(engine, child), title: withheldOf(engine, child) ? null : child.title } : null } : {}),
+    ...(r.workflow === PROPOSAL ? { dispatched: !!child, execution: child ? (withheldOf(engine, child) ? { ...runState(engine, child), waitingOn: (runState(engine, child).waitingOn ?? []).map((w) => ({ card: w.card, node: w.node, kind: w.kind })), title: null } : { ...runState(engine, child), title: child.title }) : null } : {}),
     ...(typeof r.params?._firstmateProposal === "string" ? { proposal: r.params._firstmateProposal } : {}),
     ...(f ? { failure: { class: f.class, code: f.code, at: f.at, node: f.node, title: f.title, meaning: f.meaning, fix: f.fix, where: f.where, message: f.message } } : {}),
     error: row.error,
   };
   if (full) {
     try { out.events = engine.timeline(r.id).slice(-40).map((e: any) => ({ type: e.type, node: e.node ?? null, edge: e.edge ?? null, at: e.ts ?? e.at ?? null })); } catch { out.events = []; }
-    out.cards = engine.cards.list({ run: r.id }).map((c) => ({ id: c.id, kind: c.kind, node: c.node, status: c.status, title: c.title.en, createdAt: c.createdAt, answer: c.answer ? { choice: c.answer.choice, by: c.answer.by, at: c.answer.at } : null }));
+    out.cards = engine.cards.list({ run: r.id }).map((c) => ({ id: c.id, kind: c.kind, node: c.node, status: c.status, ...(withheld ? {} : { title: c.title.en }), createdAt: c.createdAt, answer: c.answer ? { choice: c.answer.choice, by: c.answer.by, at: c.answer.at } : null }));
   }
   return out;
 }

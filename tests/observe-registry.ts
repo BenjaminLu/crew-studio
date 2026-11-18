@@ -82,7 +82,8 @@ try {
   ok(task.data.waitingOn.some((w: any) => w.kind === "failure") && /Deploy to staging/.test(J(task.data)), "Q2: and where: its failure card at the Deploy to staging step", J(task.data.waitingOn));
   ok(task.data.failure.message?.untrusted === true && /connection refused/.test(task.data.failure.message.text), "Q2: the step's own message is there, wrapped as untrusted", J(task.data.failure.message));
   const row = taskRow(F.E, F.E.get(F.ids.failed)!);
-  ok(["id", "status", "workflow", "version", "createdAt", "updatedAt", "endedAt", "title", "request", "project"].every((k) => J(task.data[k]) === J((row as any)[k])) && J(task.data.current) === J(row.current), "a Task reads as the board's Tasks list row (the route's own taskRow)", J({ task: task.data, row }));
+  const fullFailed: any = await O.call("studio_get", { ref: `task:${F.ids.failed}`, depth: "full" }), ROW_KEYS = ["id", "workflow", "version", "status", "result", "project", "createdAt", "updatedAt", "endedAt", "archived", "merged", "cancelReason", "current", "childRun", "title", "request"] as const;
+  ok(J(Object.fromEntries(ROW_KEYS.map((k) => [k, fullFailed.data[k]]))) === J(Object.fromEntries(ROW_KEYS.map((k) => [k, (row as any)[k]]))) && fullFailed.data.error?.text === row.error, "a Task reads as the board's Tasks list row (the route's own taskRow)", J({ task: task.data, row }));
 
   // ---------- acceptance 3: which pull requests are merged but not live, on which pod ----------
   const merged: any = await O.call("studio_list", { kind: "pr", filter: { tab: "merged" } });
@@ -95,7 +96,10 @@ try {
   ok(now1.data.waiting[0].ref === `card:${F.ids.doorCard}` && now1.data.counts.waiting === openBefore && now1.data.waiting.some((w: any) => w.kind === "failure"), "Q4: studio_now lists the same card first, then the failed Task's card", J(now1.data.waiting));
   ok(F.E.cards.list({ open: true }).length === openBefore && specs.every((s) => !/answer|approve|prepare|start|send/.test(s.name)), "Q4: reading answered nothing, and no read tool answers, approves or prepares a card");
   const shownCard = F.E.cards.view(F.E.cards.get(F.ids.doorCard)!);
-  ok(J(cards.data.entries[0].options.map((x: any) => x.label)) === J(shownCard.options.map((x) => x.label)) && cards.data.entries[0].status === shownCard.status, "a card reads as the Inbox shows it (engine.cards.view)");
+  const fullCard: any = await O.call("studio_get", { ref: `card:${F.ids.doorCard}`, depth: "full" }), C_KEYS = ["id", "run", "node", "visit", "kind", "status", "createdAt", "workflow", "door", "confirmDoor", "title", "runTitle"] as const;
+  ok(J(Object.fromEntries(C_KEYS.map((k) => [k, fullCard.data[k]]))) === J(Object.fromEntries(C_KEYS.map((k) => [k, (shownCard as any)[k]])))
+    && J(fullCard.data.options) === J(shownCard.options.map((o) => ({ id: o.id, label: o.label, labelZh: o.labelZh ?? null }))) && fullCard.data.captainOnly === !!shownCard.captainOnly && fullCard.data.body.text === shownCard.body && (fullCard.data.answer ?? null) === null,
+    "a card reads as the Inbox shows it (engine.cards.view): every field the provider takes", J([C_KEYS.filter((k) => J(fullCard.data[k]) !== J((shownCard as any)[k])), fullCard.data.body, shownCard.body, fullCard.data.captainOnly]));
 
   // ---------- acceptance 9: what happened in the last hour ----------
   ok(["task:" + F.ids.failed, "card:" + F.E.cards.list({ run: F.ids.answered })[0].id, `room:${ROOM}`, `pr:${REPO}#1601`].every((r) => now1.data.recent.some((x: any) => x.ref === r)), "Q9: the last hour: the failed Task, the answered card, the room's answer, the merged pull request", J(now1.data.recent));
@@ -140,16 +144,33 @@ try {
   ok(new FocusStore(dir).on === false && new FocusStore(null).on === true, "sharing is on by default; turning it off is remembered");
 
   // ---------- a review room of a Task withheld from Firstmate; a Task an external CLI started ----------
-  { const tainted = F.E.start({ workflow: "pick-fixture", version: 1, title: `ISSUE TITLE ${INJECTION}`, text: "x", by: "fixture", params: { _tainted: "issue-text" } } as any);
+  { const tainted = F.E.start({ workflow: "inject-fixture", version: 1, title: `ISSUE TITLE ${INJECTION}`, text: "x", by: "fixture", params: { _tainted: "issue-text" } } as any);
     await until(() => F.E.cards.list({ run: tainted.id, open: true }).length > 0);
     const rr: any = F.reviewRoom, view0 = rr.view, list0 = rr.list, expl0 = rr.explain.view;
     rr.view = (id: string, o?: boolean) => id === tainted.id ? { ...view0(ROOM, o), subject: { kind: "branch", room: tainted.id, task: tainted.id, branch: "fix/issue" }, task: { id: tainted.id, title: "x" } } : view0(id, o);
-    rr.list = () => [...list0(), { id: tainted.id, kind: "branch", title: "Branch fix/issue", open: true, running: false, turns: 2, repository: null, zone: "active", updatedAt: new Date().toISOString() }];
+    const mergeCard = F.E.cards.list({ run: tainted.id, open: true })[0].id;
+    rr.view = ((v: any) => (id: string, o?: boolean) => id === mergeCard ? v(tainted.id, o) : v(id, o))(rr.view);
+    // the room list's own titles on a withheld Task: a merge room's is its card's title, a branch room's names the branch
+    rr.list = () => [...list0(), { id: tainted.id, kind: "branch", title: `Branch fix/${INJECTION}`, open: true, running: false, turns: 2, repository: null, zone: "active", updatedAt: new Date().toISOString() },
+      { id: mergeCard, kind: "merge", title: `MERGE ${INJECTION}`, open: true, running: false, turns: 1, repository: null, zone: "active", updatedAt: new Date().toISOString() }];
     rr.explain.view = (id: string) => expl0(id === tainted.id ? ROOM : id);
     try {
       const got: any = await O.call("studio_get", { ref: `room:${tainted.id}`, depth: "full" }), listed: any = await O.call("studio_list", { kind: "room" }), now: any = await O.call("studio_now", {});
       ok(F.E.redacted(F.E.get(tainted.id)) && !J(got).includes("IGNORE") && got.data.withheld && got.untrusted.length === 0, "a room of a Task withheld from Firstmate shows none of its untrusted text", J(got.data).slice(0, 300));
-      ok(!J(listed).includes("IGNORE") && !J(now).includes("ISSUE TITLE"), "nor does the room list or studio_now");
+      ok(!J(listed).includes("IGNORE") && !J(now).includes("ISSUE TITLE") && !J(now).includes("CARD TITLE"), "nor does the room list or studio_now", J(listed.items));
+      const found: any = await O.call("studio_find", { query: "merge ignore all" }), byBranch: any = await O.call("studio_find", { query: "branch fix/ignore" });
+      ok(found.items.length === 0 && byBranch.items.length === 0, "studio_find never matches a withheld room's own title (merge card, branch)", J([found.items, byBranch.items]));
+      const mergeRoom: any = await O.call("studio_get", { ref: `room:${mergeCard}` });
+      ok(!J(mergeRoom).includes("IGNORE") && mergeRoom.data.withheld, "a merge card's room on a withheld Task is withheld too", J(mergeRoom).slice(0, 200));
+      const fullTask: any = await O.call("studio_get", { ref: `task:${tainted.id}`, depth: "full" }), cardList: any = await O.call("studio_list", { kind: "card", filter: { run: tainted.id } });
+      // (its steps' labels are the workflow's own, so the fixture's card title, its node label, may show there; the cards may not)
+      ok(fullTask.data.cards.length > 0 && !J(fullTask.data.cards).includes("CARD TITLE") && !J(cardList.data.entries).includes("CARD TITLE") && !J(cardList.items).includes("CARD TITLE"), "a withheld Task's cards, at full depth or listed, carry no title", J(fullTask.data.cards));
+      // a proposal whose execution Task is withheld: the execution's state, never its words
+      const parent: any = F.E.get(F.ids.plain), w0 = parent.workflow, c0 = parent.ctx.childRun;
+      parent.workflow = "firstmate-proposal"; parent.ctx.childRun = tainted.id;
+      try { const pv: any = await O.call("studio_get", { ref: `task:${F.ids.plain}` });
+        ok(pv.data.execution?.id === tainted.id && pv.data.execution.waitingOn.length > 0 && !J(pv).includes("CARD TITLE") && !J(pv).includes("ISSUE TITLE"), "a proposal's withheld execution shows its state and the cards it waits on, no title", J(pv.data.execution)); }
+      finally { parent.workflow = w0; parent.ctx.childRun = c0; }
     } finally { rr.view = view0; rr.list = list0; rr.explain.view = expl0; try { await F.E.cancel(tainted.id); } catch {} }
     const ext = F.E.start({ workflow: "pick-fixture", version: 1, title: `CLI TITLE ${INJECTION}`, text: `cli request ${INJECTION}`, by: "external CLI grant g-0000beef", params: {} } as any);
     await until(() => F.E.cards.list({ run: ext.id, open: true }).length > 0);
@@ -232,7 +253,13 @@ try {
       (rt.engine as any).reviewRoom = F.reviewRoom;
       const res = await rt.handle(new Request(`http://127.0.0.1/api/review-room/${ROOM}`), new URL(`http://127.0.0.1/api/review-room/${ROOM}`), { kind: "desktop" }, false);
       const routeView: any = await res!.json(), viaTool: any = await rt.observe.call("studio_get", { ref: `room:${ROOM}` });
-      ok(res!.status === 200 && viaTool.data.subject.number === routeView.subject.number && viaTool.data.pr.state === routeView.prState.state && viaTool.data.pr.title.text === routeView.prState.title && viaTool.data.turns[0].question === routeView.turns.at(-1).text && viaTool.data.questions.asked === routeView.turns.length,
+      const fullTool: any = await rt.observe.call("studio_get", { ref: `room:${ROOM}`, depth: "full" }), ps = routeView.prState;
+      const wantPr = { state: ps.state, draft: ps.draft, mergedAt: ps.mergedAt, head: ps.head, headRef: ps.headRef, baseRef: ps.baseRef, author: ps.author, files: ps.files, approved: ps.approved, verdicts: ps.verdicts.map((d: any) => ({ author: d.author, state: d.state, current: d.current })) };
+      const { title: prTitle, ...gotPr } = fullTool.data.pr, turns = routeView.turns.filter((t: any) => !t.studio);
+      const wantTurns = [...turns].reverse().map((t: any) => ({ n: t.n, action: t.action, by: t.by, auto: !!t.auto, at: t.at, ended: t.ended, status: t.status, provider: t.provider, model: t.model, cost: t.cost ?? null, question: t.text, answer: t.answer, error: t.error ?? null }));
+      const gotTurns = fullTool.data.turns.map((t: any) => ({ n: t.n, action: t.action, by: t.by, auto: t.auto, at: t.at, ended: t.ended, status: t.status, provider: t.provider, model: t.model, cost: t.cost, question: t.question, answer: t.answer?.text ?? t.answer, error: t.error }));
+      const wantSubject = { kind: routeView.subject.kind, url: routeView.subject.url, repository: routeView.subject.repository, number: routeView.subject.number, branch: routeView.subject.branch ?? null, task: routeView.subject.task ?? null };
+      ok(res!.status === 200 && J(gotPr) === J(wantPr) && prTitle.text === ps.title && J(gotTurns) === J(wantTurns) && J(fullTool.data.subject) === J(wantSubject) && fullTool.data.notes.items.length === routeView.notes.length && fullTool.data.open === routeView.open,
         "the room reads as GET /api/review-room/<room> returns it", J({ route: routeView.prState, tool: viaTool.data.pr }));
       const notOpened = await rt.observe.call("studio_get", { ref: `room:${ROOM}`, depth: "full" });
       ok(!!notOpened, "reading a room never opens it (the fixture refuses opened=true)");
