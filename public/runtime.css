@@ -323,3 +323,27 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .rt-intent-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; color: var(--text); max-height: 16em; overflow-y: auto; }
 /* a card of a run an external CLI grant proposed (src/cli-grants.ts): where it came from, and that it is answered here */
 .cc-origin{font-size:12px;font-weight:600;color:var(--warn);padding:4px 0}
+/* cloud hand-off (src/domain/cloud-handoff.ts): the confirm view and the waiting Task */
+.rt-handoff-confirm { display: grid; gap: 8px; margin: 0; }
+.rt-handoff-row { display: grid; grid-template-columns: minmax(110px, 160px) 1fr; gap: 10px; font-size: 13px; }
+.rt-handoff-row dt { color: var(--text-2); font-weight: 600; }
+.rt-handoff-row dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.rt-handoff-row dd ul { margin: 4px 0 0; padding-left: 18px; }
+.rt-handoff-row code, .rt-handoff code { overflow-wrap: anywhere; }
+.rt-handoff-prompt pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.rt-handoff { display: grid; gap: 8px; }
+.rt-handoff h3, .rt-handoff p { margin: 0; }
+.rt-handoff.red { border-color: var(--bad); }
+@media (max-width: 640px) { .rt-handoff-row { grid-template-columns: 1fr; gap: 2px; } }
+/* the hand-off's warnings, errors and red flags: scoped here (a bare .bad has no style of its own) */
+.rt-handoff-bad, .rt-handoff-warn { color: var(--bad); font-size: 13px; margin: 0; }
+.rt-handoff-bad:empty { display: none; }
+.rt-handoff-warn { border-left: 3px solid var(--bad); padding-left: 10px; }
+.rt-handoff-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+.rt-handoff-flags { display: grid; gap: 6px; border-left: 3px solid var(--bad); padding-left: 10px; }
+.rt-handoff-flags .rt-handoff-list { color: var(--bad); }
+.rt-handoff-flags p { font-size: 13px; }
+.rt-handoff-confirm-discard { display: grid; gap: 8px; border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--border)); border-radius: 8px; padding: 10px 12px; }
+.rt-handoff-confirm-discard p { margin: 0; font-size: 13px; }
+.rt-handoff .actions .btn, .rt-endpanel [data-handoff-fire] { min-height: 44px; }
+.rt-handoff .rt-handoff-red-title { color: var(--bad); }

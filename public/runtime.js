@@ -1092,6 +1092,91 @@ function roundHistory(r) {
 // calmPanel is the same layout with a neutral border for a non-destructive step (continue on the same task)
 const endPanel = (title, text, ...kids) => h("div", { class: "card x-pad rt-endpanel", role: "group", "aria-label": title }, h("h3", {}, title), h("p", { class: "faint" }, text), ...kids);
 const calmPanel = (title, text, ...kids) => { const el = endPanel(title, text, ...kids); el.classList.add("calm"); return el; };
+// ---------- cloud hand-off (src/domain/cloud-handoff.ts): the confirm view, the waiting state, take back and discard ----------
+const handoffPost = async (u, body) => { const res = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }); let j = {}; try { j = await res.json(); } catch {} return { ok: res.ok, status: res.status, j }; };
+function handoffPreview(v, id) { api(`/api/wruns/${id}/handoff`).then((x) => { v.handoff = x; rerender(); }).catch((e) => { v.handoffMsg = e.message; rerender(); }); }
+const handoffLocale = () => T("en-US", "zh-TW", "zh-CN");
+const handoffTime = (ms) => new Date(ms).toLocaleString(handoffLocale(), { dateStyle: "medium", timeStyle: "short" });
+// Retry-After: seconds or an HTTP date; the moment the routine takes a fire again, or null
+const handoffRetryAt = (ra) => { if (!ra) return null; if (/^\d{1,7}$/.test(ra)) return Date.now() + Number(ra) * 1000; const t = Date.parse(ra); return Number.isFinite(t) ? t : null; };
+const handoffRetryText = (at) => { const min = Math.max(1, Math.round((at - Date.now()) / 60000)), hm = new Date(at).toLocaleTimeString(handoffLocale(), { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return T(`The routine's hourly fire limit is reached. Try again in about ${min} minute${min === 1 ? "" : "s"} (${hm}). Studio does not retry on its own.`, `routine 每小時的送出次數用完了。請約 ${min} 分鐘後（${hm}）再試。Studio 不會自動重試。`); };
+// the reasons Studio's setup fixes (the Doctor) and those the project's policy fixes
+const HANDOFF_DOCTOR = ["setup", "routine-repo", "org-policy", "policy"];
+function handoffPanel(v, id) {
+  const x = v.handoff, c = x?.confirm, blocked = !!x?.blockers?.length, L2 = (o) => o ? T(o.en, o.zh) : "";
+  const row = (en, zh, ...val) => h("div", { class: "rt-handoff-row" }, h("dt", {}, T(en, zh)), h("dd", {}, ...val));
+  const waitUntil = v.handoffRetryAt && v.handoffRetryAt > Date.now() ? v.handoffRetryAt : null;
+  if (waitUntil && !v.handoffRetryTimer) v.handoffRetryTimer = setTimeout(() => { v.handoffRetryTimer = null; rerender(); }, Math.min(60000, waitUntil - Date.now() + 50));
+  const fire = async () => { v.firing = true; v.handoffMsg = ""; v.handoffRetryAt = null; rerender();
+    const res = await handoffPost(`/api/wruns/${id}/handoff/fire`, { branch: c.branch }); v.firing = false;
+    if (res.j.run) v.r = res.j.run;
+    if (res.ok) { v.panel = null; toast(T("Handed off. The cloud session link is on this page.", "已交出去。雲端 session 的連結在這一頁。")); }
+    else if (res.status === 429 && handoffRetryAt(res.j.retryAfter)) { v.handoffRetryAt = handoffRetryAt(res.j.retryAfter); v.handoffMsg = ""; }
+    else v.handoffMsg = T(res.j.error || `HTTP ${res.status}`, res.j.errorZh || res.j.error || `HTTP ${res.status}`);
+    // the next confirm view (its branch number moved on): the captain checks it again before another send
+    handoffPreview(v, id); loadRun(v); rerender(); };
+  return calmPanel(T("Hand this Task to the cloud", "把這個任務交給雲端接手"),
+    blocked ? T("Studio cannot hand this Task off yet. Each reason below says what to change.", "這個任務現在還不能交接。下面每一條都寫了要改什麼。")
+      : T("Check this one screen, then send. Studio sends it once and never retries on its own.", "看完這一個畫面再送出。Studio 只送一次，不會自動重試。"),
+    !x && !v.handoffMsg ? h("p", { class: "faint", "data-handoff-loading": id }, T("Checking GitHub and the setup…", "正在檢查 GitHub 和設定…")) : null,
+    blocked ? h("div", { "data-handoff-blocked": id }, h("ul", { class: "rt-handoff-list" }, ...x.blockers.map((b) => h("li", { "data-handoff-blocker": b.code }, L2(b)))),
+      x.blockers.some((b) => HANDOFF_DOCTOR.includes(b.code)) ? h("p", {}, h("a", { href: "#/doctor", "data-handoff-doctor": id }, T("Open the Doctor: cloud hand-off setup", "打開 Doctor：交給雲端接手設定"))) : null) : null,
+    c ? h("dl", { class: "rt-handoff-confirm", "data-handoff-confirm": id },
+      row("Branch", "分支", h("code", { "data-handoff-branch": c.branch }, c.branch), " ", h("span", { class: "faint" }, `${c.repository} · ${String(c.baseHead).slice(0, 8)}`)),
+      row("Break point", "斷點", L2(c.breakpoint)),
+      row("What the cloud is told", "給雲端的指示", h("span", { "data-handoff-instruction": "1" }, L2(c.instruction))),
+      row("Cost", "費用", L2(c.quota)),
+      row("Left to do", "剩下的步驟", T(`The cloud: ${c.cloudDoes}. Then Studio, here: ${c.after.join(" → ")}.`, `雲端：${c.cloudDoes}。之後由 Studio 在這台 Mac 跑：${c.after.join(" → ")}。`)),
+      row("Done when", "完成條件", h("div", { "data-handoff-done": "1" }, c.tests.length ? h("div", {}, ...c.tests.map((t) => h("code", {}, t))) : T("The repository declares no test command.", "這個 repo 沒有宣告測試指令。"), c.doneLines.length ? h("ul", {}, ...c.doneLines.map((d) => h("li", {}, d))) : null)),
+      c.sessionUrlWarning ? h("p", { class: "rt-handoff-warn", "data-handoff-session-warning": "1" }, L2(c.sessionUrlWarning)) : null,
+      h("details", { class: "rt-handoff-prompt" }, h("summary", {}, T(`Task instructions (${c.promptChars} characters, sent as is)`, `任務指示（${c.promptChars} 字元，原樣送出）`)), h("pre", { "data-handoff-prompt": "1" }, c.prompt))) : null,
+    waitUntil ? h("p", { class: "rt-handoff-bad", role: "status", "data-handoff-retry-at": String(waitUntil) }, handoffRetryText(waitUntil)) : null,
+    h("div", { class: "actions" }, c ? h("button", { class: "btn primary", type: "button", "data-handoff-fire": id, disabled: v.firing || waitUntil || null, onclick: fire }, v.firing ? T("Sending…", "送出中…") : T("Hand off to the cloud", "交給雲端接手")) : null,
+      h("button", { class: "btn ghost", type: "button", onclick: () => { v.panel = null; rerender(); } }, blocked ? T("Close", "關閉") : T("Keep it here", "留在這台 Mac"))),
+    h("div", { class: "rt-handoff-bad", role: "status", "data-handoff-msg": id }, v.handoffMsg || ""));
+}
+function handoffTaken(v, id, t) {
+  // the Task page opens: Studio reads the hand-off branch once; a push after the take-back is flagged, never merged in
+  if (v.handoffTakenRead !== t.cloudHead) { v.handoffTakenRead = t.cloudHead; handoffPost(`/api/wruns/${id}/handoff/reconcile`, {}).then((res) => { if (res.j.run) { v.r = res.j.run; rerender(); } }); }
+  if (!t.moved) return null;
+  return h("section", { class: "card x-pad rt-handoff red", "data-handoff-moved": id }, h("h3", { class: "rt-handoff-red-title" }, T("The cloud pushed again after the take-back", "收回之後，雲端又推了新的 commit")),
+    h("p", {}, T(`${t.branch} is now at ${String(t.moved.head).slice(0, 8)}; Studio took ${String(t.cloudHead).slice(0, 8)}. Studio does not merge the new commits into this Task. Stop the cloud session on claude.ai if it is still running.`,
+      `${t.branch} 現在在 ${String(t.moved.head).slice(0, 8)}；Studio 收回的是 ${String(t.cloudHead).slice(0, 8)}。Studio 不會把新的 commit 併進這個任務。雲端 session 如果還在跑，請到 claude.ai 停掉。`)));
+}
+function handoffActive(v, id, a) {
+  // the board opens this Task: Studio reads the hand-off branch on GitHub once
+  if (v.handoffReconciled !== a.sessionId) { v.handoffReconciled = a.sessionId; handoffPost(`/api/wruns/${id}/handoff/reconcile`, {}).then((res) => { if (res.j.run) { v.r = res.j.run; rerender(); } }); }
+  const o = a.observed, pc = a.postcheck, desk = !window.crewRemote?.token?.(), refused = !!pc?.refused, base8 = String(a.baseHead).slice(0, 8);
+  const act = (what, label, cls = "btn", body = {}, attr = `data-handoff-${what}`) => h("button", { class: cls, type: "button", [attr]: id, disabled: v.handoffBusy || null, onclick: async () => {
+    v.handoffBusy = true; v.handoffMsg = ""; rerender(); const res = await handoffPost(`/api/wruns/${id}/handoff/${what}`, body); v.handoffBusy = false; v.handoffDiscard = false; v.handoffTake = false;
+    if (res.j.run) v.r = res.j.run; if (!res.ok && !res.j.needsConfirm) v.handoffMsg = res.j.error || `HTTP ${res.status}`; loadRun(v); rerender(); } }, label);
+  const status = !o ? T("Studio has not read the branch yet.", "Studio 還沒讀到這條分支。") : o.stale ? T("Studio cannot verify this hand-off any more (the GitHub grant changed).", "Studio 已無法驗證這次交接（GitHub 授權變了）。")
+    : o.head === a.baseHead ? T("No new commits yet.", "還沒有新的 commit。") : T(`${o.commits} new commit${o.commits === 1 ? "" : "s"} at ${String(o.head).slice(0, 8)}${o.status ? ` · the cloud says: ${o.status}` : " · the cloud has not said it is done"}${o.diverged ? " · the branch was rewritten" : ""}.`, `${o.commits} 個新 commit，在 ${String(o.head).slice(0, 8)}${o.status ? ` · 雲端回報：${o.status === "done" ? "完成" : "卡住"}` : " · 雲端還沒回報完成"}${o.diverged ? " · 分支被改寫了" : ""}。`);
+  const canTake = desk && o && o.head !== a.baseHead && !o.stale && !refused;
+  // red flags Studio does not refuse, on the head the cloud has now: taking it back needs a second, explicit confirm
+  const redHere = !!pc?.red && !refused && pc.cloudHead === o?.head;
+  return h("section", { class: `card x-pad rt-handoff${pc?.red ? " red" : ""}`, "data-handoff-active": id, "data-handoff-state": "waiting-external" },
+    h("h3", {}, T("With the cloud agent: Studio waits for its branch", "交給雲端了：Studio 等它推回分支")),
+    h("p", {}, T("Branch ", "分支 "), h("code", {}, a.branch), " · ", h("a", { href: a.sessionUrl, target: "_blank", rel: "noopener", "data-handoff-session": a.sessionId }, T("Cloud session", "雲端 session")), " · ", h("span", { class: "faint", "data-handoff-fired": String(a.firedAt) }, T(`sent ${handoffTime(a.firedAt)}`, `送出於 ${handoffTime(a.firedAt)}`))),
+    h("p", { "data-handoff-observed": o?.head || "" }, status),
+    o?.reason ? h("p", { class: "faint", "data-handoff-reason": "1" }, T("The cloud's own words (unverified): ", "雲端自己的說法（未驗證）："), h("q", {}, o.reason)) : null,
+    h("p", { class: "faint" }, T("Pausing this Task does not stop the cloud, and Studio cannot stop the cloud session (there is no API for it): stop it on claude.ai if you need to.", "暫停這個任務不會讓雲端停下，Studio 也停不了雲端 session（沒有這個 API）；需要的話請到 claude.ai 停掉。")),
+    pc?.findings?.length ? h("div", { class: "rt-handoff-flags", "data-handoff-findings": id }, h("ul", { class: "rt-handoff-list" }, ...pc.findings.map((f) => h("li", { "data-handoff-finding": f.class }, T(f.en, f.zh)))),
+      h("p", { "data-handoff-next": refused ? "discard" : "take-back" }, refused
+        ? T("Studio will not take this back: the commits would publish a session link, or the branch no longer starts from the hand-off. Discard it; the Task goes on here from the base.", "Studio 不會收回這次的結果：這些 commit 會把 session 連結發布出去，或分支已經不是從交接點長出來的。請丟棄，任務會從交接前在這台 Mac 繼續。")
+        : T("Taking it back still runs the build checks again on the cloud's head in the sandbox before anything goes on. Look at the flagged branches or pull requests on GitHub first; if you are unsure, discard.", "收回時仍會在 sandbox 裡對雲端的 head 重跑建置檢查，通過後才繼續。請先到 GitHub 看被標出的分支或 PR；不確定的話就丟棄。"))) : null,
+    desk && v.handoffTake && redHere ? h("div", { class: "rt-handoff-confirm-discard", role: "group", "data-handoff-take-confirm": id },
+      h("p", {}, T("Take it back despite the red flags above? The build checks run again on the cloud's head in the sandbox before the workflow goes on.", "要在上面這些紅色警示之下仍然收回嗎？流程繼續之前，仍會在 sandbox 裡對雲端的 head 重跑建置檢查。")),
+      h("div", { class: "actions" }, act("take-back", T("Take it back anyway", "仍然收回"), "btn primary", { confirm: true }, "data-handoff-take-back-confirmed"), h("button", { class: "btn ghost", type: "button", onclick: () => { v.handoffTake = false; rerender(); } }, T("Not yet", "先不要")))) : null,
+    desk && !v.handoffDiscard && !v.handoffTake ? h("div", { class: "actions" }, act("reconcile", T("Check GitHub now", "立刻到 GitHub 核對")),
+      canTake ? (redHere ? h("button", { class: "btn primary", type: "button", "data-handoff-take-back": id, onclick: () => { v.handoffTake = true; rerender(); } }, T("Take it back…", "收回…")) : act("take-back", T("Take it back", "收回"), "btn primary")) : null,
+      h("button", { class: "btn ghost", type: "button", "data-handoff-discard-open": id, onclick: () => { v.handoffDiscard = true; rerender(); } }, T("Discard…", "丟棄…"))) : null,
+    desk && v.handoffDiscard ? h("div", { class: "rt-handoff-confirm-discard", role: "group", "data-handoff-discard-confirm": id },
+      h("p", {}, T(`Discard the cloud's work? ${a.branch} stays on GitHub for reference. The cloud session may still be running: stop it on claude.ai. The Task starts a fresh build round here from ${base8}.`, `要丟棄雲端的結果嗎？${a.branch} 會留在 GitHub 供參考。雲端 session 可能還在跑：請到 claude.ai 停掉。任務會從 ${base8} 在這台 Mac 重新開始建置回合。`)),
+      h("div", { class: "actions" }, act("discard", T("Discard and start again here", "丟棄，在這裡重新開始"), "btn danger"), h("button", { class: "btn ghost", type: "button", onclick: () => { v.handoffDiscard = false; rerender(); } }, T("Keep waiting", "繼續等")))) : null,
+    h("div", { class: "rt-handoff-bad", role: "status", "data-handoff-msg": id }, v.handoffMsg || ""));
+}
 function viewRun(id) {
   if (!id) return viewRuns();
   if (!RN.view || RN.view.id !== id) { RN.view = { id, r: null }; loadRun(RN.view); }
@@ -1118,8 +1203,10 @@ function viewRun(id) {
       h("div", { class: "actions" }, r.ctx?.pr?.adapter === "github" && /^https:\/\/github\.com\//.test(r.ctx.pr.url || "") ? h("a", { class: "btn", href: r.ctx.pr.url, target: "_blank", rel: "noopener", "data-pull-request": r.ctx.pr.id }, T(`Pull request #${r.ctx.pr.id}`, `Pull request #${r.ctx.pr.id}`)) : null, r.ctx?.captures?.app ? h("a", { class: "btn", href: r.ctx.captures.app, target: "_blank", rel: "noopener", "data-open-app": r.id }, T("Open the app", "打開 app")) : null,
         // the review room on the Task's branch, once Studio's review passed at its head (also a branch that stays local)
         r.reviewRoom ? h("a", { class: "btn", href: r.reviewRoom.href, "data-task-review-room": r.id, title: r.reviewRoom.local ? T("Ready on its local branch, not published: learn the change before you decide", "在本機分支上就緒，不會發布：決定前先看懂這個改動") : null }, r.reviewRoom.host ? T("Back to its review room", "回到它的審查室") : r.reviewRoom.moved ? T("Open review room · new commits", "開啟審查室 · 有新 commit") : T("Open review room", "開啟審查室")) : null,
-        ["running", "waiting"].includes(r.status) ? h("button", { class: "btn", onclick: () => act("pause") }, T("Pause", "暫停")) : null, r.status === "paused" ? h("button", { class: "btn", onclick: () => act("resume") }, T("Resume", "繼續")) : null,
+        ["running", "waiting"].includes(r.status) && !r.handoff?.active ? h("button", { class: "btn", onclick: () => act("pause") }, T("Pause", "暫停")) : null, r.status === "paused" ? h("button", { class: "btn", onclick: () => act("resume") }, T("Resume", "繼續")) : null,
         r.status === "waiting" && r.def.kind === "coffee-kit" && open.some(c => c.node === "capability") ? h("button", { class: "btn", "data-coffee-recovery": id, onclick: () => api(`/api/wruns/${id}/coffee-recovery`, {}).then(() => loadRun(v)).catch(e => alert(e.message)) }, T("Recheck film capability", "重新檢查影片能力")) : null,
+        // the captain hands the running build round to a cloud agent (src/domain/cloud-handoff.ts): the confirm view first
+        r.handoff?.available && !window.crewRemote?.token?.() ? h("button", { class: "btn", type: "button", "data-cloud-handoff": id, "aria-expanded": String(v.panel === "handoff"), onclick: () => { if (v.panel === "handoff") { v.panel = null; rerender(); return; } v.panel = "handoff"; v.handoff = null; v.handoffMsg = ""; rerender(); handoffPreview(v, id); } }, T("Hand off to the cloud…", "交給雲端接手…")) : null,
         !ended ? h("button", { class: "btn ghost", "data-run-cancel": id, "aria-expanded": String(v.panel === "cancel"), onclick: () => { v.panel = v.panel === "cancel" ? null : "cancel"; rerender(); } }, T("Cancel task…", "取消任務…")) : null,
         // an ended Task whose pull request may have been merged on GitHub after all: Studio reads it there (read-only) and records what it sees
         ended && r.reconcilable && !r.reconciled && !window.crewRemote?.token?.() ? h("button", { class: "btn", type: "button", "data-reconcile-merge": id, disabled: v.reconciling || null, onclick: () => { v.reconciling = true; rerender();
@@ -1142,6 +1229,9 @@ function viewRun(id) {
         `GitHub 合併的是 ${String(r.reconciled.head || "未知的版本").slice(0, 8)}，不是 Studio 驗證過的 head（${String(r.reconciled.reviewed).slice(0, 8)}）：Studio 的檢查沒有跑在被合併的內容上。`)) : null,
       h("p", { class: "faint" }, T(`Studio read this on GitHub at ${r.reconciled.observedAt} and recorded it as ledger entry #${r.reconciled.ledger}. The earlier entries and the recorded end stay as they were; nothing was changed on GitHub.`,
         `Studio 於 ${r.reconciled.observedAt} 在 GitHub 讀到這件事，記為帳本第 #${r.reconciled.ledger} 筆。先前的紀錄和原本的結束狀態都不變；GitHub 上沒有任何變更。`))) : null,
+    r.handoff?.active ? handoffActive(v, id, r.handoff.active) : null,
+    r.handoff?.taken ? handoffTaken(v, id, r.handoff.taken) : null,
+    v.panel === "handoff" && !r.handoff?.active ? handoffPanel(v, id) : null,
     // the captain's full request: the title above is only its short name
     (r.request || r.text) && (r.request || r.text) !== r.title ? h("section", { class: "card x-pad rt-intent", "data-task-intent": r.id }, h("h3", {}, T("Intent", "意圖")), h("p", { class: "rt-intent-text" }, r.request || r.text)) : null,
     v.panel === "cancel" && !ended ? endPanel(T("Cancel this task", "取消這個任務"), T("Its open cards are withdrawn, its agents stop and its on_cancel hooks run. The task ends Cancelled.", "它開著的卡會撤回、agent 會停下、on_cancel hooks 會執行。任務以「已取消」結束。"),
@@ -1194,7 +1284,7 @@ function buildRunGraph(r,v){
  const toggle=(restore=false)=>{expanded=!expanded;v.graphExpanded=expanded;panel.classList.toggle("expanded",expanded);panel.setAttribute("role",expanded?"dialog":"region");panel.setAttribute("aria-modal",String(expanded));expand.setAttribute("aria-expanded",String(expanded));expand.textContent=expanded?T("Exit expanded view","退出展開"):T("Expand graph","展開流程圖");if(expanded){origin=expand;expand.focus();}else if(origin?.isConnected)origin.focus();if(!restore)requestAnimationFrame(fit);};
  const button=(key,label,fn)=>h("button",{type:"button",class:"btn sm", "data-run-graph-action":key,onclick:fn},label),expand=button("expand",T("Expand graph","展開流程圖"),toggle);expand.setAttribute("aria-expanded","false");
  const toolbar=h("div",{class:"rt-rungraph-tools",role:"group","aria-label":T("Graph controls","流程圖控制")},["simple","detail"].map(k=>h("button",{class:"btn sm",type:"button","data-view-toggle":k,"aria-pressed":String(mode===k),onclick:()=>{v.gview=k;try{localStorage.setItem("crew.graphView",k);}catch{}rerender();}},k==="simple"?T("Simple","簡易"):T("Detail","詳細"))),button("zoom-in",T("Zoom in +","放大 +"),()=>zoom(.8)),button("zoom-out",T("Zoom out −","縮小 −"),()=>zoom(1.25)),button("fit",T("Fit all","全部顯示"),fit),button("current",T("Focus current","聚焦目前節點"),focus),expand);
- const status=h("div",{class:"rt-rungraph-status","data-current-graph-stage":"",role:"status"},current.length?current.map(([id,rn])=>h("p",{},h("b",{},r.def.nodes.find(n=>n.id===id)?.label||id)," · ",rn.waiting==="card"?T("Waiting for your answer","等待船長回答"):rn.data?.nativeQueue?.state==="waiting"?T("Queued","排隊中"):T("Working","工作中"),rn.note?" · "+rn.note:"")):h("p",{},T("No active node","目前沒有執行中的節點")));
+ const status=h("div",{class:"rt-rungraph-status","data-current-graph-stage":"",role:"status"},current.length?current.map(([id,rn])=>h("p",{},h("b",{},r.def.nodes.find(n=>n.id===id)?.label||id)," · ",rn.waiting==="external"&&rn.data?.external?.handler==="cloud-handoff"?T("With the cloud agent","雲端接手中"):rn.waiting==="card"?T("Waiting for your answer","等待船長回答"):rn.data?.nativeQueue?.state==="waiting"?T("Queued","排隊中"):T("Working","工作中"),rn.note&&rn.data?.external?.handler!=="cloud-handoff"?" · "+rn.note:"")):h("p",{},T("No active node","目前沒有執行中的節點")));
  panel.append(toolbar,status,h("p",{class:"faint"},T("Drag to pan. Wheel zoom in expanded view. Click a node for details.","拖曳平移；展開後可用滾輪縮放。點選節點查看詳細資料。")),viewport,h("div",{class:"rt-rungraph-legend"},[["running",T("Working","執行中")],["waiting",T("Waiting","等待中")],["passed",T("Complete","已完成")],["failed",T("Blocked","受阻")]].map(([state,label])=>h("span",{class:"rt-st st-"+state},label))),detail);viewport.append(g);
  g.addEventListener("pointerdown",e=>{if(e.button!==0||drag||e.pointerType==="touch"&&!expanded)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY,view:{...g.view},moved:false};});
  g.addEventListener("pointermove",e=>{if(!drag||drag.id!==e.pointerId)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(!drag.moved&&Math.hypot(dx,dy)<6)return;drag.moved=true;suppress=true;g.interactionActive=true;g.setPointerCapture(e.pointerId);const matrix=g.getScreenCTM(),k=1/Math.max(.00001,matrix.a);set({...drag.view,x:drag.view.x-dx*k,y:drag.view.y-dy*k});e.preventDefault();});
