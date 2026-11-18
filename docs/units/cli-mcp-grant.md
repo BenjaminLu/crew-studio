@@ -103,6 +103,57 @@ board's Apply starts), merging, reviews, comments or labels. A tool error is `{e
 - **What it can read is what the captain's GitHub token can read.** `prs_watch` takes any pull request address and
   `prs_get` returns its body, so a list grant reads every pull request that token reaches, private repositories included.
 
+## Scopes are a set; reading Studio (scope `observe`)
+
+A grant's `scopes` is a set of `project` (the four run tools), `prs` (the pull request list's tools) and `observe` (Studio's
+read tools, `src/observe/`). A record written before scopes were a set (`scope: "prs"`, or none: `project`) is read as that
+one scope and written back as a set when Studio starts (`CliGrants.migrate`). `tools/list` holds the tools of the grant's
+scopes and nothing else: a tool a scope does not give is not listed, and calling it is "no such tool".
+
+Settings → External CLI grants → **Reaches: Read Studio / 讀取 Studio** (`POST /api/cli-grants {scopes: ["observe"],
+project?, observe: {preset, kinds?, untrusted?}, ttl}`) picks what it reads (`src/observe/grant-scope.ts`):
+
+| Preset | Kinds | Project |
+| --- | --- | --- |
+| This project / 這個專案 | every grantable kind | required: a project-bound kind shows that project's entities only (workflows, skills, the crew and Doctor are Studio-wide) |
+| Review only / 只看 review | `room` | none: every review room |
+| Custom… / 自訂… | the kinds ticked, by group (Work, Review, Outputs, Crew and skills, System: Doctor) | optional |
+
+- **External text is left out** unless **Include external text / 包含外部文字** is ticked: every untrusted value (a pull
+  request's text, a reviewer's comment, a tutor's or a model's answer, a tool's output) is removed from what the grant
+  reads, and the envelope says `externalText: left out`. `studio_find` never matches untrusted text, ticked or not, so a
+  search cannot tell what a pull request's body says. Reason: an external CLI has a shell and the network; private data,
+  someone else's words and a way out must not meet there.
+- **Never grantable**: settings, grants, peers, terminals and focus (`NEVER_GRANTABLE`). A custom grant naming one is
+  refused; no preset includes one; no grant's `studio_now` carries the captain's focus.
+- What a grant may not see reads exactly as a missing ref: `studio_get` of another project's Task says "not in Studio (or
+  not in this grant)", the same words a ref that does not exist gets. Its events are those whose every ref it sees.
+- **Resources**: the MCP helper offers the template `studio://{kind}/{id}` (`resources/templates/list`) where the session
+  has `studio_get`; `resources/read` is `studio_get` of that ref (JSON), and an entity the grant does not see is
+  `-32002 Resource not found`. `studio_find` and `studio_list` return `resource_link`s to them.
+- **Rolling budget**: every grant, whatever its scopes, has at most `CREW_CLI_GRANT_HOURLY_CALLS` calls (600) and
+  `CREW_CLI_GRANT_HOURLY_BYTES` bytes of answers (4 MB) in any hour; past either it gets HTTP 429 saying when it frees up.
+  The board shows this hour's use on each grant. The total call bound (`CREW_CLI_GRANT_MAX_CALLS`) stays.
+
+## Rolling back
+
+`data/cli-grants.json` is written so the release before scopes were a set reads it safely (`storedGrant`):
+
+- A plain project grant is stored as that release wrote it. A plain `prs` grant keeps `scope: "prs"`. Both keep working after a rollback.
+- Any other grant (`observe`, or more than one scope) is stored with `tokenHash` set to a value no token hashes to. Its real hash is in `tokenHash2`. The older release therefore refuses its token (403) and never reads it as a project grant. It still lists such a grant, and can revoke it.
+- Records that are no grant are moved to `cli-grants.quarantine.json` with a warning.
+
+`tests/cli-grant.ts` runs the older release's code (`tests/fixture/cli-grants-before-scopes.ts`, frozen) against the file.
+
+Steps, should a rollback be needed:
+
+1. `bun scripts/live-release.ts rollback`.
+2. On the board (Settings → External CLI grants), revoke every grant that read Studio. They show as project grants there, but answer 403.
+3. Re-issue what the captain still needs, as project or pull request list grants.
+4. After rolling forward again, revoke those re-issued grants and issue observe grants.
+
+The older release shows `tokenHash2` (a SHA-256 of a random token, not the token) to the captain's own board page: it strips only `tokenHash`.
+
 ## What the boundary is not
 
 - **It bounds the tool surface, not the process.** The CLI runs as the captain, unsandboxed, on the same Mac. A grant
