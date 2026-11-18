@@ -668,9 +668,22 @@ try {
     const startOff = await w.$eval("[data-explain-start]", (e) => e.disabled);
     ok(/no decision yet/.test(box) && /scripts\/use-py\.py · network, subprocess/.test(box) && /Network when it runs: api\.model-vendor\.example/.test(box) && /installed by Studio before it runs: python \(requirements\.txt\)/.test(box) && /Programs it uses: ffmpeg/.test(box) && /aaaaaaaaaaaa \/ bbbbbbbbbbbb/.test(box) && /Approve with scripts/.test(box) && /Text only/.test(box) && startOff,
       "an undecided script version: the confirmation shows the team-change card's facts (scripts with flags, hosts, lockfiles, programs, hashes) and the pick; Confirm waits for it", JSON.stringify({ box, startOff }));
-    await (await w.$("[data-explain-decidebox]")).scrollIntoViewIfNeeded(); await w.screenshot({ path: join(shots, "15-decide-pending.png") });
+    // while undecided, the upper rows do not promise a run or a network the decision below may not give
+    const upper = await w.evaluate(() => ({ scripts: document.querySelector("[data-explain-scripts]")?.dataset.explainScripts, text: document.querySelector("[data-explain-scripts]")?.textContent || "", net: document.querySelector('[data-explain-srow="network"]')?.textContent || "" }));
+    ok(upper.scripts === "pending" && /Depends on your decision below/.test(upper.text) && !/with network/.test(upper.text) && /Depends on your decision below/.test(upper.net) && !/public hosts only/.test(upper.net),
+      "an undecided version: the scripts and network rows say they depend on the decision below", JSON.stringify(upper));
+    // the decision is far down: the sticky footer says Confirm waits for it, and takes the captain there
+    const hint = async () => w.evaluate(() => { const e = document.querySelector("[data-explain-pickhint]"), r = e?.getBoundingClientRect(); return e ? { hidden: e.hidden, text: e.textContent, inView: !!r && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight } : null; });
+    const inView = () => w.evaluate(() => { const r = document.querySelector('[data-explain-decide="scripts"]')?.getBoundingClientRect(), f = document.querySelector(".rx-modal > .rx-foot")?.getBoundingClientRect(); return !!r && !!f && r.height > 0 && r.top >= 0 && r.bottom <= f.top; });
+    // a smooth scroll: wait until the dialog stops moving
+    const settle = () => w.evaluate(() => new Promise((ok) => { const m = document.querySelector(".rx-modal"); let last = -1, same = 0; const t = setInterval(() => { same = m.scrollTop === last ? same + 1 : 0; last = m.scrollTop; if (same >= 4) { clearInterval(t); ok(); } }, 50); }));
+    const h0 = await hint();
+    ok(h0 && !h0.hidden && h0.inView && /Choose “Approve with scripts” or “Text only” below to start/.test(h0.text) && !(await inView()), "the footer says Confirm waits for the pick, on the first screen", JSON.stringify(h0));
+    await w.click("[data-explain-gopick]"); await settle();
+    ok(await inView(), "the footer's button scrolls to the decision");
+    await w.screenshot({ path: join(shots, "15-decide-pending.png") });
     await w.check('[data-explain-decide="scripts"]');
-    ok(!(await w.$eval("[data-explain-start]", (e) => e.disabled)), "picking Approve with scripts enables Confirm");
+    ok(!(await w.$eval("[data-explain-start]", (e) => e.disabled)) && (await hint())?.hidden === true, "picking Approve with scripts enables Confirm and the footer line goes");
     onGen = (r, b) => { D = { ...D, selected: { id: "walkthrough", v: 1 }, running: 1, runs: [run(1, "generate", "running", { decided: "approved", prepare: { state: "running", at: "t" }, rounds: [], progress: [{ at: "t", text: "Studio is reading the materials (read-only)" }] })] }; r.fulfill({ json: D }); };
     await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
     ok(gens.at(-1)?.confirm === PENDING.hash && gens.at(-1)?.skillDecision === "scripts", "Confirm sends the exact confirmation and the pick", JSON.stringify(gens.at(-1)));
@@ -681,6 +694,21 @@ try {
     await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector('[data-explain-ended="prepare"]', { timeout: 5000 });
     const ended = await w.$eval('[data-explain-ended="prepare"]', (e) => e.textContent);
     ok(/could not install the skill's dependencies, so no round ran/.test(ended) && /pip install failed/.test(ended), "a failed prepare says why the run stopped", ended);
+    // a narrow window: the options are there (the header's skill picker hides below 760 px; the decision does not) and the pick enables Confirm
+    await w.setViewportSize({ width: 390, height: 844 });
+    // (the header's picker is hidden at this width: the room's own Generate button opens the confirmation)
+    cur = { ...PENDING, hash: "c0ffee00000000a4" }; D = { ...D, selected: { id: "walkthrough", v: 1 }, versions: [], runs: [] };
+    await w.goto(`${base}/#/board`); await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-again]", { timeout: 15000 });
+    await w.click("[data-explain-again]"); await w.waitForSelector("[data-explain-confirm] [data-explain-start]"); await w.waitForTimeout(60);
+    const h390 = await hint();
+    ok(h390 && !h390.hidden && h390.inView, "390 px: the footer says Confirm waits for the pick", JSON.stringify(h390));
+    await w.click("[data-explain-gopick]"); await settle();
+    const opts = await w.$$eval("[data-explain-decide]", (xs) => xs.map((x) => { const r = x.closest("label").getBoundingClientRect(); return { v: x.value, w: r.width, h: r.height, shown: getComputedStyle(x.closest("[role=radiogroup]")).display !== "none", inView: r.top >= 0 && r.bottom <= document.querySelector(".rx-modal > .rx-foot").getBoundingClientRect().top }; }));
+    ok(opts.length === 2 && opts.every((o) => o.shown && o.w > 0 && o.h > 0 && o.inView), "390 px: both decision options are visible", JSON.stringify(opts));
+    await w.screenshot({ path: join(shots, "15b-decide-390.png") });
+    await w.click('label:has([data-explain-decide="text-only"])');
+    ok(!(await w.$eval("[data-explain-start]", (e) => e.disabled)), "390 px: picking enables Confirm");
+    await w.click(".rx-modal .rx-foot > .btn:not(.primary)"); await w.setViewportSize({ width: 1440, height: 900 });
     // text only, picked in the confirmation
     cur = { ...PENDING, hash: "c0ffee00000000a2" }; D = { ...D, selected: null, runs: [] }; await openConfirm();
     await w.check('[data-explain-decide="text-only"]');

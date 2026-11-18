@@ -171,6 +171,7 @@ function promptUi(c) {
   const sv = q("[data-explain-promptsave]"); if (sv) sv.disabled = (v.trim() || null) === (c.def ?? null) || v.length > PROMPT_MAX;
   const rs = q("[data-explain-promptreset]"); if (rs) rs.hidden = c.def == null || v === c.def;
   const nt = q("[data-explain-promptnote]"); if (nt) nt.textContent = c.note || "";
+  const ph = q("[data-explain-pickhint]"); if (ph) ph.hidden = !needsPick(c);
   const go = q("[data-explain-start]"); if (go) go.disabled = !!(c.pending || c.stale || c.loading || c.offer?.error || needsPick(c) || X.posting.has(`${c.id}/gen`));
 }
 /** the built-in checklist is already in the text (either language): inserting it again would only repeat it */
@@ -197,14 +198,18 @@ const setPrompt = (c, text) => { c.saved = false; const ta = document.querySelec
 /** the skill's scripts in a confirmation: a head line, then one row each (credentials and endpoints as chips by name), and a
  *  version the Skills page never approved as its own warning line */
 const chips = (names) => h("span", { class: "rx-chips" }, names.map((n) => h("code", { class: "rx-chipname" }, n)));
-function scriptRows(s, row) {
+function scriptRows(s, row, pending) {
   if (!s) return [];
   if (!s.run) return [row(T("The skill's scripts", "skill 的腳本"), h("span", { "data-explain-scripts": "off" }, h("b", {}, T("Do not run", "不會執行")), " — ", T(s.en, s.zh)))];
   const R = s.rows || {}, w = (x) => (x ? T(x.en, x.zh) : "");
+  // an undecided version: whether its scripts run, and where they connect, is the decision below (its facts list the hosts)
+  const below = T("Depends on your decision below", "看你在下面的決定");
   return [
-    row(T("The skill's scripts", "skill 的腳本"), h("span", { "data-explain-scripts": "run" }, h("b", {}, T(`Run, sandboxed, ${s.network ? "with network" : "no network here"}`, `會執行，在沙盒裡、${s.network ? "可以連網" : "這裡不能連網"}`)), ` · ${(s.interpreters || []).join(T(", ", "、"))}`,
+    row(T("The skill's scripts", "skill 的腳本"), h("span", { "data-explain-scripts": pending ? "pending" : "run" }, pending
+      ? [h("b", {}, below), T(": approved, they run sandboxed; text only, they never run", "：核准就在沙盒裡執行；只當文字就不執行")]
+      : [h("b", {}, T(`Run, sandboxed, ${s.network ? "with network" : "no network here"}`, `會執行，在沙盒裡、${s.network ? "可以連網" : "這裡不能連網"}`)), ` · ${(s.interpreters || []).join(T(", ", "、"))}`],
       R.approval ? h("span", { class: "rx-warn", "data-explain-unapproved": "" }, w(R.approval)) : null)),
-    row(T("Network", "網路"), h("span", { "data-explain-srow": "network" }, w(R.network))),
+    row(T("Network", "網路"), h("span", { "data-explain-srow": "network" }, pending ? T(`${below}: approved, the hosts it lists there; text only, none`, `${below}：核准就是那裡列的主機；只當文字就不連網`) : w(R.network))),
     row(T("Credentials", "憑證"), h("span", { "data-explain-srow": "credentials" }, (s.keys || []).length ? chips(s.keys) : T("none", "沒有"), h("small", { class: "faint" }, T(" from the environment Studio started with (the same values Studio sees); never a key Studio stores, its GitHub token or its session keys", "（來自 Studio 啟動時的環境，和 Studio 看到的同一份；絕不會拿到 Studio 保存的金鑰、GitHub token 或 session 金鑰）")))),
     ...((s.endpoints || []).length ? [row(T("Endpoints", "端點"), h("span", { "data-explain-srow": "endpoints" }, chips(s.endpoints)))] : []),
     row(T("Files", "檔案"), h("span", { "data-explain-srow": "access" }, w(R.access))),
@@ -241,9 +246,18 @@ function decideRows(c, row) {
   return [row(T("Decision", "決定"), h("div", { "data-explain-decidebox": "" },
     h("p", {}, T(`This version has ${f.scripts.length} script${f.scripts.length === 1 ? "" : "s"} and no decision yet. Choose once, for exactly this version, Studio-wide:`, `這個版本有 ${f.scripts.length} 個 script，還沒決定。只決定這個版本，全 Studio 生效：`)),
     ...decideFacts(f),
-    h("div", { class: "rx-pick", role: "radiogroup", "aria-label": T("Its scripts", "它的 script") },
+    h("div", { class: "rx-decidepick", role: "radiogroup", "aria-label": T("Its scripts", "它的 script") },
       radio("scripts", T("Approve with scripts", "核准（含 script）")), radio("text-only", T("Text only", "只當文字"))),
     h("small", { class: "faint" }, T("Text only: the skill gets its text and never runs its scripts. A new version asks again.", "只當文字：skill 只拿到文字，不跑 script。新版本會再問。"))))];
+}
+/** the footer's line while Confirm waits for the pick (the decision sits at the end of the dialog), with a way to it */
+function pickHint(c) {
+  if (c.offer?.decide?.state !== "pending") return null;
+  const go = () => { const g = document.querySelector("[data-explain-decidebox] .rx-decidepick"), still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    g?.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" }); g?.querySelector("input[data-explain-decide]")?.focus({ preventScroll: true }); };
+  return h("p", { class: "rx-state rx-footmsg", role: "status", "data-explain-pickhint": "", hidden: needsPick(c) ? null : true },
+    T("Choose “Approve with scripts” or “Text only” below to start.", "請在下面選「核准（含 script）」或「只當文字」才能開始。"), " ",
+    h("button", { type: "button", class: "btn sm", "data-explain-gopick": "", onclick: go }, T("Go to the choice", "前往選擇")));
 }
 /** a script call in the progress list, in the captain's language: the result first, then the time and the hosts; it opens to
  *  its stderr tail and every host it reached or was refused */
@@ -296,9 +310,9 @@ function confirmDialog(r) {
           row(h("label", { for: "rx-limit" }, T("Safety limit", "安全時限")), h("span", { class: "rx-limit" }, h("input", { id: "rx-limit", type: "number", min: "1", max: "1440", value: String(o.limitMin), "data-explain-limit": "", onchange: (e) => setLimit(e.target.value) }),
             T(" min of wall clock, then Studio stops it · applies to every room", " 分鐘，到了 Studio 會停下 · 所有審查室共用"))),
           row(T("Output frame", "產出顯示框"), T(o.isolation.en, o.isolation.zh)),
-          ...scriptRows(o.scripts, row), ...decideRows(c, row)),
+          ...scriptRows(o.scripts, row, o.decide?.state === "pending"), ...decideRows(c, row)),
         c.note ? h("p", { class: "rx-state err", role: "alert" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), c.note) : null],
-      h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn", onclick: closeDialog }, T("Cancel", "取消")),
+      h("div", { class: "rx-foot" }, pickHint(c), h("button", { type: "button", class: "btn", onclick: closeDialog }, T("Cancel", "取消")),
         h("button", { type: "button", class: "btn primary", "data-explain-start": "", "data-explain-autofocus": "", disabled: c.loading || c.pending || c.stale || o?.error || needsPick(c) || X.posting.has(`${id}/gen`) ? true : null, onclick: start }, T("Confirm and start", "確認並開始")))));
 }
 
