@@ -13,16 +13,13 @@ import { createServer, connect, isIP, type Server, type Socket } from "node:net"
 import { dirname } from "node:path";
 import { lookup as dnsLookup } from "node:dns";
 import { lookup } from "node:dns/promises";
-import { BROKER_PORTS } from "./egress-client";
+import { BROKER_PORTS, tunnelIdleMs } from "./egress-client";
+export { tunnelIdleMs } from "./egress-client";
 import { guardedLookup, isLoopbackAddress, localAddresses } from "./egress-guard";
 
 export type EgressMeta = { purpose?: "round" | "skill" | "prepare"; run?: string; node?: string; visit?: number; skill?: string; script?: string; strict?: boolean;
   /** any public host name (the explainer's skill scripts): only Studio's own code sets it, never a policy's host list */ anyHost?: boolean };
 export type EgressEvent = { at: string; host: string; port: number; allowed: boolean; method: string; round: string | null; why?: string; run?: string; node?: string; skill?: string; script?: string; purpose?: string };
-/** How long an open tunnel may carry no bytes before the proxy closes it: 30 minutes (CREW_EGRESS_TUNNEL_IDLE_MS, 1 s to
- *  2 h). A model streaming a reply can go quiet for minutes while it thinks; at the old 120 s the proxy cut Claude rounds
- *  mid-reply, which the CLI reported as an API error. A round's tunnels still close when its credential is revoked. */
-export const tunnelIdleMs = () => { const v = Number(process.env.CREW_EGRESS_TUNNEL_IDLE_MS); return Number.isFinite(v) && v >= 1000 && v <= 7_200_000 ? v : 30 * 60_000; };
 export class Egress {
   private server: Server | null = null;
   private starting: Promise<number> | null = null;

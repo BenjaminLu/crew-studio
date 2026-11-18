@@ -83,5 +83,20 @@ try{
   await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('idle tunnel never closed')), 3000))]);
   assert(closedAt - at >= 1400, `closed only after the idle limit (${closedAt - at} ms)`);
   console.log('egress-client: a quiet tunnel stays open for minutes by default and closes past the configured idle limit');
+  // the path a round's CLI really takes starts at its per-job broker (HTTPS_PROXY): the broker keeps the same limit
+  // an upstream that answers the CONNECT and then stays silent and never times out, so the broker is the only hop that can close it
+  const quiet = createServer(sock => { sock.once('data', () => sock.write('HTTP/1.1 200 Connection Established\r\n\r\n')); }); await new Promise<void>(r => quiet.listen(0, '127.0.0.1', r));
+  const quietAuthority = { port: (quiet.address() as any).port, open() {}, close() {} };
+  const lease = await openScopedProxy(quietAuthority, ['1.1.1.1']);
+  const viaBroker = connect(lease.port, '127.0.0.1');
+  try {
+   const opened2 = new Promise<void>((resolve, reject) => { viaBroker.on('data', b => { if (b.toString().includes('200 Connection Established')) resolve(); }); viaBroker.on('error', reject); });
+   viaBroker.write('CONNECT 1.1.1.1:443 HTTP/1.1\r\nHost: 1.1.1.1:443\r\n\r\n');
+   await opened2; const at2 = Date.now(); let closedAt2 = 0; const closed2 = new Promise<void>(r => viaBroker.once('close', () => { closedAt2 = Date.now(); r(); }));
+   await new Promise(r => setTimeout(r, 1000)); assert(!viaBroker.destroyed && !closedAt2, 'through the broker, a tunnel quiet for less than the limit stays open');
+   await Promise.race([closed2, new Promise((_, reject) => setTimeout(() => reject(new Error('the broker kept an idle tunnel past the limit, or never applied it')), 3000))]);
+   assert(closedAt2 - at2 >= 1400, `the broker closed it only after the idle limit (${closedAt2 - at2} ms)`);
+   console.log('egress-client: through the per-job broker as well, the idle limit is the configured one, not a fixed 120 s');
+  } finally { viaBroker.destroy(); lease.close(); await new Promise<void>(r => quiet.close(() => r())); }
  } finally { t.destroy(); eg2.stop(); await new Promise<void>(r => dest.close(() => r())); if (was === undefined) delete process.env.CREW_EGRESS_TUNNEL_IDLE_MS; else process.env.CREW_EGRESS_TUNNEL_IDLE_MS = was; }
 }
