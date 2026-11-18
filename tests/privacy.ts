@@ -20,7 +20,7 @@ const rules: Rule[] = [
   ["a Linux home path", /\/home\/(?!captain\b|you\b|runner\b|<)[a-z0-9._-]+\//],
   ["a home path encoded as a project key", /-Users-(?!you-)[A-Za-z0-9]+-/],
   // a Claude session link names a private conversation: never in anything committed or pushed (CONTRIBUTING.md)
-  ["a claude.ai session link", /claude\.ai\/code\/session_|claude\.ai\/code\/session\b/i],
+  ["a claude.ai session link", /claude\.ai\/code\/[a-z]{2,16}_|claude\.ai\/code\/session\b/i],
   ...(user && user.length > 2 && !["root", "runner", "you", "captain"].includes(user) ? [[`the local user's name (${user.length} letters)`, new RegExp(`\\b${user}`, "i"), "local-user"] as Rule] : []),
   ...deny.map((d) => [`a denylisted name (${d.length} letters)`, new RegExp(d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")] as [string, RegExp]),
 ];
@@ -49,6 +49,13 @@ for(const [key] of publicAttribution){const split=key.lastIndexOf(":"),file=key.
 { const link = ["https://claude", "ai/code/session_", "01ExampleExampleExample"].join(".").replace("ai/code/session_.", "ai/code/session_");
   ok(violations("CONTRIBUTING.md", 1, `see ${link}`).some((v) => /session link/.test(v)) && violations("x.txt", 1, `Claude-Session: ${link}`).length > 0 && !violations("x.txt", 1, "claude.ai/settings").some((v) => /session link/.test(v)),
     "a claude.ai session link is refused in any tracked file (a synthetic link, built at run time)"); }
+// the routine fire API's live session links use the cse_ prefix (src/domain/cloud-handoff.ts)
+{ const link = ["https://claude", "ai/code/"].join(".") + "cse_" + "01ExampleExampleExample";
+  ok(violations("README.md", 1, `see ${link}`).some((v) => /session link/.test(v)), "a claude.ai cse_ session link is refused too (built at run time)"); }
+// any short prefix the routine fire API may use next (the same grammar src/domain/cloud-handoff.ts accepts); routines and artifact pages are not sessions
+{ const host = ["https://claude", "ai/code/"].join(".");
+  ok(violations("README.md", 1, `see ${host}ses_01ExampleExampleExample`).some((v) => /session link/.test(v)) && !violations("README.md", 1, `see ${host}routines`).some((v) => /session link/.test(v)) && !violations("README.md", 1, `see ${host}artifact/0f3c2b1a-1111-2222-3333-444455556666`).some((v) => /session link/.test(v)),
+    "a session link with another prefix is refused; claude.ai routines and artifact links are not"); }
 ok(secretFile("data/github-token")&&secretFile("private/ledger.key")&&!publicLine("data/github-token",1,text("skins/captain/LICENSE.txt")?.split("\n")[2]??""),"public attribution cannot exempt tracked token or key files");
 const hits: string[] = [];
 for (const f of files) { const t = text(f); if (t == null) continue;

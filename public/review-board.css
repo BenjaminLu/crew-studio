@@ -331,14 +331,13 @@ body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
 /* the answer that finished while the captain looked elsewhere, waiting to be shown */
 .rb-ready { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 23; box-shadow: var(--rr-shadow); }
 
-/* ---------- the play bar, floating on the board: the caption, a point back and on, play, replay, the scene, the voice ---------- */
+/* ---------- the play bar, floating on the board: the caption, a point back and on, play, replay, the scene ---------- */
 .rb-play { position: absolute; left: 12px; bottom: 12px; z-index: 20; display: grid; gap: 6px; width: min(660px, calc(100% - 340px)); min-width: 0; box-sizing: border-box; padding: 8px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--rr-shadow); }
 .rb-play .rr-caption { padding: 4px 12px; font-size: 14.5px; border-radius: 9px; }
 .rb-play .rr-playbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .rb-play .rr-playbar > * { flex: none; }
 .rb-play .rr-dots { flex: 0 1 auto; flex-wrap: wrap; }
 .rb-play .rr-ibtn { width: 32px; height: 32px; border-radius: 9px; }
-.rb-play .rr-voice select { max-width: 180px; height: 32px; font-size: 12.5px; }
 .rb-play .rr-scenenav { margin-left: auto; }
 .rb-play.mini { width: auto; padding: 5px 6px; }
 .rb-play-l { font-size: 12.5px; color: var(--text-2); white-space: nowrap; padding: 0 4px; }
@@ -353,7 +352,7 @@ body.rr-fs .rb-tools [data-notes-toggle] { display: none; }
   .rb-play { left: 8px; right: 8px; width: auto; bottom: 48px; padding: 6px; gap: 4px; }
   .rb-play.mini { right: auto; } .rb-play-l { display: none; }
   .rb-play .rr-caption { font-size: 13.5px; }
-  .rb-play .rr-scenenav, .rb-play .rr-voice, .rb-play .rr-voices { display: none; }
+  .rb-play .rr-scenenav { display: none; }
   .rb-play .rr-dots { flex: 1; justify-content: center; }
 }
 

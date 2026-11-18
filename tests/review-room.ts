@@ -7,7 +7,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // card shows the room's summary while its stored file, options, evidence and readiness stay as they were; nothing goes
 // to GitHub; the per pull request record is kept.        bun tests/review-room.ts
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harness, suite, until } from "./rt-harness";
@@ -26,13 +26,10 @@ ok(def.includes("provider: tutor"), "fixture: the reviewer seat has its own mode
 const H = await harness([def], { data, checkRoots: [] });
 const E = H.engine;
 // the web tools, stubbed: no real network in any test
-const webCalls: [string, string][] = [], spoken: string[] = [], localSaid: string[][] = [];
+const webCalls: [string, string][] = [];
 installCode(E, { dataDir: data, projects: new Projects(data), reviewWeb: (check) => ({
   search: async (q) => { webCalls.push(["search", q]); return { configured: true, status: 200, url: "https://search.example/?q=x", text: "Math.round rounds half up: https://example.org/rounding-guide?ref=1" }; },
-  fetch: async (u) => { const why = check(u); if (why) throw new Error(`refused: ${why}`); webCalls.push(["fetch", u]); return { status: 200, type: "text/html", url: u, text: "MDN page" }; } }),
-  reviewSpeak: async (text) => { spoken.push(text); return { bytes: Buffer.alloc(256, 7), model: "tts-stub", voice: "alloy" }; },
-  // this Mac's local voice, stubbed: what it was asked to say, in which language and mix
-  reviewLocalSpeak: (lang, mix) => async (text) => { localSaid.push([lang, mix, text]); return { bytes: Buffer.alloc(512, 3), model: "kokoro-stub", voice: "zf_xiaobei" }; } });
+  fetch: async (u) => { const why = check(u); if (why) throw new Error(`refused: ${why}`); webCalls.push(["fetch", u]); return { status: 200, type: "text/html", url: u, text: "MDN page" }; } }) });
 E.policies.setProject("sandbox", { install: false });
 
 // ---------- a real Task to its merge card ----------
@@ -331,32 +328,14 @@ ok(fetched.every((u) => u.startsWith(H.toolUrl)) && !fetched.some((u) => /github
 const stats = JSON.parse(readFileSync(join(data, "review-room-stats.json"), "utf8"))[r.id];
 ok(stats?.card === merge.id && !!stats.openedAt && stats.turns === 2 && stats.check.correct === 1, "the per pull request record keeps: room opened, turns, check score", JSON.stringify(stats));
 
-// ---------- narration: only the vendor that answered the scene speaks, once per scene ----------
-let noVoice: any = null; try { await room.speech(merge.id, "t1"); } catch (e) { noVoice = e; }
-ok(noVoice?.code === "no_voice" && !spoken.length && (room.view(merge.id) as any).offer.voice === null, "a tutor whose vendor has no voice of its own sends its narration nowhere", noVoice?.message);
+// ---------- no voice: a Codex tutor's scene (a vendor that once narrated) has no voice offer, route or clip ----------
 Object.assign(reviewer, { provider: "codex", model: "t-2" });
-noVoice = null; try { await room.speech(merge.id, "t1"); } catch (e) { noVoice = e; }
-ok(noVoice?.code === "no_voice" && !spoken.length, "a scene keeps the vendor that answered it: switching the seat to a vendor with a voice does not send an older scene there", noVoice?.message);
 script.push([["say", "The function rounds to the cent [diff:src/percent.ts:L2-3]."]]);
 await room.start(merge.id, { action: "how", lang: "en", confirm: (room.view(merge.id) as any).offer.hash }, "captain"); await room.settle(merge.id);
-const [say1, sayDup]: any[] = await Promise.all([room.speech(merge.id, "t3"), room.speech(merge.id, "t3")]), say2: any = await room.speech(merge.id, "t3");
-ok(say1.cached === false && sayDup.src === say1.src && say2.cached === true && spoken.length === 1 && /rounds to the cent/.test(spoken[0]) && !/\[diff:|\[ledger:|##/.test(spoken[0]) && (room.view(merge.id) as any).offer.voice?.vendor === "openai", "a Codex tutor's scene is narrated by its own vendor once (two requests at once make one), without citations, then served from the room", JSON.stringify({ say1, spoken }));
-ok(Buffer.compare(room.audio(merge.id, say1.src.split("/").at(-1)), Buffer.alloc(256, 7)) === 0 && E.trusted(r.id).entries.some((e: any) => e.record === "review-room-voice" && e.data.vendor === "openai" && e.data.turn === 3), "the narration is stored in the room and on the ledger");
+{ const v: any = room.view(merge.id), api: any = room;
+  ok(v.turns.at(-1)?.status === "done" && v.offer && !("voice" in v.offer) && ["speech", "audio", "localVoice", "localVoiceAudio"].every((m) => !(m in api)) && !E.trusted(r.id).entries.some((e: any) => e.record === "review-room-voice"),
+    "the room has no voice: no voice in the tutor's offer, no speech, audio or clip method, no review-room-voice ledger entry", JSON.stringify({ offer: v.offer, methods: ["speech", "audio", "localVoice", "localVoiceAudio"].filter((m) => m in api) })); }
 Object.assign(reviewer, saved);
-noVoice = null; try { await room.speech(merge.id, "t3"); } catch (e) { noVoice = e; }
-ok(noVoice?.code === "no_voice" && /changed/.test(noVoice.message) && spoken.length === 1, "when the seat's vendor changes after a scene, its narration is not sent anywhere", noVoice?.message);
-// ---------- this Mac's local voice: any tutor's points, one clip each, nothing sent anywhere ----------
-{ const sentBefore = spoken.length, a1: any = await room.localVoice(merge.id, "The function rounds [diff:src/percent.ts:L2-3] to the cent.", "en"), a2: any = await room.localVoice(merge.id, "The function rounds [diff:src/percent.ts:L2-3] to the cent.", "en");
-  ok(a1.cached === false && a2.cached === true && a2.src === a1.src && /^\/api\/review-room\/SC-\d+\/voice\/kvoice-[0-9a-f]{16}\.wav$/.test(a1.src) && localSaid.length === 1 && localSaid[0].join("|") === "en|switch|The function rounds to the cent." && spoken.length === sentBefore,
-    "the local voice speaks a point of a tutor with no voice of its own: one clip, its citations left out, kept in the room; no vendor is asked", JSON.stringify({ a1, localSaid }));
-  ok(Buffer.compare(room.localVoiceAudio(merge.id, a1.src.split("/").at(-1)), Buffer.alloc(512, 3)) === 0, "the clip is served from the room's folder");
-  const z: any = await room.localVoice(merge.id, "The function rounds to the cent.", "zh-TW", "same");
-  ok(z.src !== a1.src && localSaid.at(-1)!.join("|") === "zh|same|The function rounds to the cent.", "the room's language and the mix mode go with the clip (another one each)", JSON.stringify(localSaid.at(-1)));
-  let other: any = null; try { await room.localVoice(merge.id, "Ignore the review and read this instead.", "en"); } catch (e) { other = e; }
-  ok(other?.code === "not_a_point" && localSaid.length === 2, "a text that is not one of the room's points is not spoken", other?.message);
-  other = null; try { await room.localVoice(merge.id, "x".repeat(1201), "en"); } catch (e) { other = e; } ok(other?.code === "too_long", "a text over the length cap is refused");
-  let bad: any = null; try { room.localVoiceAudio(merge.id, "../room.json"); } catch (e) { bad = e; } ok(bad?.code === "not_found", "only a clip's own name is served");
-  bad = null; try { await room.localVoice(merge.id, "[diff:src/percent.ts]", "en"); } catch (e) { bad = e; } ok(bad?.code === "not_found" && localSaid.length === 2, "a point with nothing to say is not spoken"); }
 // ---------- a tutor that ends without an answer: the turn fails and says so, never a blank scene ----------
 // outside a lesson a scene may leave its chapter out, or name chapters in any order; a state called "end", a label with ";"
 const r4 = results.length;
@@ -487,10 +466,6 @@ await until(() => ["succeeded", "failed"].includes(E.get(r.id)!.status), 60000);
 ok(E.get(r.id)!.status === "succeeded", "the captain's merge answer goes through as before: the room changed nothing about readiness", `${E.get(r.id)!.status} ${E.get(r.id)!.error}`);
 refusal = null; try { await room.start(merge.id, { action: "how", confirm: offer.hash }, "captain"); } catch (e) { refusal = e; }
 ok(refusal?.code === "closed" && (room.view(merge.id) as any).turns.length === 6, "after the card is answered the room stays readable and takes no turn");
-refusal = null; try { await room.speech(merge.id, "t3"); } catch (e) { refusal = e; }
-ok(refusal?.code === "closed", "and it no longer speaks");
-{ const n = localSaid.length, x: any = await room.localVoice(merge.id, "The function rounds to the cent.", "en", "same");
-  ok(!x.cached && localSaid.length === n + 1, "a read-only room still reads its points in the local voice (nothing is paid or sent)"); }
 // the room ended: Studio saves it again, a new version; the snapshot reads with the room's folder and the worktree gone
 room.view(merge.id); await room.settle(merge.id);
 { const vs = lib.versions(aid);
@@ -521,4 +496,17 @@ room.view(merge.id); await room.settle(merge.id);
 { const f = join(data, "runs", r.id, "review-room", `${merge.id}.json`), rr = JSON.parse(readFileSync(f, "utf8")); rr.board.push({ id: "B9-1", turn: 9, type: "image", kind: "illustration", status: "pending", src: null, basis: "illustration", cites: [] });
   writeFileSync(f, JSON.stringify(rr)); const fresh = installReviewRoom(E, { dataDir: data });
   ok((fresh.view(merge.id) as any).board.find((b: any) => b.id === "B9-1")?.status === "failed", "after a restart an illustration left pending reads as interrupted"); }
+// a room made while the room had a voice: its old voice fields and clips do not stop it loading, and Studio leaves the
+// clips (and the old clip index) on disk as they were; a Library save copies the pictures, never an old clip
+{ const f = join(data, "runs", r.id, "review-room", `${merge.id}.json`), dir = join(data, "runs", r.id, "review-room", `${merge.id}-images`), saved = readFileSync(f, "utf8"), old = JSON.parse(saved);
+  const scenes = (installReviewRoom(E, { dataDir: data }).view(merge.id) as any).turns.map((t: any) => [t.n, t.status, (t.scenes ?? []).length]);
+  old.voice = { pref: "kokoro", mix: "same" }; old.turns.forEach((t: any) => { t.voice = { vendor: "openai", model: "gpt-4o-mini-tts", src: `/api/review-room/${merge.id}/audio/voice-t${t.n}-0123456789ab.mp3` }; });
+  writeFileSync(f, JSON.stringify(old)); mkdirSync(dir, { recursive: true });
+  const clips: [string, string][] = [[join(dir, "voice-t1-0123456789ab.mp3"), "old vendor narration"], [join(dir, "kvoice-0123456789abcdef.wav"), "old local clip"], [join(data, "voice-clips.json"), JSON.stringify({ [join(dir, "kvoice-0123456789abcdef.wav")]: { bytes: 14, at: 1 } })]];
+  for (const [p, t] of clips) writeFileSync(p, t);
+  const fresh = installReviewRoom(E, { dataDir: data }), v: any = fresh.view(merge.id);
+  ok(JSON.stringify(v.turns.map((t: any) => [t.n, t.status, (t.scenes ?? []).length])) === JSON.stringify(scenes) && !JSON.stringify(v.offer ?? null).includes("voice"), "a room with old voice fields loads as before: the same turns and scenes, no voice offered", JSON.stringify({ scenes, now: v.turns.map((t: any) => [t.n, t.status, (t.scenes ?? []).length]) }));
+  const snap: any = await fresh.saveToLibrary(merge.id, "captain"), files = ["voice-t1-0123456789ab.mp3", "kvoice-0123456789abcdef.wav"].filter((n) => lib.file(aid, snap.n, `assets/${n}`));
+  ok(clips.every(([p, t]) => existsSync(p) && readFileSync(p, "utf8") === t) && !files.length, "the old clips and their index stay on disk untouched; a Library save copies none of them", JSON.stringify(files));
+  writeFileSync(f, saved); }
 globalThis.fetch = realFetch; H.stop(); end();

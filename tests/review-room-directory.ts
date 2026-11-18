@@ -143,7 +143,7 @@ try {
   ok(short.status === "done" && !short.error && JSON.stringify(short.gaps) === JSON.stringify(["modules", "talks", "sequence"]) && short.jobs?.length === 3 && short.scenes.length === 1,
     "a directory's lesson still without its parts (or how they compose) after its two follow-ups is kept as written, its gaps named on the turn (a directory's own chapters)", JSON.stringify([short.status, short.error, short.gaps, short.jobs]));
 
-  // ---------- every follow-up: a question on the board, words selected, regenerate, the check, the voice's rule ----------
+  // ---------- every follow-up: a question on the board, words selected, regenerate, the check ----------
   const lessonScene = `t${lt.n}-2`;
   script.push([["say", "core keeps sums pure [diff:src/core/sum.ts:L2]."]]);
   await room.start(opened.id, { thread: { anchor: { scene: lessonScene, kind: "sentence", part: "p0.s0", text: "core adds numbers" }, chip: "why" }, confirm: (room.view(opened.id) as any).offer.hash, lang: "en" }, "captain"); await room.settle(opened.id);
@@ -161,8 +161,6 @@ try {
   await room.start(opened.id, { action: "quiz", confirm: (room.view(opened.id) as any).offer.hash, lang: "en" }, "captain"); await room.settle(opened.id);
   const graded: any = room.answer(opened.id, 1, 0);
   ok(graded.correct === true && graded.cites?.[0]?.ok === true, "the check works in a directory's room: asked by the tutor, graded by Studio", JSON.stringify(graded).slice(0, 200));
-  const voice = await refused(() => room.speech(opened.id, `t${t1.n}`));
-  ok(voice?.code === "no_voice" || voice?.code === "not_found" || /OpenAI/.test(voice?.message ?? ""), "the vendor's voice follows the same rule (only the answering tutor's vendor, only with its key)", voice?.message);
   // the tutor the captain picks: the room's own pick runs its next turn
   const picked: any = (room as any).setTutor(opened.id, { provider: "claude", model: "x-1" }, "captain");
   ok(picked.offer.provider === "claude" && picked.offer.picked === "room", "the tutor picker works in a directory's room", JSON.stringify(picked.offer));

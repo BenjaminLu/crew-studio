@@ -29,6 +29,9 @@ const textOf = (content) => (Array.isArray(content) ? content.map((c) => c?.text
 // ---------- scripted modes the shared stub agent does not cover ----------
 const png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 async function* acceptanceScript(text, call, say) {
+  // ACCEPT_LINGER: a build round that stays live for ten minutes before it works (an end-to-end check hands it to the cloud or
+  // cancels it meanwhile; stopping the round ends this process)
+  if (text.startsWith("BUILD ROUND") && /ACCEPT_LINGER/.test(text)) { yield* call("fs_list", {}); await new Promise((r) => setTimeout(r, 600_000)); }
   const onboarding=/^Call onboarding_read with nonce ([a-f0-9]+)\./.exec(text);
   if(onboarding){const result=yield* call('onboarding_read',{nonce:onboarding[1]});if(typeof result?.challenge!=='string')throw new Error('No onboarding challenge');yield* say(result.challenge);return true;}
   if (text.startsWith("DELIVER ")) {
