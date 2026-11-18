@@ -87,7 +87,7 @@ are reversible on the page, and are each audited.
 | `prs_refresh` | read GitHub now, then `prs_list` (a refresh error is `refreshError`, not `error`) |
 | `prs_watch`, `prs_unwatch`, `prs_restore` | the watch list, as the page's address field and remove buttons |
 | `prs_settings` | `{settings}`: only what it names changes (`which` and `evidence` merge one level down) |
-| `prs_order`, `prs_deps`, `prs_group`, `prs_accept` | the order, a dependency, a release group, accepting Studio's proposal |
+| `prs_order`, `prs_deps`, `prs_group` | the order, a dependency, a release group (accepting Studio's proposal as the captain's is the captain's, on the page) |
 
 They run the board's own code (`act` in `src/pr-watch.ts`), so the same checks hold, and the open page reloads (live event
 `prs`). **Nothing writes to GitHub**: there is no tool for the dependency block (that stays the captain-only card the

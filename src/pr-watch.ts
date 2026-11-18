@@ -264,6 +264,20 @@ class OverAuto extends Error {}
 const sameIds = (a: string[], b: string[]) => { const n = (x: string[]) => [...new Set(x.map((i) => i.toLowerCase()))].sort().join(); return n(a) === n(b); };
 class NoSuchAction extends Error { constructor(name: string) { super(`no such action: ${name}`); } }
 
+/** The pull request list's tools, as a "prs" grant lists them (the crew-studio CLI's `prs` commands are made from these). */
+export const PR_TOOL_SPECS = [
+  { name: "prs_list", description: "Studio's pull request list: every watched open pull request in the captain's order, with CI, approvals (what is still missing, per required team), reviews, test evidence, environments, dependencies, linked issues and the next step; the merged ones followed until production (merged or live, with each environment). Also the watch list and the settings.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "prs_get", description: "One pull request of the list in full: everything prs_list has plus the merge-box facts Studio read.", inputSchema: { type: "object", required: ["pr"], additionalProperties: false, properties: { pr: { type: "string", description: "owner/repo#number" } } } },
+  { name: "prs_refresh", description: "Read GitHub again now (Studio also refreshes every 5 minutes), then return the list.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "prs_watch", description: "Watch a repository (its open pull requests the captain opened or is assigned to) or one pull request, by its GitHub address.", inputSchema: { type: "object", required: ["url"], additionalProperties: false, properties: { url: { type: "string", description: "https://github.com/<owner>/<repo> or …/pull/<n>" } } } },
+  { name: "prs_unwatch", description: "Stop watching a repository ({repo: owner/repo}) or leave one pull request out of the list ({pr: owner/repo#N}).", inputSchema: { type: "object", additionalProperties: false, properties: { repo: { type: "string" }, pr: { type: "string" } } } },
+  { name: "prs_restore", description: "Bring back a pull request left out of the list ({pr}), or all of them ({}).", inputSchema: { type: "object", additionalProperties: false, properties: { pr: { type: "string" } } } },
+  { name: "prs_settings", description: "Change the list's settings. Pass only what changes; the rest is kept. Fields: which {mine, assigned, reviewRequested}, evidence {accounts, checks, labels}, requiredReviewers, environments (each {name, production, repos, detect, each: [{repo, detect}]}: one environment may detect each repository its own way), groups, shortForm, messageLang.", inputSchema: { type: "object", required: ["settings"], additionalProperties: false, properties: { settings: { type: "object" } } } },
+  { name: "prs_order", description: "Set the release order: pull request ids first to last (owner/repo#N). Rows not named follow in Studio's proposed order.", inputSchema: { type: "object", required: ["order"], additionalProperties: false, properties: { order: { type: "array", items: { type: "string" } } } } },
+  { name: "prs_deps", description: "Set what one pull request waits for: {pr, on: [ids]} (an empty list clears it). Studio's record only; nothing is written to GitHub.", inputSchema: { type: "object", required: ["pr", "on"], additionalProperties: false, properties: { pr: { type: "string" }, on: { type: "array", items: { type: "string" } } } } },
+  { name: "prs_group", description: "Put a pull request in one of the release groups from the settings ({pr, group}); an empty group takes it out.", inputSchema: { type: "object", required: ["pr", "group"], additionalProperties: false, properties: { pr: { type: "string" }, group: { type: "string" } } } },
+] as const;
+
 export function createPrWatch(d: PrWatchDeps) {
   const dir = join(d.dataDir, "pr-watch"), stateFile = join(dir, "state.json"), snapFile = join(dir, "snapshot.json");
   const now = d.now ?? (() => Date.now());
@@ -1717,19 +1731,7 @@ export function createPrWatch(d: PrWatchDeps) {
     return null; };
   const REFRESH_GAP = 60_000; let toolRefreshAt = 0;
   const MAX_ARGS = 16_384;
-  const TOOLS = [
-    { name: "prs_list", description: "Studio's pull request list: every watched open pull request in the captain's order, with CI, approvals (what is still missing, per required team), reviews, test evidence, environments, dependencies, linked issues and the next step; the merged ones followed until production (merged or live, with each environment). Also the watch list and the settings.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-    { name: "prs_get", description: "One pull request of the list in full: everything prs_list has plus the merge-box facts Studio read.", inputSchema: { type: "object", required: ["pr"], additionalProperties: false, properties: { pr: { type: "string", description: "owner/repo#number" } } } },
-    { name: "prs_refresh", description: "Read GitHub again now (Studio also refreshes every 5 minutes), then return the list.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-    { name: "prs_watch", description: "Watch a repository (its open pull requests the captain opened or is assigned to) or one pull request, by its GitHub address.", inputSchema: { type: "object", required: ["url"], additionalProperties: false, properties: { url: { type: "string", description: "https://github.com/<owner>/<repo> or …/pull/<n>" } } } },
-    { name: "prs_unwatch", description: "Stop watching a repository ({repo: owner/repo}) or leave one pull request out of the list ({pr: owner/repo#N}).", inputSchema: { type: "object", additionalProperties: false, properties: { repo: { type: "string" }, pr: { type: "string" } } } },
-    { name: "prs_restore", description: "Bring back a pull request left out of the list ({pr}), or all of them ({}).", inputSchema: { type: "object", additionalProperties: false, properties: { pr: { type: "string" } } } },
-    { name: "prs_settings", description: "Change the list's settings. Pass only what changes; the rest is kept. Fields: which {mine, assigned, reviewRequested}, evidence {accounts, checks, labels}, requiredReviewers, environments (each {name, production, repos, detect, each: [{repo, detect}]}: one environment may detect each repository its own way), groups, shortForm, messageLang.", inputSchema: { type: "object", required: ["settings"], additionalProperties: false, properties: { settings: { type: "object" } } } },
-    { name: "prs_order", description: "Set the release order: pull request ids first to last (owner/repo#N). Rows not named follow in Studio's proposed order.", inputSchema: { type: "object", required: ["order"], additionalProperties: false, properties: { order: { type: "array", items: { type: "string" } } } } },
-    { name: "prs_deps", description: "Set what one pull request waits for: {pr, on: [ids]} (an empty list clears it). Studio's record only; nothing is written to GitHub.", inputSchema: { type: "object", required: ["pr", "on"], additionalProperties: false, properties: { pr: { type: "string" }, on: { type: "array", items: { type: "string" } } } } },
-    { name: "prs_group", description: "Put a pull request in one of the release groups from the settings ({pr, group}); an empty group takes it out.", inputSchema: { type: "object", required: ["pr", "group"], additionalProperties: false, properties: { pr: { type: "string" }, group: { type: "string" } } } },
-    { name: "prs_accept", description: "Accept Studio's proposed order and dependencies as the captain's.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  ] as const;
+  const TOOLS = PR_TOOL_SPECS;
   /** A tool call from a pull request list grant (grant: its id, recorded on what it changes). */
   async function tool(name: string, a: unknown, grant = "external-cli"): Promise<unknown> {
     const b: Record<string, any> = obj(a) ? a : {};
@@ -1755,7 +1757,6 @@ export function createPrWatch(d: PrWatchDeps) {
         case "prs_order": { if (!ids(b.order)) return { error: "prs_order takes {order: [owner/repo#N, …]}" }; await changedBy("order", b, grant); return listView(); }
         case "prs_deps": { if (!str(b.pr) || !ids(b.on)) return { error: "prs_deps takes {pr, on: [ids]}" }; await changedBy("deps", b, grant); return listView(); }
         case "prs_group": { if (!str(b.pr) || typeof b.group !== "string") return { error: "prs_group takes {pr, group}" }; await changedBy("group", b, grant); return listView(); }
-        case "prs_accept": await changedBy("accept", {}, grant); return listView();
       }
     } catch (e: any) { return { error: String(e?.message ?? e).slice(0, 300) }; }
     return { error: `no such tool: ${name}` };

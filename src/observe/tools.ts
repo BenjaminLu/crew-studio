@@ -94,6 +94,8 @@ export function createObserve(s: Sources, grant: GrantView | null = null) {
   // as not there (the same not-found a missing ref gets), so nothing is learnt from the difference
   const allowed = grant ? kinds().filter((k) => grant.kinds.includes(k)) : kinds();
   const kindOrFail = (k: unknown, tool: string): KindDef => { const d = typeof k === "string" && allowed.includes(k) ? kindDef(k) : undefined;
+    // a kind Studio has but this grant does not read: its own code, so a CLI can say "not in your grant" (exit 3)
+    if (!d && grant && typeof k === "string" && kindDef(k)) throw new NativeToolFailure("not_granted", `${tool}: this grant does not read ${String(k).slice(0, 20)}. Valid kinds: ${allowed.join(", ")}.`, `${tool}：這個授權讀不到 ${String(k).slice(0, 20)}。可用的有：${allowed.join("、")}。`, "read_current_state");
     if (!d) throw bad(`${tool}: ${grant && typeof k === "string" && kindDef(k) ? `this grant does not read ${String(k).slice(0, 20)}` : `unknown kind ${JSON.stringify(k ?? null).slice(0, 40)}`}. Valid kinds: ${allowed.join(", ")}.`, `${tool}：沒有這種 kind（或這個授權讀不到）。可用的有：${allowed.join("、")}。`); return d; };
   const visible = (def: KindDef, e: Entity) => !grant || STUDIO_WIDE.has(def.kind) || !grant.project || def.scope(e) === grant.project;
   const refVisible = (ref: string): boolean => { if (!grant) return true; const r = parseRef(ref); if (!r || !allowed.includes(r.kind)) return false; const def = kindDef(r.kind)!; if (STUDIO_WIDE.has(def.kind) || !grant.project) return true;
