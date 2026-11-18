@@ -42,6 +42,7 @@ import {projectPrAdapter,GitHubPrAdapter,type GitHubProjectGrant} from './adapte
 //   chat: CREW_CHAT_PROVIDER=claude|codex|anthropic|openai|openai-compatible|stub (Settings in the chat header saves a choice to CREW_DATA/settings.json),
 //         CREW_CLAUDE_MODEL, CREW_CLAUDE_PERMISSION_MODE (fresh Claude Firstmate: auto|default, default auto), CREW_CODEX_MODEL, CREW_CLAUDE_BIN, CREW_CODEX_BIN, CREW_CHAT_TIMEOUT_MS
 //   Crew page: CREW_DETECT_FORCE_MIN_MS (tests: how soon 重新偵測 may detect again; default 10 s)
+//   Egress proxy: CREW_EGRESS_TUNNEL_IDLE_MS (how long an open tunnel may carry no bytes before it is closed; default 30 min)
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";

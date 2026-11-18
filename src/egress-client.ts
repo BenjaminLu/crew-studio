@@ -5,6 +5,11 @@ import { randomBytes } from 'node:crypto';
 import { createServer, connect, type Socket } from 'node:net';
 import { BROKER_PORTS } from "./loopback-ports";
 export { BROKER_PORTS } from "./loopback-ports";
+/** How long an open tunnel may carry no bytes before the proxy closes it: 30 minutes (CREW_EGRESS_TUNNEL_IDLE_MS, 1 s to
+ *  2 h). A model streaming a reply can go quiet for minutes while it thinks; at the old 120 s the proxy cut Claude rounds
+ *  mid-reply, which the CLI reported as an API error.
+ *  The same limit holds at both hops a round's traffic takes: this per-job broker and the egress proxy behind it. A round's tunnels still close when its credential is revoked. */
+export const tunnelIdleMs = () => { const v = Number(process.env.CREW_EGRESS_TUNNEL_IDLE_MS); return Number.isFinite(v) && v >= 1000 && v <= 7_200_000 ? v : 30 * 60_000; };
 export type ProxyAuthority={port:number;open(t:string,hosts:string[],options?:Record<string,unknown>):void;close(t:string):void};
 export async function openScopedProxy(egress:ProxyAuthority,hosts:string[],options?:Record<string,unknown>) {
   if(!Number.isInteger(egress.port)||egress.port<1)throw new Error('egress upstream is unavailable');
@@ -29,7 +34,7 @@ export async function openScopedProxy(egress:ProxyAuthority,hosts:string[],optio
       up.once('error',destroy);client.once('error',destroy);
       up.once('connect',()=>{
         if(closed){destroy();return;}
-        client.setTimeout(120000,destroy);up.setTimeout(120000,destroy);
+        const idle=tunnelIdleMs();client.setTimeout(idle,destroy);up.setTimeout(idle,destroy);
         up.write(Buffer.concat([Buffer.from(clean.join('\r\n')+'\r\n\r\n','latin1'),head.subarray(end+4)]));
         head=Buffer.alloc(0);client.pipe(up);up.pipe(client);client.resume();
       });
