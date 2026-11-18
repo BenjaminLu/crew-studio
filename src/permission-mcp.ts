@@ -6,6 +6,7 @@
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
+import { negotiateProtocolVersion } from "./mcp-protocol";
 
 // CREW_PERM_TOKEN_FILE: the token in a 0600 file (how the claude host hands it, off the command line)
 const SOCKET = process.env.CREW_PERM_SOCKET ?? "", TOKEN = process.env.CREW_PERM_TOKEN_FILE ? (() => { try { return readFileSync(process.env.CREW_PERM_TOKEN_FILE!, "utf8").trim(); } catch { return ""; } })() : process.env.CREW_PERM_TOKEN ?? "";
@@ -30,7 +31,7 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
   let m: any; try { m = JSON.parse(line); } catch { return; }
   const reply = (result: unknown) => { if (m.id !== undefined) out({ jsonrpc: "2.0", id: m.id, result }); };
   switch (m.method) {
-    case "initialize": return reply({ protocolVersion: m.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "studio_permission", version: "0.3.0" } });
+    case "initialize": return reply({ protocolVersion: negotiateProtocolVersion(m.params?.protocolVersion), capabilities: { tools: {} }, serverInfo: { name: "studio_permission", version: "0.3.0" } });
     case "notifications/initialized": return;
     case "ping": return reply({});
     case "tools/list": return reply({ tools: [{ name: "approve", description: "Ask the captain in Crew Studio whether this tool call may run.",
