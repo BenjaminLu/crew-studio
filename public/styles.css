@@ -629,3 +629,18 @@ body.chat-closed .main{padding-bottom:120px}
 body[data-focus] .fab, body[data-focus] .ob-tour { display: none !important; }
 body[data-focus]:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bottom: 0; height: auto; z-index: 80; width: min(var(--chat-w), 92vw); box-shadow: var(--shadow-2); }
 @media (max-width: 760px) { body[data-focus].chat-closed .shell { height: 100dvh; } }
+/* what Firstmate sees (docs/units/observe.md "Focus"): a small muted line under the panel's mode row, as wide as its words */
+.fm-sees-row{padding:4px 12px 8px;border-bottom:1px solid var(--border);display:flex;min-width:0}
+.fm-sees{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-width:0;padding:1px 8px;border:0;border-radius:99px;background:transparent;color:var(--text-3);font:inherit;font-size:12px;line-height:18px;cursor:pointer}
+.fm-sees:hover,.fm-sees:focus-visible{background:var(--surface-2);color:var(--text-2)}
+.fm-sees .fm-sees-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fm-sees[data-state="failed"],.fm-sees[data-state="offline"]{opacity:.65}
+/* a ref in Firstmate's answer: its first mention a quiet chip at line height, later ones plain links; a card on hover or focus */
+.ref-chip,.ref-link{position:relative;font-family:var(--f-mono);font-size:.92em;white-space:nowrap}
+.ref-chip{padding:0 5px;border-radius:5px;background:var(--surface-2);color:var(--accent-text);text-decoration:none;line-height:inherit}
+.ref-link{color:var(--accent-text)}
+.ref-chip:hover,.ref-chip:focus-visible{background:var(--accent-soft)}
+.ref-pop{display:none;position:fixed;z-index:60;width:max-content;max-width:260px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);box-shadow:var(--shadow-2);color:var(--text-2);font-family:var(--f-sans);font-size:12px;line-height:1.45;white-space:normal}
+.ref-pop>*{display:block}.ref-pop b{color:var(--text);font-family:var(--f-mono);font-weight:600}
+.ref-pop-now:empty{display:none}
+.ref-chip:hover .ref-pop,.ref-chip:focus .ref-pop,.ref-link:hover .ref-pop,.ref-link:focus .ref-pop{display:block}

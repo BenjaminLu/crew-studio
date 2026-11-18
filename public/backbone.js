@@ -109,7 +109,17 @@ routes.settings = () => page(T("Settings", "設定"), T("Language, Doctor, keys 
     h("a", { class: "bb-set", href: "#/roadmap" }, icon("target"), h("span", {}, h("b", {}, T("Roadmap", "路線圖")), h("span", { class: "faint" }, T("What is planned next, by milestone.", "接下來的規劃，依里程碑。")))),
     h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "labsToggle", checked: labsOn(), onchange: (e) => { store.set("crew.labs", e.target.checked ? "1" : null); showLabs(); } }),
       h("span", {}, h("b", {}, T("Show labs", "顯示實驗功能")), h("span", { class: "faint" }, T("Adds the planned pages to the sidebar. They work, but they are not the backbone.", "把規劃中的頁面加回側邊欄；可以用，但不是主幹功能。"))))),
+  // what the captain is looking at, for Firstmate's studio_now (docs/units/observe.md "Focus"): on by default, just before the
+  // grants (which never receive it)
+  focusSharing(),
   cliGrants(), rulesEditor());
+function focusSharing() {
+  return h("section", { class: "card x-pad bb-focus", "data-focus-sharing": "" },
+    h("h2", { style: "margin:0 0 8px;font-size:16px" }, "Firstmate"),
+    h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "focusShare", checked: window.studioFocus?.sharing !== false, onchange: async (e) => { const on = await window.studioFocus?.setSharing(e.target.checked); e.target.checked = on !== false; window.onFocusLabel?.(); } }),
+      h("span", {}, h("span", {}, h("b", {}, T("Share my current page and selection with Firstmate", "與 Firstmate 分享我目前的頁面與選取")), T(" (only the page and item names, never what I am typing or the screen)", "（只送頁面和項目名稱，不送輸入中的文字或畫面）")),
+        h("span", { class: "faint" }, T("External CLI grants never receive this.", "外部 CLI 授權不會收到這項資訊。")))));
+}
 // External CLI grants (docs/units/cli-mcp-grant.md): the captain lets an agent CLI they opened themselves start and
 // follow runs in one project over MCP, or read and edit the pull request list. Issued and revoked here only (this Mac's page session); the CLI reaches four tools
 // and none of them answers a card, so every decision stays on the board.

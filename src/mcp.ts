@@ -35,6 +35,9 @@ const call = async (path: string, body?: unknown) => {
   return JSON.parse(text);
 };
 
+/** the tools whose results go as structuredContent (those with an outputSchema), from the last tools/list */
+let structured: Set<string> | null = null;
+const listStructured = async () => { try { const t = await call("/api/tools"); return new Set<string>((Array.isArray(t) ? t : []).filter((x: any) => x?.outputSchema).map((x: any) => x.name)); } catch { return new Set<string>(); } };
 const rl = createInterface({ input: process.stdin });
 rl.on("line", async (line) => {
   let m: any;
@@ -47,9 +50,16 @@ rl.on("line", async (line) => {
         return reply({ protocolVersion: negotiateProtocolVersion(m.params?.protocolVersion), capabilities: { tools: {} }, serverInfo: { name: "studio", version: "0.2.0" }, instructions: SERVER_INSTRUCTIONS });
       case "notifications/initialized": return;
       case "ping": return reply({});
-      case "tools/list": return reply({ tools: byName(await call("/api/tools")) });
+      case "tools/list": { const tools = byName(await call("/api/tools")); structured = new Set((Array.isArray(tools) ? tools : []).filter((t: any) => t?.outputSchema).map((t: any) => t.name)); return reply({ tools }); }
       case "tools/call": {
-        const r = await call(`/api/tools/${encodeURIComponent(m.params?.name ?? "")}`, m.params?.arguments ?? {});
+        const name = String(m.params?.name ?? "");
+        const r = await call(`/api/tools/${encodeURIComponent(name)}`, m.params?.arguments ?? {});
+        // a read tool (src/observe/tools.ts) declares an outputSchema: its result also goes as structuredContent, its trust note
+        // (_meta["studio/trust"]) as the result's _meta; the text copy stays for a client that reads only content
+        if (!r?.error && r && typeof r === "object" && (structured ??= await listStructured()).has(name)) { const { _meta, ...data } = r as any;
+          // a search's hits also go as resource_link content blocks (studio://kind/id), the form MCP clients list as links
+          const links = (Array.isArray(data.items) ? data.items : []).map((x: any) => x?.resource_link).filter((l: any) => l?.type === "resource_link" && typeof l.uri === "string");
+          return reply({ content: [{ type: "text", text: JSON.stringify(data) }, ...links], structuredContent: data, isError: false, ...(_meta ? { _meta } : {}) }); }
         return reply({ content: mcpContent(r), isError: !!r?.error }); // a picture (a reviewer's image read) goes as an image block
       }
       default: return fail(-32601, `unknown method ${m.method}`);
