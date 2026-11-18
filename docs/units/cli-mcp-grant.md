@@ -137,15 +137,16 @@ project?, observe: {preset, kinds?, untrusted?}, ttl}`) picks what it reads (`sr
 
 ## Connecting a client (the plug-in kit)
 
-- **Snippets.** Each active grant on the board has a tab per client, each with copy buttons (`src/mcp-snippets.ts`,
-  `grantView(…).snippets`): Claude Code (`claude mcp add studio -- <helper>` or a project's `.mcp.json`), Codex
-  (`codex mcp add studio -- <helper>` or `[mcp_servers.studio]` in `~/.codex/config.toml`), Cursor (`.cursor/mcp.json`)
-  and VS Code (`.vscode/mcp.json`, `type: "stdio"`). Every one runs the same helper with the grant's file, never the token.
-- **Plug-in.** `plugins/crew-studio/` is one folder with a Claude Code manifest (`.claude-plugin/plugin.json`, listed in
-  the repository's marketplace `.claude-plugin/marketplace.json`) and a Codex manifest (`.codex-plugin/plugin.json`).
-  Both bring `.mcp.json` (`crew-studio mcp`) and the `studio` skill. The helper takes the grant file from
-  `CREW_STUDIO_GRANT_FILE` (and Studio's address from `CREW_STUDIO_URL`) when no `--grant-file` is given, and only for a
-  plain CLI (never when Studio started the helper with its own token).
+- **Snippets.** Each active grant on the board has a tab per client, each with copy buttons (`src/mcp-snippets.ts`, `grantView(…).snippets`). Every one is user-scope: a config holds this Mac's absolute paths, so it belongs in the captain's own settings, never in a project file that may be committed. Every one runs the same helper with the grant's file, never the token.
+  - Claude Code: `claude mcp add --scope user studio -- <helper>`, or `~/.claude.json`.
+  - Codex: `codex mcp add studio -- <helper>`, or `[mcp_servers.studio]` in `~/.codex/config.toml`.
+  - Cursor: `~/.cursor/mcp.json`.
+  - VS Code: the user `mcp.json` (`type: "stdio"`).
+  - Plug-in: the shell lines the plug-in reads (`CREW_STUDIO_GRANT_FILE`, `CREW_STUDIO_URL`, and `CREW_STUDIO_BIN` or `CREW_STUDIO_SRC`).
+- **Plug-in.** `plugins/crew-studio/` is one folder with two manifests: a Claude Code one (`.claude-plugin/plugin.json`, listed in the repository's marketplace `.claude-plugin/marketplace.json`) and a Codex one (`.codex-plugin/plugin.json`). Both bring `.mcp.json` and the `studio` skill.
+  - Its server is a resolver (`PLUGIN_SERVER`) that needs nothing on PATH. It runs `$CREW_STUDIO_BIN mcp`, or `bun $CREW_STUDIO_SRC/src/mcp.ts`, or a `crew-studio` it finds on PATH. If it finds none, it exits 127, saying what to set.
+  - The helper takes the grant file from `CREW_STUDIO_GRANT_FILE` when no `--grant-file` is given, and only for a plain CLI. With no grant it stops at once, saying to set it.
+  - Install: Claude Code `/plugin marketplace add <repo>`, then `/plugin install crew-studio@crew-studio`. Codex `codex plugin marketplace add <repo>`, then `codex plugin add crew-studio@crew-studio`.
 - **Generated pages.** The `studio` skill (`plugins/crew-studio/skills/studio/SKILL.md`) and the tools reference
   (`docs/reference/studio-tools.md`) are made from `src/observe/` by `bun scripts/observe-index.ts --write`;
   `tests/observe-index.ts` fails when one drifts.

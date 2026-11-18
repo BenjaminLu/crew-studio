@@ -41,11 +41,11 @@ try {
     const cmd = p.locator("[data-cli-grants] [data-grant-command][data-fresh]"); await cmd.waitFor({ timeout: 10000 });
     const line = await cmd.textContent(), id = await cmd.getAttribute("data-grant-command");
     const file = join(data, "grants", id), token = readFileSync(file, "utf8").trim();
-    ok(/^claude mcp add studio -- \S+ \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/.test(line) && line.includes(file), `${key}: the copy-able command names the grant file`, line);
+    ok(/^claude mcp add --scope user studio -- \S+ \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/.test(line) && line.includes(file), `${key}: the copy-able command names the grant file`, line);
     ok(!line.includes(token) && !(await p.content()).includes(token), `${key}: the token is never on the page`);
     // connecting a client: Claude Code (default), Codex, Cursor, VS Code, each its command and config entry
     const tabs = await p.locator(`[data-grant="${id}"] [data-grant-client]`).allTextContents();
-    ok(JSON.stringify(tabs) === JSON.stringify(["Claude Code", "Codex", "Cursor", "VS Code"]), `${key}: a tab per client`, JSON.stringify(tabs));
+    ok(JSON.stringify(tabs) === JSON.stringify(["Claude Code", "Codex", "Cursor", "VS Code", "Plug-in"]), `${key}: a tab per client`, JSON.stringify(tabs));
     ok(/"mcpServers"/.test(await p.locator(`[data-grant="${id}"] [data-grant-config=claude]`).textContent()), `${key}: Claude Code's .mcp.json entry`);
     await p.click(`[data-grant="${id}"] [data-grant-client=codex]`);
     const codexCmd = await p.locator(`[data-grant="${id}"] [data-grant-client-command=codex]`).textContent(), toml = await p.locator(`[data-grant="${id}"] [data-grant-config=codex]`).textContent();

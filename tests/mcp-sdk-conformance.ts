@@ -9,7 +9,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //      bun tests/mcp-sdk-conformance.ts
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -17,7 +17,7 @@ import { suite } from "./rt-harness";
 import { observeP2Fixture, ROOM } from "./lib/observe-p2-fixture";
 import { createObserve } from "../src/observe/tools";
 import { grantableKinds } from "../src/observe/grant-scope";
-import { clientSnippets } from "../src/mcp-snippets";
+import { clientSnippets, PLUGIN_SERVER } from "../src/mcp-snippets";
 import { SUPPORTED_PROTOCOL_VERSIONS } from "../src/mcp-protocol";
 process.env.CREW_TEST_IN_PROCESS = "1";
 const { ok, end } = suite("mcp-sdk-conformance");
@@ -66,8 +66,8 @@ async function connectAndUse(label: string, server: { command: string; args: str
 }
 try {
   ok(SUPPORTED_PROTOCOL_VERSIONS.length > 0, "the helper negotiates from a fixed list");
-  const snippets = clientSnippets(helper);
-  ok(J(snippets.map((s) => s.client)) === J(["claude", "codex", "cursor", "vscode"]) && snippets.every((s) => !s.config.includes(TOKEN) && !(s.command ?? "").includes(TOKEN)), "a snippet for Claude Code, Codex, Cursor and VS Code; none carries the token");
+  const all = clientSnippets(helper, { grantFile, url: base, home: { src: REPO } }), snippets = all.filter((s) => s.client !== "plugin");
+  ok(J(all.map((s) => s.client)) === J(["claude", "codex", "cursor", "vscode", "plugin"]) && /--scope user/.test(all[0].command!) && all.every((s) => !/^\.(cursor|vscode)\/|^\.mcp\.json$/.test(s.file)) && snippets.every((s) => !s.config.includes(TOKEN) && !(s.command ?? "").includes(TOKEN)), "a snippet for Claude Code, Codex, Cursor and VS Code; none carries the token");
   for (const sn of snippets) for (const form of ["command", "config"] as const) {
     if (form === "command" && !sn.command) continue;
     const label = `${sn.label} ${form === "command" ? "command" : sn.file}`, server = serverOf(sn, form);
@@ -84,11 +84,21 @@ try {
   }
   // the plug-in (Claude Code and Codex): its .mcp.json starts `crew-studio mcp`; the grant file comes from the environment
   const plug = JSON.parse(readFileSync(join(REPO, "plugins/crew-studio/.mcp.json"), "utf8")).mcpServers.studio;
+  ok(J(plug) === J(PLUGIN_SERVER), "the plug-in's .mcp.json is the resolver (nothing on PATH needed)", J(plug));
   const claudeManifest = JSON.parse(readFileSync(join(REPO, "plugins/crew-studio/.claude-plugin/plugin.json"), "utf8")), codexManifest = JSON.parse(readFileSync(join(REPO, "plugins/crew-studio/.codex-plugin/plugin.json"), "utf8"));
   const market = JSON.parse(readFileSync(join(REPO, ".claude-plugin/marketplace.json"), "utf8"));
-  ok(plug.command === "crew-studio" && J(plug.args) === J(["mcp"]) && claudeManifest.name === "crew-studio" && codexManifest.skills === "./skills/" && codexManifest.mcpServers === "./.mcp.json" && market.plugins[0].source === "./plugins/crew-studio",
+  ok(plug.command === "sh" && plug.type === "stdio" && claudeManifest.name === "crew-studio" && codexManifest.skills === "./skills/" && codexManifest.mcpServers === "./.mcp.json" && market.plugins[0].source === "./plugins/crew-studio",
     "the plug-in: Claude Code and Codex manifests, its .mcp.json, the marketplace entry", J({ plug, codexManifest }));
-  const viaEnv = await connectAndUse("the plug-in's server (grant file from CREW_STUDIO_GRANT_FILE)", { command: "bun", args: [join(REPO, "src", "mcp.ts")] }, { CREW_STUDIO_GRANT_FILE: grantFile, CREW_STUDIO_URL: base });
+  // the plug-in tab's export lines, as a shell would set them, start the resolver with no crew-studio on PATH
+  const exported = Object.fromEntries(all.at(-1)!.config.trim().split("\n").map((l) => { const m = /^export (\w+)=(.*)$/.exec(l)!; return [m[1], words(m[2])[0]]; }));
+  ok(exported.CREW_STUDIO_GRANT_FILE === grantFile && exported.CREW_STUDIO_URL === base && exported.CREW_STUDIO_SRC === REPO, "the plug-in tab exports the grant file, Studio's address and where Studio is", J(exported));
+  const noPath = { PATH: "/usr/bin:/bin:" + dirname(process.execPath) };
+  const viaEnv = await connectAndUse("the plug-in's server, from its tab's exports (no crew-studio on PATH)", { command: plug.command, args: plug.args }, { ...noPath, ...exported });
   await viaEnv?.close();
+  // what goes wrong says how to fix it, at once
+  const run = (env: Record<string, string>) => { const r = Bun.spawnSync([plug.command, ...plug.args], { env: { ...noPath, HOME: dir, ...env }, stdin: new TextEncoder().encode('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n') }); return { code: r.exitCode, err: r.stderr.toString() }; };
+  const nowhere = run({}), nogrant = run({ CREW_STUDIO_SRC: REPO });
+  ok(nowhere.code === 127 && /set CREW_STUDIO_BIN/.test(nowhere.err), "no Studio found: exit 127, saying to set CREW_STUDIO_BIN or CREW_STUDIO_SRC", J(nowhere));
+  ok(nogrant.code === 2 && /set CREW_STUDIO_GRANT_FILE/.test(nogrant.err), "no grant: the helper stops at once, saying to set CREW_STUDIO_GRANT_FILE", J(nogrant));
 } finally { stub.stop(true); for (const r of F.E.list()) if (!["failed", "cancelled", "succeeded"].includes(r.status)) { try { await F.E.cancel(r.id); } catch {} } F.H.stop(); }
 end();

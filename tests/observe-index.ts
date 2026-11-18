@@ -37,7 +37,14 @@ ok(STUDIO_TOOLS.every((t) => skill.includes("`" + t.name + "`")), "the skill nam
   const studio = readFileSync(join(root, "plugins/crew-studio/skills/studio/SKILL.md"), "utf8"), ref = readFileSync(join(root, "docs/reference/studio-tools.md"), "utf8");
   const { OBSERVE_TOOLS } = await import("../src/observe/tools");
   ok(/^---\nname: studio\ndescription: .+\n---\n/.test(studio) && IRON_RULES.every((r) => studio.includes(r)) && OBSERVE_TOOLS.every((t) => studio.includes("`" + t + "`") && ref.includes("## `" + t + "`")), "the studio skill carries the iron rules and every read tool; the reference page has a section per tool");
-  ok(!/\| `(settings|peer|terminal)` \| `/.test(studio), "the studio skill lists no never-grantable kind"); }
+  ok(!/\| `(settings|peer|terminal)` \| `/.test(studio), "the studio skill lists no never-grantable kind");
+  // the skill describes the tools a real grant lists: the same names and first sentences, and nothing a grant cannot reach
+  const { createObserve } = await import("../src/observe/tools"), { grantableKinds } = await import("../src/observe/grant-scope");
+  const real = createObserve({ engine: null } as any, { id: "g-00000000", kinds: grantableKinds(), project: null, untrusted: false }).specs;
+  const toolsPart = studio.slice(studio.indexOf("## Tools")), kindsPart = studio.slice(studio.indexOf("## Kinds"), studio.indexOf("## Grant presets"));
+  ok(real.every((t) => toolsPart.includes("`" + t.name + "` ") && toolsPart.includes(t.description.split(". ")[0])) && (toolsPart.match(/^- `/gm) ?? []).length === real.length, "the studio skill's tools are what a grant's tools/list returns, word for word");
+  ok(!/terminal|settings|peer|looking at/i.test(toolsPart + kindsPart), "its tools and kinds say nothing of terminals, settings, peers or the captain's focus");
+  ok(/Under an external CLI grant: What needs the captain now, within this grant/.test(ref), "the reference page says how each tool differs under a grant"); }
 
 // studio_manual {}: the manual's index page, its page list, and the same index as data
 const H = await harness([readFileSync(join(root, "workflows/v2/firstmate-proposal.wf.yaml"), "utf8")]);

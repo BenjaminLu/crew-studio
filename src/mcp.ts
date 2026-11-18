@@ -26,6 +26,8 @@ const URL_ = flag("--url") || process.env.CREW_STUDIO_URL || "http://127.0.0.1:4
 const readToken = (f: string) => { try { return readFileSync(f, "utf8").trim(); } catch { return ""; } };
 // a Studio-owned session hands the token as a 0600 file (CREW_TOOL_TOKEN_FILE), so it is never on a command line; so does a grant
 const TOKEN = GRANT_FILE ? readToken(GRANT_FILE) : process.env.CREW_TOOL_TOKEN_FILE ? readToken(process.env.CREW_TOOL_TOKEN_FILE) : process.env.CREW_TOOL_TOKEN ?? "";
+// no grant file, no token and no socket: a plug-in started without CREW_STUDIO_GRANT_FILE. Say so now, not on tools/list
+if (!GRANT_FILE && !TOKEN && !process.env.CREW_STUDIO_SOCKET) { process.stderr.write("crew-studio mcp: no grant: set CREW_STUDIO_GRANT_FILE to the grant file Studio's board shows (Settings, External CLI grants), or pass --grant-file <path>\n"); process.exit(2); }
 if (GRANT_FILE && !TOKEN) { process.stderr.write(`crew-studio mcp: cannot read the grant file ${GRANT_FILE} (revoked, or never issued)\n`); process.exit(2); }
 const SOCKET = process.env.CREW_STUDIO_SOCKET ?? "";
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");

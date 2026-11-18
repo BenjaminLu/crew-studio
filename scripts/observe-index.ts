@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { firstmateSkill } from "../src/observe/guide";
 import { studioSkill, toolsReference } from "../src/observe/kit";
+import { PLUGIN_SERVER } from "../src/mcp-snippets";
 
 const ROOT = join(import.meta.dir, "..");
 export const SKILL_PATH = join(ROOT, "skills", "firstmate", "SKILL.md");
@@ -14,6 +15,7 @@ export const GENERATED: { path: string; text: () => string }[] = [
   { path: SKILL_PATH, text: firstmateSkill },
   { path: join(ROOT, "plugins", "crew-studio", "skills", "studio", "SKILL.md"), text: studioSkill },
   { path: join(ROOT, "docs", "reference", "studio-tools.md"), text: toolsReference },
+  { path: join(ROOT, "plugins", "crew-studio", ".mcp.json"), text: () => JSON.stringify({ mcpServers: { studio: PLUGIN_SERVER } }, null, 2) + "\n" },
 ];
 if (import.meta.main) {
   if (process.argv.includes("--write")) for (const g of GENERATED) { mkdirSync(dirname(g.path), { recursive: true }); writeFileSync(g.path, g.text()); console.log(`wrote ${g.path}`); }

@@ -51,7 +51,7 @@ try {
     assert.equal(statSync(A.file).mode & 0o777, 0o600, "token file is 0600"); assert.equal(statSync(join(s.data, "grants")).mode & 0o777, 0o700);
     const token = readFileSync(A.file, "utf8").trim(); assert.match(token, /^csg_g-[0-9a-f]{8}_[0-9a-f]{64}$/);
     assert.ok(!readFileSync(join(s.data, "cli-grants.json"), "utf8").includes(token), "the store keeps only a hash"); assert.equal(A.tokenHash, undefined);
-    assert.match(A.claudeMcpAdd, /^claude mcp add studio -- \S+ \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/); assert.ok(!A.claudeMcpAdd.includes(token), "the token is never on the command line");
+    assert.match(A.claudeMcpAdd, /^claude mcp add --scope user studio -- \S+ \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/); assert.ok(!A.claudeMcpAdd.includes(token), "the token is never on the command line");
     const asTool = await post("/api/cli-grants", { project: "sandbox", ttl: "8h" }, { "content-type": "application/json", "x-crew-tool-token": token, origin: s.base, "sec-fetch-site": "same-origin" });
     assert.equal(asTool.status, 403, "a grant token cannot issue a grant");
     const asToolWithPage = await post("/api/cli-grants", { project: "sandbox", ttl: "8h" }, page({ "x-crew-tool-token": token }));
@@ -149,7 +149,7 @@ try {
     assert.equal(never.status, 400); assert.match(never.body.error, /never reads terminal/);
     const r = await post("/api/cli-grants", { scopes: ["observe"], project: "sandbox", observe: { preset: "project" }, ttl: "1h" }, page()); assert.equal(r.status, 200, JSON.stringify(r.body)); const G = r.body.grant;
     assert.deepEqual(G.scopes, ["observe"]); assert.equal(G.observe.untrusted, false);
-    assert.deepEqual(G.snippets.map((x: any) => x.client), ["claude", "codex", "cursor", "vscode"]); assert.equal(G.snippets[0].command, G.claudeMcpAdd);
+    assert.deepEqual(G.snippets.map((x: any) => x.client), ["claude", "codex", "cursor", "vscode", "plugin"]); assert.match(G.snippets[4].config, /export CREW_STUDIO_GRANT_FILE=/); assert.equal(G.snippets[0].command, G.claudeMcpAdd);
     const token = readFileSync(G.file, "utf8").trim(); assert.ok(G.snippets.every((x: any) => x.config.includes(G.file) && !x.config.includes(token)), "every config names the grant file, never the token");
     const listed = await s.api("/api/cli-grants"); assert.deepEqual(listed.body.scopes, ["project", "prs", "observe"]); assert.ok(listed.body.observe.groups.some((g: any) => g.id === "system" && g.kinds.includes("doctor")));
     const c = mcp(G.file);

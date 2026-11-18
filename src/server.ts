@@ -549,7 +549,8 @@ const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants,
 /** the line the board shows to copy: the MCP helper with the grant's token file (and Studio's URL when not the default port) */
 const grantCommand = (file: string) => { const port = server?.port ?? PORT; return helperCommand("mcp", ["--grant-file", file, ...(port !== 4210 ? ["--url", `http://127.0.0.1:${port}`] : [])]); };
 // each client's command and config entry (src/mcp-snippets.ts): Claude Code, Codex, Cursor, VS Code
-const grantView = (g: ReturnType<CliGrants["view"]>) => { if (!g.file) return g; const cmd = grantCommand(g.file), snippets = clientSnippets(cmd);
+const grantView = (g: ReturnType<CliGrants["view"]>) => { if (!g.file) return g; const cmd = grantCommand(g.file), port = server?.port ?? PORT;
+  const snippets = clientSnippets(cmd, { grantFile: g.file, url: port !== 4210 ? `http://127.0.0.1:${port}` : null, home: COMPILED ? { bin: process.execPath } : { src: SRC_ROOT } });
   return { ...g, command: cmd, claudeMcpAdd: snippets[0].command, snippets }; };
 // an agent's question goes to Firstmate first: it answers through studio_answer_agent_question, or escalates to the captain with its reason
 runtime.engine.askFirstmate = (r, node, question, visit, o) => {

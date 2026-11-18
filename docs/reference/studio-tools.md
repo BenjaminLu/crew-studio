@@ -25,6 +25,8 @@ Resources: `studio://{kind}/{id}` reads as `studio_get` does (`resources/read`).
 
 What the captain is looking at and what needs them now: the page, item and dialog in each Studio window (with how long ago; over 10 minutes it is "last seen"), the cards waiting for the captain (most urgent first), the work running with its progress and cost, and what changed in the last hour. Call it first, then studio_get or studio_find; cite the refs you use (task:R-162, card:SC-248, room:PR-0123456789ab-1645, pr:owner/repo#1645, skill:baton@v2).
 
+Under an external CLI grant: What needs the captain now, within this grant: the cards waiting for them (most urgent first), the work running with its progress and cost, and what changed in the last hour. Call it first, then studio_get or studio_find; cite the refs you use.
+
 | Input | Type | Required | |
 | --- | --- | --- | --- |
 | `depth` | string (summary, full) | no | summary (default, about 4 KB) or full (up to 24 KB) |
@@ -38,6 +40,8 @@ Example:
 ## `studio_find`
 
 Search Studio by id or name across every kind: Tasks, cards, review rooms, pull requests, workflows, projects, skills, documents and more (kinds: task, card, room, pr, workflow, project, skill, crew, terminal, artifact, doc, doctor, settings, peer). Returns matching refs with their board pages and resource links; read one with studio_get.
+
+Under an external CLI grant: Search Studio by id or name across every kind: Tasks, cards, review rooms, pull requests, workflows, projects, skills, documents and more (kinds: task, card, room, pr, workflow, project, skill, crew, artifact, doc, doctor). Returns matching refs with their board pages and resource links; read one with studio_get. A grant's kinds are only those it was given, at most: task, card, room, pr, workflow, project, skill, crew, artifact, doc, doctor.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
@@ -54,6 +58,8 @@ Example:
 ## `studio_list`
 
 List one kind of Studio entity with each one's summary: task (Tasks, newest first), card (cards waiting for the captain, most urgent first), room (review rooms), pr (watched pull requests; merged ones until production), workflow, project, skill (versions; a script skill's approval and environment), crew (seats), terminal (state only), artifact, doc, doctor, settings, peer. Filter keys depend on the kind; page with cursor.
+
+Under an external CLI grant: List one kind of Studio entity with each one's summary: task (Tasks, newest first), card (cards waiting for the captain, most urgent first), room (review rooms), pr (watched pull requests; merged ones until production), workflow, project, skill (versions; a script skill's approval and environment), crew (seats), artifact, doc, doctor. Filter keys depend on the kind; page with cursor. A grant's kinds are only those it was given, at most: task, card, room, pr, workflow, project, skill, crew, artifact, doc, doctor.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
@@ -85,7 +91,9 @@ Example:
 
 ## `studio_logs`
 
-Log and progress of one task, room, pr, terminal by ref: a Task's steps (round, model, cost, checks) and events; a room's tutor rounds and Explain-with runs (cost, why each stopped); a pull request's go-live timeline; a terminal's state (its screen only when the captain asked for it this turn). Oldest first; pass since (the cursor it returned, or an ISO time) to read on.
+Log and progress of one task, room, pr, terminal by ref: a Task's steps (round, model, cost, checks) and events; a room's tutor rounds and Explain-with runs (cost, why each stopped); a pull request's go-live timeline; a terminal's state (its screen only when the captain asked for it this turn). Oldest first; pass since (the cursor it returned) to read on.
+
+Under an external CLI grant: Log and progress of one task, room, pr by ref: a Task's steps (round, model, cost, checks) and events; a room's tutor rounds and Explain-with runs (cost, why each stopped); a pull request's go-live timeline. Oldest first; pass since (the cursor it returned) to read on.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |
@@ -101,7 +109,9 @@ Example:
 
 ## `studio_events`
 
-Studio's event stream, oldest first: Tasks that failed, review room rounds that failed, pull requests merged and going live per environment, the captain's notes for the retro, grants used. Pass since (the nextCursor of the last call) to read only what is new; kinds or ref to follow some.
+Studio's event stream, oldest first: Tasks that failed, review room rounds that failed, pull requests merged and going live per environment, the captain's notes for the retro, grants used. Only events about what this session may read. Pass since (the nextCursor of the last call) to read only what is new; kinds or ref to follow some.
+
+Under an external CLI grant: Studio's event stream, oldest first: Tasks that failed, review room rounds that failed, pull requests merged and going live per environment, the captain's notes for the retro. Only events about what this session may read. Pass since (the nextCursor of the last call) to read only what is new; kinds or ref to follow some. A grant's kinds are only those it was given, at most: task, card, room, pr, workflow, project, skill, crew, artifact, doc, doctor.
 
 | Input | Type | Required | |
 | --- | --- | --- | --- |

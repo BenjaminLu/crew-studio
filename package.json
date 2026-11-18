@@ -153,7 +153,7 @@
     "test:own-claude-refresh": "bun tests/own-workflow-claude-refresh.ts && bun tests/own-workflow-claude-refresh-ui.ts",
     "test:crew-visibility": "bun tests/crew-visibility.ts && node tests/crew-visibility-ui.mjs",
     "test:firstmate-card-ux": "bun tests/firstmate-intent-title.ts && bun tests/staffing-judge-defaults.ts && node tests/firstmate-card-ux-ui.mjs",
-    "test:ci:portable": "bun scripts/check-duplicate-imports.ts && bun tests/env-isolation.ts && bun tests/git-config-guard.ts && bun tests/server-lifetime.ts && bun tests/ci-runner.ts && bun tests/cli-grant.ts && bun tests/mcp-sdk-conformance.ts && bun run build",
+    "test:ci:portable": "bun scripts/check-duplicate-imports.ts && bun tests/env-isolation.ts && bun tests/git-config-guard.ts && bun tests/server-lifetime.ts && bun tests/ci-runner.ts && bun tests/cli-grant.ts && bun tests/mcp-sdk-conformance.ts && bun tests/observe-index.ts && bun run build",
     "test:workflow-overview-ui": "OVERVIEW_CAPTURE_GROUP=1 bun tests/workflow-overview-ui.mjs && OVERVIEW_CAPTURE_GROUP=2 bun tests/workflow-overview-ui.mjs",
     "test:onboarding-team": "bun tests/onboarding-team.ts && bun tests/onboarding-team-probe.ts && bun tests/onboarding-team-ui.ts",
     "test:workflow-definition-export": "bun tests/workflow-definition-export.ts && node tests/workflow-definition-export-ui.mjs",
