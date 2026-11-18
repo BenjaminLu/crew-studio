@@ -410,14 +410,19 @@ addEventListener("keydown", (e) => {
 // A tab is its title and one dot: the state of what it shows (waiting first, then working, exited, done). Everything else a
 // tab or a pane once carried as buttons (close, the pane's bar) is a key and an item of the ⋯ menu.
 const RANK = ["waiting", "working", "exited", "done"];
-const stateText = (t) => { const [, l] = STATE[t.state] || STATE.working; return l() + (t.state === "exited" ? (t.signal ? ` ${t.signal}` : t.exitCode != null ? ` ${t.exitCode}` : "") : ""); };
+// "waiting" also covers a shell or an agent idle at its own prompt: only one that asks (a question, a permission menu: its
+// ask, reason "question") gets the ring and the tinted name, so the real "needs you" stands out among idle shells
+const asking = (t) => !!t && t.running && t.state === "waiting" && (!!t.ask || t.reason === "question");
+const stateText = (t) => { if (t.running && t.state === "waiting" && !asking(t)) return T("Idle at its prompt", "在提示字元閒置");
+  const [, l] = STATE[t.state] || STATE.working; return l() + (t.state === "exited" ? (t.signal ? ` ${t.signal}` : t.exitCode != null ? ` ${t.exitCode}` : "") : ""); };
 function tabEls() {
   return TM.lay.tabs.map((x, i) => { const ts = panesOf(x.root).map(termOf).filter(Boolean), ft = termOf(focusPane(x));
     const st = ts.map((t) => (t.running || t.state !== "waiting" ? t.state : "done")).sort((a, b) => RANK.indexOf(a) - RANK.indexOf(b))[0] || "working";
+    const asks = ts.some(asking), mark = st === "waiting" ? (asks ? "waiting" : "idle") : st;
     const says = ts.map((t) => `${t.label} · ${t.project.name} · ${stateText(t)}${t.ask && t.state === "waiting" ? `: ${t.ask}` : ""}`).join("\n");
     return h("div", { class: "wt-tab", role: "tab", "data-term-tab": x.id, "aria-selected": String(i === TM.lay.cur), title: says,
       onclick: () => { TM.lay.cur = i; redo(); }, ondblclick: () => { TM.ui.naming = { tab: x.id }; redo(); } },
-      h("i", { class: `wt-dot ${st}`, "data-term-state": st, role: "img", "aria-label": ts.map(stateText).join(", "), title: ts.map(stateText).join(", ") }), h("span", { class: "wt-tname" }, x.name || ft?.label || "…")); });
+      h("i", { class: `wt-dot ${mark}`, "data-term-state": st, "data-term-asks": asks ? "1" : null, role: "img", "aria-label": ts.map(stateText).join(", "), title: ts.map(stateText).join(", ") }), h("span", { class: "wt-tname" }, x.name || ft?.label || "…")); });
 }
 // more tabs than the strip shows: its right edge fades and says how many are past it
 function tabsOver() {

@@ -221,6 +221,20 @@ try {
       await p.evaluate((id) => { window.__es0 = crewTerminals.mux.es; crewTerminals.mux.es.dispatchEvent(new MessageEvent("gone", { data: JSON.stringify({ id, code: "tooManyViews" }) })); }, id);
       await seen(p.locator(`[data-term-gone="${id}"]`), 3000); return "__es0"; });
   ok(await until(async () => !(await p.locator("[data-term-gone]").count()), 10000), "the pane's notice goes once the stream is open again");
+
+  // "needs you" stands out: a shell idle at its prompt (the server's "waiting") gets a plain dot and no tint; a program that
+  // asks gets the ring and the tinted name
+  const mark = () => p.evaluate(() => { const tab = document.querySelector('.wt-tabs [aria-selected="true"]'), d = tab.querySelector(".wt-dot"), n = tab.querySelector(".wt-tname");
+    return { state: d.dataset.termState, asks: d.dataset.termAsks ?? null, cls: d.className, ring: getComputedStyle(d).boxShadow, name: getComputedStyle(n).color,
+      plain: getComputedStyle(document.querySelector(".wt-tabs .wt-tab:not([aria-selected='true']) .wt-tname") || n).color, human: getComputedStyle(document.documentElement).getPropertyValue("--human").trim(), label: d.getAttribute("aria-label") }; });
+  const idleId = await fresh(() => p.keyboard.press("Meta+KeyT"), true);
+  const idle = await until(async () => { const m = await mark(); return m.state === "waiting" ? m : null; }, 10000);
+  ok(idle && !idle.asks && /\bidle\b/.test(idle.cls) && idle.ring === "none" && /Idle/.test(idle.label), "an idle shell at its prompt: a plain dot, no ring, labelled idle", JSON.stringify(idle));
+  const askId = await fresh(async () => { await p.keyboard.press("Alt+Meta+KeyN"); await seen(p.locator("#termCmd")); await p.locator("#termCmd").fill("printf 'Apply the migration? [y/N] '; read a"); await p.locator("#termCmd").press("Enter"); }, true);
+  const asks = await until(async () => { const m = await mark(); return m.asks === "1" ? m : null; }, 10000);
+  ok(asks && /\bwaiting\b/.test(asks.cls) && asks.ring !== "none" && asks.name !== idle?.name && /Waiting for you/.test(asks.label), "a program that asks: the ring, the tinted name, labelled waiting for you", JSON.stringify(asks));
+  await shot(p, "chrome-idle-vs-asking.png");
+  ok(idleId !== askId, "two different terminals");
   await ctx.close();
 
   // ---------- a Mac in a browser tab: Open in a Studio window; Remote Control's link ----------

@@ -28,7 +28,7 @@ The sidebar has a **Terminals** item (its own icon, right after Firstmate, also 
 The state is on `<body>` and in `PAGE_FOCUS`, outside `#view`, so a `render()` changes nothing.
 
 With a terminal shown, the page is the terminal: one slim strip of tabs (each a title and one mark for its state, the
-panes' most pressing first: working a filled dot, waiting a dot in a ring with the tab's name tinted, exited a hollow ring,
+panes' most pressing first: working a filled dot, a program that asks (its question or permission menu) a dot in a ring with the tab's name tinted, a shell or agent idle at its own prompt a plain grey dot, exited a hollow ring,
 done a check mark, so it reads without the colour; the words are its label and title, each pane's name, state and
 question in the tab's title; more tabs than fit fade out with a +N count) and a **⋯** menu, and
 the tab's panes fill the rest, width and height (at 1440 x 900 the terminal is the window's height less at most 48 px). No
