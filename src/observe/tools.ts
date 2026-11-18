@@ -100,7 +100,7 @@ export function createObserve(s: Sources, grant: GrantView | null = null) {
     try { const e = def.get(s, r.id); return !!e && visible(def, e); } catch { return false; } };
   const fin = (env: Envelope, budget: number) => {
     if (grant && !grant.untrusted) { const { v, cut } = stripWrapped(env.data); env = { ...env, data: { ...(v as Record<string, unknown>), ...(cut ? { externalText: "left out: this grant does not include external text (pull request text, reviewers' comments, models' answers)" } : {}) } }; }
-    return fin(env, budget);
+    return finish(env, budget);
   };
   const get = (a: Record<string, unknown>) => {
     onlyKeys(a, "studio_get", ["ref", "depth"]); const depth = depthOf(a, "studio_get");

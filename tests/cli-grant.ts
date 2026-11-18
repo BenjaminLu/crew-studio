@@ -120,6 +120,55 @@ try {
   await step("every issue, use, refusal and revoke is audited", () => {
     const types = new Set(audit.map((a) => a.type)); for (const t of ["cli_grant_issued", "cli_grant_used", "cli_grant_refused", "cli_grant_revoked", "cli_grant_run"]) assert.ok(types.has(t), t);
   });
+  // ---------- scopes are a set; old records migrate; observe presets; never-grantable kinds; the rolling budget ----------
+  await step("a grant written before scopes were a set reads as that scope, and is written back as a set", () => {
+    const { mkdtempSync } = require("node:fs") as typeof import("node:fs"); const { tmpdir } = require("node:os") as typeof import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "crew-grant-migrate-")), f = join(dir, "cli-grants.json");
+    const old = (id: string, scope?: string) => ({ id, ...(scope ? { scope } : {}), project: scope === "prs" ? "" : "alpha", ttl: "1h", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600_000).toISOString(), lastUsedAt: null, revokedAt: null, revokedBy: null, createdBy: "captain", calls: 0, tokenHash: "0".repeat(64), runs: [] });
+    writeFileSync(f, JSON.stringify([old("g-00000001"), old("g-00000002", "prs"), old("g-00000003", "project")]));
+    const g = new CliGrants(dir), raw = JSON.parse(readFileSync(f, "utf8"));
+    assert.deepEqual(g.list().map((x) => [x.id, x.scopes]).sort(), [["g-00000001", ["project"]], ["g-00000002", ["prs"]], ["g-00000003", ["project"]]]);
+    assert.ok(raw.every((x: any) => Array.isArray(x.scopes) && !("scope" in x)), JSON.stringify(raw));
+    assert.equal(new CliGrants(dir).migrate(), 0, "written once");
+  });
+  await step("an observe grant: presets give kinds; external text off by default; settings, grants, peers, terminals and focus never", () => {
+    const r = grants.issue({ scopes: ["observe"], observe: { preset: "review" }, ttl: "1h" }, "captain").grant;
+    assert.deepEqual(r.scopes, ["observe"]); assert.deepEqual(r.observe, { preset: "review", kinds: ["room"], untrusted: false }); assert.equal(r.project, "");
+    const p = grants.issue({ scopes: ["project", "observe"], project: "alpha", observe: { preset: "project", untrusted: true }, ttl: "1h" }, "captain").grant;
+    assert.deepEqual(p.scopes, ["project", "observe"]); assert.equal(p.observe!.untrusted, true); assert.ok(!p.observe!.kinds.some((k) => ["settings", "terminal", "peer"].includes(k)));
+    for (const k of ["settings", "terminal", "peer", "grant", "focus"]) assert.throws(() => grants.issue({ scopes: ["observe"], observe: { preset: "custom", kinds: ["task", k] }, ttl: "1h" }, "captain"), /never reads/, k);
+    assert.throws(() => grants.issue({ scopes: ["observe"], observe: { preset: "project" }, ttl: "1h" }, "captain"), /choose a project/);
+    assert.throws(() => grants.issue({ scopes: ["nope"], ttl: "1h" } as any, "captain"), /choose what the grant reaches/);
+    assert.throws(() => grants.issue({ scopes: ["project"], project: "alpha", observe: { preset: "review" }, ttl: "1h" }, "captain"), /need the observe scope/);
+    for (const g of [r, p]) grants.revoke(g.id, "captain");
+  });
+  await step("a grant lists only its scopes' tools; a tool outside them is no tool", async () => {
+    const T = createGrantTools({ engine: E, grants, firstmate: () => fm, observe: (v) => ({ specs: [{ name: "studio_get", description: "x", inputSchema: {}, outputSchema: {}, annotations: { readOnlyHint: true } }], call: async (n, a) => ({ called: n, a, kinds: v.kinds, untrusted: v.untrusted }) }) });
+    const o = grants.issue({ scopes: ["observe"], observe: { preset: "review" }, ttl: "1h" }, "captain").grant, full = grants.get(o.id)!;
+    assert.deepEqual(T.list(full).map((t) => t.name), ["studio_get"]);
+    assert.deepEqual(await T.call(full, "studio_get", { ref: "room:x" }), { called: "studio_get", a: { ref: "room:x" }, kinds: ["room"], untrusted: false });
+    assert.match(String(((await T.call(full, "start_run", {})) as any).error), /no such tool/);
+    const both = grants.get(grants.issue({ scopes: ["project", "observe"], project: "alpha", observe: { preset: "project" }, ttl: "1h" }, "captain").grant.id)!;
+    assert.deepEqual(T.list(both).map((t) => t.name), ["list_workflows", "start_run", "run_status", "read_cards", "studio_get"]);
+    for (const g of [o, both]) grants.revoke(g.id, "captain");
+  });
+  await step("each grant has a rolling budget: calls and bytes in the last hour, refused with when it frees up", () => {
+    const keep = { c: process.env.CREW_CLI_GRANT_HOURLY_CALLS, b: process.env.CREW_CLI_GRANT_HOURLY_BYTES };
+    process.env.CREW_CLI_GRANT_HOURLY_CALLS = "3"; process.env.CREW_CLI_GRANT_HOURLY_BYTES = "1000";
+    try {
+      const g = grants.issue({ scopes: ["observe"], observe: { preset: "review" }, ttl: "1h" }, "captain").grant, t = tokenOf(g.id);
+      for (let i = 0; i < 3; i++) assert.ok(grants.use(t, "studio_now").ok);
+      const r = grants.use(t, "studio_now"); assert.ok(!r.ok && r.status === 429 && /hourly budget/.test(r.error) && /frees up from/.test(r.error), JSON.stringify(r));
+      const h = grants.issue({ scopes: ["observe"], observe: { preset: "review" }, ttl: "1h" }, "captain").grant, th = tokenOf(h.id);
+      assert.ok(grants.use(th, "studio_get").ok); grants.charge(h.id, 1200);
+      const rb = grants.use(th, "studio_get"); assert.ok(!rb.ok && rb.status === 429 && /1200 of 1000 bytes/.test(rb.error), JSON.stringify(rb));
+      assert.equal(grants.list().find((x) => x.id === h.id)!.budget.bytes, 1200);
+      // an hour later the window has moved on
+      const f = join(H.data, "cli-grants.json"), all = JSON.parse(readFileSync(f, "utf8")); for (const x of all) if (x.id === g.id) x.usage = x.usage.map((u: any) => ({ ...u, at: u.at - 3601_000 })); writeFileSync(f, JSON.stringify(all));
+      assert.ok(grants.use(t, "studio_now").ok, "the window rolls");
+      for (const x of [g, h]) grants.revoke(x.id, "captain");
+    } finally { for (const [k, v] of [["CREW_CLI_GRANT_HOURLY_CALLS", keep.c], ["CREW_CLI_GRANT_HOURLY_BYTES", keep.b]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+  });
 } finally { for (const r of E.list()) if (!["failed", "cancelled", "succeeded"].includes(r.status)) await E.cancel(r.id); H.stop(); }
 console.log(failed ? "\ncli-grant: FAILED" : "\ncli-grant: all passed");
 process.exit(failed ? 1 : 0);

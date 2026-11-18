@@ -144,6 +144,31 @@ try {
     const r = await s.api("/api/cli-grants"); assert.equal(r.status, 200); const txt = JSON.stringify(r.body);
     assert.ok(!/csg_g-/.test(txt) && !/tokenHash/.test(txt)); assert.deepEqual(r.body.grants.map((g: any) => g.state).sort(), ["expired", "revoked", "revoked"]);
   });
+  await step("an observe grant over MCP: only Studio's read tools, its kinds, resources studio://{kind}/{id}; never a terminal", async () => {
+    const never = await post("/api/cli-grants", { scopes: ["observe"], project: "sandbox", observe: { preset: "custom", kinds: ["task", "terminal"] }, ttl: "1h" }, page());
+    assert.equal(never.status, 400); assert.match(never.body.error, /never reads terminal/);
+    const r = await post("/api/cli-grants", { scopes: ["observe"], project: "sandbox", observe: { preset: "project" }, ttl: "1h" }, page()); assert.equal(r.status, 200, JSON.stringify(r.body)); const G = r.body.grant;
+    assert.deepEqual(G.scopes, ["observe"]); assert.equal(G.observe.untrusted, false);
+    const listed = await s.api("/api/cli-grants"); assert.deepEqual(listed.body.scopes, ["project", "prs", "observe"]); assert.ok(listed.body.observe.groups.some((g: any) => g.id === "system" && g.kinds.includes("doctor")));
+    const c = mcp(G.file);
+    try {
+      const init = await c.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fixture", version: "1" } }); assert.ok(init.result.capabilities.resources, JSON.stringify(init.result.capabilities));
+      const tl = await c.rpc("tools/list"); const names = tl.result.tools.map((t: any) => t.name);
+      assert.deepEqual(names, ["studio_events", "studio_find", "studio_get", "studio_list", "studio_logs", "studio_now"], names.join());
+      const enumOf = tl.result.tools.find((t: any) => t.name === "studio_list").inputSchema.properties.kind.enum;
+      assert.ok(!enumOf.some((k: string) => ["terminal", "settings", "peer"].includes(k)) && enumOf.includes("task"), enumOf.join());
+      const lp = await c.rpc("tools/call", { name: "studio_list", arguments: { kind: "project" } });
+      assert.equal(lp.result.isError, false); assert.deepEqual(lp.result.structuredContent.items.map((x: any) => x.ref), ["project:sandbox"]);
+      assert.ok(lp.result.content.some((x: any) => x.type === "resource_link" && x.uri === "studio://project/sandbox"), JSON.stringify(lp.result.content));
+      const tpl = await c.rpc("resources/templates/list"); assert.equal(tpl.result.resourceTemplates[0].uriTemplate, "studio://{kind}/{id}");
+      const rd = await c.rpc("resources/read", { uri: "studio://project/sandbox" }); const body = JSON.parse(rd.result.contents[0].text);
+      assert.equal(body.ref, "project:sandbox"); assert.equal(rd.result.contents[0].mimeType, "application/json");
+      const term = await c.rpc("resources/read", { uri: "studio://terminal/T-mf3k2a-1b2c3d" }); assert.equal(term.error?.code, -32002, JSON.stringify(term));
+      const tget = await c.tool("studio_get", { ref: "terminal:T-mf3k2a-1b2c3d" }); assert.ok(tget.isError); assert.match(tget.text, /does not read terminal/);
+      for (const n of ["start_run", "prs_list", "studio_manual"]) { const x = await c.tool(n, {}); assert.ok(x.isError, n); }
+      const after = (await s.api("/api/cli-grants")).body.grants.find((g: any) => g.id === G.id); assert.ok(after.budget.calls >= 8 && after.budget.bytes > 0, JSON.stringify(after.budget));
+    } finally { c.close(); await post(`/api/cli-grants/${G.id}/revoke`, {}, page()); }
+  });
   a.close(); b.close();
   await step("the MCP helper refuses a missing grant file", async () => {
     const p = Bun.spawnSync(["bun", "src/mcp.ts", "--grant-file", join(s.data, "grants", "g-00000000")], { cwd: REPO, stdin: "ignore" });

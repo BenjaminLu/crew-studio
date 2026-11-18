@@ -47,6 +47,15 @@
 .bb-grants{display:grid;gap:10px;margin-top:12px}
 .bb-grant-form{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
 .bb-grant-form label{display:grid;gap:2px}
+.bb-grant-scopes{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.bb-grant-pick{display:inline-flex;gap:6px;align-items:center}
+.bb-grant-observe{display:grid;gap:8px;margin:0;padding:10px;border:1px solid var(--border);border-radius:8px;min-width:0}
+.bb-grant-observe legend{padding:0 4px}
+.bb-grant-presets{display:flex;flex-wrap:wrap;gap:6px 14px}
+.bb-grant-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.bb-grant-group{display:grid;gap:4px}
+.bb-grant-group>div{display:flex;flex-wrap:wrap;gap:4px 10px}
+.bb-grant-h{min-width:0}.bb-grant-h>span{overflow-wrap:anywhere}
 .bb-grant-list{display:grid;gap:8px}
 .bb-grant{display:grid;gap:6px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
 .bb-grant.st-revoked,.bb-grant.st-expired{opacity:.7}
