@@ -162,7 +162,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
   
 }
 
-/* ---------- the lesson report (baton's packet, workflows/skills/baton): a teach answer read top to bottom ----------
+/* ---------- the lesson report (baton's packet): a teach answer read top to bottom ----------
    Sections are cards on the room's paper: a numbered heading in a display serif, the points as prose or as findings with
    a tone stripe, and Studio's drawing under them in a figure card. The report scrolls inside the room; the page does not. */
 
@@ -237,7 +237,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 
 .rp-rej { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; text-align: left; width: 100%; }
 
-/* ---------- figures in the room's semantic palette (workflows/skills/diagram-design style guide, mapped to the room's tokens):
+/* ---------- figures in the room's semantic palette (diagram-design's style guide, mapped to the room's tokens):
    accent = this change (1–2 focal), ok = new / ends well, amber = needs attention / a way back, seal = cannot be undone,
    muted = context, outside this change. A figure the tutor draws uses only these as var(--fig-…). */
 :root { --fig-paper: var(--rr-paper); --fig-card: #ffffff; --fig-card-2: #f2efe6; --fig-ink: #2d3142; --fig-muted: #4f5d75; --fig-soft: #7a8399; --fig-rule: rgba(45,49,66,.14); --fig-rule-strong: #bfc0c0;

@@ -42,7 +42,7 @@ export async function observeFixture(o: { now?: number } = {}) {
       verdicts: [{ author: "kai-reviewer", state: "CHANGES_REQUESTED", commit: "b".repeat(40), current: false }] },
     head: "a".repeat(40), base: "c".repeat(40),
     // a room made before the whiteboard was retired: its turns and drawings stay on disk, the view says only that they exist
-    oldBoard: { turns: 2, items: 3 },
+    oldBoard: { turns: 2, items: 3, usd: 0.2 },
     notes: [{ id: "n1", kind: "review", author: "kai-reviewer", body: `Please add a jitter. ${INJECTION}`, at: iso(3600_000), url: null, state: "CHANGES_REQUESTED" }],
   };
   const explain = { selected: { id: "baton", v: 2 }, running: null,
@@ -52,7 +52,7 @@ export async function observeFixture(o: { now?: number } = {}) {
       { n: 3, kind: "generate", skill: { id: "baton", v: 2, name: "baton", sha256: "x" }, status: "stopped", why: "limit", stop: "the run passed its 10-minute safety limit", at: iso(18 * 60_000), ended: iso(8 * 60_000), provider: "claude", model: "fixture-model", rounds: [{}, {}], cost: { usd: 0.61 }, error: null, summary: null, prompt: "Add the retry timeline", decided: "approved", prepare: { state: "done", at: iso(18 * 60_000) }, version: null, head: "a".repeat(40) }],
     versions: [{ n: 1, run: 1, skill: { id: "baton", v: 2, name: "baton" }, at: iso(38 * 60_000), kind: "html", entry: "index.html", summary: `A one-page walkthrough. ${INJECTION}`, prompt: "Keep it to one page for the PM" }] };
   const reviewRoom = {
-    list: () => [{ id: ROOM, kind: "pr", title: `Pull request #1645: ${view.prState.title}`, titleZh: `Pull request #1645：${view.prState.title}`, open: true, running: false, versions: 1, questions: 1, usd: 1.08, oldBoard: view.oldBoard, repository: REPO, zone: "reviewing", updatedAt: iso(8 * 60_000) }],
+    list: () => [{ id: ROOM, kind: "pr", title: `Pull request #1645: ${view.prState.title}`, titleZh: `Pull request #1645：${view.prState.title}`, open: true, running: false, versions: 1, questions: 1, usd: 1.28, oldBoard: view.oldBoard, repository: REPO, zone: "reviewing", updatedAt: iso(8 * 60_000) }],
     view: (id: string, opened = false) => { if (id !== ROOM) throw Object.assign(new Error("No such room"), { code: "not_found" }); if (opened) throw new Error("a read tool opened the room"); return structuredClone(view); },
     explain: { view: (id: string) => { if (id !== ROOM) throw new Error("No such room"); return structuredClone(explain); } },
   };

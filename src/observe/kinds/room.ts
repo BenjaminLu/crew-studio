@@ -21,7 +21,8 @@ function roomData(s: Sources, id: string, full: boolean): Record<string, unknown
   let v: any; try { v = rr.view(id, false); } catch { return null; }
   let x: any = null; try { x = rr.explain?.view?.(id) ?? null; } catch { x = null; }
   const runs: any[] = x?.runs ?? [], asks = runs.filter((r) => r.kind === "ask"), pages = runs.filter((r) => r.kind !== "ask");
-  const cost = round(runs.reduce((n: number, r: any) => n + usd(r.cost), 0));
+  // what the room cost: its runs, and an old whiteboard's turns as their records kept (oldBoard.usd)
+  const cost = round(runs.reduce((n: number, r: any) => n + usd(r.cost), 0) + (typeof v.oldBoard?.usd === "number" ? v.oldBoard.usd : 0));
   return {
     id, kind: v.subject?.kind ?? null, subject: { kind: v.subject?.kind ?? null, url: v.subject?.url ?? null, repository: v.subject?.repository ?? null, number: v.subject?.number ?? null, branch: v.subject?.branch ?? null, task: v.subject?.task ?? null },
     task: v.task ? { id: v.task.id } : null, open: !!v.open, closed: v.closed ?? null, running: x?.running != null ? { run: x.running, kind: (x.runs ?? []).find((r: any) => r.n === x.running)?.kind ?? null } : null, archived: !!v.archived,

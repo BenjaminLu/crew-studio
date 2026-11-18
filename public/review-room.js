@@ -22,7 +22,7 @@ const ic = (n) => sv("svg", { viewBox: "0 0 24 24", class: "rr-ic", "aria-hidden
  *  old whiteboard snapshot, offered as its JSON file */
 const snapRoom = (id, snap, url) => { const old = snap.kind !== "review-room-pages", turns = old ? (snap.view?.turns || []).filter((t) => t.status === "done" || t.status === "interrupted" || t.status === "failed").length : 0;
   return { ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null, oldBoard: old ? { turns, items: (snap.view?.board || []).length } : null,
-    snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, url, room: snap.room || snap.subject?.room || null, pages: old ? null : snap.pages || [], cost: snap.cost || null, integrity: snap.integrity ?? null } }; };
+    snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, url, room: snap.room || snap.subject?.room || null, pages: old ? null : snap.pages || [], cost: snap.cost || null, old: old ? null : snap.oldBoard || null, integrity: snap.integrity ?? null } }; };
 const readLater = new Set();
 async function load(id, open = false) {
   if (RR.loading.has(id)) return; RR.loading.add(id); const was = RR.rooms.get(id)?.running;
@@ -195,10 +195,13 @@ async function setArchived(id, on) { RR.posting.add(`${id}/archive`); rerender()
     if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; if (onList()) readList(); else RR.list.fresh = false; } }
   catch (e) { if (onRoom(id)) RR.err.set(id, e.message); else if (RR.list) RR.list.err = e.message; }
   finally { RR.posting.delete(`${id}/archive`); rerender(); } }
+/** a row's counts as the list reads them: the room's page versions, its questions, an old whiteboard kept */
+const roomCounts = (x) => { const v = Number(x.versions) || 0, q = Number(x.questions) || 0, ob = x.oldBoard?.turns || 0;
+  return [T(`${v} version${v === 1 ? "" : "s"}`, `${v} 個版本`), q ? T(`${q} question${q === 1 ? "" : "s"}`, `${q} 個問題`) : null, ob ? T(`old whiteboard (${ob} turn${ob === 1 ? "" : "s"})`, `舊白板（${ob} 個回合）`) : null].filter(Boolean).join(" · "); };
 const roomRow = (x, mark = (t) => t) => h("li", { "data-room-row": x.id },
   h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, mark(T(x.title, x.titleZh || x.title)))), " ",
   h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("generating", "產生中") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
-  h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`), archiveBtn(x));
+  h("span", { class: "faint", "data-room-counts": "" }, ` · ${roomCounts(x)} · ${String(x.updatedAt || "").slice(0, 16).replace("T", " ")}`), archiveBtn(x));
 /** a zone's rooms under their repositories, by name; rooms with none last. A repository's letter case does not split it */
 function repoGroups(rooms, mark) { const by = new Map(); for (const x of rooms) { const k = String(x.repository || "").toLowerCase(); if (!by.has(k)) by.set(k, { name: x.repository, rooms: [] }); by.get(k).rooms.push(x); }
   return [...by.entries()].sort(([a], [b]) => !a - !b || a.localeCompare(b)).map(([k, g]) => h("div", { class: "rr-repo", "data-room-repo": k },
@@ -251,6 +254,7 @@ function savedPages(r) {
   return h("section", { class: "card x-pad rr-saved", "data-saved-pages": sp.length },
     h("h2", {}, T(`${sp.length} page version${sp.length === 1 ? "" : "s"} saved${usd(r.snapshot.cost)}`, `存了 ${sp.length} 個頁面版本${usd(r.snapshot.cost)}`)),
     Array.isArray(r.snapshot.integrity) && r.snapshot.integrity.length ? h("p", { class: "rr-err", role: "alert", "data-saved-integrity": "bad" }, T("These files changed since they were saved.", "這些檔案存下來之後被改過。")) : null,
+    r.snapshot.old?.turns ? h("p", { class: "faint", "data-saved-oldboard": r.snapshot.old.turns }, T(`The total includes the room's old whiteboard: ${r.snapshot.old.turns} turn${r.snapshot.old.turns === 1 ? "" : "s"}${usd(r.snapshot.old)}.`, `總計含這間審查室的舊白板：${r.snapshot.old.turns} 個回合${usd(r.snapshot.old)}。`)) : null,
     h("ol", { class: "rr-saved-list" }, sp.map((v) => h("li", { "data-saved-page": v.n },
       h("b", {}, `v${v.n}`), " ", v.skill?.id === "studio-baton" ? T("baton (built in)", "baton（內建）") : (v.skill?.name || ""),
       h("span", { class: "faint" }, ` · ${String(v.at || "").slice(0, 16).replace("T", " ")}${v.head ? ` · ${String(v.head).slice(0, 8)}` : ""}${v.model ? ` · ${v.model}` : ""}${usd(v.cost)}`),

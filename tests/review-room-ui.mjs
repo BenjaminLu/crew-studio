@@ -152,8 +152,8 @@ try {
   // ---------- getting back: the sidebar's Review room, its list of rooms, the room's crumb, external links in a new window ----------
   { const { ctx, p } = await open(1440, "en"); await p.setViewportSize({ width: 1440, height: 900 });
     await p.addInitScript(() => { window.__opened = []; window.open = (u, t, f) => { window.__opened.push([u, t, f]); return null; }; });
-    let sc50Turns = 2;
-    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [{ id: "SC-50", kind: "merge", title: "Merge: Add percent", titleZh: "合併：新增 percent", open: true, running: false, turns: sc50Turns, repository: null, zone: "waiting", updatedAt: "2026-10-28T10:00:00Z" }, { id: "PR-0123456789ab-7", kind: "pr", title: "Pull request #7: Shout", open: false, running: false, turns: 1, repository: "fixture/project", zone: "concluded", updatedAt: "2026-10-28T12:00:00Z" }] } }));
+    let sc50Versions = 2;
+    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [{ id: "SC-50", kind: "merge", title: "Merge: Add percent", titleZh: "合併：新增 percent", open: true, running: false, versions: sc50Versions, questions: 1, usd: 0.5, oldBoard: null, repository: null, zone: "waiting", updatedAt: "2026-10-28T10:00:00Z" }, { id: "PR-0123456789ab-7", kind: "pr", title: "Pull request #7: Shout", open: false, running: false, versions: 0, questions: 0, usd: 0, oldBoard: { turns: 2, items: 3 }, repository: "fixture/project", zone: "concluded", updatedAt: "2026-10-28T12:00:00Z" }] } }));
     await p.goto(`${base}/#/board`); await p.waitForFunction(() => S.route?.name === "board");
     const navItem = await p.evaluate(() => { const b = document.querySelector('.nav-item[data-view="room"]'); return b && { inLabs: !!b.closest(".nav-labs"), hidden: b.hidden, text: b.textContent }; });
     ok(navItem && !navItem.inLabs && !navItem.hidden && /Review room/.test(navItem.text), "the sidebar has a Review room item of its own (on the rail too when it is folded)", JSON.stringify(navItem));
@@ -172,9 +172,11 @@ try {
       await p.route(/\/api\/review-room\/SC-50\/archive$/, async (r) => { await held; await r.fulfill({ json: next }); }); await p.route(planned, (r) => r.fulfill({ json: next.view }));
       await p.click('[data-room-restore="SC-50"]'); await p.waitForTimeout(100); await p.evaluate(() => dispatchEvent(new Event("hashchange"))); await p.waitForTimeout(300); release(); await p.waitForSelector('[data-room-archive="SC-50"]'); await p.waitForTimeout(400);
       ok(!arrives.length, "restoring in a room's header starts no paid analysis", JSON.stringify(arrives)); await p.unroute(planned); await p.unroute(/\/api\/review-room\/SC-50\/arrive$/); await p.unroute(/\/api\/review-room\/SC-50\/archive$/); }
-    sc50Turns = 3; await p.goBack(); await p.waitForFunction(() => S.route?.name === "room" && !S.route.arg); const onList = await p.evaluate(() => document.body.dataset.focus ?? null);
-    const fresh = await p.waitForFunction(() => /3 answers/.test(document.querySelector("[data-room-list]")?.textContent || ""), null, { timeout: 5000 }).then(() => true, () => false);
-    ok(fresh, "coming back to the room list reads it again: a room's new answers show", await p.$eval("[data-room-list]", (e) => e.textContent).catch(() => ""));
+    sc50Versions = 3; await p.goBack(); await p.waitForFunction(() => S.route?.name === "room" && !S.route.arg); const onList = await p.evaluate(() => document.body.dataset.focus ?? null);
+    const fresh = await p.waitForFunction(() => /3 versions · 1 question/.test(document.querySelector("[data-room-list]")?.textContent || ""), null, { timeout: 5000 }).then(() => true, () => false);
+    ok(fresh, "coming back to the room list reads it again: a room's new page versions show", await p.$eval("[data-room-list]", (e) => e.textContent).catch(() => ""));
+    const rows = await p.$$eval("[data-room-counts]", (els) => els.map((e) => e.textContent));
+    ok(rows.length === 2 && /0 versions · old whiteboard \(2 turns\)/.test(rows[1]) && !rows.some((t) => /undefined|NaN/.test(t)), "each row reads the list's own fields (versions, questions, an old whiteboard): never undefined", JSON.stringify(rows));
     await p.goBack(); await p.waitForFunction(() => S.route?.name === "board"); const onBoard = await p.evaluate(() => document.body.dataset.focus ?? null);
     ok(onList === null && onBoard === null, "the browser's back walks Studio's own pages: room → the room list → the board, and focus ends with the room", JSON.stringify({ onList, onBoard }));
     await p.evaluate(() => { location.hash = "#/room/SC-50"; }); await p.waitForSelector("[data-explain-room]");

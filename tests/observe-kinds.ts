@@ -86,7 +86,7 @@ try {
   { const lg: any = await O.call("studio_logs", { ref: `room:${ROOM}` });
     const last = lg.data.explain.at(-1);
     ok(last.cost.usd === 0.61 && last.why === "limit" && /10-minute safety limit/.test(last.stop) && lg.data.events.some((e: any) => e.type === "room_round_failed" && e.data.why === "limit"), "Q7: the last page run cost $0.61 and stopped at its safety limit; the log has the failed round", J(lg.data.explain));
-    ok(J(lg.data.explain.map((r: any) => [r.n, r.kind])) === J([[1, "generate"], [2, "ask"], [3, "generate"]]) && lg.data.cost.usd === 1.08 && !("turns" in lg.data) && J(Object.keys(lg.data).sort()) === J(["cost", "events", "explain", "more"]),
+    ok(J(lg.data.explain.map((r: any) => [r.n, r.kind])) === J([[1, "generate"], [2, "ask"], [3, "generate"]]) && lg.data.cost.usd === 1.28 && !("turns" in lg.data) && J(Object.keys(lg.data).sort()) === J(["cost", "events", "explain", "more"]),
       "a room's log is its runs, a page or a question, oldest first, its events and what it all cost: no tutor turns", J(Object.keys(lg.data)));
     ok(!!lg.nextCursor && Number.isFinite(Date.parse(lg.nextCursor)), "studio_logs returns a cursor to read on (a room's: a time)", String(lg.nextCursor));
     const seqOnTime = await failOf(() => O.call("studio_logs", { ref: `room:${ROOM}`, since: "seq:3" }));

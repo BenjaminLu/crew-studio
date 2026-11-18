@@ -29,6 +29,10 @@ import { PROVIDERS as CREW_PROVIDERS } from "./crew";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { installExplainer } from "./review-explain";
 import { OperatingRules, jobInstructions } from "../operating-rules";
+/** Why an old tutor turn did not end done, as the short code its room_round_failed event carries (the retro still reads old
+ *  events: the explainer's runs carry their own `why`). From Studio's own words for the ending, else "failed". */
+export const turnWhy = (error: unknown): string => { const e = String(error ?? "");
+  return /^Studio refused the lesson/.test(e) ? "lesson-refused" : /tutor ended without an answer/.test(e) ? "no-answer" : /no result within|timed? ?out/i.test(e) ? "timeout" : /cancel/i.test(e) ? "cancelled" : "failed"; };
 export function parseDirUrl(u: unknown): { repository: string; rest: string[] } | null {
   const m = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})(?:\/tree\/([^?#\s]{1,600}))?\/?$/.exec(String(u ?? "").trim());
   if (!m || m[2] === "." || m[2] === ".." || m[2].endsWith(".git")) return null;
@@ -619,9 +623,16 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     if (!pages.length) throw refuse("Nothing to save yet: the room has no page / 還沒有可以存的頁面", "empty");
     const view: any = api.view(k.id), dir = mkdtempSync(join(tmpdir(), "crew-room-snap-"));
     try {
-      for (const v of pages) for (const f of v.files) { try { const to = join(dir, "pages", `v${v.n}`, f.path); mkdirSync(dirname(to), { recursive: true }); copyFileSync(join(v.dir, f.path), to); } catch {} }
-      const usd = pages.reduce((n, v) => n + (typeof v.run?.cost?.usd === "number" ? v.run.cost.usd : 0), 0), savedAt = new Date().toISOString();
-      const snap = { schema: 2, kind: "review-room-pages", room: k.id, savedAt, reason, cost: { usd: Math.round(usd * 10000) / 10000 },
+      // every file of every version, checked against the hash it was kept with: a file missing or changed fails the save (a
+      // manifest never lists a page it does not hold)
+      for (const v of pages) for (const f of v.files) { const from = join(v.dir, f.path), to = join(dir, "pages", `v${v.n}`, f.path);
+        let bytes: Buffer; try { bytes = readFileSync(from); } catch { throw refuse(`v${v.n}'s ${f.path} is missing: nothing was saved / v${v.n} 的 ${f.path} 不見了：沒有存任何東西`, "integrity"); }
+        if (f.sha256 && sha(bytes as any) !== f.sha256) throw refuse(`v${v.n}'s ${f.path} changed since it was made: nothing was saved / v${v.n} 的 ${f.path} 產生後被改過：沒有存任何東西`, "integrity");
+        mkdirSync(dirname(to), { recursive: true }); writeFileSync(to, bytes); }
+      // the total: the pages' runs, plus an old whiteboard's turns; none when any page's cost is unknown
+      const known = pages.every((v) => typeof v.run?.cost?.usd === "number"), ob = oldBoard(room);
+      const usd = known ? round4(pages.reduce((n, v) => n + v.run!.cost.usd, 0) + (ob?.usd ?? 0)) : null, savedAt = new Date().toISOString();
+      const snap = { schema: 2, kind: "review-room-pages", room: k.id, savedAt, reason, cost: { usd }, oldBoard: ob,
         subject: { kind: k.kind, room: k.id, repository: room?.subject?.repository ?? null, number: room?.subject?.number ?? (view.pr?.id ?? null), url: room?.subject?.url ?? view.pr?.url ?? null, head: room?.head ?? view.head ?? null, title: view.card?.title ?? null },
         pages: pages.map((v) => ({ n: v.n, skill: v.skill, at: v.at, entry: `pages/v${v.n}/${v.entry}`, kind: v.kind, summary: v.summary, prompt: v.prompt ?? null, head: v.run?.head ?? null, provider: v.run?.provider ?? null, model: v.run?.model ?? null, cost: v.run?.cost ?? null })),
         view: { card: view.card, subject: view.subject, task: view.task, pr: view.pr, head: view.head, base: view.base, dir: view.dir ?? null, open: false, closed: { en: "Saved in the Library: its pages, read only.", zh: "存在成品庫：它的頁面，唯讀。" } } };
@@ -643,7 +654,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     room.finished.tried = true; save(k, room);
     void queueSave(k.id, () => snapshot(api, k, room.finished!.reason, true)).catch((e: any) => { const r2 = load(k); if (r2?.finished) { r2.finished.error = String(e?.message ?? e).slice(0, 300); save(k, r2); } }); } catch {} };
   /** a room's old whiteboard, as counts (the page offers its record as a file): never its text */
-  const oldBoard = (r: Room | null) => { const turns = (r?.turns ?? []).filter((t: any) => !t?.studio && t?.status && t.status !== "running").length, items = (r?.board ?? []).length; return turns || items ? { turns, items } : null; };
+  /** a room's old whiteboard, as counts and what it cost (its turns and its translations, as their records kept): never its text */
+  const oldBoard = (r: Room | null) => { const ts = (r?.turns ?? []).filter((t: any) => !t?.studio && t?.status && t.status !== "running"), items = (r?.board ?? []).length;
+    const usd = round4((r?.turns ?? []).reduce((n: number, t: any) => n + (typeof t?.cost?.usd === "number" ? t.cost.usd : 0), 0) + (typeof r?.translating?.cost?.usd === "number" ? r.translating.cost.usd : 0));
+    return ts.length || items || usd ? { turns: ts.length, items, usd } : null; };
+  const round4 = (n: number) => Math.round(n * 10000) / 10000;
+  /** a room's cost: its explainer's runs and an old whiteboard's turns */
+  const costOf = (id: string, r: Room | null) => round4((explainer.brief(id)?.usd ?? 0) + (oldBoard(r)?.usd ?? 0));
   // ---------- the room list, the zones and the merge card's summary: from the explainer (its versions, its runs) ----------
   /** the room's latest page, while the captain has not opened the room since it came */
   const unread = (k: Key, r: Room | null) => { const at = explainer.brief(k.id)?.latest?.at ?? null; return at && !(r?.read && r.read >= at) ? at : null; };
@@ -682,7 +699,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     /** the summary a merge card shows: the room's pages and what they cost; never readiness, never an answer */
     summary(c: SCard) {
       if (c.kind !== "merge") return null; const b = explainer.brief(c.id);
-      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: b?.usd ?? 0, running: !!b?.running, latest: b?.latest ?? null };
+      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(c.id, (() => { try { return load(keyOf(c.id)); } catch { return null; } })()), running: !!b?.running, latest: b?.latest ?? null };
     },
     /** A Task's entry to the room on its reviewed branch (the Task page): once Studio's review passed at its head, or a room exists. */
     taskEntry(run: any) {
@@ -725,7 +742,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
      *  then the most recent: all of them, since the page searches this list. A room's time is its latest page's or run's */
     list() { const out: any[] = [], push = (id: string, file: string) => { try { const k = keyOf(id), r = load(k); if (!r) return; const st = statSync(file), b = explainer.brief(id);
         const title = k.kind === "merge" ? (k.card?.title?.en ?? id) : k.kind === "branch" ? `Branch ${engine.get(k.run!)?.ctx.branch ?? id}` : k.kind === "dir" ? dirTitle(r).en : `Pull request #${r.subject?.number ?? ""}: ${r.pr?.title ?? ""}`;
-        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : title, open: k.open(), running: !!b?.running, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: b?.usd ?? 0,
+        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : title, open: k.open(), running: !!b?.running, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(id, r),
           oldBoard: oldBoard(r), repository: repositoryOf(k, r), zone: roomZone(zoneFacts(k, r)), updatedAt: b?.updatedAt ?? st.mtime.toISOString() }); } catch {} };
       try { for (const f of readdirSync(prDir)) if (/^PR-[0-9a-f]{12}-\d+\.json$/.test(f)) push(f.slice(0, -5), join(prDir, f)); } catch {}
       try { for (const f of readdirSync(dirDir)) if (/^DIR-[0-9a-f]{12}-[0-9a-f]{12}\.json$/.test(f)) push(f.slice(0, -5), join(dirDir, f)); } catch {}

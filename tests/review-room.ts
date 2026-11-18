@@ -1,3 +1,4 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The review room (docs/units/review-room.md) on a real code-firstmate Task stopped at its merge card, with a scripted stub
 // provider and temporary data: the room belongs to merge cards only; its page (baton's, the default) is a paid run the captain
 // confirms, on the tutor the room adapts to this machine; a sandbox-off grant refuses it; the merge card shows the room's pages
@@ -125,10 +126,20 @@ ok(room.list().find((x: any) => x.id === id)?.versions === 2 && room.list().find
 
 // ---------- the Library: a save keeps the room's pages, byte for byte ----------
 const kept: any = await room.saveToLibrary(id, "captain"), snap: any = room.librarySnapshot(kept.artifact, kept.n);
-const libStore = new (await import("../src/artifacts")).ArtifactStore(data);
+const libStore = new (await import("../src/artifacts")).ArtifactStore(data), saved0 = () => kept.artifact;
 ok(snap.kind === "review-room-pages" && snap.room === id && snap.pages.length === 2 && snap.pages[1].skill.id === "studio-baton" && snap.pages[1].cost?.usd === 0.25 && snap.cost.usd === 0.5 && snap.integrity.length === 0,
   "Save to Library: the room's pages, each with its skill and cost, verified as written", JSON.stringify({ kind: snap.kind, pages: snap.pages?.length, cost: snap.cost, integrity: snap.integrity }));
 ok(readFileSync(libStore.file(kept.artifact, kept.n, "pages/v2/index.html")!, "utf8") === PAGE(2) && !libStore.file(kept.artifact, kept.n, "pages/v2/.baton/packet.json"), "each version's files are kept as they were (its .baton/ workspace was never part of it)");
+
+{ const st = join(E.rdir(r.id), "review-room", `${id}-explain`, "state.json"), keep = readFileSync(st, "utf8"), x = JSON.parse(keep);
+  delete x.runs.find((q: any) => q.n === x.versions[0].run).cost; writeFileSync(st, JSON.stringify(x));
+  const { installReviewRoom } = await import("../src/domain/review-room"), other = installReviewRoom(E, { dataDir: data });
+  const u: any = await other.saveToLibrary(id, "captain"), us: any = other.librarySnapshot(u.artifact, u.n);
+  ok(us.cost.usd === null && us.pages[0].cost === null && us.pages[1].cost?.usd === 0.25, "a version whose cost is unknown: the save shows no total (never a partial sum)", JSON.stringify(us.cost));
+  writeFileSync(st, keep); const page = join(E.rdir(r.id), "review-room", `${id}-explain`, "v1", "index.html"), html = readFileSync(page, "utf8"); writeFileSync(page, html + "<!-- changed -->");
+  const third = installReviewRoom(E, { dataDir: data }), before = libStore.versions(saved0()).length; let bad: any = null; try { await third.saveToLibrary(id, "captain"); } catch (e) { bad = e; }
+  ok(bad?.code === "integrity" && /v1's index\.html changed/.test(bad.message) && libStore.versions(saved0()).length === before, "a page file changed since it was made fails the save: nothing is kept, nothing listed that the save does not hold", bad?.message);
+  writeFileSync(page, html); }
 
 // ---------- the merge card and readiness untouched; nothing to GitHub; the worktree untouched ----------
 const after = E.cards.view(E.cards.get(id)!);
@@ -144,12 +155,14 @@ await until(() => (room.view(id) as any).library?.versions?.length >= 2, 10000).
 { const vr: any = E.reviewRoom!.view(id); ok(vr.library?.versions?.length >= 2, "answering the merge card saves the room's pages to the Library once more (Studio's own save)", JSON.stringify(vr.library)); }
 // ---------- a room from before: its whiteboard stays on disk as it was, read by nothing, offered whole as a file ----------
 { const f = join(E.rdir(r.id), "review-room", `${id}.json`), rec = JSON.parse(readFileSync(f, "utf8"));
-  rec.turns = [{ n: 1, action: "teach", by: "captain", status: "done", text: "teach me", answer: "## Overview", scenes: [{ n: 1, title: "s1" }] }, { n: 2, action: "how", by: "captain", status: "running", text: "how?" }];
-  rec.board = [{ id: "B1-1", turn: 1, type: "svg", title: "flow" }]; rec.lesson = { threads: [{ n: 1, state: "open" }] }; rec.translations = { 1: { en: { answer: "x" } } };
+  rec.turns = [{ n: 1, action: "teach", by: "captain", status: "done", text: "teach me", answer: "## Overview", scenes: [{ n: 1, title: "s1" }], cost: { usd: 0.3 } }, { n: 2, action: "how", by: "captain", status: "running", text: "how?" }];
+  rec.board = [{ id: "B1-1", turn: 1, type: "svg", title: "flow" }]; rec.lesson = { threads: [{ n: 1, state: "open" }] }; rec.translations = { 1: { en: { answer: "x" } } }; rec.translating = { lang: "en", status: "done", at: "t", cost: { usd: 0.05 } };
   const text = JSON.stringify(rec); writeFileSync(f, text);
   const { installReviewRoom } = await import("../src/domain/review-room");
   const fresh = installReviewRoom(E, { dataDir: data }), ov: any = fresh.view(id), ex: any = fresh.exportRoom(id);
-  ok(JSON.stringify(ov.oldBoard) === JSON.stringify({ turns: 1, items: 1 }) && !("turns" in ov) && !("board" in ov), "an old room: the view says only how many finished turns and board items it kept", JSON.stringify(ov.oldBoard));
+  ok(JSON.stringify(ov.oldBoard) === JSON.stringify({ turns: 1, items: 1, usd: 0.35 }) && !("turns" in ov) && !("board" in ov), "an old room: the view says only how many finished turns and board items it kept, and what its turns and translation cost", JSON.stringify(ov.oldBoard));
+  const row: any = fresh.list().find((x: any) => x.id === id), sm: any = fresh.summary(E.cards.get(id)!), oldSnap: any = await fresh.saveToLibrary(id, "captain"), os: any = fresh.librarySnapshot(oldSnap.artifact, oldSnap.n);
+  ok(row.usd === 0.85 && sm.usd === 0.85 && os.cost.usd === 0.85 && os.oldBoard?.usd === 0.35, "the old whiteboard's cost still counts: the room list, the merge card and a Library save add it to the pages' ($0.50 + $0.35)", JSON.stringify({ row: row.usd, card: sm.usd, lib: os.cost, old: os.oldBoard }));
   ok(JSON.stringify(ex.record.turns) === JSON.stringify(rec.turns) && JSON.stringify(ex.record.board) === JSON.stringify(rec.board) && ex.record.lesson.threads.length === 1, "its record exports exactly as kept: turns, board, lesson and translations");
   fresh.view(id, true); await fresh.settle(id);
   const disk = JSON.parse(readFileSync(f, "utf8"));

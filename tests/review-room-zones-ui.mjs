@@ -42,6 +42,7 @@ const search = async (p, q) => { await p.fill("[data-room-search]", q); await p.
 try {
   { const { p, ctx } = await open("en", 1440);
     ok(JSON.stringify(await p.$$eval("[data-room-zone]", (els) => els.map((e) => e.dataset.roomZone))) === '["waiting","reviewing","concluded","archived"]', "four zones, in order");
+    { const counts = await p.$$eval("[data-room-counts]", (els) => els.map((e) => e.textContent)); ok(counts.length >= 5 && !counts.some((t) => /undefined|NaN/.test(t)) && counts.some((t) => /1 version/.test(t)), "each row's counts come from the real server's list (versions, questions): never undefined", JSON.stringify(counts)); }
     ok(await zoneOf(p, waiting) === "waiting" && await zoneOf(p, reviewing) === "reviewing" && await zoneOf(p, merged) === "concluded" && await zoneOf(p, archived) === "archived", "each room is in its zone: a merged one in 已結論, not 封存");
     const repos = await p.$$eval('[data-room-zone="waiting"] [data-room-repo]', (els) => els.map((e) => [e.dataset.roomRepo, e.querySelector("h4").textContent, e.querySelectorAll("li").length]));
     ok(JSON.stringify(repos) === '[["acme/api","acme/api",1],["acme/web","acme/web",1]]', "inside a zone, rooms are grouped by repository", JSON.stringify(repos));

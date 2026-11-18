@@ -83,8 +83,8 @@ ok(zone(closed) === "concluded", "a closed pull request is concluded even with n
 ok(zone(leftRunning) === "concluded" && row(leftRunning)?.running === false, "a run left running by a Studio that stopped is not in progress: the merged room is concluded, not in review", JSON.stringify(row(leftRunning)));
 ok(zone(stalePr) === "waiting", "GitHub shows newer commits Studio could not fetch: they wait for the captain all the same", zone(stalePr));
 ok(zone(reopened) === "reviewing", "a pull request reopened on GitHub leaves 已結論: its state decides, not the old `finished` mark", zone(reopened));
-ok(zone(oldBoardOnly) === "waiting" && JSON.stringify(row(oldBoardOnly)?.oldBoard) === JSON.stringify({ turns: 1, items: 1 }) && row(oldBoardOnly)?.versions === 0,
-  "an old whiteboard's finished turns are not a page: the room waits, and the list says only that the old board exists", JSON.stringify(row(oldBoardOnly)));
+ok(zone(oldBoardOnly) === "waiting" && JSON.stringify(row(oldBoardOnly)?.oldBoard) === JSON.stringify({ turns: 1, items: 1, usd: 0 }) && row(oldBoardOnly)?.versions === 0,
+  "an old whiteboard's finished turns are not a page: the room waits, and the list says only that the old board exists (and what it cost: nothing recorded here)", JSON.stringify(row(oldBoardOnly)));
 ok(row(blank)?.oldBoard === null && row(unreadPr)?.versions === 1 && row(failedAsk)?.questions === 1 && row(failedAsk)?.usd === 0.2, "a row counts the room's pages, its questions and what its runs cost", JSON.stringify(row(failedAsk)));
 ok(row(unreadPr)?.updatedAt === gen(1).ended && row(failed)?.updatedAt === "2026-11-01T10:06:00.000Z", "a room's time on the list is its explainer's last ended run, a failed one included", JSON.stringify([row(unreadPr)?.updatedAt, row(failed)?.updatedAt]));
 { const mtime = statSync(join(prDir, `${blank}.json`)).mtime.toISOString(); ok(row(blank)?.updatedAt === mtime, "with no run, a room's time is its file's", JSON.stringify([row(blank)?.updatedAt, mtime])); }
