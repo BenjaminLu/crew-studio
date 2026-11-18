@@ -82,6 +82,13 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   // the last lines of a screen, as studio_logs gives them when the captain asks (src/observe/kinds/terminal.ts): plain text
   const t = svc.tail(v.id, 3);
   ok(!!t && t.at(-1)?.trim() === "hello" && t.every((l) => !/\x1b/.test(l)) && svc.tail("T-none", 3) === null, "tail(): a screen's last non-empty lines, no escape codes; none for an unknown terminal", JSON.stringify(t));
+  // a full-screen program (it moves the cursor) reads as the screen it leaves, redacted after it is drawn
+  { const secret = "ghp_" + "Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8";
+    const tv = await svc.create({ project: "p", command: `printf '\033[?1049h\033[2J\033[1;1Hstatus: ok\033[3;5Hkey ${secret} end\033[5;1Hrow five\033[1;9HOK'; sleep 1` });
+    await until(() => (svc.tail(tv.id, 10) ?? []).some((l) => l.includes("row five")), 5000);
+    const sc = svc.tail(tv.id, 10) ?? [];
+    ok(sc[0] === "status: OK" && sc[1] === "    key [credential removed] end" && sc[2] === "row five" && !sc.join("\n").includes(secret), "tail(): a full-screen program reads as its screen (rows, cursor moves), the secret it drew removed", JSON.stringify(sc));
+    await until(() => svc.get(tv.id)?.running === false, 5000); }
   rmSync(d, { recursive: true, force: true });
 }
 
