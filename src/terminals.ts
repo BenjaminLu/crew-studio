@@ -30,7 +30,7 @@ import { REDACTED, SECRET_VALUE, redactText } from "./secure";
  *  the first line whole only runs into the next line's first word, and the first line's own redaction already took it. */
 function spansSecret(a: string, b: string, cut: boolean): boolean {
   const joined = a + b;
-  for (const re of SECRET_VALUE) {
+  for (const re of [...SECRET_VALUE, REMOTE_URL]) {
     const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
     for (const m of joined.matchAll(g)) { const at = m.index ?? 0; if (!(at < a.length && at + m[0].length > a.length)) continue;
       if (cut) return true; const own = new RegExp(`^(?:${re.source})$`, re.flags.replace("g", "")); if (!own.test(a.slice(at))) return true; }
@@ -296,6 +296,10 @@ export class Terminals {
     let rows: string[];
     if (hit && hit.key === key) rows = hit.rows;
     else { if (this.screens.size > 64) this.screens.clear(); const raw = t.redactor.scrub(new TextDecoder().decode(bytes).slice(-SCREEN_INPUT_MAX)); rows = (await readScreen(raw, cols, rows0)).lines; this.screens.set(id, { key, rows }); }
+    // a link the screen shows: a box whose rows a program placed with cursor moves (ratatui, Codex) joins its rows only
+    // here, so the link is read from the drawn rows too, learned whole, and removed from them through the box's borders
+    const shown = findLink(rows.join("\n") + "\n", cols, true); if (shown) this.learnLink(t, shown);
+    if (t.redactor.known) rows = t.redactor.scrub(rows.join("\n")).split("\n");
     const lines = rows.map((l) => redactText(l));
     const edgeR = (l: string) => l.replace(/[\s│|║┃]+$/, ""), edgeL = (l: string) => l.replace(/^[\s│|║┃]+/, "");
     for (let k = 0; k + 1 < rows.length; k++) {
@@ -367,9 +371,10 @@ export class Terminals {
     clearTimeout(t.timer); t.timer = setTimeout(() => this.evaluate(t), this.idleMs + 50);
   }
   /** The newest Remote Control link in the recent output; one still at the very end counts once the output pauses. */
-  private scanLink(t: Term, trailing: boolean) {
-    const u = findLink(t.rawTail, t.cols, trailing);
-    if (!u || u === t.remoteUrl || t.seen.has(u)) return;
+  private scanLink(t: Term, trailing: boolean) { const u = findLink(t.rawTail, t.cols, trailing); if (u) this.learnLink(t, u); }
+  /** A Remote Control link read from the terminal's output (its raw stream, or the screen Terminals.tail drew). */
+  private learnLink(t: Term, u: string) {
+    if (u === t.remoteUrl || t.seen.has(u)) return;
     // any terminal that prints a Remote Control link (a shell running claude, Remote Control turned on by hand): its link is
     // redacted from then on and a phone gets no more of its output; only the Claude preset shows the link on the Mac's page
     t.seen.add(u); t.linkSeen = true; t.redactor.know(u); if (t.ask) t.ask = this.scrubAsk(t, t.ask);
