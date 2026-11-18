@@ -21,13 +21,17 @@ const ic = (n) => sv("svg", { viewBox: "0 0 24 24", class: "rr-ic", "aria-hidden
 /** a saved room in the Library (#/room/lib:<artifact>[@n]): an old whiteboard snapshot, offered as its JSON file */
 const snapRoom = (id, snap, url) => ({ ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null,
   snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, url } });
+const readLater = new Set();
 async function load(id, open = false) {
-  if (RR.loading.has(id)) return; RR.loading.add(id);
+  if (RR.loading.has(id)) return; RR.loading.add(id); const was = RR.rooms.get(id)?.running;
   try { const lib = /^lib:(room-[a-z0-9-]+)(?:@(\d+))?$/.exec(id), u = lib ? `/api/review-room/library/${lib[1]}${lib[2] ? `?v=${lib[2]}` : ""}` : null;
     RR.rooms.set(id, lib ? snapRoom(id, await api(u), u) : await api(`/api/review-room/${enc(id)}${open ? "?open=1" : ""}`)); RR.err.delete(id); }
   catch (e) { if (!RR.rooms.has(id)) RR.rooms.set(id, { error: e.message }); else RR.err.set(id, e.message); }
-  finally { RR.loading.delete(id); redraw(id); schedule(); }
+  finally { RR.loading.delete(id); redraw(id); schedule();
+    // a run that ends with the captain on the room is read as an arrival (it does not wait for the room list); hidden, once back
+    if (was != null && RR.rooms.get(id)?.running == null && onRoom(id)) { if (document.hidden) readLater.add(id); else load(id, true); } }
 }
+document.addEventListener("visibilitychange", () => { const id = S.route?.name === "room" ? S.route.arg : null; if (!document.hidden && id && readLater.delete(id)) load(id, true); });
 function schedule() { clearTimeout(RR.poll); RR.poll = null; const id = S.route?.name === "room" ? S.route.arg : null, r = id && RR.rooms.get(id); if (r && r.running != null && !r.snapshot) RR.poll = setTimeout(() => { RR.poll = null; load(id); }, 2500); }
 window.liveListen?.("review-room", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (d.card && RR.rooms.has(d.card)) load(d.card);
   if (RR.list && onList()) { clearTimeout(RR.listPoll); RR.listPoll = setTimeout(() => { if (onList()) readList(); }, 800); } });
@@ -269,7 +273,7 @@ addEventListener("hashchange", () => { if (RR.list && !(S.route?.name === "room"
 // The splitter between the room's main area and its right-hand pane (the board's conversation, the skill's chat): dragged, or
 // focused and moved with the arrow keys (Shift for bigger steps, Home and End for the bounds); a double-click or Enter goes back
 // to the default width. The width is kept per view on this browser (localStorage) as a property on the page's root, so a redraw
-// of the room keeps it; the CSS clamps it again to the room's width (review-room.css .rr-split, review-board.css --rb-pane).
+// of the room keeps it; the CSS clamps it again to the room's width (review-room.css .rr-split).
 // The separator's value is the main area's width (the panel before it): ← lowers it and widens the pane.
 (() => {
 const MIN = { explain: 320 }, MAX = 720, STEP = 16, root = document.documentElement;

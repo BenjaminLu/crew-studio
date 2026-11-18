@@ -1,7 +1,6 @@
-/* The review room (public/review-room.js). A room is the whole screen (focus mode: the sidebar folds to its rail, Firstmate
-   is a sheet over the room): the header, the board (public/review-board.css: every scene a region on a canvas the camera
-   owns, the play bar floating on it) and the dock, one viewport tall. Nothing in the room grows the page. The transcript
-   and a citation open over the room. */
+/* The review room (public/review-room.js, public/review-explain.js). A room is the whole screen (focus mode: the sidebar folds
+   to its rail, Firstmate is a sheet over the room): the header, a line when the room has an old whiteboard, then the skill's
+   page with its one-line toolbar and the room's Q&A beside it, one viewport tall. Nothing in the room grows the page. */
 
 /* ---------- the room's paper: tokens (light, then dark under the system preference and under the dark theme) ---------- */
 :root {

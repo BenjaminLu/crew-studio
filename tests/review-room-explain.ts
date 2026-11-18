@@ -80,7 +80,7 @@ const waitRun = async (n: number, ms = 60000) => { await until(() => { const v =
 let v: any = X.view(id);
 ok(v.selected?.id === "studio-baton" && v.tutor === false && v.auto?.due === true && v.auto.skill === "studio-baton" && v.skills.some((s: any) => s.id === "studio-baton" && s.name === "baton (built in)" && s.source === "builtin") && v.skills.some((s: any) => s.id === "baton" && s.own) && v.skills.some((s: any) => s.id === lib.id && s.name === "walkthrough" && /walkthrough of a change/.test(s.description)) && v.versions.length === 0 && v.runs.length === 0, "the picker: baton by default (Studio's default skill, due to start by itself when the room opens), and the captain's library skill listed", JSON.stringify(v.skills));
 v = X.select(id, lib.id); ok(v.selected?.id === lib.id && v.runs.length === 0, "selecting a skill is free: nothing runs");
-v = X.select(id, null); ok(v.selected === null && v.tutor === true && v.auto.due === false && v.auto.why === "picked", "the built-in tutor, picked: nothing starts by itself (unchanged behaviour)");
+v = X.select(id, null); ok(v.selected?.id === "studio-baton" && v.tutor === false && v.auto.due === true, "no pick (an old room once set to the tutor's board, now gone) is explained with the default skill again");
 let e: any = await refused(() => X.select(id, "no-such-skill")); ok(e?.code === "bad_skill", "a skill that is not in the library is refused", e?.message);
 
 // ---------- a generation is paid: the confirmation names the model, the materials, the time and the isolation ----------
@@ -327,10 +327,10 @@ delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
 
 // ---------- baton, the default skill: opening the room starts its generation by itself, once per head ----------
 { const { BATON_ADAPTER } = await import("../src/domain/review-baton");
-  script.length = 0; X.select(id, null);
+  script.length = 0; X.select(id, lib.id);
   const n0 = X.view(id).runs.length;
   let w: any = await X.auto(id, "captain");
-  ok(w.runs.length === n0 && w.running == null && w.auto.why === "picked", "the captain picked the tutor for this room: opening it starts nothing", JSON.stringify(w.auto));
+  ok(w.runs.length === n0 && w.running == null && w.auto.why === "picked", "the captain picked another skill for this room: opening it starts nothing by itself", JSON.stringify(w.auto));
   w = X.select(id, "studio-baton"); const head = w.auto.head;
   ok(w.auto.due === true && /^[0-9a-f]{40}$/.test(head) && w.runs.length === n0, "picking baton (the default skill) costs nothing; its generation is due for this head", JSON.stringify(w.auto));
   X.setSettings({ autoRun: false }); ok(X.view(id).auto.due === false && X.view(id).auto.why === "off" && X.view(id).settings.autoRun === false, "the captain can turn starting by itself off");
