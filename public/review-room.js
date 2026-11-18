@@ -20,6 +20,7 @@ const onRoom = (id) => S.route?.name === "room" && S.route.arg === id;
 // selection and its "Ask about this"; it runs once the selection goes (public/review-board.js selHeld)
 const redraw = (id) => { if (!onRoom(id)) return; if (BOARD?.selHeld?.()) { RR.heldRedraw = true; return; } render(); };
 addEventListener("hashchange", () => { // after app.js's own listener: S.route is already the new page
+  if (RR.playing && !onRoom(RR.playing)) stopPlay();
   if (RR.rec && !onRoom(RR.recCard)) try { RR.rec.stop(); } catch {}
 });
 const enc = encodeURIComponent;
@@ -788,7 +789,7 @@ const studioClaim = (c, lang) => (LANG_BASE(lang) === "zh-TW" && c.zh ? { ...c, 
 const missingIn = (r, lang) => (r.turns || []).filter((t) => t.status === "done" && !t.studio && !turnIn(r, t, lang)).map((t) => t.n);
 /** switch the room's language: at once when every answer is in it; otherwise a translation turn, confirmed once per room */
 async function switchLang(r, lang) {
-  const card = r.card.id; RR.lang.set(card, lang); leaveStep();
+  const card = r.card.id; RR.lang.set(card, lang); stopPlay();
   const missing = missingIn(r, lang);
   if (!missing.length || !r.open || r.snapshot) { rerender(); return; }
   if (!r.translate?.confirmed && !RR.trConfirm.has(card)) { RR.confirm.set(card, { action: "translate", lang }); rerender(); return; }
@@ -939,9 +940,9 @@ function visualAt(r, sc, k) {
 const CODEISH = new Set(["code", "diff", "compare", "snippet"]);
 const isCode = (it) => !!it && CODEISH.has(it.type);
 /** the step a card is on: the point being read while it plays or is stepped through, else the step the captain picked (null: the whole card) */
-const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? null);
+const stepOf = (card, sc, k) => (k < sc.points.length ? (k > 0 ? k - 1 : null) : RR.step.get(`${card}/${sc.key}`) ?? (RR.playing === card && RR.playKey === sc.key && sc.points.length ? sc.points.length - 1 : null));
 /** pick a step: the points up to it shown (as the play bar's dots do), its picture zoomed to what it is about */
-function pickStep(card, sc, m) { markMoved(card); leaveStep(); RR.pick.delete(`${card}/${sc.key}`); RR.explain.delete(card); RR.reveal.set(`${card}/${sc.key}`, m + 1); RR.step.set(`${card}/${sc.key}`, m); rerender(); }
+function pickStep(card, sc, m) { markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.explain.delete(card); RR.reveal.set(`${card}/${sc.key}`, m + 1); RR.step.set(`${card}/${sc.key}`, m); rerender(); }
 const stepBtn = (card, sc, m, cur) => h("button", { type: "button", class: `rr-stepn${cur === m ? " on" : ""}`, "data-step-pick": m + 1, "aria-pressed": String(cur === m), "aria-label": T(`Show step ${m + 1}`, `看第 ${m + 1} 步`), onclick: (e) => { e.stopPropagation(); pickStep(card, sc, m); } }, String(m + 1));
 /** the focus keys of a step, with an edge's two ends: what the illustration zooms to */
 const focusOf = (p) => (Array.isArray(p?.focus) ? p.focus.filter((f) => typeof f === "string" && f).slice(0, 8) : []);
@@ -1048,17 +1049,35 @@ function fallbackVisual(r, sc) {
 /** show a board item: its scene (the board flies there), that picture */
 function showItem(r, id) {
   const card = r.card.id, scenes = scenesOf(r), i = scenes.findIndex((s) => s.visuals.some((b) => b.id === id)); RR.cite.delete(card);
-  if (i >= 0) { leaveStep(); RR.scene.set(card, i); RR.pick.set(`${card}/${scenes[i].key}`, id); }
+  if (i >= 0) { stopPlay(); RR.scene.set(card, i); RR.pick.set(`${card}/${scenes[i].key}`, id); }
   rerender();
 }
-// ---------- stepping: no playback; the captain moves through a scene's points by a dot, the arrows or ← → ----------
-/** leaving a step (another point, scene, language or page): an explanation opened on it closes */
-const leaveStep = () => RR.explain.clear();
+// ---------- playback: captions only, no voice. Each point shows for its reading time, then the next one follows ----------
+/** how long a point's caption stays before the next one: its reading time, at least 2.6 s */
+const readMs = (text) => Math.max(2600, [...text].length * 170);
+function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; RR.playKey = null; }
+/** show one more point of the current scene; while playing, the next one follows when its caption has been read */
+function advance(card) {
+  if (!onRoom(card)) return stopPlay();
+  const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), sc = scenes[sceneState(card, scenes)]; if (!sc) return;
+  const k = revealOf(card, sc); if (k >= sc.points.length || sc.quiz) { stopPlay(); rerender(); return; }
+  RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
+  if (RR.playing !== card) return;
+  RR.timer = setTimeout(() => advance(card), readMs(plain(sc.points[k].text)));
+}
+/** play the scene: from where it stands, or from its start when it is already whole (from: 0 replays it) */
+function play(card, sc, from) {
+  const k = revealOf(card, sc), start = from ?? (k >= sc.points.length ? 0 : Math.max(0, k - 1));
+  // playing takes over from a step picked before (a dot, a number): the step shown is the one being read
+  stopPlay(); RR.playing = card; RR.playKey = sc.key; RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, start);
+  advance(card);
+}
 const curScene = (card) => { const r = RR.rooms.get(card); if (!r) return {}; const scenes = scenesOf(r), i = sceneState(card, scenes); return { r, scenes, i, sc: scenes[i] }; };
-/** one point forward or back (← →, the step bar's arrows): past a scene's last point is the next scene's first */
+const togglePlay = (card) => { const { sc } = curScene(card); if (!sc) return; if (RR.playing === card) { stopPlay(); rerender(); } else if (sc.points.length) play(card, sc); };
+/** one point forward or back (← →, the play bar's arrows): past a scene's last point is the next scene's first */
 function stepPoint(card, dir) {
   markMoved(card);
-  const { scenes, i, sc } = curScene(card); if (!sc) return; leaveStep();
+  const { scenes, i, sc } = curScene(card); if (!sc) return; stopPlay();
   const k = revealOf(card, sc), n = sc.points.length;
   RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`);
   if (dir > 0) { if (k < n) RR.reveal.set(`${card}/${sc.key}`, k + 1); else if (i < scenes.length - 1) { RR.scene.set(card, i + 1); RR.reveal.set(`${card}/${scenes[i + 1].key}`, Math.min(1, scenes[i + 1].points.length)); } }
@@ -1068,7 +1087,7 @@ function stepPoint(card, dir) {
 }
 /** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind a chip instead of pulling the board away */
 const markMoved = (card) => { if (RR.rooms.get(card)?.running != null) RR.moved.add(card); };
-const goScene = (card, n) => { markMoved(card); const { scenes } = curScene(card); if (!scenes?.length) return; leaveStep(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
+const goScene = (card, n) => { markMoved(card); const { scenes } = curScene(card); if (!scenes?.length) return; stopPlay(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
 // ---------- the check on the board: multiple choice, graded by Studio (no model) the moment the captain picks ----------
 const LETTERS = "ABCD";
 async function pickOption(card, q, i, at) {
@@ -1264,7 +1283,7 @@ function sceneLabel(sc) {
  *  how it started (auto-teach), what it cost */
 function sceneHead(r, sc) {
   const card = r.card.id, t = sc.t; if (!t || sc.studio || sc.quiz) return null;
-  const vers = t.versions?.length > 1 ? h("span", { class: "rr-vers", role: "group", "data-versions": t.regenOf ?? t.n, "aria-label": T("Answers to this question", "這一題的回答") }, t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === t.n), title: x.status, onclick: () => { leaveStep(); RR.ver.set(`${card}/${t.regenOf ?? t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null;
+  const vers = t.versions?.length > 1 ? h("span", { class: "rr-vers", role: "group", "data-versions": t.regenOf ?? t.n, "aria-label": T("Answers to this question", "這一題的回答") }, t.versions.map((x) => h("button", { type: "button", class: "rr-ver", "data-version-pick": x.n, "aria-pressed": String(x.n === t.n), title: x.status, onclick: () => { stopPlay(); RR.ver.set(`${card}/${t.regenOf ?? t.n}`, x.n); rerender(); } }, `${x.provider} ${x.model}`))) : null;
   const regen = t.status === "done" && r.open && !r.snapshot && (r.tutors || []).length ? h("button", { type: "button", class: "rr-mini rr-regen", "data-regen": t.n, "aria-expanded": String(RR.regen.get(card) === t.n), onclick: () => { RR.regen.get(card) === t.n ? RR.regen.delete(card) : RR.regen.set(card, t.n); rerender(); } }, T("Regenerate with…", "換一位導師重講")) : null;
   const cost = t.status === "done" && t.cost?.usd != null ? h("span", { class: "faint rr-cost" }, `$${Number(t.cost.usd).toFixed(2)} · ${t.provider} · ${t.model}`) : null, auto = autoNote(r, t), gaps = gapsNote(r, t);
   if (!vers && !regen && !cost && !auto && !gaps) return null;
@@ -1329,19 +1348,26 @@ function sceneCard(r, scenes, j, W) {
         sc.welcome && !answers ? h("p", { class: "faint rr-boardhint", "data-board-empty": "" }, T("Ask below. Each answer becomes a block on this board: a picture (a diagram built up step by step, the app's screenshots before and after, a chart, the code) beside the tutor's points, played one at a time.", "在下方提問。每個回答會在這塊白板上變成一個區塊：一張圖（一步步組起來的圖、改動前後的截圖、圖表、程式碼），旁邊是導師的重點，一個一個播放。")) : null,
         sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null)));
 }
-/** The step bar, floating on the board: a point back, a dot per point, a point on, the scene before and after. No
- *  playback: nothing moves by itself */
+/** The play bar, floating on the board: the caption of the point being read, a point back, a dot per point, a point on,
+ *  play / pause, replay, the scene before and after */
 function playBar(r, scenes, i) {
   const card = r.card.id, sc = scenes[i]; if (!sc) return null;
-  const n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc);
-  // a lesson's chapter is read whole on the board: no bar over it and its question cards
-  if (sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" && k >= n) return null;
-  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); leaveStep(); RR.step.set(`${card}/${sc.key}`, m - 1); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
-  return h("div", { class: "rb-play", "data-playbar": card, role: "group", "aria-label": T("Points and scenes", "重點與場景") },
+  const n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc), running = sc.t?.status === "running";
+  const cur = sc.quiz ? null : sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
+  // a lesson's chapter is read, not played: until it plays the bar is a small pill (play, replay) that leaves the
+  // chapter and its question cards clear
+  const playBtn = h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n || sc.quiz, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play"));
+  const replay = h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay"));
+  if (sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" && RR.playing !== card && k >= n)
+    return h("div", { class: "rb-play mini", "data-playbar": card, role: "group", "aria-label": T("Playback", "播放") }, h("div", { class: "rr-playbar" }, playBtn, replay, h("span", { class: "rb-play-l" }, T("Play this chapter", "播放這一章"))));
+  const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.step.set(`${card}/${sc.key}`, m - 1); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
+  return h("div", { class: "rb-play", "data-playbar": card, role: "group", "aria-label": T("Captions and playback", "字幕與播放") },
+    h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),
     h("div", { class: "rr-playbar" },
       h("button", { type: "button", class: "rr-ibtn", "data-point-prev": "", disabled: i === 0 && k <= 1, onclick: () => stepPoint(card, -1), "aria-label": T("Previous point", "上一點"), title: T("Previous point", "上一點") }, ic("prev")),
       n && !sc.quiz && n <= 24 ? h("div", { class: "rr-dots", role: "group", "aria-label": T("Points", "重點") }, sc.points.map((_, m) => dot(m + 1))) : null,
       h("button", { type: "button", class: "rr-ibtn", "data-point-next": "", disabled: i === scenes.length - 1 && k >= n, onclick: () => stepPoint(card, 1), "aria-label": T(`Next point (${k}/${n})`, `下一點（${k}/${n}）`), title: T("Next point", "下一點") }, ic("next")),
+      playBtn, replay,
       h("span", { class: "rr-scenenav" },
         h("button", { type: "button", class: "rr-mini", "data-scene-prev": "", disabled: i === 0, onclick: () => goScene(card, i - 1), "aria-label": T("Previous scene", "上一個場景") }, "«"),
         h("span", { class: "faint", "data-scene-pos": `${i + 1}/${scenes.length}` }, T(`Scene ${i + 1} of ${scenes.length}`, `場景 ${i + 1} / ${scenes.length}`)),
@@ -1350,13 +1376,13 @@ function playBar(r, scenes, i) {
 /** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind this chip on the board */
 function readyChip(r, scenes) {
   const card = r.card.id; if (!RR.ready.has(card)) return null;
-  return h("button", { type: "button", class: "rr-chip lead rb-ready", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.jump.set(card, key); RR.reveal.set(`${card}/${key}`, Math.min(1, scenes[at].points.length)); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示"));
+  return h("button", { type: "button", class: "rr-chip lead rb-ready", "data-answer-ready": RR.ready.get(card), onclick: () => { const key = RR.ready.get(card), at = scenes.findIndex((x) => x.key === key); RR.ready.delete(card); RR.moved.delete(card); if (at >= 0) { RR.scene.set(card, at); RR.jump.set(card, key); RR.reveal.set(`${card}/${key}`, 0); queueMicrotask(() => play(card, scenes[at])); } rerender(); } }, T("The answer is ready — show it", "回答好了：顯示"));
 }
-/** a point on or back while a scene is being stepped through (→ ← on the board); false when the scene is whole */
+/** a point on or back while a scene is being played or stepped through (→ ← on the board); false when the scene is whole */
 function stepReveal(card, dir) {
   const { sc } = curScene(card); if (!sc || sc.quiz) return false; const k = revealOf(card, sc), n = sc.points.length;
   if (k >= n || (dir < 0 && k <= 1)) return false;
-  markMoved(card); leaveStep(); RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + dir); rerender(); return true;
+  markMoved(card); stopPlay(); RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + dir); rerender(); return true;
 }
 const boardView = (r) => { const scenes = scenesOf(r); return BOARD.view(r, scenes, sceneState(r.card.id, scenes)); };
 // ---------- the prompt bar: quick actions, a question (typed or spoken), the paid-round confirmation ----------
@@ -1379,7 +1405,7 @@ const askTurn = (card, action, text, again) => { if (action === "ask" && !text) 
   const prior = !again && r && action !== "quiz" ? [...(r.turns || [])].reverse().find((t) => !t.studio && t.status === "done" && t.action === action && t.head === r.head && (action !== "ask" || String(t.text).trim() === String(text).trim())) : null;
   RR.confirm.set(card, prior ? { action, text: text || "", existing: prior.n } : { action, text: text || "" }); rerender(); };
 /** go to a turn's scene (its first) */
-const showTurn = (card, n) => { const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), at = scenes.findIndex((x) => x.t?.n === n); if (at >= 0) { leaveStep(); RR.scene.set(card, at); } rerender(); };
+const showTurn = (card, n) => { const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), at = scenes.findIndex((x) => x.t?.n === n); if (at >= 0) { stopPlay(); RR.scene.set(card, at); } rerender(); };
 /** The dock under the board: the quick actions, the question (typed or spoken), the transcript; the paid round's
  *  confirmation, a turn being sent and errors open above it, over the board, never pushing it */
 function promptBar(r) {
@@ -1443,7 +1469,7 @@ function drawer(r) {
       h("div", { class: "rr-drawer-body" },
         h("h3", {}, T("Scenes", "場景")),
         // a jump flies the board to the scene and closes the drawer: nothing scrolls
-        h("ol", { class: "rr-turns" }, scenes.map((sc, i) => h("li", { "data-turn": sc.turn, "data-turn-status": sc.t?.status || "opening" }, h("button", { type: "button", class: "rr-jump", "data-jump": sc.key, onclick: () => { leaveStep(); markMoved(card); RR.scene.set(card, i); RR.drawer.delete(card); rerender(); } },
+        h("ol", { class: "rr-turns" }, scenes.map((sc, i) => h("li", { "data-turn": sc.turn, "data-turn-status": sc.t?.status || "opening" }, h("button", { type: "button", class: "rr-jump", "data-jump": sc.key, onclick: () => { stopPlay(); markMoved(card); RR.scene.set(card, i); RR.drawer.delete(card); rerender(); } },
           sc.question ? h("span", { class: "rr-jq" }, sc.question.slice(0, 160)) : null, h("span", { class: "faint" }, ` → ${sc.title}`)),
           // the tutor's whole answer: the board shows it short, the transcript in full (text only)
           sc.t && !sc.t.studio && sc.t.status === "done" && sc.t.answer && sc.key === `t${sc.t.n}` ? h("details", { class: "rr-answer", "data-answer": sc.t.n, open: RR.fold.has(`${card}/answer/${sc.t.n}`) },
@@ -1477,7 +1503,7 @@ function drawer(r) {
 async function resetRoom(card) {
   if (RR.posting.has(card)) return; RR.posting.add(card); RR.err.delete(card); rerender();
   try { await postJ(`/api/review-room/${enc(card)}/reset`, {});
-    leaveStep(); clearTimeout(RR.poll); RR.poll = null;
+    stopPlay(); clearTimeout(RR.poll); RR.poll = null;
     for (const m of [RR.scene, RR.seen, RR.confirm, RR.draft, RR.cite, RR.err, RR.reveal, RR.ready, RR.rscroll, RR.jump, RR.lang]) m.delete(card);
     for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
     for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);
@@ -1651,7 +1677,7 @@ document.addEventListener("fullscreenchange", () => {
 let fsResized = 0; addEventListener("resize", () => { if (FS.card == null && performance.now() - FS.at > 1500) return; clearTimeout(fsResized); fsResized = setTimeout(() => { const card = FS.card ?? FS.last; if (card != null && onRoom(card)) fsRefit(card); }, 160); });
 // leaving the room leaves full screen
 addEventListener("hashchange", () => { if (FS.card != null && !onRoom(FS.card)) exitFs(false); });
-// the keyboard: the board's own (← → n p a point of a scene being stepped through, else a region; Space held
+// the keyboard: the board's own (← → n p a point of a scene being played, else a region; a Space tap plays or pauses, held it
 // pans; + − 0 zoom), f full screen, Escape closes what is open over the room (then full screen)
 addEventListener("keydown", (e) => {
   if (S.route?.name !== "room" || !S.route.arg || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1665,7 +1691,7 @@ addEventListener("keydown", (e) => {
 });
 // the board, built with the room's own helpers (public/review-board.js)
 const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
-  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, leaveStep, markMoved, revealOf, isFs,
+  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
   stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody, figViewer });
 const onList = () => S.route?.name === "room" && !S.route.arg;
 /** the list read again. Only the rows are drawn again when they are there (public/list-tools.js ltItems): the search box stays the
@@ -1745,7 +1771,7 @@ routes.room = (arg) => {
     // the board flies to that answer itself (not to whatever scene happens to be last)
     RR.scene.set(arg, scenes.indexOf(sc)); if (sc.quiz) continue;
     // a lesson opens at its first chapter: read, not played
-    if (sc.chapter && sc.t?.action === "teach") { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, Math.min(1, sc.points.length)); } }
+    if (sc.chapter && sc.t?.action === "teach") { RR.jump.set(arg, sc.key); continue; } RR.reveal.set(`${arg}/${sc.key}`, 0); queueMicrotask(() => play(arg, sc)); } }
   // entering a room while a turn runs: the board shows that turn (its progress, the scenes it made so far)
   if (!seen && r.running != null && r.running > 0) { const at = scenes.findIndex((x) => x.t?.n === r.running); if (at >= 0) RR.scene.set(arg, at); }
   if (r.running == null && RR.moved.has(arg) && !RR.ready.has(arg)) RR.moved.delete(arg);

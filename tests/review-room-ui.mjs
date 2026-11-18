@@ -183,14 +183,6 @@ try {
     const quiet = await p.evaluate(() => ({ spoken: window.__spoken.length, audios: window.__audios.length }));
     ok(s.points === 2 && /rounded to whole cents/.test(s.caption) && !quiet.spoken && !quiet.audios && !speech.length, "then the next point and its caption follow by themselves; nothing is spoken, no audio plays, no voice is asked of Studio", JSON.stringify({ s, quiet, speech }));
     await p.click("[data-play]").catch(() => {});
-    // the reading pace counts each run by its script: a CJK character about 170 ms, any other letter or mark about 60 ms
-    // (English near 200 words a minute, not 75), spaces free, never under 2.6 s
-    { const pace = await p.evaluate(() => { const r = window.crewReviewRoom.readMs; return {
-        en: r("The function rounds a share of an amount to whole cents, so every invoice line adds up to the total shown."),
-        zh: r("這個函式把金額的百分比取整到整數分，讓每一行發票加起來剛好等於顯示的總額。"),
-        mixed: r("收到 webhook 之後，Studio 會先檢查 signature，再把事件交給 worker。"), short: r("OK."), zhShort: r("好。") }; });
-      ok(pace.en === 5160 && pace.zh === 6290 && pace.mixed === 17 * 170 + 28 * 60 && pace.short === 2600 && pace.zhShort === 2600,
-        "the reading pace is script-aware: English at about 60 ms a letter (106 characters ≈ 5.2 s), Chinese at 170 ms a character, a mixed point by each run's script, at least 2.6 s", JSON.stringify(pace)); }
     // a spoken question: on-device recognition, push to talk, the transcript shown before it is sent
     ok(await p.evaluate(() => JSON.stringify(window.__micAsked)) === JSON.stringify({ langs: ["en"], processLocally: true }), "the mic is offered only after the browser says it recognises speech on this device");
     await p.dispatchEvent("[data-mic]", "pointerdown"); await p.waitForSelector("[data-heard]");

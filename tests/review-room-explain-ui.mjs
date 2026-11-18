@@ -94,7 +94,7 @@ try {
   // ---------- the output's line: no column left of the output; the board / output switch and the version menu, by mouse and keys ----------
   { const c9 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await c9.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
-      window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
     await c9.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const html = versions.filter((v) => v.kind === "html" && v.n !== 4);
     let W = { skills: [], log: [], settings: { limitMin: 120 }, busy: false, selected: { id: "walkthrough", v: 1 }, versions: html, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1 })] }; const sel = [];
@@ -156,9 +156,9 @@ try {
 
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("keep-lang")) localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
-    // no on-device speech recognition here (headless Chromium has none)
-    
-    window.SpeechRecognition = class { static async available() { return "unavailable"; } start() {} stop() {} }; });
+    // no speech in this test (the room's voice controls read the voices; headless Chromium has none)
+    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+    window.SpeechRecognition = class { static async available() { return "unavailable"; } start() {} stop() {} }; window.Audio = function (src) { return { src, play: async () => {}, pause() {} }; }; });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   // the room itself and the paid runs are the test's; the explainer's view too (so its runs can be staged), with the real versions
   let X = { selected: null, skills: [], versions: [], runs: [], running: null, consent: null, log: [], settings: { limitMin: 120 }, busy: false };
@@ -424,7 +424,7 @@ try {
   // ---------- zh-TW at 390 on a paired phone: the reason in Chinese; the phone reads only ----------
   { const c2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await c2.addInitScript(() => { try { localStorage.setItem("crew.lang", "zh-TW"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
-      window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
     await c2.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const Z = { ...X, selected: { id: "walkthrough", v: 1 }, versions: [], running: null, runs: [run(1, "generate", "stopped", { stop: "the safety limit of 120 min passed", why: "limit" })] };
     await c2.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
@@ -446,7 +446,7 @@ try {
   // ---------- two rooms: a question queued in room B is only ever asked in room B, never in the room drawn last ----------
   { const ID_A = `PR-${sha("sample-org/other-kit").slice(0, 12)}-3`, c4 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await c4.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
-      window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
     await c4.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const ROOM_A = { ...ROOM, card: { ...ROOM.card, id: ID_A, title: { en: "Pull request #3: Other" } }, subject: { ...ROOM.subject, room: ID_A, number: 3 } };
     // room A already agreed to unconfirmed follow-ups: a question sent there by mistake would start a paid run
@@ -478,7 +478,7 @@ try {
   for (const width of [390, 900]) {
     const c3 = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 800 } });
     await c3.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
-      window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
     await c3.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     let N = { ...X, selected: { id: "walkthrough", v: 1 }, versions: versions.slice(0, 1), running: null, consent: null, runs: [run(1, "generate", "done", { version: 1 })] };
     await c3.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
@@ -533,7 +533,7 @@ try {
     const prefill = () => (DEF != null ? { text: DEF, source: "default" } : LAST ? { text: LAST, source: "last" } : { text: "", source: "none" });
     const routes = async (c, Y) => {
       await c.addInitScript(() => { try { if (!sessionStorage.getItem("keep-lang")) localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
-        window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+        Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
       await c.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
       await c.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
       await c.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
@@ -766,7 +766,7 @@ try {
   // ---------- an undecided script version: the decision is picked in the confirmation; the run shows its prepare ----------
   { const c7 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await c7.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
-      window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
     await c7.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const FACTS = { id: "walkthrough", v: 1, sha256: "a".repeat(64), filesSha256: "b".repeat(64), scripts: [{ path: "scripts/use-py.py", lang: "python", flags: ["network", "subprocess"] }], hosts: ["api.model-vendor.example"], bins: ["ffmpeg"], locks: ["python (requirements.txt)"] };
     const PENDING = { ...OFFER, hash: "c0ffee00000000a1", decide: { state: "pending", facts: FACTS } };
@@ -870,7 +870,7 @@ try {
   // What it says (starting, or why it was refused) is in the dialog's sticky footer: in view at any width, however long the dialog.
   const explainCtx = async (vp, zh) => { const c = await browser.newContext({ viewport: vp });
     await c.addInitScript((z) => { try { localStorage.setItem("crew.lang", z ? "zh-TW" : "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {}
-      window.SpeechRecognition = class { static async available() { return "unavailable"; } }; }, zh);
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; }, zh);
     await c.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     await c.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
     await c.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} })); return c; };

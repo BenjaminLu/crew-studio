@@ -64,8 +64,9 @@ const ROOM = (url = "https://github.com/fixture/project/pull/7") => ({ card: { i
     { n: 3, action: "ask", text: "Where is the rounding?", lang: "en", status: "done", provider: "codex", model: "gpt-6", answer: "z", head: H, claims: [cl("It is one line [board:B3-1].", [ok1("board:B3-1")]), cl("Nothing else rounds [diff:src/percent.ts].", [ok1("diff:src/percent.ts")])] }],
   tutors: [], sources: [], notes: [], lesson: { threads: [], visited: ["t2", "t2-2", "t2-3", "end"] }, check: { questions: [] },
   diffstat: { files: [{ path: "src/percent.ts", added: 4, removed: 0 }, { path: "test/percent.test.ts", added: 3, removed: 1 }], total: { files: 2, added: 7, removed: 1 }, from: "git" } });
-const stubs = () => {
-  window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;
+const stubs = () => { const v = [{ name: "Ava (Premium)", lang: "en-US", localService: true, voiceURI: "ava" }];
+  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => v, speak: (u) => setTimeout(() => u.onend && u.onend(), 5), cancel: () => {} } });
+  window.SpeechSynthesisUtterance = function (t) { this.text = t; }; window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;
   window.__opened = []; window.open = (u) => { window.__opened.push(u); return null; }; };
 async function open(width, room, o = {}) {
   const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 900 }, colorScheme: o.dark ? "dark" : "light", reducedMotion: "reduce" });

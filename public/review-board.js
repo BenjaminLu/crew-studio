@@ -12,7 +12,7 @@
 (() => {
 window.crewReviewBoard = (D) => {
 const { RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
-  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, leaveStep, markMoved, revealOf, isFs,
+  sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
   stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, figViewer, sceneBody } = D;
 /** a lesson's chapter, finished: a region of sentences and drawings to ask about. Every other scene (the welcome, an answer,
  *  a check, Studio's own, a turn still running or one that failed) is a scene region: its picture and its points, played */
@@ -192,7 +192,7 @@ function sceneRegionEl(card, r, x, j, ctx) {
 }
 /** a scene region's place key as Studio keeps it: a check (t3-quiz) is asked about as its turn's scene (t3) */
 const sceneKey = (key) => String(key).replace(/-quiz$/, "");
-// ---------- asking about any words selected on the board (a scene, a chapter, an answer's card) ----------
+// ---------- asking about any words selected on the board (a scene, a chapter, an answer's card, the caption) ----------
 /** a mouse pointer on words (not on paper, a box or a control): a drag there selects the text instead of panning the board */
 function onWords(e) {
   if (e.pointerType === "touch" || e.button > 0 || B.space || !e.target.closest?.(".rb-rbody, .rb-card") || e.target.closest("button,a,input,select,textarea,summary,svg")) return false;
@@ -203,16 +203,16 @@ function onWords(e) {
 }
 /** a short stable key for the words selected (the anchor's part): where they are is their scene, what they are is this */
 const selKey = (t) => { let x = 5381; for (const ch of t) x = ((x * 33) ^ ch.codePointAt(0)) >>> 0; return `sel:${x.toString(16)}`; };
-/** what the captain selected on the board, as a place to ask about: its scene (the region it is in),
+/** what the captain selected on the board, as a place to ask about: its scene (the region it is in, or the scene the caption reads),
  *  its words, the citations next to them, and where on screen it ends; null when it is not text of a scene */
 function selectionPlace(card) {
   const s = getSelection(); if (!s || s.isCollapsed || !s.rangeCount) return null;
   const text = s.toString().replace(/\s+/g, " ").trim(); if (!text) return null;
   const rg = s.getRangeAt(0), c0 = rg.commonAncestorContainer, el = c0.nodeType === 1 ? c0 : c0.parentElement;
   if (!el || el.closest(".rb-pop, input, textarea, [contenteditable], .rr-dock, .rr-drawer")) return null;
-  const sh = B.shown.get(card), reg = el.closest(`[data-board-vp="${CSS.escape(card)}"] [data-region]`);
-  const conv = !reg ? el.closest(`[data-board-notes="${CSS.escape(card)}"] [data-conv-scene]`) : null;
-  const key = reg ? reg.dataset.region : conv ? conv.dataset.convScene : null; if (!key || key === "end") return null;
+  const sh = B.shown.get(card), reg = el.closest(`[data-board-vp="${CSS.escape(card)}"] [data-region]`), cap = el.closest(`[data-playbar="${CSS.escape(card)}"] [data-caption]`);
+  const conv = !reg && !cap ? el.closest(`[data-board-notes="${CSS.escape(card)}"] [data-conv-scene]`) : null;
+  const key = reg ? reg.dataset.region : cap ? sh?.scenes[sh.i]?.key : conv ? conv.dataset.convScene : null; if (!key || key === "end") return null;
   const x = sh?.scenes.find((y) => y.key === key); if (!x || (x.t && x.t.status !== "done")) return null;
   const host = el.closest("li, p, .rb-card, .rr-point") || el, refs = [...new Set([...host.querySelectorAll("[data-cite]")].map((b) => b.dataset.cite))].slice(0, 4);
   const rects = [...rg.getClientRects()].filter((q) => q.width || q.height), last = rects.at(-1) || rg.getBoundingClientRect();
@@ -518,11 +518,12 @@ function flyTo(card, key, glide = true) {
   const r = RR.rooms.get(card); if (askable(card, key)) visit(card, r, key); B.cur.set(card, key); B.lock.set(card, { region: key }); B.sheet.delete(card);
   // the scene the play bar plays follows the region in view (a new one stops what was playing)
   const sh = B.shown.get(card), j = sh ? sh.scenes.findIndex((x) => x.key === key) : -1;
-  if (j >= 0 && j !== sh.i) { leaveStep(); markMoved(card); RR.scene.set(card, j); B.lastScene.set(card, key); }
+  if (j >= 0 && j !== sh.i) { stopPlay(); markMoved(card); RR.scene.set(card, j); B.lastScene.set(card, key); }
   // a region with no scene ("Your questions"): what was playing stops there too
+  else if (j < 0 && RR.playing === card) stopPlay();
   rerender(); layout(card); const to = regionCam(card, key); if (to) moveCam(card, to, glide);
 }
-/** → / ←: the next point of a scene being stepped through, else the next region (shown whole) */
+/** → / ←: the next point of a scene being played or stepped through, else the next region (shown whole) */
 function step(card, dir) { if (B.cur.get(card) !== "end" && stepReveal(card, dir)) return; const L = B.L.get(card); if (!L) return; const order = L.order, i = order.indexOf(B.cur.get(card)), n = order[i + dir];
   if (n) flyTo(card, n); else if (dir > 0) fitAll(card); }
 /** a question in focus: the camera flies to its chapter with its place in view and lit (the rest dimmed), the conversation pane
@@ -641,8 +642,9 @@ const up = (e) => { ptrs.delete(e.pointerId); if (ptrs.size < 2) B.pinch = null;
 addEventListener("pointerup", up); addEventListener("pointercancel", up);
 // a new window size (a phone's column, a narrower desktop) draws the board again and aims the camera at what it is locked on
 let resized = 0; addEventListener("resize", () => { clearTimeout(resized); resized = setTimeout(() => { if (document.querySelector("[data-board-vp]")) rerender(); }, 120); });
-// Space held and dragged pans (a tap does nothing: there is no playback)
-addEventListener("keyup", (e) => { if (e.key !== " ") return; B.space = false; B.spaceUsed = false; document.querySelector("[data-board-vp]")?.classList.remove("grab"); });
+// Space held and dragged pans; a Space tap (no drag) plays or pauses the scene in view
+addEventListener("keyup", (e) => { if (e.key !== " ") return; const tap = B.space && !B.spaceUsed; B.space = false; B.spaceUsed = false; document.querySelector("[data-board-vp]")?.classList.remove("grab");
+  if (tap && S.route?.name === "room" && S.route.arg && vpOf(S.route.arg)) togglePlay(S.route.arg); });
 function wheel(card, e) {
   e.preventDefault(); markMoved(card); const vr = vpOf(card).getBoundingClientRect(), c = camOf(card);
   // a sideways scroll pans; any other wheel (and a trackpad's pinch, which arrives as a ctrl wheel) zooms at the pointer
