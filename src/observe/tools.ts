@@ -162,11 +162,19 @@ export function createObserve(s: Sources, grant: GrantView | null = null) {
     if (a.tail !== undefined && !(Number.isInteger(a.tail) && (a.tail as number) >= 1 && (a.tail as number) <= 200)) throw bad("studio_logs: tail is a whole number from 1 to 200.", "studio_logs：tail 是 1 到 200 的整數。");
     const tail = (a.tail as number | undefined) ?? 20, since = sinceArg(a, "studio_logs");
     if (!def.idPattern.test(r.id)) throw bad(`studio_logs: ${r.id.slice(0, 80)} is not a ${def.kind} id; a ${def.kind} id looks like ${def.idExample}.`, `studio_logs：${r.id.slice(0, 80)} 不是 ${def.kind} 的 id。`);
-    const ent = (() => { try { return def.get(s, r.id); } catch { return null; } })();
-    const out = ent && visible(def, ent) ? def.logs(s, r.id, { tail, since, ctx: grant ? {} : ctx }) : null;
-    if (!out) throw new NativeToolFailure("not_found", `${refOf(def.kind, r.id)} is not in Studio. List them with studio_list {kind: "${def.kind}"}.`, `Studio 裡沒有 ${refOf(def.kind, r.id)}。請用 studio_list {kind: "${def.kind}"} 列出。`, "read_current_state");
-    const shaped = shape({ fields: def.logFields } as KindDef, out.data);
-    return fin({ ref: refOf(def.kind, r.id), kind: def.kind, route: routeOf(def, r.id), updatedAt: out.updatedAt ?? null, data: shaped.data, untrusted: [], nextCursor: out.cursor, truncated: false }, BUDGET.summary);
+    if (since && def.logCursor === "time" && since.startsWith("seq:")) throw bad(`studio_logs ${def.kind}: since is a time here (the nextCursor this log returned, an ISO time).`, `studio_logs ${def.kind}：這裡的 since 是時間（上一次回傳的 nextCursor）。`);
+    if (since && def.logCursor === "seq" && !since.startsWith("seq:")) throw bad(`studio_logs ${def.kind}: since is the nextCursor this log returned (seq:N).`, `studio_logs ${def.kind}：since 是上一次回傳的 nextCursor（seq:N）。`);
+    // a page is as many entries as fit whole: when they do not, ask the log for fewer, so the cursor never passes an entry not shown
+    const ent = (() => { try { return def.get(s, r.id); } catch { return null; } })(), seen = !!ent && visible(def, ent);
+    let n = tail, env: Envelope | null = null;
+    for (;;) {
+      const out = seen ? def.logs(s, r.id, { tail: n, since, ctx: grant ? {} : ctx }) : null;
+      if (!out) throw new NativeToolFailure("not_found", `${refOf(def.kind, r.id)} is not in Studio. List them with studio_list {kind: "${def.kind}"}.`, `Studio 裡沒有 ${refOf(def.kind, r.id)}。請用 studio_list {kind: "${def.kind}"} 列出。`, "read_current_state");
+      env = { ref: refOf(def.kind, r.id), kind: def.kind, route: routeOf(def, r.id), updatedAt: out.updatedAt ?? null, data: shape({ fields: def.logFields } as KindDef, out.data).data, untrusted: [], nextCursor: out.cursor, truncated: false };
+      if (n <= 1 || finalBytes(env) <= BUDGET.summary) break;
+      n = Math.max(1, Math.floor(n * 0.7));
+    }
+    return fin(env!, BUDGET.summary);
   };
   const events = (a: Record<string, unknown>) => {
     onlyKeys(a, "studio_events", ["since", "kinds", "ref"]);

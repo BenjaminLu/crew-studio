@@ -46,7 +46,9 @@ try {
   { const t: any = await O.call("studio_list", { kind: "terminal" });
     ok(t.items.length === 2 && t.data.entries[0].state === F.terms[0].state && t.data.entries[0].waitsForInput === true && !J(t).includes("Proceed") && !J(t).includes("remote-fixture"), "terminal: the Terminals page's list (Terminals.list), state only: no question text, no remote-control link", J(t.data.entries[0])); }
   { const d: any = await O.call("studio_list", { kind: "doctor", filter: { status: "missing" } }), all: any = await O.call("studio_get", { ref: "doctor:claude" });
-    ok(d.items.length === 1 && d.data.entries[0].fix === F.doctorItems[1].fix && !J(all).includes(process.env.HOME ?? "/nohome") && /~\/\.local\/bin\/claude/.test(all.data.detail), "doctor: Doctor's rows, filtered; a home path shown as ~", J(all.data)); }
+    ok(d.items.length === 1 && d.data.entries[0].fix === F.doctorItems[1].fix && !J(all).includes(process.env.HOME ?? "/nohome") && /~\/\.local\/bin\/claude/.test(all.data.detail.text) && all.data.detail.untrusted === true && all.data.version.untrusted === true, "doctor: Doctor's rows, filtered; a home path shown as ~; its detail and version (the tool's output) untrusted", J(all.data));
+    const keys: any = await O.call("studio_get", { ref: "doctor:keys" });
+    ok(!J(keys).includes("hunter2pass") && !J(keys).includes("ops:") && /endpoint https:\/\/\[credential removed\]@api\.example\.invalid/.test(keys.data.detail.text), "doctor: an endpoint's URL credentials never show", J(keys.data)); }
   { const st: any = await O.call("studio_get", { ref: "settings:studio" });
     ok(st.data.chat.provider === "claude" && st.data.keys.anthropic === true && !("token" in st.data) && !("apiKey" in st.data) && !J(st).includes(SECRET), "settings: the non-secret part only; a key or token never", J(st.data)); }
   { const p: any = await O.call("studio_list", { kind: "peer" });
@@ -77,13 +79,29 @@ try {
   { const lg: any = await O.call("studio_logs", { ref: `room:${ROOM}` });
     const last = lg.data.explain.at(-1);
     ok(last.cost.usd === 0.61 && last.why === "limit" && /10-minute safety limit/.test(last.stop) && lg.data.events.some((e: any) => e.type === "room_round_failed" && e.data.why === "limit"), "Q7: the last Explain-with run cost $0.61 and stopped at its safety limit; the log has the failed round", J(lg.data.explain));
-    ok(!!lg.nextCursor && /^seq:\d+$/.test(lg.nextCursor), "studio_logs returns a cursor to read on", String(lg.nextCursor)); }
+    ok(!!lg.nextCursor && Number.isFinite(Date.parse(lg.nextCursor)), "studio_logs returns a cursor to read on (a room's: a time)", String(lg.nextCursor));
+    const seqOnTime = await failOf(() => O.call("studio_logs", { ref: `room:${ROOM}`, since: "seq:3" }));
+    ok(/since is a time here/.test(seqOnTime?.en ?? ""), "a cursor of the other kind is refused, saying which", J(seqOnTime)); }
+
+  // ---------- paging a log: more new entries than tail, and a page cut to its budget, lose none ----------
+  { const rr: any = F.reviewRoom, view0 = rr.view, t0 = Date.now() - 3600_000;
+    const turns = Array.from({ length: 30 }, (_, i) => ({ n: 10 + i, action: "ask", text: `q${i}`, by: "captain", at: new Date(t0 + i * 60_000).toISOString(), ended: new Date(t0 + i * 60_000 + 1000).toISOString(), status: "failed", provider: "codex", model: "m", answer: "", error: `round ${i} failed: ` + "E".repeat(420), cost: { usd: 0.01 } }));
+    rr.view = (id: string, o?: boolean) => { const v = view0(id, o); v.turns = [...v.turns, ...turns]; return v; };
+    try {
+      const all = new Set<number>(); let cur: string | undefined = new Date(t0 - 1).toISOString(), pages = 0, over = false, cut = false;
+      do { const pg: any = await O.call("studio_logs", { ref: `room:${ROOM}`, tail: 20, since: cur }); pages++; over ||= Buffer.byteLength(J(pg)) > BUDGET.summary; cut ||= pg.data.turns.length < 20 && pg.data.more;
+        pg.data.turns.forEach((t: any) => all.add(t.n)); if (!pg.data.more) break; cur = pg.nextCursor; } while (pages < 40);
+      ok([...Array(30).keys()].every((i) => all.has(10 + i)) && !over && cut, "30 new rounds with tail 20, pages cut to 4 KB: every round comes once, none skipped", `${all.size} in ${pages} pages`);
+      const latest: any = await O.call("studio_logs", { ref: `room:${ROOM}`, tail: 5 });
+      const times = [...latest.data.turns.map((t: any) => t.ended ?? t.at), ...latest.data.explain.map((r: any) => r.ended ?? r.at), ...latest.data.events.map((e: any) => e.at)].map((x: string) => Date.parse(x));
+      ok(latest.data.turns.length + latest.data.explain.length + latest.data.events.length === 5 && Date.parse(latest.nextCursor) === Math.max(...times), "without since: the newest five, and the cursor is the last one shown", J([latest.data.turns.map((t: any) => t.n), latest.nextCursor]));
+    } finally { rr.view = view0; } }
 
   // ---------- studio_logs: a Task's steps and events; a pull request's go-live timeline; errors ----------
   { const t: any = await O.call("studio_logs", { ref: `task:${F.ids.failed}` });
-    ok(t.data.status === "failed" && t.data.steps.some((x: any) => x.node === "deploy" && x.label === "Deploy to staging") && t.data.events.length > 0 && /^seq:\d+$/.test(t.nextCursor), "a Task's log: its steps and events, with a cursor", J(t.data).slice(0, 300));
+    ok(t.data.status === "failed" && t.data.steps.some((x: any) => x.node === "deploy" && x.label === "Deploy to staging") && t.data.events.length > 0 && Number.isFinite(Date.parse(t.nextCursor)), "a Task's log: its steps and events, with a cursor (a time)", J(t.data).slice(0, 300));
     const again: any = await O.call("studio_logs", { ref: `task:${F.ids.failed}`, since: t.nextCursor });
-    ok(again.data.events.length === 0 && again.nextCursor === t.nextCursor, "read on from the cursor: nothing new, the same cursor", J(again.data.events));
+    ok(again.data.events.length === 0 && again.data.steps.length === 0 && again.nextCursor === t.nextCursor, "read on from the cursor: nothing new (no step sent again), the same cursor", J(again.data));
     const pr: any = await O.call("studio_logs", { ref: `pr:${REPO}#1601` });
     ok(J(pr.data.events.map((e: any) => e.type)) === J(["pr_merged", "pr_live_partial", "captain_note"]) && pr.data.waitsAt === "staging: tide-api (v1.4.0-1a2b3c4)", "a pull request's go-live timeline", J(pr.data));
     const none = await failOf(() => O.call("studio_logs", { ref: "skill:baton" }));
@@ -114,6 +132,32 @@ try {
     let cur = next.nextCursor, seen = 0, pages = 0; do { const pg: any = await O.call("studio_events", { since: cur }); ok(bytes(pg) <= BUDGET.summary, `events page ${pages + 1} within 4 KB`); seen += pg.data.events.length; pages++; if (!pg.data.more) break; cur = pg.nextCursor; } while (pages < 60);
     ok(seen === 120, "the cursor reads every new event once, page by page", `${seen} in ${pages}`); }
 
+  // ---------- an audit line that names what a caller sent is untrusted (a grant's tool name is any text in a URL) ----------
+  { F.log.emit({ type: "cli_grant_used", workflow: "cli-grant", actor: "external-cli", summary: `external CLI grant g-0000beef called ${INJECTION}`, data: { grant: "g-0000beef", tool: INJECTION } });
+    F.log.emit({ type: "cli_grant_refused", workflow: "cli-grant", actor: "external-cli", summary: `external CLI call ${INJECTION} refused: unknown`, data: { grant: null, tool: INJECTION, why: "unknown" } });
+    const ev: any = await O.call("studio_events", { since: "seq:0" }); let all: any[] = ev.data.events, cur = ev.nextCursor;
+    while (ev.data.more) { const pg: any = await O.call("studio_events", { since: cur }); all = all.concat(pg.data.events); cur = pg.nextCursor; if (!pg.data.more) break; }
+    const used = all.filter((e: any) => e.type === "cli_grant_used" || e.type === "cli_grant_refused");
+    ok(used.length === 2 && used.every((e: any) => e.line?.untrusted === true && !("summary" in e)) && !bare(all).includes("IGNORE"), "cli_grant_used and cli_grant_refused name what the caller sent: untrusted, never at Studio's trust", J(used)); }
+
+  // ---------- an artifact made by a withheld Task: its title and summaries are left out ----------
+  { const tainted = F.E.start({ workflow: "deploy-fixture", version: 1, title: `ISSUE ART ${INJECTION}`, text: "x", by: "fixture", params: { _tainted: "issue-text" } } as any);
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs"); const { tmpdir } = await import("node:os"); const { join } = await import("node:path");
+    const d = join(mkdtempSync(join(tmpdir(), "crew-obs-wart-")), "v1"); mkdirSync(d, { recursive: true }); writeFileSync(join(d, "index.html"), "<p>x</p>");
+    F.artifacts.create({ id: "issue-page", title: `ISSUE ART ${INJECTION}`, type: "web", source: "html", entry: "index.html" });
+    F.artifacts.addVersion("issue-page", { from: d, primary: "index.html", createdBy: { kind: "agent", run: tainted.id }, status: "in-review", summary: `made from the issue ${INJECTION}` } as any);
+    const got: any = await O.call("studio_get", { ref: "artifact:issue-page", depth: "full" }), mine: any = await O.call("studio_get", { ref: "artifact:harbor-banner" }), listed: any = await O.call("studio_list", { kind: "artifact" });
+    ok(got.data.withheld && !("title" in got.data) && !J(got).includes("ISSUE ART") && !J(listed).includes("ISSUE ART") && mine.data.title?.untrusted === true, "an artifact of a withheld Task shows no title or summary; any other artifact's title is untrusted", J([got.data, mine.data.title]).slice(0, 400)); }
+
+  // ---------- a script skill's hosts, warnings and reasons are its author's words ----------
+  { const sk: any = await O.call("studio_get", { ref: "skill:baton" });
+    ok(sk.data.packageText?.untrusted === true && !("hosts" in sk.data.package) && !("warnings" in sk.data.package) && !("reasons" in sk.data.package) && sk.data.package.decision.scripts === "approved", "an imported script skill's hosts, warnings and reasons come as untrusted", J(sk.data)); }
+
+  { const base: any = await O.call("studio_logs", { ref: `pr:${REPO}#1601` }), from = base.nextCursor;
+    for (let i = 0; i < 30; i++) F.log.emit({ type: "pr_live", workflow: "studio", summary: `pr_live ${REPO}#1601 env${i}`, data: { pr: `${REPO}#1601`, env: `env${i}`, production: false, tag: null } });
+    const seen: string[] = []; let cur = from, pages = 0;
+    do { const pg: any = await O.call("studio_logs", { ref: `pr:${REPO}#1601`, tail: 20, since: cur }); pages++; pg.data.events.forEach((e: any) => seen.push(e.data.env)); if (!pg.data.more) break; cur = pg.nextCursor; } while (pages < 10);
+    ok(seen.length === 30 && new Set(seen).size === 30 && seen[0] === "env0" && pages >= 2, "a pull request's log: 30 new events with tail 20 come in two pages, oldest first, none lost", `${seen.length} in ${pages}`); }
   // ---------- withheld Tasks keep their words out of the logs and the events ----------
   { const tainted = F.E.start({ workflow: "deploy-fixture", version: 1, title: `ISSUE ${INJECTION}`, text: "x", by: "fixture", params: { _tainted: "issue-text" } } as any);
     const { until } = await import("./rt-harness"); await until(() => !!F.E.get(tainted.id)?.failure || F.E.get(tainted.id)?.status === "failed");

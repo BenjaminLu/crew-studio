@@ -4,7 +4,7 @@
 //   The retro's signals (src/retro-signals.ts SIGNAL_TYPES: run_failed, room_round_failed, pr_merged, pr_live, …) carry codes
 //   and refs only: their summary and data are Studio's. A captain_note names a note the retro keeps: its text is the
 //   captain's words (captain trust); text that was selected on the page when it was written is page text (untrusted).
-//   Studio's own audit lines (a grant issued, used or refused, a skill imported) have Studio's summary. Any other line's
+//   Studio's own audit lines built from checked ids (a grant issued or revoked, a skill imported) have Studio's summary. Any other line's
 //   summary may quote a tool's output or someone's words: it comes as untrusted, and none of its data is emitted.
 // A Task whose text is withheld from Firstmate keeps its events' untrusted parts out, as everywhere else.
 import { RetroStore, SIGNAL_TYPES } from "../retro-signals";
@@ -12,8 +12,9 @@ import { kindDef, refOf, shape, sinceOf, type FieldDecl, type KindDef, type LogE
 import { withheldOf } from "./kinds/task";
 
 const SIGNALS = new Set<string>(SIGNAL_TYPES);
-/** Studio's audit lines, whose summaries Studio composes from ids alone. */
-const STUDIO_LINES = new Set(["cli_grant_issued", "cli_grant_revoked", "cli_grant_used", "cli_grant_refused", "cli_grant_run", "cli_grant_prs_edit", "skill_imported", "operating_rules_changed", "worktree_sweep"]);
+/** Studio's audit lines whose summaries Studio composes from checked ids alone. Not cli_grant_used or cli_grant_refused:
+ *  their summary names the tool a caller asked for, which is written before the name is checked (any text in a URL). */
+const STUDIO_LINES = new Set(["cli_grant_issued", "cli_grant_revoked", "cli_grant_run", "cli_grant_prs_edit", "skill_imported", "operating_rules_changed", "worktree_sweep"]);
 const text = (v: any) => (typeof v === "string" ? v : v && typeof v === "object" ? String(v.en ?? "") : "");
 const RUN = /^R-\d+$/, PR = /^[\w.-]+\/[\w.-]+#\d+$/;
 
