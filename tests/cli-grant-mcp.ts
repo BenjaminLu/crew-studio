@@ -51,7 +51,8 @@ try {
     assert.equal(statSync(A.file).mode & 0o777, 0o600, "token file is 0600"); assert.equal(statSync(join(s.data, "grants")).mode & 0o777, 0o700);
     const token = readFileSync(A.file, "utf8").trim(); assert.match(token, /^csg_g-[0-9a-f]{8}_[0-9a-f]{64}$/);
     assert.ok(!readFileSync(join(s.data, "cli-grants.json"), "utf8").includes(token), "the store keeps only a hash"); assert.equal(A.tokenHash, undefined);
-    assert.match(A.claudeMcpAdd, /^claude mcp add studio -- \S+ \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/); assert.ok(!A.claudeMcpAdd.includes(token), "the token is never on the command line");
+    // from a checkout the helper's bun reads no bunfig.toml or .env of the folder a client starts it in (BUN_ISOLATED)
+    assert.match(A.claudeMcpAdd, /^claude mcp add studio -- \S+ --no-env-file --config=\/dev\/null \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/); assert.ok(!A.claudeMcpAdd.includes(token), "the token is never on the command line");
     const asTool = await post("/api/cli-grants", { project: "sandbox", ttl: "8h" }, { "content-type": "application/json", "x-crew-tool-token": token, origin: s.base, "sec-fetch-site": "same-origin" });
     assert.equal(asTool.status, 403, "a grant token cannot issue a grant");
     const asToolWithPage = await post("/api/cli-grants", { project: "sandbox", ttl: "8h" }, page({ "x-crew-tool-token": token }));

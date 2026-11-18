@@ -1,12 +1,12 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // External CLI grants on the board (Settings, docs/units/cli-mcp-grant.md): the section issues a grant for a registered
-// project, shows the exact `claude mcp add studio -- … --grant-file …` line to copy (never the token), and revokes it; its
+// project, names it and shows one line to test it with the CLI, `crew-studio --grant <name> whoami` (never the token), and revokes it; its
 // scopes are a set (runs, the pull request list, reading Studio); reading Studio has presets (this project, review only,
 // custom groups), external text off by default, and never offers settings, peers or terminals. 1440 and 390, light and
 // dark, en and zh-TW, no overflow. CLI_GRANT_SHOTS=<dir> also writes screenshots there.
 //   PLAYWRIGHT_MODULE=<playwright index.mjs> node tests/cli-grant-ui.mjs
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,12 +36,23 @@ try {
     ok(await p.locator("[data-cli-grants] h2", { hasText: language === "en" ? "External CLI grants" : "外部 CLI 授權" }).isVisible(), `${key}: the section is titled in the page language`);
     ok(await p.locator("#grantScope-project").isChecked() && !(await p.locator("#grantScope-prs").isChecked()) && !(await p.locator("#grantScope-observe").isChecked()), `${key}: a new grant reaches runs in a project, by default`);
     ok(!/\bnull\b|undefined/.test(await p.locator("[data-cli-grants]").innerText()), `${key}: no stray "null" or "undefined" in the section`);
-    await p.selectOption("#grantProject", "sandbox"); await p.selectOption("#grantTtl", "1h");
+    const name = `bot-${width}-${theme}-${language}`.toLowerCase();
+    await p.selectOption("#grantProject", "sandbox"); await p.selectOption("#grantTtl", "1h"); await p.fill("#grantName", name);
     await p.click("#grantIssue");
     const cmd = p.locator("[data-cli-grants] [data-grant-command][data-fresh]"); await cmd.waitFor({ timeout: 10000 });
     const line = await cmd.textContent(), id = await cmd.getAttribute("data-grant-command");
+    ok((await p.inputValue("#grantName")) === "", `${key}: the name field is empty again after issuing`);
+    // this Studio has no CLI installed in its HOME: the dialog says where it comes from; the name is marked optional
+    ok(await p.locator("[data-cli-grants] [data-cli-missing] a[href='#/doctor']").count() === 1, `${key}: "install the CLI from Doctor first", with a link to Doctor`);
+    ok(/optional|可不填/.test(await p.locator("[data-cli-grants] .bb-grant-form label").first().innerText()), `${key}: the name is marked optional, with its characters`);
+    const nameBg = await p.evaluate(() => getComputedStyle(document.querySelector("#grantName")).backgroundColor), ttlBg = await p.evaluate(() => getComputedStyle(document.querySelector("#grantTtl")).backgroundColor);
+    ok(nameBg !== "rgba(0, 0, 0, 0)" && !/239, 239, 239|rgb\(2[0-9]{2}, 2[0-9]{2}, 2[0-9]{2}\)/.test(theme === "dark" ? nameBg : "") , `${key}: the name field has the form's own background (not the grey of a disabled field)`, `${nameBg} vs ${ttlBg}`);
     const file = join(data, "grants", id), token = readFileSync(file, "utf8").trim();
-    ok(/^claude mcp add studio -- \S+ \S*src\/mcp\.ts --grant-file \S+ --url http:\/\/127\.0\.0\.1:\d+$/.test(line) && line.includes(file), `${key}: the copy-able command names the grant file`, line);
+    // the dialog shows the name, reach and expiry, and one line to test it with the CLI; no per-client snippet
+    const cliFile = join(process.env.CREW_STUDIO_HOME, "grants", `${name}.json`);
+    ok(line === `crew-studio --grant ${name} whoami` && existsSync(cliFile) && (statSync(cliFile).mode & 0o777) === 0o600, `${key}: the copy-able line tests the named grant with the CLI; its CLI file is 0600`, line);
+    ok(!/claude mcp add|codex mcp|--grant-file/.test(await p.locator("[data-cli-grants]").innerText()), `${key}: no per-client MCP snippet in the section`);
+    ok((await p.locator(`[data-grant="${id}"] [data-grant-name]`).getAttribute("data-grant-name")) === name, `${key}: the grant row shows its name`);
     ok(!line.includes(token) && !(await p.content()).includes(token), `${key}: the token is never on the page`);
     ok(/sandbox/.test(await p.locator(`[data-grant="${id}"] .bb-grant-h`).textContent()), `${key}: the grant row names its project`);
     const over = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);

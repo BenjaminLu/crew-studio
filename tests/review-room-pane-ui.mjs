@@ -1,6 +1,6 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// The review room's right-hand pane (public/review-room.js crewRoomPane, review-room.css .rr-split, review-board.css): the board's
-// conversation and the skill's chat read wider by default (the chat 440 px or more at 1440; the board's conversation 300 px or more, growing past 1440 while the board keeps the width its chapter needs), the room uses the whole
+// The review room's right-hand pane (public/review-room.js crewRoomPane, review-room.css .rr-split): the room's Q&A beside
+// the skill's page (the board and its conversation are gone) read wider by default (the chat 440 px or more at 1440; the board's conversation 300 px or more, growing past 1440 while the board keeps the width its chapter needs), the room uses the whole
 // screen on a wide one; the splitter before the pane is a focusable separator the arrow keys, Home and End move within its
 // bounds, dragging resizes it, the width is kept per view across a reload, a double-click goes back to the default; long chat
 // scrolls inside the pane (never the page), its citations stay on one line each; a phone and a narrow window never scroll
@@ -81,7 +81,7 @@ const AT1440 = { board: 300, explain: 440 }, AT1920 = { board: 500, explain: 540
 const aria = (p, mode) => p.evaluate((sel) => { const e = document.querySelector(sel); return { min: Number(e.getAttribute("aria-valuemin")), max: Number(e.getAttribute("aria-valuemax")), now: Number(e.getAttribute("aria-valuenow")) }; }, split(mode));
 
 try {
-  for (const mode of ["board", "explain"]) {
+  for (const mode of ["explain"]) { // the board is gone (P1): only the skill's chat has a pane
     // ---------- the default: a comfortable reading width at 1440; the room fills a wide screen ----------
     const { ctx, p } = await open(mode, 1440);
     const def = await paneW(p, mode);
@@ -107,7 +107,7 @@ try {
     ok(Math.abs(await paneW(p, mode) - def) <= 1, `${mode}: Enter goes back to the default width`);
     // the room redraws (the board on a settled width, a live update): the splitter keeps the keyboard
     await p.keyboard.press("ArrowLeft"); await p.waitForTimeout(600);
-    await p.evaluate((id) => window.crewReviewRoom.redraw(id), mode === "board" ? "SC-60" : ID); await p.waitForTimeout(400);
+    await p.evaluate(() => render()); await p.waitForTimeout(400);
     ok(await p.evaluate((sel) => document.activeElement?.matches(sel), split(mode)), `${mode}: after the room redraws, the splitter still has the keyboard`, await p.evaluate(() => document.activeElement?.outerHTML.slice(0, 120)));
     if (mode === "board") {
       // the board lays its scenes out for the width it has beside the pane
@@ -148,42 +148,8 @@ try {
     await w.ctx.close();
   }
 
-  // ---------- the board at its default width: the chapter is whole on the canvas at a readable scale (its answers are in the
-  // pane); the zoom row and the play bar never overlap ----------
-  for (const width of [1280, 1440, 1920]) {
-    const { ctx, p } = await open("board", width);
-    const look = () => p.evaluate(() => { const id = "SC-60", B = window.crewReviewRoom.board, L = B.layoutOf(id), cur = document.querySelector("[data-board]").dataset.scene, r = L.R[cur], cam = B.camOf(id);
-      const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), inside = (b) => b.left >= vp.left - 1 && b.right <= vp.right + 1;
-      const sl = vp.left + cam.x + r.x * cam.s, sc = { left: sl, right: sl + r.W * cam.s };
-      const pl = document.querySelector(".rb-play")?.getBoundingClientRect(), zm = document.querySelector(".rb-zoom")?.getBoundingClientRect();
-      const meet = pl && zm && !(pl.right <= zm.left || zm.right <= pl.left || pl.bottom <= zm.top || zm.bottom <= pl.top);
-      return { cur, s: cam.s, scene: inside(sc), meet, vp: Math.round(vp.width), pane: document.querySelectorAll("[data-board-notes] .rb-card").length }; });
-    const v = await look();
-    ok(v.scene && v.s >= 0.88 && v.pane > 0, `board at ${width}: the chapter is whole on the canvas at 0.88 or more, its answers in the pane`, JSON.stringify(v));
-    ok(!v.meet, `board at ${width}: the zoom row and the play bar do not overlap`, JSON.stringify(v));
-    // the conversation at its widest: the board keeps 560 px, the chapter still whole, and its controls still do not overlap
-    await p.focus(split("board")); await p.keyboard.press("Home"); await p.waitForTimeout(800);
-    const w2 = await look();
-    ok(w2.vp >= 556 && !w2.meet, `board at ${width}, the conversation at its widest: the board keeps 560 px and its zoom row clears the play bar`, JSON.stringify(w2));
-    ok(w2.scene && w2.s >= 0.7, `board at ${width}, the conversation at its widest: the chapter is still whole`, JSON.stringify(w2));
-    await ctx.close();
-  }
-
-  // ---------- the chat's text: long follow-ups scroll inside the pane; citations stay on one line ----------
-  {
-    const { ctx, p } = await open("explain", 1440, { asks: 12 });
-    const m = await p.evaluate(() => { const list = document.querySelector("[data-x-msgs]"), cites = [...document.querySelectorAll(".rx-cite")];
-      return { scrolls: list.scrollHeight > list.clientHeight + 50, overflow: getComputedStyle(list).overflowY, page: document.documentElement.scrollHeight <= innerHeight + 1 && document.scrollingElement.scrollTop === 0,
-        oneLine: cites.every((c) => c.getBoundingClientRect().height <= 22), inside: cites.every((c) => c.getBoundingClientRect().right <= c.closest(".rx-m").getBoundingClientRect().right + 0.5),
-        font: parseFloat(getComputedStyle(document.querySelector("[data-explain-answer] p")).fontSize), lh: parseFloat(getComputedStyle(document.querySelector("[data-explain-answer]")).lineHeight) / parseFloat(getComputedStyle(document.querySelector("[data-explain-answer]")).fontSize) }; });
-    ok(m.scrolls && m.overflow === "auto" && m.page, "a long conversation scrolls inside the chat, never the page", JSON.stringify(m));
-    ok(m.oneLine && m.inside, "each citation chip stays on one line, inside its message", JSON.stringify(m));
-    ok(m.font >= 14 && m.lh >= 1.55, "the chat reads at 14 px with roomy line height", JSON.stringify(m));
-    await ctx.close();
-  }
-
   // ---------- narrow: no sideways scroll, no splitter ----------
-  for (const mode of ["board", "explain"]) for (const width of [390, 760, 1000]) {
+  for (const mode of ["explain"]) for (const width of [390, 760, 1000]) {
     const { ctx, p } = await open(mode, width);
     // the board's conversation is closed by default on a narrow window: opened, it is an overlay with no splitter
     if (mode === "board" && width > 760) { await p.click("[data-notes-toggle]"); await p.waitForSelector("[data-board-notes]"); await p.waitForTimeout(200); }

@@ -10,12 +10,12 @@
     "test:cloud-handoff": "bun tests/cloud-handoff.ts && bun tests/cloud-handoff-flow.ts && bun tests/cloud-handoff-ui.mjs",
     "test:list-tools": "bun tests/list-tools.ts && bun tests/activity-list.ts && node tests/list-tools-ui.mjs",
     "test:observe": "bun tests/observe-registry.ts && bun tests/observe-kinds.ts && bun tests/observe-grants.ts && bun tests/observe-focus.ts && bun tests/observe-index.ts && bun tests/observe-eval-cli.ts && node tests/observe-ui.mjs",
-    "test:cli-grant": "bun tests/cli-grant.ts && bun tests/cli-grant-mcp.ts && bun tests/cli.ts && bun tests/cli-drift.ts && bun tests/cli-hardening.ts && bun tests/mcp-proxy-conformance.ts && node tests/cli-grant-ui.mjs",
+    "test:cli-grant": "bun tests/cli-grant.ts && bun tests/cli-grant-mcp.ts && bun tests/cli.ts && bun tests/cli-drift.ts && bun tests/cli-hardening.ts && bun tests/cli-install.ts && bun tests/mcp-sdk-conformance.ts && bun tests/mcp-proxy-conformance.ts && node tests/cli-grant-ui.mjs",
     "test:lan": "bun tests/lan-crypto.ts && bun tests/lan-keys.ts && bun tests/lan-identity.ts && bun tests/lan-code.ts && bun tests/lan-spend.ts && bun tests/lan-limits.ts && bun tests/lan-store.ts && bun tests/lan-profile.ts && bun tests/lan-relay.ts && bun tests/lan-workflows.ts && bun tests/lan-two-machine-guard.ts && node tests/lan-ui.mjs",
     "test:core": "bun scripts/check-duplicate-imports.ts && bun tests/env-isolation.ts && bun tests/git-config-guard.ts && bun tests/server-lifetime.ts && bun run test:firstmate-staffing && bun tests/smoke-code.ts && bun run test:acceptance && bun run test:sandboxed-e2e:fast && bun tests/privacy.ts && bun tests/opencc-only.ts && bun run build",
     "test:brief-skeleton": "bun tests/brief-skeleton.ts",
     "test:terminals": "bun tests/terminal-state.ts && bun tests/terminal-screen.ts && bun tests/terminals.ts && node tests/terminals-ui.mjs && node tests/terminal-focus-ui.mjs && node tests/terminal-chrome-ui.mjs && bun tests/terminal-keys.ts && bun tests/terminal-theme.ts && bun tests/terminal-launch.ts && bun tests/terminal-mux.ts && node tests/terminal-panes-ui.mjs && node tests/terminal-input-ui.mjs && node tests/terminal-reattach-ui.mjs && bun tests/branch-intake.ts && bun tests/terminal-review.ts",
-    "test:review-room": "bun tests/route-names.ts && bun tests/review-baton.ts && bun tests/review-web.ts && bun tests/review-room-figures.ts && bun tests/review-room.ts && bun tests/review-room-admission.ts && bun tests/review-room-anywhere.ts && bun tests/review-room-directory.ts && bun tests/review-room-zones.ts && bun tests/review-room-board.ts && bun tests/review-room-explain.ts && bun tests/review-room-explain-scripts.ts && node tests/review-room-ui.mjs && node tests/review-room-zones-ui.mjs && node tests/review-room-board-ui.mjs && node tests/review-room-board-only-ui.mjs && node tests/review-room-conv-ui.mjs && node tests/review-room-steps-ui.mjs && node tests/review-room-quality-ui.mjs && node tests/review-room-explain-ui.mjs && node tests/review-room-pane-ui.mjs",
+    "test:review-room": "bun tests/route-names.ts && bun tests/review-baton.ts && bun tests/review-web.ts && bun tests/review-room-figures.ts && bun tests/review-room.ts && bun tests/review-room-admission.ts && bun tests/review-room-anywhere.ts && bun tests/review-room-directory.ts && bun tests/review-room-zones.ts && bun tests/review-room-board.ts && bun tests/review-room-explain.ts && bun tests/review-room-explain-scripts.ts && node tests/review-room-ui.mjs && node tests/review-room-zones-ui.mjs && node tests/review-room-explain-ui.mjs && node tests/review-room-pane-ui.mjs",
     "test:adaptive-staffing": "bun tests/adaptive-staffing.ts && bun tests/staffing-verify.ts",
     "test:crew": "bun tests/crew-seats.ts && bun tests/crew-project.ts && bun tests/crew-run-effort.ts && bun tests/crew-image-hook.ts && bun tests/crew-staffing.ts && bun tests/crew-migrate.ts && bun tests/crew-workflow-seats.ts && bun tests/crew-cards.ts && bun tests/crew-draft-seats.ts && bun tests/crew-own-run.ts && bun tests/dynamic-models.ts && bun tests/crew-page-ui.mjs",
     "test:ui-information-density": "node tests/ui-information-density.mjs",
@@ -162,6 +162,7 @@
     "test:workflow-package-adoption": "bun tests/workflow-package-adoption.ts && bun tests/workflow-package-adoption-e2e.ts && node tests/workflow-package-adoption-ui.mjs"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-unicode11": "0.9.0",
     "@xterm/xterm": "6.0.0",
