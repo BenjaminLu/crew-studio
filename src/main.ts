@@ -8,8 +8,8 @@ else if (sub === "permission-mcp") await import("./permission-mcp");
 else if (sub === "--version" || sub === "version") console.log("crew-studio 0.4.0");
 else if (sub === "open" || sub === "launch") await import("./open"); // the captain's explicit step that starts a browser session
 // the crew-studio CLI (src/cli.ts, docs/units/cli.md): an external agent's commands, through the captain's grant
-// any other word is a CLI command too (an unknown one is a usage error, exit 2): only no argument at all starts Studio, so a
-// mistyped command never starts a server on Studio's port
-else if (sub !== undefined && !sub.startsWith("-")) await (await import("./cli")).main(process.argv.slice(2));
+// any other argument goes to the CLI too, a flag first included (crew-studio --grant review-bot whoami; an unknown command is
+// a usage error, exit 2): only no argument at all starts Studio, so a mistyped command never starts a server on Studio's port
+else if (sub !== undefined) await (await import("./cli")).main(process.argv.slice(2));
 else await import("./server");
 export {};
