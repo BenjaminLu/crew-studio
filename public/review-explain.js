@@ -37,7 +37,9 @@ const latest = (st) => st?.versions?.at(-1) || null;
 const shownVersion = (id) => { const st = state(id); if (!st) return null; const n = X.shown.get(id), sid = st.selected?.id;
   return st.versions.find((v) => v.n === n) || [...st.versions].reverse().find((v) => v.skill.id === sid) || latest(st); };
 /** the skill the room is explained with now: the shown version's (what a follow-up runs), else the selected one */
-const shownSkill = (id) => { const st = state(id), v = shownVersion(id); return v ? { id: v.skill.id, name: v.skill.name } : st?.selected ? { id: st.selected.id, name: skillName(st, st.selected.id) } : null; };
+/** a skill as the captain reads its name: the built-in baton in their language */
+const sk = (s) => s?.id === BUILTIN ? T("baton (built in)", "baton（內建）") : (s?.name ?? "");
+const shownSkill = (id) => { const st = state(id), v = shownVersion(id); return v ? { id: v.skill.id, name: sk(v.skill) } : st?.selected ? { id: st.selected.id, name: skillName(st, st.selected.id) } : null; };
 /** the run that made a version (its model, cost and head) */
 const runOf = (st, v) => st?.runs?.find((r) => r.n === v?.run) || null;
 const short = (h) => String(h || "").slice(0, 7);
@@ -89,7 +91,7 @@ function schedule(id) { clearTimeout(X.poll.get(id)); X.poll.delete(id); if (sta
 function ended(id, was) {
   const st = state(id); if (was == null || st?.running != null) return; const r = st?.runs.find((x) => x.n === was); if (!r) return;
   const watching = onRoom(id) && active(id) && !document.hidden;
-  if (!watching) { const msg = r.status === "done" ? (r.version ? T(`${r.skill.name}: v${r.version} is ready`, `${r.skill.name}：v${r.version} 好了`) : T(`${r.skill.name} answered your question`, `${r.skill.name} 回答了你的問題`)) : `${r.skill.name}: ${whyOf(r).text}`;
+  if (!watching) { const msg = r.status === "done" ? (r.version ? T(`${sk(r.skill)}: v${r.version} is ready`, `${sk(r.skill)}：v${r.version} 好了`) : T(`${sk(r.skill)} answered your question`, `${sk(r.skill)} 回答了你的問題`)) : `${sk(r.skill)}: ${whyOf(r).text}`;
     try { toast(h("span", { "data-explain-toast": id }, msg, " ", h("a", { href: `#/room/${enc(id)}` }, T("Open the room", "打開審查室")))); } catch {} }
   const q = X.queue.get(id); if (q && r.kind === "generate" && r.status === "done" && onRoom(id) && active(id)) { X.queue.delete(id); X.shown.delete(id); queueMicrotask(() => send(id, q)); }
   // the generation stopped or failed: the waiting question goes back into the ask box (nothing is asked, nothing is lost)
@@ -343,7 +345,7 @@ function confirmDialog(r) {
   const cost = o?.cost || {};
   return h("div", { class: "rx-modalbg", onclick: (e) => { if (e.target === e.currentTarget) closeDialog(); } },
     h("div", { class: "rx-modal", role: "dialog", "aria-modal": "true", "aria-labelledby": "rx-conf-h", "data-explain-confirm": c.sid },
-      h("h2", { id: "rx-conf-h" }, T(`Explain with ${o?.skill?.name || c.sid}`, `用 ${o?.skill?.name || c.sid} 解釋`)),
+      h("h2", { id: "rx-conf-h" }, T(`Explain with ${sk(o?.skill) || c.sid}`, `用 ${sk(o?.skill) || c.sid} 解釋`)),
       c.loading ? h("p", { class: "faint" }, T("Reading the offer…", "讀取中…"))
       : o?.error ? h("p", { class: "rx-state err", role: "alert" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), bi(o.error))
       : [h("p", { class: "rx-sub" }, T("A paid run on the room's tutor model. Nothing starts until you confirm.", "用審查室導師的模型付費執行。按確認之前什麼都不會開始。")),
@@ -354,7 +356,7 @@ function confirmDialog(r) {
           row(T("Cost", "費用"), h("span", { "data-explain-costrow": "" },
             cost.estimate != null ? T(`about ${usd(cost.estimate)} a run (the median of earlier runs here)`, `每次約 ${usd(cost.estimate)}（這裡之前幾次的中位數）`) : T("no estimate yet: billed by the tokens the skill uses, more rounds cost more", "還沒有估計：依 skill 用掉的 token 計費，輪數越多越貴"),
             cost.runs ? T(` · this room so far ${usd(cost.spent)} over ${cost.runs} run${cost.runs === 1 ? "" : "s"}`, ` · 這間審查室目前共 ${usd(cost.spent)}（${cost.runs} 次）`) : "")),
-          row(T("Skill", "Skill"), `${o.skill.name} (v${o.skill.v})`),
+          row(T("Skill", "Skill"), `${sk(o.skill)} (v${o.skill.v})`),
           row(T("Materials (read-only)", "給 skill 的材料（唯讀）"), T(o.materials.en.join(", "), o.materials.zh.join("、"))),
           row(T("Rounds", "輪數"), T(o.rounds.en, o.rounds.zh)),
           row(T("Expected time", "預計時間"), o.expected ? T(`about ${o.expected.minutes} min (from ${o.expected.from} earlier run${o.expected.from === 1 ? "" : "s"})`, `約 ${o.expected.minutes} 分鐘（依之前 ${o.expected.from} 次）`) : T("not known yet: the first run of this skill here (often 10–30 min)", "還不知道：這是這個 skill 在這裡第一次跑（常見 10–30 分鐘）")),
@@ -431,7 +433,7 @@ function bar(r, st) {
     st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
         title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
       // a long skill name is cut, never the version, the count or "generating"
-      h("span", { class: "rx-vername" }, gen ? run.skill.name : cur ? skillName(st, cur.skill.id) : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
+      h("span", { class: "rx-vername" }, gen ? sk(run.skill) : cur ? skillName(st, cur.skill.id) : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
       h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
     cur && !gen ? versionHead(r, st, cur) : h("span", { class: "rx-linefill" }),
     cur && !gen && runOf(st, cur) ? h("span", { class: "rx-vfacts faint", "data-explain-vfacts": cur.n, title: whoPays(runOf(st, cur)) },
@@ -466,7 +468,7 @@ function verMenu(r, st) {
   return h("div", { class: "rx-vermenu", id: "rx-vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
       onfocusout: (e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && !e.relatedTarget.closest("[data-explain-versions]")) closeVerMenu(); } },
     h("h6", {}, T("Outputs", "產出")),
-    run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, run.skill.name), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
+    run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, sk(run.skill)), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
     [...st.versions].reverse().map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null,
         onclick: () => { X.verMenu = null; showVersion(r, v); focusLater("[data-explain-versions]"); } },
       h("span", { class: "k" }, `${skillName(st, v.skill.id)} v${v.n}`), v.summary || v.entry, h("small", { "data-explain-verfacts": v.n }, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${runOf(st, v)?.head ? ` · ${T("head", "head")} ${short(runOf(st, v).head)}` : ""}${money(runOf(st, v)?.cost) ? ` · ${money(runOf(st, v).cost)}` : ""}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
@@ -519,7 +521,7 @@ function stage(r, st) {
     return h("div", { class: "rx-empty", "data-x-stage": "", "data-explain-empty": "" },
       bad ? h("div", { class: `rx-state ${lastGen.status === "stopped" ? "warn" : "err"}`, role: "alert", "data-explain-ended": lastGen.why || lastGen.status },
         h("span", { class: "rx-ic", "aria-hidden": "true" }, lastGen.status === "stopped" ? "⚠" : "✕"),
-        h("div", {}, h("b", {}, lastGen.status === "stopped" ? T(`${lastGen.skill.name} stopped`, `${lastGen.skill.name} 已停止`) : T(`${lastGen.skill.name} did not finish`, `${lastGen.skill.name} 沒有完成`)), h("p", {}, w.text), w.detail ? h("small", { class: "faint" }, w.detail) : null))
+        h("div", {}, h("b", {}, lastGen.status === "stopped" ? T(`${sk(lastGen.skill)} stopped`, `${sk(lastGen.skill)} 已停止`) : T(`${sk(lastGen.skill)} did not finish`, `${sk(lastGen.skill)} 沒有完成`)), h("p", {}, w.text), w.detail ? h("small", { class: "faint" }, w.detail) : null))
         : h("p", {}, T(`Nothing made with ${skillName(st, sid)} yet in this room.`, `這間審查室還沒有用 ${skillName(st, sid)} 產生過。`)),
       (bad && fa?.run === lastGen ? retryBtn() : null) ?? (r.open && !readOnly() ? h("button", { type: "button", class: "btn primary", "data-explain-again": "", onclick: () => openConfirm(r, sid, "generate", "[data-explain-again]") }, bad ? T("Try again", "再試一次") : T("Generate", "產生")) : null)); }
   const gen = run && run.kind === "generate" ? run : null;
@@ -532,7 +534,7 @@ function stage(r, st) {
 function genStrip(r, st, run) {
   const id = r.card.id, ms = Date.now() - Date.parse(run.at), last = (run.progress || []).at(-1);
   return h("div", { class: "rx-genstrip", role: "status", "data-explain-genstrip": run.n },
-    h("b", {}, T(`${run.skill.name} is making a new version${run.head ? ` for ${short(run.head)}` : ""}`, `${run.skill.name} 正在產生新的一版${run.head ? `（${short(run.head)}）` : ""}`)),
+    h("b", {}, T(`${sk(run.skill)} is making a new version${run.head ? ` for ${short(run.head)}` : ""}`, `${sk(run.skill)} 正在產生新的一版${run.head ? `（${short(run.head)}）` : ""}`)),
     h("span", { class: "faint" }, `${fmtMin(ms)} · ${T(`round ${run.rounds.length || 1}`, `第 ${run.rounds.length || 1} 輪`)}${money(run.cost) ? ` · ${money(run.cost)}` : ""}`),
     h("span", { class: "faint", "data-explain-model": "" }, whoPays(run)),
     last ? h("span", { class: "faint" }, last.text) : null, h("span", { class: "rx-genstrip-fill" }),
@@ -544,7 +546,7 @@ function progressCard(r, st, run) {
   const step = (cls, mark, text, kids) => h("li", { class: cls }, h("span", { class: "d", "aria-hidden": "true" }, mark), h("div", {}, text, kids || null));
   return h("div", { class: "rx-gen", "data-x-stage": "", "data-explain-progress": run.n },
     h("div", { class: "rx-gencard" },
-      h("h3", {}, T(`${run.skill.name} is making the explanation`, `${run.skill.name} 正在產生說明`)),
+      h("h3", {}, T(`${sk(run.skill)} is making the explanation`, `${sk(run.skill)} 正在產生說明`)),
       h("div", { class: "faint", "data-explain-model": "" }, whoPays(run)),
       h("div", { class: "faint" }, T(`${fmtMin(ms)} so far · round ${rounds || 1} · it runs in the background: you can leave, Studio tells you when it is done`, `已跑 ${fmtMin(ms)} · 第 ${rounds || 1} 輪 · 在背景跑：可以先離開，做好了 Studio 會通知`), money(run.cost) ? ` · ${money(run.cost)}` : ""),
       h("ol", { class: "rx-steps", "data-explain-steps": "" },
@@ -662,8 +664,8 @@ function msgs(r, st) {
   for (const run of st.runs) {
     const spent = [run.ended ? fmtMin(Date.parse(run.ended) - Date.parse(run.at)) : null, money(run.cost)].filter(Boolean).join(" · ");
     if (run.kind === "generate") {
-      if (run.status === "done" || run.status === "running") out.push(h("div", { class: "rx-m sys", "data-explain-run": run.n, "data-status": run.status }, run.status === "running" ? T(`${run.skill.name}: generating…`, `${run.skill.name}：產生中…`) : T(`${run.skill.name} v${run.version} made · ${spent}`, `${run.skill.name} v${run.version} 完成 · ${spent}`)));
-      else { const w = whyOf(run); out.push(h("div", { class: `rx-m ${run.status === "stopped" ? "warn" : "err"}`, "data-explain-run": run.n, "data-status": run.status }, h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), h("b", {}, run.skill.name), " ", w.text, spent ? h("small", { class: "faint" }, ` · ${spent}`) : null)); }
+      if (run.status === "done" || run.status === "running") out.push(h("div", { class: "rx-m sys", "data-explain-run": run.n, "data-status": run.status }, run.status === "running" ? T(`${sk(run.skill)}: generating…`, `${sk(run.skill)}：產生中…`) : T(`${sk(run.skill)} v${run.version} made · ${spent}`, `${sk(run.skill)} v${run.version} 完成 · ${spent}`)));
+      else { const w = whyOf(run); out.push(h("div", { class: `rx-m ${run.status === "stopped" ? "warn" : "err"}`, "data-explain-run": run.n, "data-status": run.status }, h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), h("b", {}, sk(run.skill)), " ", w.text, spent ? h("small", { class: "faint" }, ` · ${spent}`) : null)); }
       continue; }
     const sel = run.selection;
     out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, run.from ? h("span", { class: "rx-thumb", "data-explain-about": run.from }, T(`about v${run.from}`, `關於 v${run.from}`)) : null, run.question));
@@ -704,7 +706,7 @@ function layerEl() { if (!L.el) { L.el = h("div", { class: "rx-layer", "data-x-l
 /** the scroll positions of everything the stage sits in, put back once the room is back */
 const scrollers = (el) => { const out = []; for (let e = el; e; e = e.parentElement) if (e.scrollTop || e.scrollLeft) out.push([e, e.scrollTop, e.scrollLeft]); return { out, x: scrollX, y: scrollY }; };
 function fullBar(id, v) {
-  return h("div", { class: "rx-fullbar", "data-explain-fullbar": "" }, h("span", { class: "rx-fulltitle" }, `${v.skill.name} v${v.n}`),
+  return h("div", { class: "rx-fullbar", "data-explain-fullbar": "" }, h("span", { class: "rx-fulltitle" }, `${sk(v.skill)} v${v.n}`),
     h("button", { type: "button", class: "rx-fullx", "data-explain-fullclose": "", "aria-label": T("Exit full screen (Esc)", "離開全螢幕（Esc）"), onclick: () => exitFull() }, "✕ ", T("Exit full screen", "離開全螢幕"), h("kbd", {}, "Esc")));
 }
 /** native fullscreen of the output's layer (a picture or a video: of that element, natively); refused, a fixed full-window layer */
@@ -752,7 +754,7 @@ function mount(id, v) {
     el.replaceChildren(); L.frame = null; L.video = null;
     if (v.kind === "html" || v.kind === "markdown" || v.kind === "text") {
       // allow-scripts only: an opaque origin (no allow-same-origin, no popups, no forms, no top navigation)
-      L.frame = h("iframe", { class: "rx-frame", sandbox: "allow-scripts", referrerpolicy: "no-referrer", title: `${v.skill.name} v${v.n}`, "data-explain-frame": `${v.n}` });
+      L.frame = h("iframe", { class: "rx-frame", sandbox: "allow-scripts", referrerpolicy: "no-referrer", title: `${sk(v.skill)} v${v.n}`, "data-explain-frame": `${v.n}` });
       el.append(L.frame); capFor(id, v).then((src) => { if (L.frame && L.key?.startsWith(`${id}/${v.n}/`)) L.frame.src = src; }).catch((e) => { X.err.set(id, bi(e.message)); refresh(id); });
     } else if (v.kind === "video") { L.video = h("video", { class: "rx-media", controls: true, preload: "metadata", src: `${base(id)}/media/${v.n}/${v.entry.split("/").map(enc).join("/")}`, "data-explain-video": "" }); el.append(L.video); }
     else el.append(h("img", { class: "rx-media", alt: v.summary || v.entry, src: `${base(id)}/media/${v.n}/${v.entry.split("/").map(enc).join("/")}`, "data-explain-image": "" }));
