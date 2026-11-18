@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // The stdio MCP proxy (src/mcp.ts) against a stub Studio on a free port and a private unix socket, for every token family
 // that goes through it: a chat question's token, a Studio-owned session's token file over a socket, an external CLI grant.
-// initialize negotiates protocolVersion from the proxy's own list (never echoes an unknown one) and sends the server
+// initialize negotiates protocolVersion from src/mcp-protocol.ts (shared with src/permission-mcp.ts, also checked here) (never echoes an unknown one) and sends the server
 // instructions from src/observe/instructions.ts (at most 4 KB); tools/list comes back sorted by name, the same on every call,
 // whatever order Studio answers in. Tool names and calls pass through unchanged.
 import assert from "node:assert/strict";
@@ -60,6 +60,19 @@ try {
     assert.match(SERVER_INSTRUCTIONS, /studio_manual/);
     assert.ok(Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8") <= 4096, `${Buffer.byteLength(SERVER_INSTRUCTIONS)} bytes`);
   });
+  await step("the permission prompt server (src/permission-mcp.ts) negotiates from the same list", async () => {
+    const clean = { ...process.env }; for (const k of ["CREW_PERM_SOCKET", "CREW_PERM_TOKEN", "CREW_PERM_TOKEN_FILE"]) delete clean[k];
+    const p = spawn("bun", ["src/permission-mcp.ts"], { cwd: REPO, stdio: ["pipe", "pipe", "pipe"], env: { ...clean, CREW_PERM_SOCKET: join(dir, "no-such.sock"), CREW_PERM_TOKEN: "tok-perm" } });
+    const waiting = new Map<number, (v: any) => void>(); let n = 0;
+    createInterface({ input: p.stdout }).on("line", (l) => { try { const m = JSON.parse(l); waiting.get(m.id)?.(m); waiting.delete(m.id); } catch {} });
+    const rpc = (method: string, params?: unknown) => new Promise<any>((res, rej) => { const id = ++n; waiting.set(id, res); p.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n"); setTimeout(() => rej(new Error(`no answer to ${method}`)), 15_000); });
+    try {
+      for (const [asked, got] of [["2026-07-28", "2025-11-25"], ["2025-06-18", "2025-06-18"], ["2025-03-26", "2025-03-26"], ["2024-11-05", "2024-11-05"], ["bogus", "2025-11-25"], [undefined, "2025-11-25"]] as const) {
+        const r = await rpc("initialize", asked === undefined ? {} : { protocolVersion: asked });
+        assert.equal(r.result.protocolVersion, got, `asked ${asked}`); assert.equal(r.result.serverInfo.name, "studio_permission");
+      }
+    } finally { p.kill(); }
+  });
   for (const f of families) {
     const c = proxy(f.args, f.env);
     try {
@@ -72,7 +85,9 @@ try {
       await step(`${f.name}: supported versions are kept, an unknown or missing one is never echoed`, async () => {
         assert.equal((await c.rpc("initialize", { protocolVersion: "2025-06-18" })).result.protocolVersion, "2025-06-18");
         assert.equal((await c.rpc("initialize", { protocolVersion: "2025-11-25" })).result.protocolVersion, "2025-11-25");
-        assert.equal((await c.rpc("initialize", { protocolVersion: "2024-11-05" })).result.protocolVersion, "2025-11-25");
+        assert.equal((await c.rpc("initialize", { protocolVersion: "2024-11-05" })).result.protocolVersion, "2024-11-05");
+        assert.equal((await c.rpc("initialize", { protocolVersion: "2025-03-26" })).result.protocolVersion, "2025-03-26");
+        assert.equal((await c.rpc("initialize", { protocolVersion: "2024-10-07" })).result.protocolVersion, "2025-11-25");
         assert.equal((await c.rpc("initialize", { protocolVersion: "not-a-version" })).result.protocolVersion, "2025-11-25");
         assert.equal((await c.rpc("initialize", {})).result.protocolVersion, "2025-11-25");
       });

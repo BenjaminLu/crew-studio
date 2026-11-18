@@ -12,11 +12,8 @@ import { mcpContent } from "./tool-content";
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { SERVER_INSTRUCTIONS } from "./observe/instructions";
+import { negotiateProtocolVersion } from "./mcp-protocol";
 
-/** MCP protocol versions this proxy implements, oldest first. A client asking for one of them gets it back; any other
- *  (an older one, or a newer one such as 2026-07-28) gets the newest here, as the spec's version negotiation says. */
-const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-11-25"] as const;
-const negotiate = (asked: unknown) => SUPPORTED_PROTOCOL_VERSIONS.find((v) => v === asked) ?? SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1];
 // one fixed order whatever order Studio answers in, so a client's prompt cache sees the same tool list every time
 const byName = (tools: any) => Array.isArray(tools) ? [...tools].sort((a, b) => { const x = String(a?.name ?? ""), y = String(b?.name ?? ""); return x < y ? -1 : x > y ? 1 : 0; }) : tools;
 
@@ -47,7 +44,7 @@ rl.on("line", async (line) => {
   try {
     switch (m.method) {
       case "initialize":
-        return reply({ protocolVersion: negotiate(m.params?.protocolVersion), capabilities: { tools: {} }, serverInfo: { name: "studio", version: "0.2.0" }, instructions: SERVER_INSTRUCTIONS });
+        return reply({ protocolVersion: negotiateProtocolVersion(m.params?.protocolVersion), capabilities: { tools: {} }, serverInfo: { name: "studio", version: "0.2.0" }, instructions: SERVER_INSTRUCTIONS });
       case "notifications/initialized": return;
       case "ping": return reply({});
       case "tools/list": return reply({ tools: byName(await call("/api/tools")) });
