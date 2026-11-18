@@ -136,6 +136,7 @@ try {
     { const st = { calls: [], taken: { branch: BRANCH, cloudHead: CLOUD, moved: { branch: BRANCH, takenHead: CLOUD, head: "d00dfeed".repeat(5), at: "2026-11-18T11:00:00Z" } } }, p = await page(width, scheme, st);
       await p.goto(`${base}/#/run/${ID}`); if (zh) await p.evaluate(() => setLang("zh-TW"));
       ok(await seen(p, `[data-handoff-moved="${ID}"]`) && (await text(p, `[data-handoff-moved="${ID}"]`)).includes("d00dfeed") && (zh ? /不會把新的 commit 併進/ : /does not merge the new commits/).test(await text(p, `[data-handoff-moved="${ID}"]`)), `${tag}: a push after the take-back is flagged, not merged`);
+      ok(await isRed(p, `[data-handoff-moved="${ID}"] h3`) && !(await isRed(p, `[data-handoff-moved="${ID}"] p`)), `${tag}: only the title is red; the body is in normal ink`);
       await p.waitForTimeout(300); ok(st.calls.some((x) => x.endsWith("/handoff/reconcile")), `${tag}: the Task page reads the branch after a take-back too`);
       await p.screenshot({ path: join(shots, `moved-${tag}.png`), fullPage: true }); await p.context().close(); }
     // refused take-back: a Claude-Session trailer

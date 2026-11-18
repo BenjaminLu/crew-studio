@@ -1140,8 +1140,8 @@ function handoffTaken(v, id, t) {
   // the Task page opens: Studio reads the hand-off branch once; a push after the take-back is flagged, never merged in
   if (v.handoffTakenRead !== t.cloudHead) { v.handoffTakenRead = t.cloudHead; handoffPost(`/api/wruns/${id}/handoff/reconcile`, {}).then((res) => { if (res.j.run) { v.r = res.j.run; rerender(); } }); }
   if (!t.moved) return null;
-  return h("section", { class: "card x-pad rt-handoff red", "data-handoff-moved": id }, h("h3", {}, T("The cloud pushed again after the take-back", "收回之後，雲端又推了新的 commit")),
-    h("p", { class: "rt-handoff-bad" }, T(`${t.branch} is now at ${String(t.moved.head).slice(0, 8)}; Studio took ${String(t.cloudHead).slice(0, 8)}. Studio does not merge the new commits into this Task. Stop the cloud session on claude.ai if it is still running.`,
+  return h("section", { class: "card x-pad rt-handoff red", "data-handoff-moved": id }, h("h3", { class: "rt-handoff-red-title" }, T("The cloud pushed again after the take-back", "收回之後，雲端又推了新的 commit")),
+    h("p", {}, T(`${t.branch} is now at ${String(t.moved.head).slice(0, 8)}; Studio took ${String(t.cloudHead).slice(0, 8)}. Studio does not merge the new commits into this Task. Stop the cloud session on claude.ai if it is still running.`,
       `${t.branch} 現在在 ${String(t.moved.head).slice(0, 8)}；Studio 收回的是 ${String(t.cloudHead).slice(0, 8)}。Studio 不會把新的 commit 併進這個任務。雲端 session 如果還在跑，請到 claude.ai 停掉。`)));
 }
 function handoffActive(v, id, a) {

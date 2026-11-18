@@ -346,3 +346,4 @@ body:not(.chat-closed) .rt-cue { top: calc(120px + env(safe-area-inset-top, 0px)
 .rt-handoff-confirm-discard { display: grid; gap: 8px; border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--border)); border-radius: 8px; padding: 10px 12px; }
 .rt-handoff-confirm-discard p { margin: 0; font-size: 13px; }
 .rt-handoff .actions .btn, .rt-endpanel [data-handoff-fire] { min-height: 44px; }
+.rt-handoff .rt-handoff-red-title { color: var(--bad); }
