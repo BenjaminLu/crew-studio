@@ -276,7 +276,6 @@ export const PR_TOOL_SPECS = [
   { name: "prs_order", description: "Set the release order: pull request ids first to last (owner/repo#N). Rows not named follow in Studio's proposed order.", inputSchema: { type: "object", required: ["order"], additionalProperties: false, properties: { order: { type: "array", items: { type: "string" } } } } },
   { name: "prs_deps", description: "Set what one pull request waits for: {pr, on: [ids]} (an empty list clears it). Studio's record only; nothing is written to GitHub.", inputSchema: { type: "object", required: ["pr", "on"], additionalProperties: false, properties: { pr: { type: "string" }, on: { type: "array", items: { type: "string" } } } } },
   { name: "prs_group", description: "Put a pull request in one of the release groups from the settings ({pr, group}); an empty group takes it out.", inputSchema: { type: "object", required: ["pr", "group"], additionalProperties: false, properties: { pr: { type: "string" }, group: { type: "string" } } } },
-  { name: "prs_accept", description: "Accept Studio's proposed order and dependencies as the captain's.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
 ] as const;
 
 export function createPrWatch(d: PrWatchDeps) {
@@ -1758,7 +1757,6 @@ export function createPrWatch(d: PrWatchDeps) {
         case "prs_order": { if (!ids(b.order)) return { error: "prs_order takes {order: [owner/repo#N, …]}" }; await changedBy("order", b, grant); return listView(); }
         case "prs_deps": { if (!str(b.pr) || !ids(b.on)) return { error: "prs_deps takes {pr, on: [ids]}" }; await changedBy("deps", b, grant); return listView(); }
         case "prs_group": { if (!str(b.pr) || typeof b.group !== "string") return { error: "prs_group takes {pr, group}" }; await changedBy("group", b, grant); return listView(); }
-        case "prs_accept": await changedBy("accept", {}, grant); return listView();
       }
     } catch (e: any) { return { error: String(e?.message ?? e).slice(0, 300) }; }
     return { error: `no such tool: ${name}` };

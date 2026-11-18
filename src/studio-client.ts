@@ -5,7 +5,7 @@
 // The token is read from the grant file only; it is never printed, never put on a command line or in an environment value.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { privateProblem } from "./instance";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { cliGrantsDir, type CliGrantFile } from "./studio-home";
 
 export type Conn = { url: string; socket?: string | null; token: string };
@@ -53,7 +53,8 @@ function readGrant(file: string): CliGrantFile {
 /** The grant this CLI uses: --grant, then CREW_STUDIO_GRANT, then the only file in the grants folder. */
 export function findGrant(flag: string | null, env = process.env): FoundGrant {
   const dir = cliGrantsDir(), pick = flag ?? env.CREW_STUDIO_GRANT ?? null;
-  if (pick) { const file = isPath(pick) ? pick : join(dir, `${pick.replace(/\.json$/, "")}.json`);
+  // a path is shown and checked as the absolute path it resolves to (a relative CREW_STUDIO_GRANT reads from the current folder)
+  if (pick) { const file = isPath(pick) ? resolve(pick) : join(dir, `${pick.replace(/\.json$/, "")}.json`);
     if (!existsSync(file)) throw new NoGrant(`no grant ${isPath(pick) ? file : `named ${pick}`} (${isPath(pick) ? "no such file" : `nothing in ${dir}`})`); return { file, grant: readGrant(file) }; }
   let files: string[] = []; try { files = readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => join(dir, f)).filter((f) => statSync(f).isFile()); } catch {}
   if (files.length === 1) return { file: files[0], grant: readGrant(files[0]) };
