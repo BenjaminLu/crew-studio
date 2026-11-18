@@ -709,6 +709,17 @@ try {
     await w.click('label:has([data-explain-decide="text-only"])');
     ok(!(await w.$eval("[data-explain-start]", (e) => e.disabled)), "390 px: picking enables Confirm");
     await w.click(".rx-modal .rx-foot > .btn:not(.primary)"); await w.setViewportSize({ width: 1440, height: 900 });
+    // refused because the skill has a new, undecided version: the pick made for the old one is not carried over
+    cur = { ...PENDING, hash: "c0ffee00000000a5" }; D = { ...D, selected: null, runs: [] }; await openConfirm();
+    await w.check('[data-explain-decide="scripts"]');
+    const NEWV = { ...PENDING, hash: "c0ffee00000000a6", skill: { ...PENDING.skill, v: 2 }, decide: { state: "pending", facts: { ...FACTS, v: 2, sha256: "c".repeat(64), filesSha256: "d".repeat(64) } } };
+    onGen = (r) => r.fulfill({ status: 409, json: { error: "The skill changed since you confirmed: confirm again / 確認之後 skill 變了，請再確認一次", code: "confirm_required", offer: NEWV } });
+    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-note]", { timeout: 5000 }); await w.waitForTimeout(100);
+    const after = await w.evaluate(() => ({ checked: [...document.querySelectorAll("[data-explain-decide]")].filter((x) => x.checked).map((x) => x.value), off: !!document.querySelector("[data-explain-start]")?.disabled, box: document.querySelector("[data-explain-decidebox]")?.textContent || "" }));
+    ok(after.checked.length === 0 && after.off && /walkthrough@v2 · cccccccccccc/.test(after.box), "refused for a new undecided version: no option is pre-ticked and Confirm waits for a new pick", JSON.stringify({ ...after, box: after.box.slice(0, 120) }));
+    await w.check('[data-explain-decide="text-only"]'); onGen = (r) => { D = { ...D, running: null, runs: [] }; r.fulfill({ json: D }); };
+    await w.click("[data-explain-start]"); await w.waitForTimeout(150);
+    ok(gens.at(-1)?.confirm === NEWV.hash && gens.at(-1)?.skillDecision === "text-only", "the new pick goes with the new version's confirmation", JSON.stringify(gens.at(-1)));
     // text only, picked in the confirmation
     cur = { ...PENDING, hash: "c0ffee00000000a2" }; D = { ...D, selected: null, runs: [] }; await openConfirm();
     await w.check('[data-explain-decide="text-only"]');

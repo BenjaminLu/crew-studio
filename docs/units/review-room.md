@@ -870,7 +870,7 @@ The room can be presented by one of the captain's own skills instead of the tuto
     signed ledger (`SkillPackages.decide`, `via: "review-room"`, with the room and the Task), bound to the hashes the
     confirmation showed; the run and its start record keep `decided`. Once written it is the version's decision: it stays
     if the run then fails or is stopped. A follow-up's "don't ask again" given with the pick is stored for the offer with
-    the decision in force (the hash the next follow-up's offer has), not the pending one. A decided version shows its decision ("Approved with
+    the decision in force (the hash the next follow-up's offer has), not the pending one, and moves with it when the run's prepare changes the plan's interpreters; a refused confirmation that brings another undecided version clears the pick made for the old one. A decided version shows its decision ("Approved with
     scripts · decided in the review room") and asks nothing. Text only: the run has no `skill_run` and the first message
     says the scripts do not run. Approved: before its first round the run waits for the version's prepare (or starts it:
     `SkillPackages.ensure`, the lockfile-derived egress list and the sandboxed install of §4); the stage shows "Studio is

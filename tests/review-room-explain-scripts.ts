@@ -354,6 +354,19 @@ ok(run3.status === "done" && !prompts.at(-1)!.tools.includes("skill_run") && /do
   const nG = n0(); script.push([["explain_answer", { answer: "Still the lock.", cites: [], updated: false, summary: "lock again" }]]);
   await X.ask(id, { question: "And again?", selection: null, version: from.n }, "captain"); const runG = await waitRun(nG);
   ok(runG?.status === "done" && runG.auto === true, "the next follow-up goes without asking", JSON.stringify({ s: runG?.status, auto: runG?.auto, e: runG?.error }));
+  // the same with Approve with scripts: the run prepares the version, and the prepared env changes the plan's interpreters;
+  // the consent moves with it, so the next follow-up still goes without asking
+  writeFileSync(join(dF, "requirements.txt"), fx.requirements);
+  writeFileSync(join(dF, "scripts", "use-py.py"), "import sys\nimport fixture_py\nprint(fixture_py.shout('v3'))\n"); E.skillLibrary().importFolder(dF, "captain");
+  const o8: any = X.offer(id, null, "ask", from.n), nH = n0();
+  ok(o8.decide?.state === "pending" && o8.skill.v === 3, "v3 is undecided", JSON.stringify({ d: o8.decide?.state, v: o8.skill }));
+  script.push([["explain_answer", { answer: "Approved.", cites: [], updated: false, summary: "approved" }]]);
+  await X.ask(id, { question: "Approve it?", selection: null, version: from.n, confirm: o8.hash, consent: true, skillDecision: "scripts" }, "captain"); const runH = await waitRun(nH, 240000);
+  const o9: any = X.offer(id, null, "ask", from.n);
+  ok(runH?.status === "done" && runH.prepare?.state === "done" && o9.decide?.state === "approved" && X.view(id).consent?.plan === o9.hash, "after the prepare, the consent given with Approve is for the offer with the prepared env", JSON.stringify({ s: runH?.status, e: runH?.error, p: runH?.prepare, consent: X.view(id).consent, o9: o9.hash, i: o9.scripts?.interpreters }));
+  const nI = n0(); script.push([["explain_answer", { answer: "Still approved.", cites: [], updated: false, summary: "approved again" }]]);
+  await X.ask(id, { question: "And now?", selection: null, version: from.n }, "captain"); const runI = await waitRun(nI);
+  ok(runI?.status === "done" && runI.auto === true, "the next follow-up after an approval and its prepare goes without asking", JSON.stringify({ s: runI?.status, auto: runI?.auto, e: runI?.error }));
 }
 
 upstream.stop(true); egress.stop(); prepEgress.stop(); fx.stop(); H.stop();

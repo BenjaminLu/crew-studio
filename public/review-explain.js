@@ -163,7 +163,7 @@ function promptEdited(id, value) {
   clearTimeout(promptTimer); promptTimer = setTimeout(async () => {
     const want = c.prompt; let o = null, note = null; try { o = await readOffer(id, c.sid, c.kind, want); } catch (e) { note = bi(e.message); }
     if (X.confirm !== c || c.prompt !== want) return;
-    if (o && !o.error) { c.offer = o; c.note = null; c.stale = false; } else { c.note = note || bi(o?.error || ""); c.stale = true; }
+    if (o && !o.error) { Object.assign(c, withOffer(c, o)); c.note = null; c.stale = false; } else { c.note = note || bi(o?.error || ""); c.stale = true; }
     c.pending = false; promptUi(c); }, 250);
 }
 /** the field's own parts, kept in step without redrawing it (the caret stays): counter, where the text came from, the buttons, Confirm */
@@ -233,6 +233,10 @@ function scriptSummary(s) {
 /** The captain's decision on a script version (docs/units/skill-packages.md §3), shown as the team-change card shows it: pending,
  *  its scripts with their flags, the hosts approving it allows, its lockfiles and programs, and the pick made with this
  *  confirmation (recorded Studio-wide for exactly this version); decided, the decision. */
+/** the confirmation with a new offer: a pick made for one version's decision is never carried to another's (or to a decision
+ *  no longer pending) — the captain picks again */
+const pickKey = (o) => { const d = o?.decide; return d?.state === "pending" ? `${o.skill?.id}@${o.skill?.v}:${d.facts?.sha256}:${d.facts?.filesSha256}` : null; };
+const withOffer = (c, o) => ({ ...c, offer: o, ...(pickKey(o) !== pickKey(c.offer) ? { decision: null } : {}) });
 const needsPick = (c) => c?.offer?.decide?.state === "pending" && c.decision !== "scripts" && c.decision !== "text-only";
 const viaWords = (via) => via === "review-room" ? T("in the review room", "在審查室") : /^page/.test(via || "") ? T("on the Crew page", "在團隊頁") : via === "card" || /card/.test(via || "") ? T("on the team-change card", "在團隊變更卡上") : T("earlier", "之前");
 function decideFacts(f) {
@@ -299,7 +303,7 @@ function confirmDialog(r) {
     // the dialog is gone (the captain went to another page meanwhile): the room says why instead (a read would clear it)
     const why = bi(err?.message || T("Studio gave no answer: the run did not start", "Studio 沒有回應：沒有開始執行"));
     if (X.confirm !== c) { X.err.set(id, why); render(); return; }
-    X.confirm = { ...c, ...(err?.offer ? { offer: err.offer } : {}), note: why }; render(); focusLater(); load(id); };
+    X.confirm = { ...(err?.offer ? withOffer(c, err.offer) : c), note: why }; render(); focusLater(); load(id); };
   const setLimit = async (v) => { try { await postJ("/api/review-room/explain/settings", { limitMin: Number(v) }); if (X.confirm === c) await openConfirm(r, c.sid, c.kind, undefined, c.kind === "generate" ? c.prompt ?? "" : undefined); } catch (e) { if (X.confirm === c) { X.confirm = { ...c, note: bi(e.message) }; render(); } } };
   const cost = o?.cost || {};
   return h("div", { class: "rx-modalbg", onclick: (e) => { if (e.target === e.currentTarget) closeDialog(); } },

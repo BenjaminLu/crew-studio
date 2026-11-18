@@ -563,6 +563,10 @@ export function installExplainer(d: ExplainerDeps) {
       const pk: SkillPackages | null = engine.deps.skillPackages ?? null;
       if (plan?.run && pk && pk.decision(run.skill.id, run.skill.v)?.scripts === "approved" && pk.status(run.skill.id, run.skill.v).state !== "ready") {
         run.prepare = { state: "running", at: now() }; save(); d.notify(k);
+        // "don't ask again" given for a follow-up's offer before the prepare moves to the offer after it: the prepared env changes
+        // the interpreters the plan names, not what the captain agreed to
+        const askHash = (): string | null => { try { const o: any = offer(k, run.skill.id, "ask"); return o.error ? null : o.hash; } catch { return null; } };
+        const askBefore = st.consent ? askHash() : null;
         // a prepare can take many minutes (src/skillpkg/prepare.ts): Stop and the safety limit do not wait for it. The run ends at
         // once and frees the tutor seat; the prepare is the version's, shared with every other waiter, and goes on in the background
         const ensuring = pk.ensure(run.skill.id, run.skill.v); ensuring.catch(() => {});
@@ -571,7 +575,8 @@ export function installExplainer(d: ExplainerDeps) {
         const ps = live.stop ? null : await Promise.race([ensuring, woke]).finally(() => { clearTimeout(timer); live.wake = undefined; });
         if (!ps) { run.prepare = { state: "left", at: now() };
           Object.assign(run, live.stop ? { status: "stopped", stop: live.stop, why: "captain" } : { status: "stopped", stop: `the safety limit of ${run.limitMin} min passed`, why: "limit" }); }
-        else if (ps.state === "ready" || (ps.state === "not-ready" && !ps.blocking)) { run.prepare = { state: "done", at: now(), ...(ps.reasons.length ? { reasons: ps.reasons } : {}) }; plan = planOf(run.skill); }
+        else if (ps.state === "ready" || (ps.state === "not-ready" && !ps.blocking)) { run.prepare = { state: "done", at: now(), ...(ps.reasons.length ? { reasons: ps.reasons } : {}) }; plan = planOf(run.skill);
+          if (askBefore && st.consent?.plan === askBefore) { const h = askHash(); if (h) st.consent = { ...st.consent, plan: h }; } }
         else { const rs = ps.reasons.length ? ps.reasons : [{ en: `${run.skill.id}@v${run.skill.v} is ${ps.state}`, zh: `${run.skill.id}@v${run.skill.v}：${ps.state}` }];
           run.prepare = { state: "failed", at: now(), reasons: rs };
           Object.assign(run, { status: "failed", why: "prepare", error: clip(`Studio could not prepare the skill's dependencies: ${rs.map((r) => r.en).join("; ")} / Studio 沒辦法準備這個 skill 的依賴：${rs.map((r) => r.zh).join("；")}`, 900) }); }
