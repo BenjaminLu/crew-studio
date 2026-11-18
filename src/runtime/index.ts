@@ -656,7 +656,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing) return json({ error: "use POST" }, 405);
         if (ho[2] === "reconcile") { try { return json({ ...(await ch.reconcile(ho[1])), run: runView(ho[1], who) }); } catch (e: any) { return json({ error: `GitHub could not be read: ${String(e?.message ?? e).slice(0, 200)}`, run: runView(ho[1], who) }, 502); } }
         if (who.kind !== "desktop") return json({ error: "only the desktop captain hands a Task to the cloud or takes it back" }, 403);
-        const out = ho[2] === "fire" ? await ch.fire(ho[1], { branch: typeof b?.branch === "string" ? b.branch : undefined, by }) : ho[2] === "take-back" ? await ch.takeBack(ho[1], by) : await ch.discard(ho[1], by);
+        const out = ho[2] === "fire" ? await ch.fire(ho[1], { branch: typeof b?.branch === "string" ? b.branch : undefined, by }) : ho[2] === "take-back" ? await ch.takeBack(ho[1], by, { confirm: b?.confirm === true }) : await ch.discard(ho[1], by);
         return json({ ...out.body, run: runView(ho[1], who) }, out.status);
       }
       m = /^\/api\/wruns\/(R-\d+)(?:\/(pause|resume|cancel|file|events|evidence|archive|delete|reconcile-merge)|\/nodes\/([a-z0-9-]+)\/agent)?$/.exec(p);

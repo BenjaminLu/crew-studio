@@ -228,7 +228,7 @@ const CURSOR_SECRETS = ["auth.json", "cli-config.json", "mcp.json", "chats", "pr
 /** Cursor's private files in a home (the project and data-root checks refuse them too). */
 export const cursorSecretPaths = (h = homedir()) => CURSOR_SECRETS.map((x) => join(h, x));
 const HOME_SECRETS = [".ssh", ".aws", ".gnupg", ".netrc", ".config", ".claude", ".claude.json", ".codex", ...CURSOR_SECRETS, ".docker", ".kube", ".npmrc", ".git-credentials", "Library/Keychains"];
-export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json"), join(dataDir, "session-token")] : []), runtimeDir(),
+export const SECRET_DIRS = (dataDir?: string | null) => { const h = homedir(); return [...(dataDir ? [join(dataDir, "ledger.key"), join(dataDir, "keys.json"), join(dataDir, "cloud-handoff.json"), join(dataDir, "github-token"), join(dataDir, "policies"), join(dataDir, "remote-devices.json"), join(dataDir, "session-token")] : []), runtimeDir(),
   ...HOME_SECRETS.map((x) => join(h, x))]; };
 /** The deny list a profile ends with: SECRET_DIRS, and the same folders of the account's own home when Studio runs with another
  *  HOME (the acceptance harness, a launcher that sets HOME): those hold the real logins. */

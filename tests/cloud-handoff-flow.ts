@@ -81,7 +81,7 @@ try {
   fire.set({ status: 429, retryAfter: "120" });
   const f1 = await api().fire(id, { branch: c.branch, by: "captain" });
   const r1 = records(id).map((e: any) => e.record);
-  ok(f1.status === 429 && f1.body.retryAfter === "120" && f1.body.retried === false && fire.calls.length === 1 && /120/.test(f1.body.error), "a 429 is reported with its Retry-After and sent once", JSON.stringify(f1));
+  ok(f1.status === 429 && f1.body.retryAfter === "120" && f1.body.retried === false && fire.calls.length === 1 && !/120/.test(f1.body.error), "a 429 is reported once, with its Retry-After as a field (the page says when, once)", JSON.stringify(f1));
   ok(r1.join() === "cloud-handoff-attempt,cloud-handoff-pushed,cloud-handoff-fire-failed" && buildLive(id), "the ledger: the attempt, the push, the failed fire; the local round goes on", r1.join());
   await Bun.sleep(400); ok(fire.calls.length === 1, "Studio never fires again on its own");
   const stale = await api().fire(id, { branch: c.branch, by: "captain" });
@@ -113,21 +113,32 @@ try {
   ok(E.get(id)!.nodes.build.waiting === "external" && seen?.status === "done" && seen.commits === 1 && /done line passes/.test(seen.reason) && E.events(id).some((e: any) => e.type === "cloud_handoff_status"),
     "after a restart the wait is watched again: Handoff-Status: done and one new commit are seen on GitHub, and the captain is told", JSON.stringify(seen));
   ok((await api().reconcile(id)).observed?.head === cloudHead, "opening the board reads GitHub once more (same head)");
+  ok(api().refreshAll() === 1 && api().refreshAll() === 0, "the board reloading on every live event reads each hand-off at most once per gap");
 
   // ---------- take back: post checks, then the build checks again in the sandbox (acceptance 4, 6) ----------
   const other = join(temp, "other"); must(temp, ["clone", "-q", bare, other]); assertTempRepo(other); writeFileSync(join(other, "NOTE"), "x"); must(other, ["add", "."]);
   must(other, ["-c", "user.name=Someone", "-c", "user.email=someone@example.invalid", "commit", "-qm", "note"]); must(other, ["push", "-q", "origin", "HEAD:refs/heads/feature/someone-else"]);
   sim.pulls.set(99, { number: 99, state: "open", title: "Opened from the cloud", body: "", draft: false, created_at: new Date().toISOString(), merged_at: null, html_url: "https://github.com/fixture/money-kit/pull/99", head: { ref: "feature/someone-else" }, base: { ref: "main" } });
-  const tb = await api().takeBack(id, "captain");
-  const classes = (tb.body.findings ?? []).map((f: any) => f.class).sort().join();
-  ok(tb.status === 200 && tb.body.red === true && classes === "other-branches,pull-requests", "the take-back flags the other branch and the pull request (red)", JSON.stringify(tb.body).slice(0, 400));
+  const tb0 = await api().takeBack(id, "captain");
+  const classes = (tb0.body.findings ?? []).map((f: any) => f.class).sort().join();
+  ok(tb0.status === 409 && tb0.body.needsConfirm === true && tb0.body.red === true && classes === "other-branches,pull-requests" && E.get(id)!.nodes.build.waiting === "external" && !records(id).some((e: any) => e.record === "cloud-handoff-taken"),
+    "the take-back flags the other branch and the pull request (red) and waits for the captain's second confirm", JSON.stringify(tb0.body).slice(0, 400));
+  // the confirmed take-back and a discard at the same moment: one of them acts, the node wakes once
+  const visitsBefore = E.get(id)!.nodes.build.visits;
+  const [tb, dc] = await Promise.all([api().takeBack(id, "captain", { confirm: true }), api().discard(id, "captain")]);
+  ok(tb.status === 200 && tb.body.red === true && dc.status === 409 && dc.body.busy === true && !records(id).some((e: any) => e.record === "cloud-handoff-discarded"), "a concurrent discard is refused while the take-back runs", JSON.stringify([tb.status, dc.body]).slice(0, 300));
   const pc = records(id).find((e: any) => e.record === "cloud-handoff-postcheck"), head = records(id).find((e: any) => e.record === "cloud-handoff-head");
   ok(pc?.verdict === "fail" && head?.data?.cloudHead === cloudHead && head.seq < pc.seq, "the ledger: the cloud head Studio took, then the failed post checks", JSON.stringify(pc?.data));
   // the edge checks run after the build step ends and before the review request starts: wait for the review request, then read them
   await until(() => (E.get(id)!.nodes["pr-open"]?.visits ?? 0) > 0 || ["failed", "succeeded"].includes(status(id)), 90000);
   const after = E.get(id)!, edgeChecks = E.ledger(id).filter((e: any) => e.head === cloudHead && e.edge && ["firstmate/scope", "firstmate/lints", "firstmate/file-size-cap", "firstmate/covering-suites", "firstmate/fixture-modules"].includes(e.check));
-  ok(after.nodes.build.outcome === "adopted" && must(after.ctx.worktree, ["rev-parse", "HEAD"]) === cloudHead, "the worktree is at the cloud head and the build step ends adopted", `${after.nodes.build.state} ${after.nodes.build.outcome} ${after.ctx.head}`);
+  ok(after.nodes.build.outcome === "adopted" && after.nodes.build.visits === visitsBefore && must(after.ctx.worktree, ["rev-parse", "HEAD"]) === cloudHead, "the worktree is at the cloud head and the build step ends adopted", `${after.nodes.build.state} ${after.nodes.build.outcome} ${after.ctx.head}`);
   ok((after.nodes["pr-open"]?.visits ?? 0) > 0 && edgeChecks.length === 5 && edgeChecks.every((e: any) => e.verdict === "pass" || e.verdict === "not-applicable"), "the build node's checks ran again on the cloud head (OS sandbox) before the workflow went on to the review request", JSON.stringify(edgeChecks.map((e: any) => [e.check, e.verdict, e.edge])));
+  // the cloud pushes again after the take-back: flagged on the Task, never merged in (spec 3.4.1)
+  const late = cloudCommit(branch, { "NOTES.md": "more\n" }, "docs: a late push");
+  const rec = await api().reconcile(id), moved = api().view(E.get(id)!)?.taken;
+  ok(rec.moved?.head === late && moved?.moved?.head === late && moved.cloudHead === cloudHead && E.get(id)!.ctx.head !== late && records(id).some((e: any) => e.record === "cloud-handoff-moved-after-take-back" && e.data?.head === late),
+    "a push to the hand-off branch after the take-back is flagged (ledger and Task page), and the Task head stays at what was taken", JSON.stringify(rec));
   E.cancel(id, "captain", "test done"); await until(() => !E.busy(id), 30000);
 
   // ---------- a Claude-Session trailer stops the take-back; discard goes on from the base (acceptance 5, 6) ----------

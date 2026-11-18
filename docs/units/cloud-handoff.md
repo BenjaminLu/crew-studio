@@ -45,8 +45,14 @@ recorded (`cloud-handoff-fired`) and the build node waits(external) with a durab
 `handoff/<task>-<n>`. The grant's branch prefix is the boundary of what Studio may push; the hand-off branch stays inside
 it (the captain accepted this).
 
-Only the default break point exists in H1: interrupt and hand off the last committed round. "Wait for this round" is not
-built.
+There is one break point: interrupt the running round and hand off its last committed round (the spec's §3.1.1 says the
+same; waiting for the round to finish was dropped).
+
+On the Task page a refused hand-off lists each reason and what to change (the policy file to edit, a link to the
+Doctor). A 429 says once, in minutes and a clock time, when to try again, and the send button stays off until then.
+While the cloud has the build, Pause is not offered (it would not stop the cloud). Red post-check flags say what to do
+next; a take-back Studio refuses hides "Take it back" and keeps "Discard…", which asks first (the branch stays on GitHub,
+stop the cloud session on claude.ai, the Task restarts from the base head).
 
 ## Track
 
@@ -59,14 +65,22 @@ pace. The trailer, its reason and the commit messages are untrusted data: shown,
 Take back records the cloud head (`cloud-handoff-head`), then checks on GitHub: other branches changed since the fire,
 pull requests opened or merged since the fire, Claude-Session trailers or session links in the cloud's commits, and that
 the head descends from the hand-off base (`cloud-handoff-postcheck`; any finding is red). A session trailer or a
-rewritten branch stops the take-back (rewriting the commits is H2): discard instead. Otherwise the cloud head is checked
+rewritten branch stops the take-back (rewriting the commits is H2): discard instead. Other red flags (branches, pull
+requests) need the captain's second, explicit confirm. Otherwise the cloud head is checked
 out in the Task's worktree and the build node ends `adopted`: its deterministic checks run again on that head in the OS
 sandbox (the existing adopted edge to the review request) before the workflow goes on.
+
+A push to the hand-off branch after the take-back is read when the Task page opens: it is recorded
+(`cloud-handoff-moved-after-take-back`) and shown on the Task, never merged in.
+
+Take back, discard and fire are one action per Task at a time; a second one while one runs is refused. The board's reads
+of active hand-offs happen at most once per 30 s, however often the board reloads. The setup file is on the sandbox deny
+list (`SECRET_DIRS`): no round or check reads the token. The captain's request is quoted in the prompt between markers
+derived from its own bytes, so it cannot close its data block early.
 
 Discard records `cloud-handoff-discarded` and starts a fresh build round from the hand-off base; the branch stays on
 GitHub. Studio cannot stop a cloud session (no API): the Task page links it.
 
 ## Not in H1
 
-Rewrite-and-push of commits with a session trailer, notification details beyond the run event, "wait for this round",
-flagging pushes after a take-back.
+Rewrite-and-push of commits with a session trailer, notification details beyond the run event.

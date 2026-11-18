@@ -19,7 +19,7 @@ function actionButton(it) {
   if (a.kind === "login") return h("button", { class: "btn", "data-login": a.item, onclick: () => startLogin(a.item) }, icon("link", "ic sm"), T("Log in…", "登入…"));
   if (a.kind === "github") return h("button", { class: "btn", "data-gh": "connect", onclick: openGithub }, icon("pr", "ic sm"), S.github?.connected ? T("Change token…", "更換 token…") : T("Connect GitHub…", "連接 GitHub…"));
   if (a.kind === "keys") return h("button", { class: "btn", "data-keys": "open", onclick: openKeys }, icon("tool", "ic sm"), T("API keys…", "API 金鑰…"));
-  if (a.kind === "cloud-handoff") return h("button", { class: "btn", "data-cloud-handoff-setup": "open", onclick: openCloudHandoff }, icon("tool", "ic sm"), T("Cloud hand-off…", "雲端交接…"));
+  if (a.kind === "cloud-handoff") return h("button", { class: "btn", "data-cloud-handoff-setup": "open", onclick: openCloudHandoff }, icon("tool", "ic sm"), T("Set up cloud hand-off…", "設定交給雲端接手…"));
   if (a.kind === "phone") return h("a", { class: "btn", href: "#/remote" }, icon("monitor", "ic sm"), T("Phone page", "手機頁"));
   if (a.kind === "listen") return h("button", { class: "btn", "data-voice-test": it.id, onclick: (e) => listenVoice(e.currentTarget) }, icon("play", "ic sm"), T("Play a test phrase", "試聽一句"));
   return null;
@@ -186,7 +186,9 @@ async function openKeys() {
 async function openCloudHandoff() {
   const s = await getJ("/api/cloud-handoff/setup").catch(() => ({}));
   const field = (id, label, value, ph, type = "text", hint = null) => h("label", { style: "display:grid;gap:4px;font-size:13px" }, h("span", {}, label, hint), h("input", { class: "input", id, type, autocomplete: "off", value: value || "", placeholder: ph }));
-  modal(T("Cloud hand-off (Claude routine)", "雲端交接（Claude routine）"), h("div", { style: "display:grid;gap:10px" },
+  modal(T("Cloud hand-off (Claude routine)", "交給雲端接手（Claude routine）"), h("div", { style: "display:grid;gap:10px" },
+    h("p", { style: "margin:0" }, T("Create the routine at ", "到 "), h("a", { href: "https://claude.ai/code/routines", target: "_blank", rel: "noopener", "data-cloud-routines-link": "1" }, "claude.ai/code/routines"),
+      T(", add an API trigger and generate its token.", " 建立 routine，加一個 API trigger 並產生 token。")),
     h("p", { class: "muted", style: "margin:0" }, T("Use a dedicated routine: bound to the repositories below, no connectors, no environment variables, no network secrets, network Limited. The token is shown once on claude.ai; it stays on this Mac (0600) and never reaches the browser again.",
       "請用專用的 routine：綁定下面的 repo，不掛 connector、沒有環境變數、沒有網路 secret、網路設 Limited。token 只會在 claude.ai 顯示一次；它只存在這台 Mac（0600），不會再送回瀏覽器。")),
     field("cloudRoutine", T("Routine id (from the API trigger's URL)", "Routine id（API trigger 網址裡的那段）"), s.routineId, "trig_…"),
