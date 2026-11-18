@@ -506,17 +506,16 @@ function mountCard(el, card, opts = {}) {
   // (the last round's proposal open), model text rendered as markdown made of text nodes only
   // "Open this pull request?": where it goes and the exact title and body, the body rendered as markdown made of text nodes
   // a merge card's review room (src/domain/review-room.ts): the same prominent entry on every merge card, and what the room
-  // recorded (questions asked, the understanding check, sources). Display only: nothing here answers or holds the card.
+  // holds (baton's pages: how many versions, what they cost). Display only: nothing here answers or holds the card.
   function reviewRoomView(c) {
     const r = c.reviewRoom; if (c.kind !== "merge" || !r) return null;
-    const q = r.check || { asked: 0, graded: 0, correct: 0 }, src = r.sources || { consulted: 0 };
-    const score = q.graded ? T(`check ${q.correct}/${q.graded} correct`, `理解檢查答對 ${q.correct}/${q.graded}`) : q.asked ? T(`check: ${q.asked} asked, not answered yet`, `理解檢查：問了 ${q.asked} 題，還沒作答`) : T("no understanding check yet", "還沒做理解檢查");
-    const said = r.questions ? T(`${r.questions} question${r.questions === 1 ? "" : "s"} asked in the room · ${score} · ${src.consulted} source${src.consulted === 1 ? "" : "s"} consulted`, `審查室問了 ${r.questions} 題 · ${score} · 參考了 ${src.consulted} 個來源`)
-      : T("Have a tutor walk you through how and why this change works before you merge.", "合併前，請導師帶你看這個改動怎麼運作、為什麼這樣做。");
+    const n = r.versions || 0, usd = typeof r.usd === "number" && r.usd > 0 ? " · US$" + r.usd.toFixed(2) : "";
+    const said = n ? T(`${n} version${n === 1 ? "" : "s"} of the page${usd}`, `頁面 ${n} 個版本${usd}`)
+      : T("Read a page on how and why this change works before you merge.", "合併前，先看一頁說明：這個改動怎麼運作、為什麼這樣做。");
     return h("section", { class: "cc-room", "data-review-room": c.id },
       h("a", { class: "btn", href: r.href, "data-card-link": "review-room", "data-review-room-open": c.id }, T("Open review room", "開啟審查室")),
-      h("span", { class: "cc-count cc-room-text", "data-review-room-summary": "" }, said, r.running ? T(" · the tutor is working", " · 導師作答中") : "", " ",
-        T("(each question is a paid model round; the room never answers this card or changes whether it can merge)", "（每個問題都是一次付費的模型執行；審查室不會回覆這張卡，也不影響能否合併）")));
+      h("span", { class: "cc-count cc-room-text", "data-review-room-summary": "" }, said, r.running ? T(" · a page is being made", " · 頁面產生中") : "", " ",
+        T("(the room never answers this card or changes whether it can merge)", "（審查室不會回覆這張卡，也不影響能否合併）")));
   }
   function pullRequestView(c) {
     const p = c.pullRequest; if (!p) return null;

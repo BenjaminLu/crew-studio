@@ -63,18 +63,22 @@ try {
   const secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
   ok(!J(shape(fake, { status: secret }).data).includes(secret), "every output goes through Studio's redaction");
 
-  // ---------- acceptance 1: which pull request am I reviewing, what did I just ask, which chapter is the tutor on ----------
+  // ---------- acceptance 1: which pull request am I reviewing, what did I just ask, which page is the room on ----------
   F.focus.put("tab-a", { route: `#/room/${ROOM}`, ref: `room:${ROOM}`, selection: { kind: "scene", id: "3", label: "場景 3" }, dialog: null, label: "Review room · PR #1645 · 場景 3" });
   const openBefore = F.E.cards.list({ open: true }).length;
   const now1: any = await O.call("studio_now", {});
   ok(now1.data.focus.sharing === "on" && now1.data.focus.current.ref === `room:${ROOM}` && /ago$/.test(now1.data.focus.current.ago) && now1.data.focus.current.selection.label === "場景 3", "Q1: studio_now says the captain is in that room, on scene 3, and how long ago", J(now1.data.focus));
   const room: any = await O.call("studio_get", { ref: now1.data.focus.current.ref });
   ok(room.data.subject.number === 1645 && room.data.subject.repository === REPO, "Q1: the room names the pull request under review", J(room.data.subject));
-  ok(room.data.turns[0].question === "Why does the retry give up after five attempts?" && room.data.turns[0].by === "captain", "Q1: the captain's last question, newest first, in their words (captain trust, not wrapped)", J(room.data.turns[0]));
-  ok(room.data.lesson.current.chapter === "decisions" && room.data.lesson.current.scene === 3 && room.data.lesson.current.of === 3 && J(room.data.lesson.covered) === J(["what", "talks", "decisions"]), "Q1: the tutor's lesson is on chapter 3, decisions, at scene 3", J(room.data.lesson.current));
-  ok(room.untrusted.includes("data.pr.title") && room.untrusted.some((p: string) => /turns\[\d+\]\.answer/.test(p)) && room._meta["studio/trust"].untrusted.length === room.untrusted.length, "the pull request's title and the tutor's answers are untrusted, in the envelope and _meta", J(room.untrusted));
-  ok(!J(room.data).replace(/"text":"[^"]*IGNORE[^"]*"/g, "").includes("IGNORE"), "the injection line appears only inside untrusted text");
-  ok(room.data.explain.runs[0].why === "limit" && room.data.explain.runs[0].cost.usd === 0.61 && room.data.cost.usd === 1.08, "the room's Explain-with run says why it stopped and what it cost; the room sums its costs", J([room.data.explain.runs[0], room.data.cost]));
+  { const asked = room.data.explain.runs.filter((r: any) => r.kind === "ask");
+    ok(asked.length === 1 && asked[0].question === "Why does the retry give up after five attempts?" && J(room.data.questions) === J({ asked: 1, done: 1, failed: 0 }), "Q1: the captain's question about the page, in their words (captain trust, not wrapped), and how many they asked", J([asked, room.data.questions])); }
+  ok(J(room.data.pages) === J({ versions: 1, runs: 2, failed: 0 }) && room.data.explain.versions.at(-1)?.n === 1 && room.data.explain.versions.at(-1)?.skill?.name === "baton", "Q1: the room's page is baton's version 1, of two page runs", J([room.data.pages, room.data.explain.versions]));
+  ok(J(room.data.oldBoard) === J({ turns: 2, items: 3, usd: 0.2 }) && !("turns" in room.data) && !("lesson" in room.data), "an old whiteboard is only said to exist, with what its turns cost: its turns and lesson are not read", J(room.data.oldBoard));
+  ok(room.untrusted.includes("data.pr.title") && room.untrusted.some((p: string) => /explain\.runs\[\d+\]\.summary/.test(p)) && room.untrusted.some((p: string) => /explain\.versions\[\d+\]\.summary/.test(p)) && room._meta["studio/trust"].untrusted.length === room.untrusted.length,
+    "the pull request's title and the explainer's summaries are untrusted, in the envelope and _meta", J(room.untrusted));
+  ok(!J(room.data).replace(/"text":"[^"]*IGNORE[^"]*"/g, "").includes("IGNORE") && !J(room).includes("Five attempts cover"), "the injection line appears only inside untrusted text, and the answer to a question is not read at all");
+  { const limit = room.data.explain.runs.find((r: any) => r.why === "limit");
+    ok(limit?.n === 3 && limit.cost.usd === 0.61 && room.data.cost.usd === 1.28 && J(room.data.errors) === J([]), "the room's page run says why it stopped and what it cost; the room sums every run's cost and its old whiteboard's turns ($1.08 + $0.20)", J([limit, room.data.cost, room.data.errors])); }
 
   // ---------- acceptance 2: where is R-… stuck, why did it fail ----------
   const task: any = await O.call("studio_get", { ref: `task:${F.ids.failed}` });
@@ -108,12 +112,14 @@ try {
     "a card reads as the Inbox shows it (engine.cards.view): every field the provider takes", J([C_KEYS.filter((k) => J(fullCard.data[k]) !== J((shownCard as any)[k])), fullCard.data.body, shownCard.body, fullCard.data.captainOnly]));
 
   // ---------- acceptance 9: what happened in the last hour ----------
-  ok(["task:" + F.ids.failed, "card:" + F.E.cards.list({ run: F.ids.answered })[0].id, `room:${ROOM}`, `pr:${REPO}#1601`].every((r) => now1.data.recent.some((x: any) => x.ref === r)), "Q9: the last hour: the failed Task, the answered card, the room's answer, the merged pull request", J(now1.data.recent));
+  ok(["task:" + F.ids.failed, "card:" + F.E.cards.list({ run: F.ids.answered })[0].id, `room:${ROOM}`, `pr:${REPO}#1601`].every((r) => now1.data.recent.some((x: any) => x.ref === r)), "Q9: the last hour: the failed Task, the answered card, the room's page, the merged pull request", J(now1.data.recent));
+  ok(now1.data.recent.find((x: any) => x.ref === `room:${ROOM}`)?.what === "room page v1", "Q9: the room's entry names its latest page", J(now1.data.recent.find((x: any) => x.ref === `room:${ROOM}`)));
   ok(now1.data.recent.some((x: any) => /answered: go \(by captain\)/.test(x.what)), "Q9: an answered card says what the captain chose");
 
-  // ---------- acceptance 10: a summary for the PM (free, citing the scenes) ----------
+  // ---------- acceptance 10: a summary for the PM (free, citing the room's page and runs) ----------
   const fullRoom: any = await O.call("studio_get", { ref: `room:${ROOM}`, depth: "full" });
-  ok(fullRoom.data.lesson.sceneList.length === 3 && fullRoom.data.lesson.sceneList[2].title.text === "Why retry with backoff" && fullRoom.data.explain.versions[0].prompt === "Keep it to one page for the PM", "Q10: the full room holds every scene to cite and the explainer's version", J(fullRoom.data.lesson.sceneList));
+  ok(fullRoom.data.explain.runs.length === 3 && fullRoom.data.explain.versions[0].prompt === "Keep it to one page for the PM" && fullRoom.data.explain.versions[0].summary?.untrusted === true && /one-page walkthrough/.test(fullRoom.data.explain.versions[0].summary.text),
+    "Q10: the full room holds every run and the explainer's version to cite, its summary wrapped as untrusted", J(fullRoom.data.explain.versions));
   ok(bytes(fullRoom) <= BUDGET.full && bytes(room) <= BUDGET.summary, "summary within 4 KB, full within 24 KB", `${bytes(room)} ${bytes(fullRoom)}`);
 
   // ---------- acceptance 11: what should I do on this screen (never answering it) ----------
@@ -157,8 +163,8 @@ try {
     const mergeCard = F.E.cards.list({ run: tainted.id, open: true })[0].id;
     rr.view = ((v: any) => (id: string, o?: boolean) => id === mergeCard ? v(tainted.id, o) : v(id, o))(rr.view);
     // the room list's own titles on a withheld Task: a merge room's is its card's title, a branch room's names the branch
-    rr.list = () => [...list0(), { id: tainted.id, kind: "branch", title: `Branch fix/${INJECTION}`, open: true, running: false, turns: 2, repository: null, zone: "active", updatedAt: new Date().toISOString() },
-      { id: mergeCard, kind: "merge", title: `MERGE ${INJECTION}`, open: true, running: false, turns: 1, repository: null, zone: "active", updatedAt: new Date().toISOString() }];
+    rr.list = () => [...list0(), { id: tainted.id, kind: "branch", title: `Branch fix/${INJECTION}`, open: true, running: false, versions: 1, questions: 1, repository: null, zone: "reviewing", updatedAt: new Date().toISOString() },
+      { id: mergeCard, kind: "merge", title: `MERGE ${INJECTION}`, open: true, running: false, versions: 1, questions: 0, repository: null, zone: "waiting", updatedAt: new Date().toISOString() }];
     rr.explain.view = (id: string) => expl0(id === tainted.id ? ROOM : id);
     try {
       const got: any = await O.call("studio_get", { ref: `room:${tainted.id}`, depth: "full" }), listed: any = await O.call("studio_list", { kind: "room" }), now: any = await O.call("studio_now", {});
@@ -263,12 +269,12 @@ try {
       const routeView: any = await res!.json(), viaTool: any = await rt.observe.call("studio_get", { ref: `room:${ROOM}` });
       const fullTool: any = await rt.observe.call("studio_get", { ref: `room:${ROOM}`, depth: "full" }), ps = routeView.prState;
       const wantPr = { state: ps.state, draft: ps.draft, mergedAt: ps.mergedAt, head: ps.head, headRef: ps.headRef, baseRef: ps.baseRef, author: ps.author, files: ps.files, approved: ps.approved, verdicts: ps.verdicts.map((d: any) => ({ author: d.author, state: d.state, current: d.current })) };
-      const { title: prTitle, ...gotPr } = fullTool.data.pr, turns = routeView.turns.filter((t: any) => !t.studio);
-      const wantTurns = [...turns].reverse().map((t: any) => ({ n: t.n, action: t.action, by: t.by, auto: !!t.auto, at: t.at, ended: t.ended, status: t.status, provider: t.provider, model: t.model, cost: t.cost ?? null, question: t.text, answer: t.answer, error: t.error ?? null }));
-      const gotTurns = fullTool.data.turns.map((t: any) => ({ n: t.n, action: t.action, by: t.by, auto: t.auto, at: t.at, ended: t.ended, status: t.status, provider: t.provider, model: t.model, cost: t.cost, question: t.question, answer: t.answer?.text ?? t.answer, error: t.error }));
+      const { title: prTitle, ...gotPr } = fullTool.data.pr, xv = F.reviewRoom.explain.view(ROOM);
+      const wantRuns = xv.runs.map((r: any) => ({ n: r.n, kind: r.kind, status: r.status, at: r.at, ended: r.ended, provider: r.provider, model: r.model, cost: r.cost ?? null, why: r.why ?? null, question: r.question ?? null, prompt: r.prompt ?? null, version: r.version ?? null }));
+      const gotRuns = fullTool.data.explain.runs.map((r: any) => ({ n: r.n, kind: r.kind, status: r.status, at: r.at, ended: r.ended, provider: r.provider, model: r.model, cost: r.cost, why: r.why, question: r.question, prompt: r.prompt, version: r.version }));
       const wantSubject = { kind: routeView.subject.kind, url: routeView.subject.url, repository: routeView.subject.repository, number: routeView.subject.number, branch: routeView.subject.branch ?? null, task: routeView.subject.task ?? null };
-      ok(res!.status === 200 && J(gotPr) === J(wantPr) && prTitle.text === ps.title && J(gotTurns) === J(wantTurns) && J(fullTool.data.subject) === J(wantSubject) && fullTool.data.notes.items.length === routeView.notes.length && fullTool.data.open === routeView.open,
-        "the room reads as GET /api/review-room/<room> returns it", J({ route: routeView.prState, tool: viaTool.data.pr }));
+      ok(res!.status === 200 && J(gotPr) === J(wantPr) && prTitle.text === ps.title && J(gotRuns) === J(wantRuns) && J(fullTool.data.oldBoard) === J(routeView.oldBoard ?? null) && J(fullTool.data.subject) === J(wantSubject) && fullTool.data.notes.items.length === routeView.notes.length && fullTool.data.open === routeView.open,
+        "the room reads as GET /api/review-room/<room> and its explainer return it", J({ route: routeView.prState, tool: viaTool.data.pr, runs: [gotRuns, wantRuns] }));
       const notOpened = await rt.observe.call("studio_get", { ref: `room:${ROOM}`, depth: "full" });
       ok(!!notOpened, "reading a room never opens it (the fixture refuses opened=true)");
     } finally { H2.stop(); } }

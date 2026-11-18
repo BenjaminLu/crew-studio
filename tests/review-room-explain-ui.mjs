@@ -18,7 +18,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright")
   console.error("review-room-explain-ui: Playwright not found; set PLAYWRIGHT_MODULE to its index.mjs or install it"); process.exit(2); });
 process.env.CREW_SESSION_TOKEN ??= "test-session";
 const tmp = mkdtempSync(join(tmpdir(), "crew-explain-ui-")), data = join(tmp, "data"); mkdirSync(data);
-const port = await freePort();
+const port = await freePort(), TAILNET = "explain-ui-test.tailnet.example";
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 // a made-up pull request's room, seeded on disk: what the explainer's own routes (the capability, the page) read
 const REPO = "sample-org/money-kit", ID = `PR-${sha(REPO).slice(0, 12)}-7`, H = "a".repeat(40), B = "b".repeat(40);
@@ -53,7 +53,7 @@ writeFileSync(join(skillDir, "SKILL.md"), "---\nname: walkthrough\ndescription: 
 const { createServer } = await import("node:http");
 const probe = createServer((q, res) => { probeHits.push(q.url); res.end("got it"); }); await new Promise((r) => probe.listen(probePort, "127.0.0.1", r));
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
-const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_REVIEW_EXPLAIN_DEFAULT_SKILL: "", CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data,
+const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_REVIEW_EXPLAIN_DEFAULT_SKILL: "", CREW_TAILNET_NAME: TAILNET, CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data,
   CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: "/nonexistent/codex", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
 let appLog = ""; app.stdout.on("data", (d) => (appLog += d)); app.stderr.on("data", (d) => (appLog += d));
 const base = `http://127.0.0.1:${port}`;
@@ -123,7 +123,7 @@ try {
     await co.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed")); });
     await co.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const html = versions.filter((v) => v.kind === "html" && v.n !== 4);
-    await co.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: { ...ROOM, turns: [...ROOM.turns, { ...ROOM.turns[0], n: 2 }], board: [{ id: "B1-1", turn: 1, type: "svg" }] } }));
+    await co.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: { ...ROOM, oldBoard: { turns: 2, items: 1 } } }));
     await co.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: { skills: [], log: [], settings: { limitMin: 120 }, busy: false, selected: { id: "walkthrough", v: 1 }, versions: html, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1 })] } }));
     const w = await co.newPage(); w.on("pageerror", (e) => errors.push(e.message));
     await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-old-board]", { timeout: 15000 }); await w.waitForSelector("[data-explain-frame]", { timeout: 15000 });
@@ -140,6 +140,19 @@ try {
     const bare = await fetch(`${base}/api/review-room/${ID}/export`), bareRoom = await fetch(`${base}/api/review-room/${ID}`);
     ok(ex.s === 200 && /application\/json/.test(ex.type) && ex.cd === `attachment; filename="${ID}.json"` && ex.cache === "no-store" && ex.no === 404 && ex.post >= 400 && bare.status === bareRoom.status,
       "the export route: the room's JSON as a file, never cached; no such room is a 404; a POST is refused; outside Studio's page it is read as the room itself is", JSON.stringify({ ex, bare: bare.status, room: bareRoom.status }));
+    // a paired phone (Studio's own pairing, over the tailnet name): it reads the room, never its whole record as a file
+    { const { request } = await import("node:http"), host = TAILNET;
+      const raw = (method, path, o = {}) => new Promise((resolve) => { const payload = method === "GET" ? undefined : JSON.stringify(o.body ?? {});
+        const headers = { host: o.host ?? `127.0.0.1:${port}`, ...(o.token ? { authorization: `Bearer ${o.token}` } : { "x-crew-session": process.env.CREW_SESSION_TOKEN }), ...(payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {}) };
+        const q = request({ host: "127.0.0.1", port, method, path, headers }, (res) => { let t = ""; res.on("data", (c) => (t += c)); res.on("end", () => { let j = null; try { j = JSON.parse(t); } catch {} resolve({ status: res.statusCode ?? 0, body: j, cd: res.headers["content-disposition"] ?? null }); }); });
+        q.on("error", () => resolve({ status: 0, body: null })); if (payload) q.write(payload); q.end(); });
+      const code = (await raw("POST", "/api/remote/pair/start")).body?.code, ptok = (await raw("POST", "/api/remote/pair", { host, body: { code, name: "Pixel" } })).body?.token;
+      const view = await raw("GET", `/api/review-room/${ID}`, { host, token: ptok }), ex2 = await raw("GET", `/api/review-room/${ID}/export`, { host, token: ptok });
+      ok(!!ptok && view.status === 200 && ex2.status === 403 && ex2.body?.code === "desktopOnly" && !ex2.cd, "a paired phone reads the room but its whole record is refused: 403 desktopOnly, no file", JSON.stringify({ ptok: !!ptok, view: view.status, ex: ex2.status, code: ex2.body?.code }));
+      await w.evaluate(() => { window.__tok = window.crewRemote.token; window.crewRemote.token = () => "phone"; render(); }); await w.waitForSelector("[data-old-board-desktop]");
+      const ph = await w.evaluate(() => ({ dl: !!document.querySelector("[data-old-board-download]"), note: document.querySelector("[data-old-board]")?.textContent || "" }));
+      ok(!ph.dl && /downloads on the Mac running Studio/.test(ph.note), "on a paired phone the notice stays and says where the file downloads; no download link", JSON.stringify(ph));
+      await w.evaluate(() => { window.crewRemote.token = window.__tok; render(); }); }
     await co.close(); }
 
   // ---------- the page could not reach Studio to start it: never a "Starting…" that nothing ends ----------
@@ -562,7 +575,7 @@ try {
     const withMade = versions.map((v) => (v.n === 1 ? { ...v, prompt: P1 } : v.n === 2 ? { ...v, question: "Why round here?" } : v.n === 4 ? { ...v, prompt: "" } : v));
     const hashOf = (t) => (t ? `c0ffee${sha(t).slice(0, 10)}` : OFFER.hash);
     // the offer is for the text it was asked with (none: the skill's last instructions, the prefill), as the server's is
-    const offerReqs = [], gens = [], defs = []; let DEF = null, failSelect = false;
+    const offerReqs = [], gens = [], defs = [], selects = []; let DEF = null, failSelect = false;
     const EX = { en: "For this pull request, include:\n- an architecture diagram", zh: "這個 PR 請包含：\n- 架構圖" };
     const prefill = () => (DEF != null ? { text: DEF, source: "default" } : LAST ? { text: LAST, source: "last" } : { text: "", source: "none" });
     const routes = async (c, Y) => {
@@ -578,7 +591,7 @@ try {
       await c.route(/\/api\/review-room\/explain\/prompts$/, (r) => { if (r.request().method() !== "POST") return r.continue(); const b = JSON.parse(r.request().postData() || "{}"); defs.push(b); DEF = b.text || null; r.fulfill({ json: { skill: b.skill, default: DEF } }); });
       await c.route(new RegExp(`/api/review-room/${ID}/explain/generate$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); gens.push(b);
         r.fulfill(b.confirm === hashOf(b.prompt ?? "") ? { json: { ...Y(), running: 7, runs: [run(7, "generate", "running", { prompt: b.prompt })] } } : { status: 409, json: { error: "confirm / 確認", code: "confirm_required", offer: { ...OFFER, hash: hashOf(b.prompt), prompt: { text: b.prompt, max: 2000, last: LAST } } } }); });
-      await c.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => failSelect ? r.fulfill({ status: 400, json: { error: "That skill is not in the library / 技能庫裡沒有這個 skill", code: "bad_skill" } }) : r.fulfill({ json: Y() })); };
+      await c.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => { selects.push(r.request().postData()); return failSelect ? r.fulfill({ status: 400, json: { error: "That skill is not in the library / 技能庫裡沒有這個 skill", code: "bad_skill" } }) : r.fulfill({ json: Y() }); }); };
     let Y = { ...X, selected: { id: "walkthrough", v: 1 }, versions: withMade, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })] };
     const c5 = await browser.newContext({ viewport: { width: 1440, height: 900 } }); await routes(c5, () => Y);
     const w = await c5.newPage(); w.on("pageerror", (e) => errors.push(e.message));
@@ -676,9 +689,13 @@ try {
     ok(back2.body === before2.body && back2.y === before2.y && !back2.cls && back2.onSlot && back2.headOk, "Esc closes it: the same scroll position, the output on its stage, the header clickable again", JSON.stringify({ before2, back2 }));
     await w.evaluate(() => { Element.prototype.requestFullscreen = window.__realFs; });
     // a video: its own player's native full screen
-    failSelect = true; await pickVersion(w, 3); await w.waitForSelector("[data-explain-error]", { timeout: 5000 }); failSelect = false;
+    // a version another skill made (v3, explainer-video) is shown as it is: the room's skill stays the one it generates with
+    const sel0 = selects.length, skill0 = await w.evaluate(() => window.crewRoomExplain.state(S.route.arg)?.selected?.id ?? null);
+    await pickVersion(w, 3); await w.waitForSelector('[data-explain-video], video', { timeout: 5000 }).catch(() => {}); await w.waitForTimeout(300);
+    const skill3 = await w.evaluate(() => window.crewRoomExplain.state(S.route.arg)?.selected?.id ?? null);
+    ok(selects.length === sel0 && skill3 === skill0 && !(await w.$("[data-explain-error]")), "showing a version another skill made never changes the room's selected skill (no /select is sent)", JSON.stringify({ sent: selects.slice(sel0), skill0, skill3 }));
     await pickVersion(w, 1); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(150);
-    ok(!(await w.$("[data-explain-error]")), "an error from showing one version is gone once another version is shown");
+    ok(!(await w.$("[data-explain-error]")) && selects.length === sel0, "and back to v1: still nothing sent");
     await pickVersion(w, 3); await w.waitForSelector("[data-explain-video]");
     await w.click("[data-explain-full]"); await w.waitForFunction(() => !!window.crewRoomExplain.full() && !!document.fullscreenElement, null, { timeout: 5000 });
     ok(await w.evaluate(() => document.fullscreenElement?.tagName === "VIDEO" && document.fullscreenElement.hasAttribute("data-explain-video")), "a video goes full screen in its own player", await w.evaluate(() => document.fullscreenElement?.tagName));

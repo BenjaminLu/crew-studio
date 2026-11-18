@@ -6,406 +6,388 @@ import b2 from "../workflows/code.flow.yaml" with { type: "file" };
 import b3 from "../workflows/code.retro.yaml" with { type: "file" };
 import b4 from "../workflows/doors.yaml" with { type: "file" };
 import b5 from "../workflows/genesis.flow.yaml" with { type: "file" };
-import b6 from "../workflows/skills/baton/NOTICE.md" with { type: "file" };
-import b7 from "../workflows/skills/baton/SKILL.md" with { type: "file" };
-import b8 from "../workflows/skills/baton/diagrams.md" with { type: "file" };
-import b9 from "../workflows/skills/baton/spec.md" with { type: "file" };
-import b10 from "../workflows/skills/change-reviewer.md" with { type: "file" };
-import b11 from "../workflows/skills/change-worker.md" with { type: "file" };
-import b12 from "../workflows/skills/diagram-design/NOTICE.md" with { type: "file" };
-import b13 from "../workflows/skills/diagram-design/SKILL.md" with { type: "file" };
-import b14 from "../workflows/skills/diagram-design/output-spec.md" with { type: "file" };
-import b15 from "../workflows/skills/diagram-design/semantic-patterns.md" with { type: "file" };
-import b16 from "../workflows/skills/diagram-design/style-guide.md" with { type: "file" };
-import b17 from "../workflows/skills/diagram-design/type-architecture.md" with { type: "file" };
-import b18 from "../workflows/skills/diagram-design/type-data-flow.md" with { type: "file" };
-import b19 from "../workflows/skills/diagram-design/type-flowchart.md" with { type: "file" };
-import b20 from "../workflows/skills/diagram-design/type-sequence.md" with { type: "file" };
-import b21 from "../workflows/skills/diagram-design/type-state.md" with { type: "file" };
-import b22 from "../workflows/skills/firstmate-workflow-design/SKILL.md" with { type: "file" };
-import b23 from "../workflows/skills/issue-categorizer.md" with { type: "file" };
-import b24 from "../workflows/skills/issue-triager.md" with { type: "file" };
-import b25 from "../workflows/skills/pack-author.md" with { type: "file" };
-import b26 from "../workflows/skills/pack-genesis-author.md" with { type: "file" };
-import b27 from "../workflows/skills/pack-genesis-coordinator.md" with { type: "file" };
-import b28 from "../workflows/skills/pstack/NOTICE.md" with { type: "file" };
-import b29 from "../workflows/skills/pstack/how.md" with { type: "file" };
-import b30 from "../workflows/skills/pstack/teach.md" with { type: "file" };
-import b31 from "../workflows/skills/pstack/why.md" with { type: "file" };
-import b32 from "../workflows/skills/review-room-tutor.md" with { type: "file" };
-import b33 from "../workflows/skills/startup-founder.md" with { type: "file" };
-import b34 from "../workflows/skills/startup-judge.md" with { type: "file" };
-import b35 from "../workflows/skills/v2/designer.md" with { type: "file" };
-import b36 from "../workflows/skills/v2/film-editor.md" with { type: "file" };
-import b37 from "../workflows/skills/v2/image.md" with { type: "file" };
-import b38 from "../workflows/skills/v2/writer.md" with { type: "file" };
-import b39 from "../workflows/studio.retro.yaml" with { type: "file" };
-import b40 from "../workflows/v2/coffee-kit.wf.yaml" with { type: "file" };
-import b41 from "../workflows/v2/crew-change.wf.yaml" with { type: "file" };
-import b42 from "../workflows/v2/documents.wf.yaml" with { type: "file" };
-import b43 from "../workflows/v2/file-organization.wf.yaml" with { type: "file" };
-import b44 from "../workflows/v2/firstmate-connect-github.wf.yaml" with { type: "file" };
-import b45 from "../workflows/v2/firstmate-grant-merge.wf.yaml" with { type: "file" };
-import b46 from "../workflows/v2/firstmate-proposal.wf.yaml" with { type: "file" };
-import b47 from "../workflows/v2/firstmate-register-project.wf.yaml" with { type: "file" };
-import b48 from "../workflows/v2/firstmate-staffing.wf.yaml" with { type: "file" };
-import b49 from "../workflows/v2/github-review.wf.yaml" with { type: "file" };
-import b50 from "../workflows/v2/hello-crew-studio.wf.yaml" with { type: "file" };
-import b51 from "../workflows/v2/images.wf.yaml" with { type: "file" };
-import b52 from "../workflows/v2/issue-categories.wf.yaml" with { type: "file" };
-import b53 from "../workflows/v2/issue-triage.wf.yaml" with { type: "file" };
-import b54 from "../workflows/v2/local-project-register.wf.yaml" with { type: "file" };
-import b55 from "../workflows/v2/pack-genesis.wf.yaml" with { type: "file" };
-import b56 from "../workflows/v2/pr-follow.wf.yaml" with { type: "file" };
-import b57 from "../workflows/v2/pr-watch-apply-depends.wf.yaml" with { type: "file" };
-import b58 from "../workflows/v2/review-room-dir-host.wf.yaml" with { type: "file" };
-import b59 from "../workflows/v2/review-room-host.wf.yaml" with { type: "file" };
-import b60 from "../workflows/v2/startup-recursion.wf.yaml" with { type: "file" };
-import b61 from "../workflows/v2/templates/film.html" with { type: "file" };
-import b62 from "../workflows/v2/trivial-lane.wf.yaml" with { type: "file" };
-import b63 from "../workflows/v2/video.wf.yaml" with { type: "file" };
-import b64 from "../workflows/v2/web-prototype.wf.yaml" with { type: "file" };
-import b65 from "../packs/coffee-kit/checks/bundle-ready/check.yaml" with { type: "file" };
-import b66 from "../packs/coffee-kit/checks/designer/check.yaml" with { type: "file" };
-import b67 from "../packs/coffee-kit/checks/reviewer/check.yaml" with { type: "file" };
-import b68 from "../packs/coffee-kit/manifest.yaml" with { type: "file" };
-import b69 from "../packs/coffee-kit/skills/designer.md" with { type: "file" };
-import b70 from "../packs/coffee-kit/skills/hyperframes.md" with { type: "file" };
-import b71 from "../packs/coffee-kit/skills/image.md" with { type: "file" };
-import b72 from "../packs/coffee-kit/skills/reviewer.md" with { type: "file" };
-import b73 from "../packs/coffee-kit/skills/website.md" with { type: "file" };
-import b74 from "../packs/core/checks/artifact-ready/check.yaml" with { type: "file" };
-import b75 from "../packs/core/checks/brief-quality/check.yaml" with { type: "file" };
-import b76 from "../packs/core/checks/brief-quality/run" with { type: "file" };
-import b77 from "../packs/core/checks/lane-ready/check.yaml" with { type: "file" };
-import b78 from "../packs/core/checks/pack-genesis-measure/check.yaml" with { type: "file" };
-import b79 from "../packs/core/checks/pack-genesis-preview/check.yaml" with { type: "file" };
-import b80 from "../packs/core/checks/ste-wording/check.yaml" with { type: "file" };
-import b81 from "../packs/core/checks/ste-wording/run" with { type: "file" };
-import b82 from "../packs/core/evals/coordinator.json" with { type: "file" };
-import b83 from "../packs/core/manifest.yaml" with { type: "file" };
-import b84 from "../packs/core/skills/accessible-ui/SKILL.md" with { type: "file" };
-import b85 from "../packs/core/skills/code-review/SKILL.md" with { type: "file" };
-import b86 from "../packs/core/skills/commit-and-pr-text/SKILL.md" with { type: "file" };
-import b87 from "../packs/core/skills/coordinator.md" with { type: "file" };
-import b88 from "../packs/core/skills/data-viz/SKILL.md" with { type: "file" };
-import b89 from "../packs/core/skills/fail-first-testing/SKILL.md" with { type: "file" };
-import b90 from "../packs/core/skills/film-direction/SKILL.md" with { type: "file" };
-import b91 from "../packs/core/skills/image-prompting/SKILL.md" with { type: "file" };
-import b92 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
-import b93 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
-import b94 from "../packs/core/skills/security-review/SKILL.md" with { type: "file" };
-import b95 from "../packs/core/skills/studio-baton/NOTICE.md" with { type: "file" };
-import b96 from "../packs/core/skills/studio-baton/SKILL.md" with { type: "file" };
-import b97 from "../packs/core/skills/studio-baton/diagram-design/LICENSE" with { type: "file" };
-import b98 from "../packs/core/skills/studio-baton/diagram-design/SKILL.md" with { type: "file" };
-import b99 from "../packs/core/skills/studio-baton/diagram-design/assets/template.html" with { type: "file" };
-import b100 from "../packs/core/skills/studio-baton/diagram-design/references/output-spec.md" with { type: "file" };
-import b101 from "../packs/core/skills/studio-baton/diagram-design/references/semantic-patterns.md" with { type: "file" };
-import b102 from "../packs/core/skills/studio-baton/diagram-design/references/style-guide.md" with { type: "file" };
-import b103 from "../packs/core/skills/studio-baton/diagram-design/references/type-architecture.md" with { type: "file" };
-import b104 from "../packs/core/skills/studio-baton/diagram-design/references/type-data-flow.md" with { type: "file" };
-import b105 from "../packs/core/skills/studio-baton/diagram-design/references/type-db-schema.md" with { type: "file" };
-import b106 from "../packs/core/skills/studio-baton/diagram-design/references/type-dependency.md" with { type: "file" };
-import b107 from "../packs/core/skills/studio-baton/diagram-design/references/type-deployment.md" with { type: "file" };
-import b108 from "../packs/core/skills/studio-baton/diagram-design/references/type-er.md" with { type: "file" };
-import b109 from "../packs/core/skills/studio-baton/diagram-design/references/type-flowchart.md" with { type: "file" };
-import b110 from "../packs/core/skills/studio-baton/diagram-design/references/type-layers.md" with { type: "file" };
-import b111 from "../packs/core/skills/studio-baton/diagram-design/references/type-sequence.md" with { type: "file" };
-import b112 from "../packs/core/skills/studio-baton/diagram-design/references/type-state.md" with { type: "file" };
-import b113 from "../packs/core/skills/studio-baton/diagram-design/references/type-swimlane.md" with { type: "file" };
-import b114 from "../packs/core/skills/studio-baton/diagram-design/references/type-timeline.md" with { type: "file" };
-import b115 from "../packs/core/skills/studio-baton/diagram-design/references/type-tree.md" with { type: "file" };
-import b116 from "../packs/core/skills/studio-baton/references/diagrams.md" with { type: "file" };
-import b117 from "../packs/core/skills/studio-baton/references/extraction.md" with { type: "file" };
-import b118 from "../packs/core/skills/studio-baton/references/pipeline.md" with { type: "file" };
-import b119 from "../packs/core/skills/studio-baton/references/spec.md" with { type: "file" };
-import b120 from "../packs/core/skills/studio-baton/requirements.txt" with { type: "file" };
-import b121 from "../packs/core/skills/studio-baton/scripts/export_pdf.py" with { type: "file" };
-import b122 from "../packs/core/skills/studio-baton/scripts/figures.py" with { type: "file" };
-import b123 from "../packs/core/skills/studio-baton/scripts/render.py" with { type: "file" };
-import b124 from "../packs/core/skills/studio-baton/scripts/snapshot.py" with { type: "file" };
-import b125 from "../packs/core/skills/studio-baton/scripts/verify.py" with { type: "file" };
-import b126 from "../packs/core/skills/studio-baton/templates/packet.html" with { type: "file" };
-import b127 from "../packs/core/skills/technical-writing/SKILL.md" with { type: "file" };
-import b128 from "../packs/core/skills/translation-zh-tw/SKILL.md" with { type: "file" };
-import b129 from "../packs/core/skills/visual-design-review/SKILL.md" with { type: "file" };
-import b130 from "../packs/core/skills/web-interaction/SKILL.md" with { type: "file" };
-import b131 from "../packs/core/workflows/refine-demo.wf.yaml" with { type: "file" };
-import b132 from "../packs/documents/evals/writer.json" with { type: "file" };
-import b133 from "../packs/documents/manifest.yaml" with { type: "file" };
-import b134 from "../packs/documents/workflows/document.flow.yaml" with { type: "file" };
-import b135 from "../packs/file-organization/checks/plan-gates/check.yaml" with { type: "file" };
-import b136 from "../packs/file-organization/evals/organizer.json" with { type: "file" };
-import b137 from "../packs/file-organization/manifest.yaml" with { type: "file" };
-import b138 from "../packs/file-organization/rules.yaml" with { type: "file" };
-import b139 from "../packs/file-organization/skills/organizer.md" with { type: "file" };
-import b140 from "../packs/file-organization/workflows/organize.flow.yaml" with { type: "file" };
-import b141 from "../packs/firstmate/checks/caller-coverage/check.yaml" with { type: "file" };
-import b142 from "../packs/firstmate/checks/caller-coverage/run" with { type: "file" };
-import b143 from "../packs/firstmate/checks/ci/check.yaml" with { type: "file" };
-import b144 from "../packs/firstmate/checks/ci/run" with { type: "file" };
-import b145 from "../packs/firstmate/checks/covering-suites/check.yaml" with { type: "file" };
-import b146 from "../packs/firstmate/checks/covering-suites/run" with { type: "file" };
-import b147 from "../packs/firstmate/checks/design-scope/check.yaml" with { type: "file" };
-import b148 from "../packs/firstmate/checks/design-verdict/check.yaml" with { type: "file" };
-import b149 from "../packs/firstmate/checks/designer-compare/check.yaml" with { type: "file" };
-import b150 from "../packs/firstmate/checks/done-lines-observable/check.yaml" with { type: "file" };
-import b151 from "../packs/firstmate/checks/done-lines-provable/check.yaml" with { type: "file" };
-import b152 from "../packs/firstmate/checks/done-lines-provable/run" with { type: "file" };
-import b153 from "../packs/firstmate/checks/door-classify/check.yaml" with { type: "file" };
-import b154 from "../packs/firstmate/checks/env-preflight/check.yaml" with { type: "file" };
-import b155 from "../packs/firstmate/checks/fail-first/check.yaml" with { type: "file" };
-import b156 from "../packs/firstmate/checks/fail-first/run" with { type: "file" };
-import b157 from "../packs/firstmate/checks/file-size-cap/check.yaml" with { type: "file" };
-import b158 from "../packs/firstmate/checks/file-size-cap/run" with { type: "file" };
-import b159 from "../packs/firstmate/checks/fixture-modules/check.yaml" with { type: "file" };
-import b160 from "../packs/firstmate/checks/fixture-modules/run" with { type: "file" };
-import b161 from "../packs/firstmate/checks/follow-up-triage/check.yaml" with { type: "file" };
-import b162 from "../packs/firstmate/checks/gate-approval/check.yaml" with { type: "file" };
-import b163 from "../packs/firstmate/checks/gate-branch/check.yaml" with { type: "file" };
-import b164 from "../packs/firstmate/checks/gate-ci/check.yaml" with { type: "file" };
-import b165 from "../packs/firstmate/checks/gate-design/check.yaml" with { type: "file" };
-import b166 from "../packs/firstmate/checks/gate-failfirst/check.yaml" with { type: "file" };
-import b167 from "../packs/firstmate/checks/gate-rebase/check.yaml" with { type: "file" };
-import b168 from "../packs/firstmate/checks/gate-scope/check.yaml" with { type: "file" };
-import b169 from "../packs/firstmate/checks/lints/check.yaml" with { type: "file" };
-import b170 from "../packs/firstmate/checks/main-ci/check.yaml" with { type: "file" };
-import b171 from "../packs/firstmate/checks/main-ci/run" with { type: "file" };
-import b172 from "../packs/firstmate/checks/no-impl-detail/check.yaml" with { type: "file" };
-import b173 from "../packs/firstmate/checks/overlap/check.yaml" with { type: "file" };
-import b174 from "../packs/firstmate/checks/plan-covers-done-lines/check.yaml" with { type: "file" };
-import b175 from "../packs/firstmate/checks/plan-covers-done-lines/run" with { type: "file" };
-import b176 from "../packs/firstmate/checks/questions-listed/check.yaml" with { type: "file" };
-import b177 from "../packs/firstmate/checks/questions-listed/run" with { type: "file" };
-import b178 from "../packs/firstmate/checks/report-schema/check.yaml" with { type: "file" };
-import b179 from "../packs/firstmate/checks/report-schema/run" with { type: "file" };
-import b180 from "../packs/firstmate/checks/retro-trigger/check.yaml" with { type: "file" };
-import b181 from "../packs/firstmate/checks/review-depth/check.yaml" with { type: "file" };
-import b182 from "../packs/firstmate/checks/review-verdict/check.yaml" with { type: "file" };
-import b183 from "../packs/firstmate/checks/scope/check.yaml" with { type: "file" };
-import b184 from "../packs/firstmate/checks/self-update/check.yaml" with { type: "file" };
-import b185 from "../packs/firstmate/checks/self-update/run" with { type: "file" };
-import b186 from "../packs/firstmate/checks/shard-budget/check.yaml" with { type: "file" };
-import b187 from "../packs/firstmate/checks/spec-schema/check.yaml" with { type: "file" };
-import b188 from "../packs/firstmate/checks/spec-schema/run" with { type: "file" };
-import b189 from "../packs/firstmate/checks/ui-captures/check.yaml" with { type: "file" };
-import b190 from "../packs/firstmate/evals/coordinator.json" with { type: "file" };
-import b191 from "../packs/firstmate/manifest.yaml" with { type: "file" };
-import b192 from "../packs/firstmate/policies.yaml" with { type: "file" };
-import b193 from "../packs/firstmate/skills/designer.md" with { type: "file" };
-import b194 from "../packs/firstmate/skills/firstmate.md" with { type: "file" };
-import b195 from "../packs/firstmate/skills/reviewer.md" with { type: "file" };
-import b196 from "../packs/firstmate/skills/worker.md" with { type: "file" };
-import b197 from "../packs/firstmate/workflows/code-firstmate.wf.yaml" with { type: "file" };
-import b198 from "../skins/captain/LICENSE.txt" with { type: "file" };
-import b199 from "../skins/captain/ORIGIN.txt" with { type: "file" };
-import b200 from "../skins/captain/captain.css" with { type: "file" };
-import b201 from "../skins/captain/captain.js" with { type: "file" };
-import b202 from "../skins/captain/index.html" with { type: "file" };
-import b203 from "../skins/captain/manifest.json" with { type: "file" };
-import b204 from "../skins/kit/README.md" with { type: "file" };
-import b205 from "../skins/kit/skin-kit.js" with { type: "file" };
-import b206 from "../skins/terminal/index.html" with { type: "file" };
-import b207 from "../skins/terminal/manifest.json" with { type: "file" };
-import b208 from "../skins/voyage/index.html" with { type: "file" };
-import b209 from "../skins/voyage/manifest.json" with { type: "file" };
-import b210 from "../skins/voyage/voyage.css" with { type: "file" };
-import b211 from "../skins/voyage/voyage.js" with { type: "file" };
-import b212 from "../templates/sandbox-app/.crew/app.json" with { type: "file" };
-import b213 from "../templates/sandbox-app/app/README.md" with { type: "file" };
-import b214 from "../templates/sandbox-app/app/build.ts" with { type: "file" };
-import b215 from "../templates/sandbox-app/app/server.ts" with { type: "file" };
-import b216 from "../templates/sandbox-app/app/shop.ts" with { type: "file" };
-import b217 from "../templates/sandbox-app/test/shop.test.ts" with { type: "file" };
-import b218 from "../templates/sandbox-repo/.crew/gates.json" with { type: "file" };
-import b219 from "../templates/sandbox-repo/.github/CODEOWNERS" with { type: "file" };
-import b220 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md" with { type: "file" };
-import b221 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md" with { type: "file" };
-import b222 from "../templates/sandbox-repo/.github/pull_request_template.md" with { type: "file" };
-import b223 from "../templates/sandbox-repo/.github/workflows/ci.yml" with { type: "file" };
-import b224 from "../templates/sandbox-repo/CONTRIBUTING.md" with { type: "file" };
-import b225 from "../templates/sandbox-repo/README.md" with { type: "file" };
-import b226 from "../templates/sandbox-repo/README_SANDBOX.md" with { type: "file" };
-import b227 from "../templates/sandbox-repo/package.json" with { type: "file" };
-import b228 from "../templates/sandbox-repo/scripts/lint.ts" with { type: "file" };
-import b229 from "../templates/sandbox-repo/scripts/test-shard.ts" with { type: "file" };
-import b230 from "../templates/sandbox-repo/src/money.ts" with { type: "file" };
-import b231 from "../templates/sandbox-repo/test/format.test.ts" with { type: "file" };
-import b232 from "../templates/sandbox-repo/test/money.test.ts" with { type: "file" };
-import b233 from "../templates/sandbox-repo/tsconfig.json" with { type: "file" };
-import b234 from "../manual/code-firstmate/coordinator.md" with { type: "file" };
-import b235 from "../manual/code-firstmate/designer.md" with { type: "file" };
-import b236 from "../manual/code-firstmate/github.md" with { type: "file" };
-import b237 from "../manual/code-firstmate/reviewer.md" with { type: "file" };
-import b238 from "../manual/code-firstmate/worker.md" with { type: "file" };
-import b239 from "../manual/coffee-kit/overview.md" with { type: "file" };
-import b240 from "../manual/coffee-kit/worker.md" with { type: "file" };
-import b241 from "../manual/documents/writer.md" with { type: "file" };
-import b242 from "../manual/file-organization/overview.md" with { type: "file" };
-import b243 from "../manual/hello-crew-studio/overview.md" with { type: "file" };
-import b244 from "../manual/images/overview.md" with { type: "file" };
-import b245 from "../manual/index.md" with { type: "file" };
-import b246 from "../manual/studio/agents.md" with { type: "file" };
-import b247 from "../manual/studio/crew.md" with { type: "file" };
-import b248 from "../manual/studio/deliver.md" with { type: "file" };
-import b249 from "../manual/studio/firstmate.md" with { type: "file" };
-import b250 from "../manual/studio/pages/prs.md" with { type: "file" };
-import b251 from "../manual/studio/pages/review-room.md" with { type: "file" };
-import b252 from "../manual/studio/pages.md" with { type: "file" };
-import b253 from "../manual/video/editor.md" with { type: "file" };
-import b254 from "../manual/web-prototype/designer.md" with { type: "file" };
-import b255 from "../docs/acceptance.md" with { type: "file" };
-import b256 from "../docs/architecture.md" with { type: "file" };
-import b257 from "../docs/check-contract.md" with { type: "file" };
-import b258 from "../docs/ci.md" with { type: "file" };
-import b259 from "../docs/code-firstmate-pipeline.md" with { type: "file" };
-import b260 from "../docs/live-acceptance.md" with { type: "file" };
-import b261 from "../docs/local-execution.md" with { type: "file" };
-import b262 from "../docs/milestones-m6-m8.md" with { type: "file" };
-import b263 from "../docs/pack-genesis.md" with { type: "file" };
-import b264 from "../docs/setup-and-reference.md" with { type: "file" };
-import b265 from "../docs/units/agent-skills.md" with { type: "file" };
-import b266 from "../docs/units/backbone-nav.md" with { type: "file" };
-import b267 from "../docs/units/board.md" with { type: "file" };
-import b268 from "../docs/units/branch-intake.md" with { type: "file" };
-import b269 from "../docs/units/captain-card-ime.md" with { type: "file" };
-import b270 from "../docs/units/card-zh-quality.md" with { type: "file" };
-import b271 from "../docs/units/chat-attachments.md" with { type: "file" };
-import b272 from "../docs/units/check-runtime.md" with { type: "file" };
-import b273 from "../docs/units/claude-native-capability.md" with { type: "file" };
-import b274 from "../docs/units/cli-mcp-grant.md" with { type: "file" };
-import b275 from "../docs/units/cloud-handoff.md" with { type: "file" };
-import b276 from "../docs/units/code-firstmate-smoke.md" with { type: "file" };
-import b277 from "../docs/units/codex-auth-timestamp.md" with { type: "file" };
-import b278 from "../docs/units/codex-independent-login.md" with { type: "file" };
-import b279 from "../docs/units/codex-login-welcome.md" with { type: "file" };
-import b280 from "../docs/units/codex-toolchain.md" with { type: "file" };
-import b281 from "../docs/units/coffee-local-render-jobs.md" with { type: "file" };
-import b282 from "../docs/units/coffee-staffing-recovery.md" with { type: "file" };
-import b283 from "../docs/units/compare-transcripts.md" with { type: "file" };
-import b284 from "../docs/units/crew-studio-agents.md" with { type: "file" };
-import b285 from "../docs/units/default-workflow-catalog.md" with { type: "file" };
-import b286 from "../docs/units/first-workflow-tutorial.md" with { type: "file" };
-import b287 from "../docs/units/firstmate-general-cli.md" with { type: "file" };
-import b288 from "../docs/units/firstmate-generated-media.md" with { type: "file" };
-import b289 from "../docs/units/firstmate-project-registration.md" with { type: "file" };
-import b290 from "../docs/units/firstmate-staffing.md" with { type: "file" };
-import b291 from "../docs/units/fix-backbone-nav-r2.md" with { type: "file" };
-import b292 from "../docs/units/fix-backbone-nav-r3.md" with { type: "file" };
-import b293 from "../docs/units/fix-backbone-nav.md" with { type: "file" };
-import b294 from "../docs/units/fix-legacy-a1-credentials.md" with { type: "file" };
-import b295 from "../docs/units/fix-legacy-c-privacy.md" with { type: "file" };
-import b296 from "../docs/units/fix-migrate-r2.md" with { type: "file" };
-import b297 from "../docs/units/fix-migrate-stream.md" with { type: "file" };
-import b298 from "../docs/units/fix-record-smoke-r2.md" with { type: "file" };
-import b299 from "../docs/units/fix-round-record-r1.md" with { type: "file" };
-import b300 from "../docs/units/fix-round-sandbox-cli.md" with { type: "file" };
-import b301 from "../docs/units/fix-round-sandbox-r1.md" with { type: "file" };
-import b302 from "../docs/units/fix-runtime-authority.md" with { type: "file" };
-import b303 from "../docs/units/fix-runtime-contract.md" with { type: "file" };
-import b304 from "../docs/units/fix-runtime-durability.md" with { type: "file" };
-import b305 from "../docs/units/fix-runtime-followups.md" with { type: "file" };
-import b306 from "../docs/units/fix-runtime-generic.md" with { type: "file" };
-import b307 from "../docs/units/fix-runtime-ids.md" with { type: "file" };
-import b308 from "../docs/units/fix-runtime-lifetime.md" with { type: "file" };
-import b309 from "../docs/units/fix-runtime-r2.md" with { type: "file" };
-import b310 from "../docs/units/fix-runtime-sandbox.md" with { type: "file" };
-import b311 from "../docs/units/fix-runtime-tests.md" with { type: "file" };
-import b312 from "../docs/units/fix-runtime-ui-stream.md" with { type: "file" };
-import b313 from "../docs/units/fix-sandbox-repo-r2.md" with { type: "file" };
-import b314 from "../docs/units/fix-sandbox-repo.md" with { type: "file" };
-import b315 from "../docs/units/fix-sandbox-worktrees-r2.md" with { type: "file" };
-import b316 from "../docs/units/fix-sb-nav-leftovers.md" with { type: "file" };
-import b317 from "../docs/units/fix-smoke-r1.md" with { type: "file" };
-import b318 from "../docs/units/fix-worktrees-r1.md" with { type: "file" };
-import b319 from "../docs/units/github-foundation.md" with { type: "file" };
-import b320 from "../docs/units/github-review-workflow.md" with { type: "file" };
-import b321 from "../docs/units/graph-simple-view.md" with { type: "file" };
-import b322 from "../docs/units/graph-tidy.md" with { type: "file" };
-import b323 from "../docs/units/image-refine-context.md" with { type: "file" };
-import b324 from "../docs/units/inbox-live.md" with { type: "file" };
-import b325 from "../docs/units/inbox-studio-cards.md" with { type: "file" };
-import b326 from "../docs/units/intent-merge-card.md" with { type: "file" };
-import b327 from "../docs/units/issue-eval.md" with { type: "file" };
-import b328 from "../docs/units/lan-relay.md" with { type: "file" };
-import b329 from "../docs/units/list-tools.md" with { type: "file" };
-import b330 from "../docs/units/local-coffee-e2e.md" with { type: "file" };
-import b331 from "../docs/units/local-project-add.md" with { type: "file" };
-import b332 from "../docs/units/locators.md" with { type: "file" };
-import b333 from "../docs/units/login-status-r6.md" with { type: "file" };
-import b334 from "../docs/units/login-status-r7.md" with { type: "file" };
-import b335 from "../docs/units/login-status-r8.md" with { type: "file" };
-import b336 from "../docs/units/login-status-warn.md" with { type: "file" };
-import b337 from "../docs/units/migrate-r3.md" with { type: "file" };
-import b338 from "../docs/units/native-backbone-board-responsiveness.md" with { type: "file" };
-import b339 from "../docs/units/native-backbone-integration.md" with { type: "file" };
-import b340 from "../docs/units/native-coffee-board-integration.md" with { type: "file" };
-import b341 from "../docs/units/native-coffee-hyperframes.md" with { type: "file" };
-import b342 from "../docs/units/native-coffee-image.md" with { type: "file" };
-import b343 from "../docs/units/native-coffee-kit.md" with { type: "file" };
-import b344 from "../docs/units/native-coffee-real-integration.md" with { type: "file" };
-import b345 from "../docs/units/native-coffee-skills.md" with { type: "file" };
-import b346 from "../docs/units/native-pack-queue-integration.md" with { type: "file" };
-import b347 from "../docs/units/native-queue-vendor-policy.md" with { type: "file" };
-import b348 from "../docs/units/native-standalone.md" with { type: "file" };
-import b349 from "../docs/units/native-tool-errors.md" with { type: "file" };
-import b350 from "../docs/units/non-code-followups.md" with { type: "file" };
-import b351 from "../docs/units/non-code-workflows.md" with { type: "file" };
-import b352 from "../docs/units/observe.md" with { type: "file" };
-import b353 from "../docs/units/onboarding-coffee-journey.md" with { type: "file" };
-import b354 from "../docs/units/one-live-stream.md" with { type: "file" };
-import b355 from "../docs/units/open-browser.md" with { type: "file" };
-import b356 from "../docs/units/pack-genesis-interview-card.md" with { type: "file" };
-import b357 from "../docs/units/pack-genesis-interview-verification.md" with { type: "file" };
-import b358 from "../docs/units/pack-genesis-native.md" with { type: "file" };
-import b359 from "../docs/units/pr-watch.md" with { type: "file" };
-import b360 from "../docs/units/projects.md" with { type: "file" };
-import b361 from "../docs/units/public-attribution-privacy.md" with { type: "file" };
-import b362 from "../docs/units/redaction-rules-r2.md" with { type: "file" };
-import b363 from "../docs/units/redaction-rules.md" with { type: "file" };
-import b364 from "../docs/units/remote-ci-reconcile.md" with { type: "file" };
-import b365 from "../docs/units/remote-ci-run-end-fixture.md" with { type: "file" };
-import b366 from "../docs/units/remote-gates-merge.md" with { type: "file" };
-import b367 from "../docs/units/review-depth-followups.md" with { type: "file" };
-import b368 from "../docs/units/review-modes.md" with { type: "file" };
-import b369 from "../docs/units/review-room.md" with { type: "file" };
-import b370 from "../docs/units/reviewer-depth.md" with { type: "file" };
-import b371 from "../docs/units/round-record.md" with { type: "file" };
-import b372 from "../docs/units/round-sandbox.md" with { type: "file" };
-import b373 from "../docs/units/run-end-and-remove.md" with { type: "file" };
-import b374 from "../docs/units/run-graph-navigation.md" with { type: "file" };
-import b375 from "../docs/units/sandbox-repo.md" with { type: "file" };
-import b376 from "../docs/units/secrets-migrate-r5.md" with { type: "file" };
-import b377 from "../docs/units/secrets-redaction-r3.md" with { type: "file" };
-import b378 from "../docs/units/secrets-redaction-r4.md" with { type: "file" };
-import b379 from "../docs/units/secrets-v1-model.md" with { type: "file" };
-import b380 from "../docs/units/server-lifetime.md" with { type: "file" };
-import b381 from "../docs/units/shared-github-poller.md" with { type: "file" };
-import b382 from "../docs/units/shared-media-library.md" with { type: "file" };
-import b383 from "../docs/units/sidebar-workflow-create.md" with { type: "file" };
-import b384 from "../docs/units/skill-packages.md" with { type: "file" };
-import b385 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
-import b386 from "../docs/units/startup-firstmate.md" with { type: "file" };
-import b387 from "../docs/units/startup-recursion.md" with { type: "file" };
-import b388 from "../docs/units/takeover-codex.md" with { type: "file" };
-import b389 from "../docs/units/takeover.md" with { type: "file" };
-import b390 from "../docs/units/task-round.md" with { type: "file" };
-import b391 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
-import b392 from "../docs/units/transcripts-attempts.md" with { type: "file" };
-import b393 from "../docs/units/transcripts.md" with { type: "file" };
-import b394 from "../docs/units/ui-test-waits.md" with { type: "file" };
-import b395 from "../docs/units/visual-sandbox.md" with { type: "file" };
-import b396 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
-import b397 from "../docs/units/web-terminal.md" with { type: "file" };
-import b398 from "../docs/units/workflow-definition-export.md" with { type: "file" };
-import b399 from "../docs/units/workflow-overview.md" with { type: "file" };
-import b400 from "../docs/units/workflow-packages.md" with { type: "file" };
-import b401 from "../docs/units/workflow-rename.md" with { type: "file" };
-import b402 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
-import b403 from "../docs/units/worktrees.md" with { type: "file" };
-import b404 from "../docs/v2-spec.md" with { type: "file" };
-import b405 from "../docs/w29-local-sandbox.md" with { type: "file" };
+import b6 from "../workflows/skills/change-reviewer.md" with { type: "file" };
+import b7 from "../workflows/skills/change-worker.md" with { type: "file" };
+import b8 from "../workflows/skills/firstmate-workflow-design/SKILL.md" with { type: "file" };
+import b9 from "../workflows/skills/issue-categorizer.md" with { type: "file" };
+import b10 from "../workflows/skills/issue-triager.md" with { type: "file" };
+import b11 from "../workflows/skills/pack-author.md" with { type: "file" };
+import b12 from "../workflows/skills/pack-genesis-author.md" with { type: "file" };
+import b13 from "../workflows/skills/pack-genesis-coordinator.md" with { type: "file" };
+import b14 from "../workflows/skills/startup-founder.md" with { type: "file" };
+import b15 from "../workflows/skills/startup-judge.md" with { type: "file" };
+import b16 from "../workflows/skills/v2/designer.md" with { type: "file" };
+import b17 from "../workflows/skills/v2/film-editor.md" with { type: "file" };
+import b18 from "../workflows/skills/v2/image.md" with { type: "file" };
+import b19 from "../workflows/skills/v2/writer.md" with { type: "file" };
+import b20 from "../workflows/studio.retro.yaml" with { type: "file" };
+import b21 from "../workflows/v2/coffee-kit.wf.yaml" with { type: "file" };
+import b22 from "../workflows/v2/crew-change.wf.yaml" with { type: "file" };
+import b23 from "../workflows/v2/documents.wf.yaml" with { type: "file" };
+import b24 from "../workflows/v2/file-organization.wf.yaml" with { type: "file" };
+import b25 from "../workflows/v2/firstmate-connect-github.wf.yaml" with { type: "file" };
+import b26 from "../workflows/v2/firstmate-grant-merge.wf.yaml" with { type: "file" };
+import b27 from "../workflows/v2/firstmate-proposal.wf.yaml" with { type: "file" };
+import b28 from "../workflows/v2/firstmate-register-project.wf.yaml" with { type: "file" };
+import b29 from "../workflows/v2/firstmate-staffing.wf.yaml" with { type: "file" };
+import b30 from "../workflows/v2/github-review.wf.yaml" with { type: "file" };
+import b31 from "../workflows/v2/hello-crew-studio.wf.yaml" with { type: "file" };
+import b32 from "../workflows/v2/images.wf.yaml" with { type: "file" };
+import b33 from "../workflows/v2/issue-categories.wf.yaml" with { type: "file" };
+import b34 from "../workflows/v2/issue-triage.wf.yaml" with { type: "file" };
+import b35 from "../workflows/v2/local-project-register.wf.yaml" with { type: "file" };
+import b36 from "../workflows/v2/pack-genesis.wf.yaml" with { type: "file" };
+import b37 from "../workflows/v2/pr-follow.wf.yaml" with { type: "file" };
+import b38 from "../workflows/v2/pr-watch-apply-depends.wf.yaml" with { type: "file" };
+import b39 from "../workflows/v2/review-room-dir-host.wf.yaml" with { type: "file" };
+import b40 from "../workflows/v2/review-room-host.wf.yaml" with { type: "file" };
+import b41 from "../workflows/v2/startup-recursion.wf.yaml" with { type: "file" };
+import b42 from "../workflows/v2/templates/film.html" with { type: "file" };
+import b43 from "../workflows/v2/trivial-lane.wf.yaml" with { type: "file" };
+import b44 from "../workflows/v2/video.wf.yaml" with { type: "file" };
+import b45 from "../workflows/v2/web-prototype.wf.yaml" with { type: "file" };
+import b46 from "../packs/coffee-kit/checks/bundle-ready/check.yaml" with { type: "file" };
+import b47 from "../packs/coffee-kit/checks/designer/check.yaml" with { type: "file" };
+import b48 from "../packs/coffee-kit/checks/reviewer/check.yaml" with { type: "file" };
+import b49 from "../packs/coffee-kit/manifest.yaml" with { type: "file" };
+import b50 from "../packs/coffee-kit/skills/designer.md" with { type: "file" };
+import b51 from "../packs/coffee-kit/skills/hyperframes.md" with { type: "file" };
+import b52 from "../packs/coffee-kit/skills/image.md" with { type: "file" };
+import b53 from "../packs/coffee-kit/skills/reviewer.md" with { type: "file" };
+import b54 from "../packs/coffee-kit/skills/website.md" with { type: "file" };
+import b55 from "../packs/core/checks/artifact-ready/check.yaml" with { type: "file" };
+import b56 from "../packs/core/checks/brief-quality/check.yaml" with { type: "file" };
+import b57 from "../packs/core/checks/brief-quality/run" with { type: "file" };
+import b58 from "../packs/core/checks/lane-ready/check.yaml" with { type: "file" };
+import b59 from "../packs/core/checks/pack-genesis-measure/check.yaml" with { type: "file" };
+import b60 from "../packs/core/checks/pack-genesis-preview/check.yaml" with { type: "file" };
+import b61 from "../packs/core/checks/ste-wording/check.yaml" with { type: "file" };
+import b62 from "../packs/core/checks/ste-wording/run" with { type: "file" };
+import b63 from "../packs/core/evals/coordinator.json" with { type: "file" };
+import b64 from "../packs/core/manifest.yaml" with { type: "file" };
+import b65 from "../packs/core/skills/accessible-ui/SKILL.md" with { type: "file" };
+import b66 from "../packs/core/skills/code-review/SKILL.md" with { type: "file" };
+import b67 from "../packs/core/skills/commit-and-pr-text/SKILL.md" with { type: "file" };
+import b68 from "../packs/core/skills/coordinator.md" with { type: "file" };
+import b69 from "../packs/core/skills/data-viz/SKILL.md" with { type: "file" };
+import b70 from "../packs/core/skills/fail-first-testing/SKILL.md" with { type: "file" };
+import b71 from "../packs/core/skills/film-direction/SKILL.md" with { type: "file" };
+import b72 from "../packs/core/skills/image-prompting/SKILL.md" with { type: "file" };
+import b73 from "../packs/core/skills/plain-writing/NOTICE.md" with { type: "file" };
+import b74 from "../packs/core/skills/plain-writing/SKILL.md" with { type: "file" };
+import b75 from "../packs/core/skills/security-review/SKILL.md" with { type: "file" };
+import b76 from "../packs/core/skills/studio-baton/NOTICE.md" with { type: "file" };
+import b77 from "../packs/core/skills/studio-baton/SKILL.md" with { type: "file" };
+import b78 from "../packs/core/skills/studio-baton/diagram-design/LICENSE" with { type: "file" };
+import b79 from "../packs/core/skills/studio-baton/diagram-design/SKILL.md" with { type: "file" };
+import b80 from "../packs/core/skills/studio-baton/diagram-design/assets/template.html" with { type: "file" };
+import b81 from "../packs/core/skills/studio-baton/diagram-design/references/output-spec.md" with { type: "file" };
+import b82 from "../packs/core/skills/studio-baton/diagram-design/references/semantic-patterns.md" with { type: "file" };
+import b83 from "../packs/core/skills/studio-baton/diagram-design/references/style-guide.md" with { type: "file" };
+import b84 from "../packs/core/skills/studio-baton/diagram-design/references/type-architecture.md" with { type: "file" };
+import b85 from "../packs/core/skills/studio-baton/diagram-design/references/type-data-flow.md" with { type: "file" };
+import b86 from "../packs/core/skills/studio-baton/diagram-design/references/type-db-schema.md" with { type: "file" };
+import b87 from "../packs/core/skills/studio-baton/diagram-design/references/type-dependency.md" with { type: "file" };
+import b88 from "../packs/core/skills/studio-baton/diagram-design/references/type-deployment.md" with { type: "file" };
+import b89 from "../packs/core/skills/studio-baton/diagram-design/references/type-er.md" with { type: "file" };
+import b90 from "../packs/core/skills/studio-baton/diagram-design/references/type-flowchart.md" with { type: "file" };
+import b91 from "../packs/core/skills/studio-baton/diagram-design/references/type-layers.md" with { type: "file" };
+import b92 from "../packs/core/skills/studio-baton/diagram-design/references/type-sequence.md" with { type: "file" };
+import b93 from "../packs/core/skills/studio-baton/diagram-design/references/type-state.md" with { type: "file" };
+import b94 from "../packs/core/skills/studio-baton/diagram-design/references/type-swimlane.md" with { type: "file" };
+import b95 from "../packs/core/skills/studio-baton/diagram-design/references/type-timeline.md" with { type: "file" };
+import b96 from "../packs/core/skills/studio-baton/diagram-design/references/type-tree.md" with { type: "file" };
+import b97 from "../packs/core/skills/studio-baton/references/diagrams.md" with { type: "file" };
+import b98 from "../packs/core/skills/studio-baton/references/extraction.md" with { type: "file" };
+import b99 from "../packs/core/skills/studio-baton/references/pipeline.md" with { type: "file" };
+import b100 from "../packs/core/skills/studio-baton/references/spec.md" with { type: "file" };
+import b101 from "../packs/core/skills/studio-baton/requirements.txt" with { type: "file" };
+import b102 from "../packs/core/skills/studio-baton/scripts/export_pdf.py" with { type: "file" };
+import b103 from "../packs/core/skills/studio-baton/scripts/figures.py" with { type: "file" };
+import b104 from "../packs/core/skills/studio-baton/scripts/render.py" with { type: "file" };
+import b105 from "../packs/core/skills/studio-baton/scripts/snapshot.py" with { type: "file" };
+import b106 from "../packs/core/skills/studio-baton/scripts/verify.py" with { type: "file" };
+import b107 from "../packs/core/skills/studio-baton/templates/packet.html" with { type: "file" };
+import b108 from "../packs/core/skills/technical-writing/SKILL.md" with { type: "file" };
+import b109 from "../packs/core/skills/translation-zh-tw/SKILL.md" with { type: "file" };
+import b110 from "../packs/core/skills/visual-design-review/SKILL.md" with { type: "file" };
+import b111 from "../packs/core/skills/web-interaction/SKILL.md" with { type: "file" };
+import b112 from "../packs/core/workflows/refine-demo.wf.yaml" with { type: "file" };
+import b113 from "../packs/documents/evals/writer.json" with { type: "file" };
+import b114 from "../packs/documents/manifest.yaml" with { type: "file" };
+import b115 from "../packs/documents/workflows/document.flow.yaml" with { type: "file" };
+import b116 from "../packs/file-organization/checks/plan-gates/check.yaml" with { type: "file" };
+import b117 from "../packs/file-organization/evals/organizer.json" with { type: "file" };
+import b118 from "../packs/file-organization/manifest.yaml" with { type: "file" };
+import b119 from "../packs/file-organization/rules.yaml" with { type: "file" };
+import b120 from "../packs/file-organization/skills/organizer.md" with { type: "file" };
+import b121 from "../packs/file-organization/workflows/organize.flow.yaml" with { type: "file" };
+import b122 from "../packs/firstmate/checks/caller-coverage/check.yaml" with { type: "file" };
+import b123 from "../packs/firstmate/checks/caller-coverage/run" with { type: "file" };
+import b124 from "../packs/firstmate/checks/ci/check.yaml" with { type: "file" };
+import b125 from "../packs/firstmate/checks/ci/run" with { type: "file" };
+import b126 from "../packs/firstmate/checks/covering-suites/check.yaml" with { type: "file" };
+import b127 from "../packs/firstmate/checks/covering-suites/run" with { type: "file" };
+import b128 from "../packs/firstmate/checks/design-scope/check.yaml" with { type: "file" };
+import b129 from "../packs/firstmate/checks/design-verdict/check.yaml" with { type: "file" };
+import b130 from "../packs/firstmate/checks/designer-compare/check.yaml" with { type: "file" };
+import b131 from "../packs/firstmate/checks/done-lines-observable/check.yaml" with { type: "file" };
+import b132 from "../packs/firstmate/checks/done-lines-provable/check.yaml" with { type: "file" };
+import b133 from "../packs/firstmate/checks/done-lines-provable/run" with { type: "file" };
+import b134 from "../packs/firstmate/checks/door-classify/check.yaml" with { type: "file" };
+import b135 from "../packs/firstmate/checks/env-preflight/check.yaml" with { type: "file" };
+import b136 from "../packs/firstmate/checks/fail-first/check.yaml" with { type: "file" };
+import b137 from "../packs/firstmate/checks/fail-first/run" with { type: "file" };
+import b138 from "../packs/firstmate/checks/file-size-cap/check.yaml" with { type: "file" };
+import b139 from "../packs/firstmate/checks/file-size-cap/run" with { type: "file" };
+import b140 from "../packs/firstmate/checks/fixture-modules/check.yaml" with { type: "file" };
+import b141 from "../packs/firstmate/checks/fixture-modules/run" with { type: "file" };
+import b142 from "../packs/firstmate/checks/follow-up-triage/check.yaml" with { type: "file" };
+import b143 from "../packs/firstmate/checks/gate-approval/check.yaml" with { type: "file" };
+import b144 from "../packs/firstmate/checks/gate-branch/check.yaml" with { type: "file" };
+import b145 from "../packs/firstmate/checks/gate-ci/check.yaml" with { type: "file" };
+import b146 from "../packs/firstmate/checks/gate-design/check.yaml" with { type: "file" };
+import b147 from "../packs/firstmate/checks/gate-failfirst/check.yaml" with { type: "file" };
+import b148 from "../packs/firstmate/checks/gate-rebase/check.yaml" with { type: "file" };
+import b149 from "../packs/firstmate/checks/gate-scope/check.yaml" with { type: "file" };
+import b150 from "../packs/firstmate/checks/lints/check.yaml" with { type: "file" };
+import b151 from "../packs/firstmate/checks/main-ci/check.yaml" with { type: "file" };
+import b152 from "../packs/firstmate/checks/main-ci/run" with { type: "file" };
+import b153 from "../packs/firstmate/checks/no-impl-detail/check.yaml" with { type: "file" };
+import b154 from "../packs/firstmate/checks/overlap/check.yaml" with { type: "file" };
+import b155 from "../packs/firstmate/checks/plan-covers-done-lines/check.yaml" with { type: "file" };
+import b156 from "../packs/firstmate/checks/plan-covers-done-lines/run" with { type: "file" };
+import b157 from "../packs/firstmate/checks/questions-listed/check.yaml" with { type: "file" };
+import b158 from "../packs/firstmate/checks/questions-listed/run" with { type: "file" };
+import b159 from "../packs/firstmate/checks/report-schema/check.yaml" with { type: "file" };
+import b160 from "../packs/firstmate/checks/report-schema/run" with { type: "file" };
+import b161 from "../packs/firstmate/checks/retro-trigger/check.yaml" with { type: "file" };
+import b162 from "../packs/firstmate/checks/review-depth/check.yaml" with { type: "file" };
+import b163 from "../packs/firstmate/checks/review-verdict/check.yaml" with { type: "file" };
+import b164 from "../packs/firstmate/checks/scope/check.yaml" with { type: "file" };
+import b165 from "../packs/firstmate/checks/self-update/check.yaml" with { type: "file" };
+import b166 from "../packs/firstmate/checks/self-update/run" with { type: "file" };
+import b167 from "../packs/firstmate/checks/shard-budget/check.yaml" with { type: "file" };
+import b168 from "../packs/firstmate/checks/spec-schema/check.yaml" with { type: "file" };
+import b169 from "../packs/firstmate/checks/spec-schema/run" with { type: "file" };
+import b170 from "../packs/firstmate/checks/ui-captures/check.yaml" with { type: "file" };
+import b171 from "../packs/firstmate/evals/coordinator.json" with { type: "file" };
+import b172 from "../packs/firstmate/manifest.yaml" with { type: "file" };
+import b173 from "../packs/firstmate/policies.yaml" with { type: "file" };
+import b174 from "../packs/firstmate/skills/designer.md" with { type: "file" };
+import b175 from "../packs/firstmate/skills/firstmate.md" with { type: "file" };
+import b176 from "../packs/firstmate/skills/reviewer.md" with { type: "file" };
+import b177 from "../packs/firstmate/skills/worker.md" with { type: "file" };
+import b178 from "../packs/firstmate/workflows/code-firstmate.wf.yaml" with { type: "file" };
+import b179 from "../skins/captain/LICENSE.txt" with { type: "file" };
+import b180 from "../skins/captain/ORIGIN.txt" with { type: "file" };
+import b181 from "../skins/captain/captain.css" with { type: "file" };
+import b182 from "../skins/captain/captain.js" with { type: "file" };
+import b183 from "../skins/captain/index.html" with { type: "file" };
+import b184 from "../skins/captain/manifest.json" with { type: "file" };
+import b185 from "../skins/kit/README.md" with { type: "file" };
+import b186 from "../skins/kit/skin-kit.js" with { type: "file" };
+import b187 from "../skins/terminal/index.html" with { type: "file" };
+import b188 from "../skins/terminal/manifest.json" with { type: "file" };
+import b189 from "../skins/voyage/index.html" with { type: "file" };
+import b190 from "../skins/voyage/manifest.json" with { type: "file" };
+import b191 from "../skins/voyage/voyage.css" with { type: "file" };
+import b192 from "../skins/voyage/voyage.js" with { type: "file" };
+import b193 from "../templates/sandbox-app/.crew/app.json" with { type: "file" };
+import b194 from "../templates/sandbox-app/app/README.md" with { type: "file" };
+import b195 from "../templates/sandbox-app/app/build.ts" with { type: "file" };
+import b196 from "../templates/sandbox-app/app/server.ts" with { type: "file" };
+import b197 from "../templates/sandbox-app/app/shop.ts" with { type: "file" };
+import b198 from "../templates/sandbox-app/test/shop.test.ts" with { type: "file" };
+import b199 from "../templates/sandbox-repo/.crew/gates.json" with { type: "file" };
+import b200 from "../templates/sandbox-repo/.github/CODEOWNERS" with { type: "file" };
+import b201 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md" with { type: "file" };
+import b202 from "../templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md" with { type: "file" };
+import b203 from "../templates/sandbox-repo/.github/pull_request_template.md" with { type: "file" };
+import b204 from "../templates/sandbox-repo/.github/workflows/ci.yml" with { type: "file" };
+import b205 from "../templates/sandbox-repo/CONTRIBUTING.md" with { type: "file" };
+import b206 from "../templates/sandbox-repo/README.md" with { type: "file" };
+import b207 from "../templates/sandbox-repo/README_SANDBOX.md" with { type: "file" };
+import b208 from "../templates/sandbox-repo/package.json" with { type: "file" };
+import b209 from "../templates/sandbox-repo/scripts/lint.ts" with { type: "file" };
+import b210 from "../templates/sandbox-repo/scripts/test-shard.ts" with { type: "file" };
+import b211 from "../templates/sandbox-repo/src/money.ts" with { type: "file" };
+import b212 from "../templates/sandbox-repo/test/format.test.ts" with { type: "file" };
+import b213 from "../templates/sandbox-repo/test/money.test.ts" with { type: "file" };
+import b214 from "../templates/sandbox-repo/tsconfig.json" with { type: "file" };
+import b215 from "../manual/code-firstmate/coordinator.md" with { type: "file" };
+import b216 from "../manual/code-firstmate/designer.md" with { type: "file" };
+import b217 from "../manual/code-firstmate/github.md" with { type: "file" };
+import b218 from "../manual/code-firstmate/reviewer.md" with { type: "file" };
+import b219 from "../manual/code-firstmate/worker.md" with { type: "file" };
+import b220 from "../manual/coffee-kit/overview.md" with { type: "file" };
+import b221 from "../manual/coffee-kit/worker.md" with { type: "file" };
+import b222 from "../manual/documents/writer.md" with { type: "file" };
+import b223 from "../manual/file-organization/overview.md" with { type: "file" };
+import b224 from "../manual/hello-crew-studio/overview.md" with { type: "file" };
+import b225 from "../manual/images/overview.md" with { type: "file" };
+import b226 from "../manual/index.md" with { type: "file" };
+import b227 from "../manual/studio/agents.md" with { type: "file" };
+import b228 from "../manual/studio/crew.md" with { type: "file" };
+import b229 from "../manual/studio/deliver.md" with { type: "file" };
+import b230 from "../manual/studio/firstmate.md" with { type: "file" };
+import b231 from "../manual/studio/pages/prs.md" with { type: "file" };
+import b232 from "../manual/studio/pages/review-room.md" with { type: "file" };
+import b233 from "../manual/studio/pages.md" with { type: "file" };
+import b234 from "../manual/video/editor.md" with { type: "file" };
+import b235 from "../manual/web-prototype/designer.md" with { type: "file" };
+import b236 from "../docs/acceptance.md" with { type: "file" };
+import b237 from "../docs/architecture.md" with { type: "file" };
+import b238 from "../docs/check-contract.md" with { type: "file" };
+import b239 from "../docs/ci.md" with { type: "file" };
+import b240 from "../docs/code-firstmate-pipeline.md" with { type: "file" };
+import b241 from "../docs/live-acceptance.md" with { type: "file" };
+import b242 from "../docs/local-execution.md" with { type: "file" };
+import b243 from "../docs/milestones-m6-m8.md" with { type: "file" };
+import b244 from "../docs/pack-genesis.md" with { type: "file" };
+import b245 from "../docs/setup-and-reference.md" with { type: "file" };
+import b246 from "../docs/units/agent-skills.md" with { type: "file" };
+import b247 from "../docs/units/backbone-nav.md" with { type: "file" };
+import b248 from "../docs/units/board.md" with { type: "file" };
+import b249 from "../docs/units/branch-intake.md" with { type: "file" };
+import b250 from "../docs/units/captain-card-ime.md" with { type: "file" };
+import b251 from "../docs/units/card-zh-quality.md" with { type: "file" };
+import b252 from "../docs/units/chat-attachments.md" with { type: "file" };
+import b253 from "../docs/units/check-runtime.md" with { type: "file" };
+import b254 from "../docs/units/claude-native-capability.md" with { type: "file" };
+import b255 from "../docs/units/cli-mcp-grant.md" with { type: "file" };
+import b256 from "../docs/units/cli.md" with { type: "file" };
+import b257 from "../docs/units/cloud-handoff.md" with { type: "file" };
+import b258 from "../docs/units/code-firstmate-smoke.md" with { type: "file" };
+import b259 from "../docs/units/codex-auth-timestamp.md" with { type: "file" };
+import b260 from "../docs/units/codex-independent-login.md" with { type: "file" };
+import b261 from "../docs/units/codex-login-welcome.md" with { type: "file" };
+import b262 from "../docs/units/codex-toolchain.md" with { type: "file" };
+import b263 from "../docs/units/coffee-local-render-jobs.md" with { type: "file" };
+import b264 from "../docs/units/coffee-staffing-recovery.md" with { type: "file" };
+import b265 from "../docs/units/compare-transcripts.md" with { type: "file" };
+import b266 from "../docs/units/crew-studio-agents.md" with { type: "file" };
+import b267 from "../docs/units/default-workflow-catalog.md" with { type: "file" };
+import b268 from "../docs/units/first-workflow-tutorial.md" with { type: "file" };
+import b269 from "../docs/units/firstmate-general-cli.md" with { type: "file" };
+import b270 from "../docs/units/firstmate-generated-media.md" with { type: "file" };
+import b271 from "../docs/units/firstmate-project-registration.md" with { type: "file" };
+import b272 from "../docs/units/firstmate-staffing.md" with { type: "file" };
+import b273 from "../docs/units/fix-backbone-nav-r2.md" with { type: "file" };
+import b274 from "../docs/units/fix-backbone-nav-r3.md" with { type: "file" };
+import b275 from "../docs/units/fix-backbone-nav.md" with { type: "file" };
+import b276 from "../docs/units/fix-legacy-a1-credentials.md" with { type: "file" };
+import b277 from "../docs/units/fix-legacy-c-privacy.md" with { type: "file" };
+import b278 from "../docs/units/fix-migrate-r2.md" with { type: "file" };
+import b279 from "../docs/units/fix-migrate-stream.md" with { type: "file" };
+import b280 from "../docs/units/fix-record-smoke-r2.md" with { type: "file" };
+import b281 from "../docs/units/fix-round-record-r1.md" with { type: "file" };
+import b282 from "../docs/units/fix-round-sandbox-cli.md" with { type: "file" };
+import b283 from "../docs/units/fix-round-sandbox-r1.md" with { type: "file" };
+import b284 from "../docs/units/fix-runtime-authority.md" with { type: "file" };
+import b285 from "../docs/units/fix-runtime-contract.md" with { type: "file" };
+import b286 from "../docs/units/fix-runtime-durability.md" with { type: "file" };
+import b287 from "../docs/units/fix-runtime-followups.md" with { type: "file" };
+import b288 from "../docs/units/fix-runtime-generic.md" with { type: "file" };
+import b289 from "../docs/units/fix-runtime-ids.md" with { type: "file" };
+import b290 from "../docs/units/fix-runtime-lifetime.md" with { type: "file" };
+import b291 from "../docs/units/fix-runtime-r2.md" with { type: "file" };
+import b292 from "../docs/units/fix-runtime-sandbox.md" with { type: "file" };
+import b293 from "../docs/units/fix-runtime-tests.md" with { type: "file" };
+import b294 from "../docs/units/fix-runtime-ui-stream.md" with { type: "file" };
+import b295 from "../docs/units/fix-sandbox-repo-r2.md" with { type: "file" };
+import b296 from "../docs/units/fix-sandbox-repo.md" with { type: "file" };
+import b297 from "../docs/units/fix-sandbox-worktrees-r2.md" with { type: "file" };
+import b298 from "../docs/units/fix-sb-nav-leftovers.md" with { type: "file" };
+import b299 from "../docs/units/fix-smoke-r1.md" with { type: "file" };
+import b300 from "../docs/units/fix-worktrees-r1.md" with { type: "file" };
+import b301 from "../docs/units/github-foundation.md" with { type: "file" };
+import b302 from "../docs/units/github-review-workflow.md" with { type: "file" };
+import b303 from "../docs/units/graph-simple-view.md" with { type: "file" };
+import b304 from "../docs/units/graph-tidy.md" with { type: "file" };
+import b305 from "../docs/units/image-refine-context.md" with { type: "file" };
+import b306 from "../docs/units/inbox-live.md" with { type: "file" };
+import b307 from "../docs/units/inbox-studio-cards.md" with { type: "file" };
+import b308 from "../docs/units/intent-merge-card.md" with { type: "file" };
+import b309 from "../docs/units/issue-eval.md" with { type: "file" };
+import b310 from "../docs/units/lan-relay.md" with { type: "file" };
+import b311 from "../docs/units/list-tools.md" with { type: "file" };
+import b312 from "../docs/units/local-coffee-e2e.md" with { type: "file" };
+import b313 from "../docs/units/local-project-add.md" with { type: "file" };
+import b314 from "../docs/units/locators.md" with { type: "file" };
+import b315 from "../docs/units/login-status-r6.md" with { type: "file" };
+import b316 from "../docs/units/login-status-r7.md" with { type: "file" };
+import b317 from "../docs/units/login-status-r8.md" with { type: "file" };
+import b318 from "../docs/units/login-status-warn.md" with { type: "file" };
+import b319 from "../docs/units/migrate-r3.md" with { type: "file" };
+import b320 from "../docs/units/native-backbone-board-responsiveness.md" with { type: "file" };
+import b321 from "../docs/units/native-backbone-integration.md" with { type: "file" };
+import b322 from "../docs/units/native-coffee-board-integration.md" with { type: "file" };
+import b323 from "../docs/units/native-coffee-hyperframes.md" with { type: "file" };
+import b324 from "../docs/units/native-coffee-image.md" with { type: "file" };
+import b325 from "../docs/units/native-coffee-kit.md" with { type: "file" };
+import b326 from "../docs/units/native-coffee-real-integration.md" with { type: "file" };
+import b327 from "../docs/units/native-coffee-skills.md" with { type: "file" };
+import b328 from "../docs/units/native-pack-queue-integration.md" with { type: "file" };
+import b329 from "../docs/units/native-queue-vendor-policy.md" with { type: "file" };
+import b330 from "../docs/units/native-standalone.md" with { type: "file" };
+import b331 from "../docs/units/native-tool-errors.md" with { type: "file" };
+import b332 from "../docs/units/non-code-followups.md" with { type: "file" };
+import b333 from "../docs/units/non-code-workflows.md" with { type: "file" };
+import b334 from "../docs/units/observe.md" with { type: "file" };
+import b335 from "../docs/units/onboarding-coffee-journey.md" with { type: "file" };
+import b336 from "../docs/units/one-live-stream.md" with { type: "file" };
+import b337 from "../docs/units/open-browser.md" with { type: "file" };
+import b338 from "../docs/units/pack-genesis-interview-card.md" with { type: "file" };
+import b339 from "../docs/units/pack-genesis-interview-verification.md" with { type: "file" };
+import b340 from "../docs/units/pack-genesis-native.md" with { type: "file" };
+import b341 from "../docs/units/pr-watch.md" with { type: "file" };
+import b342 from "../docs/units/projects.md" with { type: "file" };
+import b343 from "../docs/units/public-attribution-privacy.md" with { type: "file" };
+import b344 from "../docs/units/redaction-rules-r2.md" with { type: "file" };
+import b345 from "../docs/units/redaction-rules.md" with { type: "file" };
+import b346 from "../docs/units/remote-ci-reconcile.md" with { type: "file" };
+import b347 from "../docs/units/remote-ci-run-end-fixture.md" with { type: "file" };
+import b348 from "../docs/units/remote-gates-merge.md" with { type: "file" };
+import b349 from "../docs/units/review-depth-followups.md" with { type: "file" };
+import b350 from "../docs/units/review-modes.md" with { type: "file" };
+import b351 from "../docs/units/review-room.md" with { type: "file" };
+import b352 from "../docs/units/reviewer-depth.md" with { type: "file" };
+import b353 from "../docs/units/round-record.md" with { type: "file" };
+import b354 from "../docs/units/round-sandbox.md" with { type: "file" };
+import b355 from "../docs/units/run-end-and-remove.md" with { type: "file" };
+import b356 from "../docs/units/run-graph-navigation.md" with { type: "file" };
+import b357 from "../docs/units/sandbox-repo.md" with { type: "file" };
+import b358 from "../docs/units/secrets-migrate-r5.md" with { type: "file" };
+import b359 from "../docs/units/secrets-redaction-r3.md" with { type: "file" };
+import b360 from "../docs/units/secrets-redaction-r4.md" with { type: "file" };
+import b361 from "../docs/units/secrets-v1-model.md" with { type: "file" };
+import b362 from "../docs/units/server-lifetime.md" with { type: "file" };
+import b363 from "../docs/units/shared-github-poller.md" with { type: "file" };
+import b364 from "../docs/units/shared-media-library.md" with { type: "file" };
+import b365 from "../docs/units/sidebar-workflow-create.md" with { type: "file" };
+import b366 from "../docs/units/skill-packages.md" with { type: "file" };
+import b367 from "../docs/units/spec-scope-bootstrap.md" with { type: "file" };
+import b368 from "../docs/units/startup-firstmate.md" with { type: "file" };
+import b369 from "../docs/units/startup-recursion.md" with { type: "file" };
+import b370 from "../docs/units/takeover-codex.md" with { type: "file" };
+import b371 from "../docs/units/takeover.md" with { type: "file" };
+import b372 from "../docs/units/task-round.md" with { type: "file" };
+import b373 from "../docs/units/transcripts-attempts-followups.md" with { type: "file" };
+import b374 from "../docs/units/transcripts-attempts.md" with { type: "file" };
+import b375 from "../docs/units/transcripts.md" with { type: "file" };
+import b376 from "../docs/units/ui-test-waits.md" with { type: "file" };
+import b377 from "../docs/units/visual-sandbox.md" with { type: "file" };
+import b378 from "../docs/units/web-open-task-reopen.md" with { type: "file" };
+import b379 from "../docs/units/web-terminal.md" with { type: "file" };
+import b380 from "../docs/units/workflow-definition-export.md" with { type: "file" };
+import b381 from "../docs/units/workflow-overview.md" with { type: "file" };
+import b382 from "../docs/units/workflow-packages.md" with { type: "file" };
+import b383 from "../docs/units/workflow-rename.md" with { type: "file" };
+import b384 from "../docs/units/workflow-semantic-comparison.md" with { type: "file" };
+import b385 from "../docs/units/worktrees.md" with { type: "file" };
+import b386 from "../docs/v2-spec.md" with { type: "file" };
+import b387 from "../docs/w29-local-sandbox.md" with { type: "file" };
 
 export const BUNDLED: Record<string, string> = {
   "workflows/change.flow.yaml": b0,
@@ -414,404 +396,386 @@ export const BUNDLED: Record<string, string> = {
   "workflows/code.retro.yaml": b3,
   "workflows/doors.yaml": b4,
   "workflows/genesis.flow.yaml": b5,
-  "workflows/skills/baton/NOTICE.md": b6,
-  "workflows/skills/baton/SKILL.md": b7,
-  "workflows/skills/baton/diagrams.md": b8,
-  "workflows/skills/baton/spec.md": b9,
-  "workflows/skills/change-reviewer.md": b10,
-  "workflows/skills/change-worker.md": b11,
-  "workflows/skills/diagram-design/NOTICE.md": b12,
-  "workflows/skills/diagram-design/SKILL.md": b13,
-  "workflows/skills/diagram-design/output-spec.md": b14,
-  "workflows/skills/diagram-design/semantic-patterns.md": b15,
-  "workflows/skills/diagram-design/style-guide.md": b16,
-  "workflows/skills/diagram-design/type-architecture.md": b17,
-  "workflows/skills/diagram-design/type-data-flow.md": b18,
-  "workflows/skills/diagram-design/type-flowchart.md": b19,
-  "workflows/skills/diagram-design/type-sequence.md": b20,
-  "workflows/skills/diagram-design/type-state.md": b21,
-  "workflows/skills/firstmate-workflow-design/SKILL.md": b22,
-  "workflows/skills/issue-categorizer.md": b23,
-  "workflows/skills/issue-triager.md": b24,
-  "workflows/skills/pack-author.md": b25,
-  "workflows/skills/pack-genesis-author.md": b26,
-  "workflows/skills/pack-genesis-coordinator.md": b27,
-  "workflows/skills/pstack/NOTICE.md": b28,
-  "workflows/skills/pstack/how.md": b29,
-  "workflows/skills/pstack/teach.md": b30,
-  "workflows/skills/pstack/why.md": b31,
-  "workflows/skills/review-room-tutor.md": b32,
-  "workflows/skills/startup-founder.md": b33,
-  "workflows/skills/startup-judge.md": b34,
-  "workflows/skills/v2/designer.md": b35,
-  "workflows/skills/v2/film-editor.md": b36,
-  "workflows/skills/v2/image.md": b37,
-  "workflows/skills/v2/writer.md": b38,
-  "workflows/studio.retro.yaml": b39,
-  "workflows/v2/coffee-kit.wf.yaml": b40,
-  "workflows/v2/crew-change.wf.yaml": b41,
-  "workflows/v2/documents.wf.yaml": b42,
-  "workflows/v2/file-organization.wf.yaml": b43,
-  "workflows/v2/firstmate-connect-github.wf.yaml": b44,
-  "workflows/v2/firstmate-grant-merge.wf.yaml": b45,
-  "workflows/v2/firstmate-proposal.wf.yaml": b46,
-  "workflows/v2/firstmate-register-project.wf.yaml": b47,
-  "workflows/v2/firstmate-staffing.wf.yaml": b48,
-  "workflows/v2/github-review.wf.yaml": b49,
-  "workflows/v2/hello-crew-studio.wf.yaml": b50,
-  "workflows/v2/images.wf.yaml": b51,
-  "workflows/v2/issue-categories.wf.yaml": b52,
-  "workflows/v2/issue-triage.wf.yaml": b53,
-  "workflows/v2/local-project-register.wf.yaml": b54,
-  "workflows/v2/pack-genesis.wf.yaml": b55,
-  "workflows/v2/pr-follow.wf.yaml": b56,
-  "workflows/v2/pr-watch-apply-depends.wf.yaml": b57,
-  "workflows/v2/review-room-dir-host.wf.yaml": b58,
-  "workflows/v2/review-room-host.wf.yaml": b59,
-  "workflows/v2/startup-recursion.wf.yaml": b60,
-  "workflows/v2/templates/film.html": b61,
-  "workflows/v2/trivial-lane.wf.yaml": b62,
-  "workflows/v2/video.wf.yaml": b63,
-  "workflows/v2/web-prototype.wf.yaml": b64,
-  "packs/coffee-kit/checks/bundle-ready/check.yaml": b65,
-  "packs/coffee-kit/checks/designer/check.yaml": b66,
-  "packs/coffee-kit/checks/reviewer/check.yaml": b67,
-  "packs/coffee-kit/manifest.yaml": b68,
-  "packs/coffee-kit/skills/designer.md": b69,
-  "packs/coffee-kit/skills/hyperframes.md": b70,
-  "packs/coffee-kit/skills/image.md": b71,
-  "packs/coffee-kit/skills/reviewer.md": b72,
-  "packs/coffee-kit/skills/website.md": b73,
-  "packs/core/checks/artifact-ready/check.yaml": b74,
-  "packs/core/checks/brief-quality/check.yaml": b75,
-  "packs/core/checks/brief-quality/run": b76,
-  "packs/core/checks/lane-ready/check.yaml": b77,
-  "packs/core/checks/pack-genesis-measure/check.yaml": b78,
-  "packs/core/checks/pack-genesis-preview/check.yaml": b79,
-  "packs/core/checks/ste-wording/check.yaml": b80,
-  "packs/core/checks/ste-wording/run": b81,
-  "packs/core/evals/coordinator.json": b82,
-  "packs/core/manifest.yaml": b83,
-  "packs/core/skills/accessible-ui/SKILL.md": b84,
-  "packs/core/skills/code-review/SKILL.md": b85,
-  "packs/core/skills/commit-and-pr-text/SKILL.md": b86,
-  "packs/core/skills/coordinator.md": b87,
-  "packs/core/skills/data-viz/SKILL.md": b88,
-  "packs/core/skills/fail-first-testing/SKILL.md": b89,
-  "packs/core/skills/film-direction/SKILL.md": b90,
-  "packs/core/skills/image-prompting/SKILL.md": b91,
-  "packs/core/skills/plain-writing/NOTICE.md": b92,
-  "packs/core/skills/plain-writing/SKILL.md": b93,
-  "packs/core/skills/security-review/SKILL.md": b94,
-  "packs/core/skills/studio-baton/NOTICE.md": b95,
-  "packs/core/skills/studio-baton/SKILL.md": b96,
-  "packs/core/skills/studio-baton/diagram-design/LICENSE": b97,
-  "packs/core/skills/studio-baton/diagram-design/SKILL.md": b98,
-  "packs/core/skills/studio-baton/diagram-design/assets/template.html": b99,
-  "packs/core/skills/studio-baton/diagram-design/references/output-spec.md": b100,
-  "packs/core/skills/studio-baton/diagram-design/references/semantic-patterns.md": b101,
-  "packs/core/skills/studio-baton/diagram-design/references/style-guide.md": b102,
-  "packs/core/skills/studio-baton/diagram-design/references/type-architecture.md": b103,
-  "packs/core/skills/studio-baton/diagram-design/references/type-data-flow.md": b104,
-  "packs/core/skills/studio-baton/diagram-design/references/type-db-schema.md": b105,
-  "packs/core/skills/studio-baton/diagram-design/references/type-dependency.md": b106,
-  "packs/core/skills/studio-baton/diagram-design/references/type-deployment.md": b107,
-  "packs/core/skills/studio-baton/diagram-design/references/type-er.md": b108,
-  "packs/core/skills/studio-baton/diagram-design/references/type-flowchart.md": b109,
-  "packs/core/skills/studio-baton/diagram-design/references/type-layers.md": b110,
-  "packs/core/skills/studio-baton/diagram-design/references/type-sequence.md": b111,
-  "packs/core/skills/studio-baton/diagram-design/references/type-state.md": b112,
-  "packs/core/skills/studio-baton/diagram-design/references/type-swimlane.md": b113,
-  "packs/core/skills/studio-baton/diagram-design/references/type-timeline.md": b114,
-  "packs/core/skills/studio-baton/diagram-design/references/type-tree.md": b115,
-  "packs/core/skills/studio-baton/references/diagrams.md": b116,
-  "packs/core/skills/studio-baton/references/extraction.md": b117,
-  "packs/core/skills/studio-baton/references/pipeline.md": b118,
-  "packs/core/skills/studio-baton/references/spec.md": b119,
-  "packs/core/skills/studio-baton/requirements.txt": b120,
-  "packs/core/skills/studio-baton/scripts/export_pdf.py": b121,
-  "packs/core/skills/studio-baton/scripts/figures.py": b122,
-  "packs/core/skills/studio-baton/scripts/render.py": b123,
-  "packs/core/skills/studio-baton/scripts/snapshot.py": b124,
-  "packs/core/skills/studio-baton/scripts/verify.py": b125,
-  "packs/core/skills/studio-baton/templates/packet.html": b126,
-  "packs/core/skills/technical-writing/SKILL.md": b127,
-  "packs/core/skills/translation-zh-tw/SKILL.md": b128,
-  "packs/core/skills/visual-design-review/SKILL.md": b129,
-  "packs/core/skills/web-interaction/SKILL.md": b130,
-  "packs/core/workflows/refine-demo.wf.yaml": b131,
-  "packs/documents/evals/writer.json": b132,
-  "packs/documents/manifest.yaml": b133,
-  "packs/documents/workflows/document.flow.yaml": b134,
-  "packs/file-organization/checks/plan-gates/check.yaml": b135,
-  "packs/file-organization/evals/organizer.json": b136,
-  "packs/file-organization/manifest.yaml": b137,
-  "packs/file-organization/rules.yaml": b138,
-  "packs/file-organization/skills/organizer.md": b139,
-  "packs/file-organization/workflows/organize.flow.yaml": b140,
-  "packs/firstmate/checks/caller-coverage/check.yaml": b141,
-  "packs/firstmate/checks/caller-coverage/run": b142,
-  "packs/firstmate/checks/ci/check.yaml": b143,
-  "packs/firstmate/checks/ci/run": b144,
-  "packs/firstmate/checks/covering-suites/check.yaml": b145,
-  "packs/firstmate/checks/covering-suites/run": b146,
-  "packs/firstmate/checks/design-scope/check.yaml": b147,
-  "packs/firstmate/checks/design-verdict/check.yaml": b148,
-  "packs/firstmate/checks/designer-compare/check.yaml": b149,
-  "packs/firstmate/checks/done-lines-observable/check.yaml": b150,
-  "packs/firstmate/checks/done-lines-provable/check.yaml": b151,
-  "packs/firstmate/checks/done-lines-provable/run": b152,
-  "packs/firstmate/checks/door-classify/check.yaml": b153,
-  "packs/firstmate/checks/env-preflight/check.yaml": b154,
-  "packs/firstmate/checks/fail-first/check.yaml": b155,
-  "packs/firstmate/checks/fail-first/run": b156,
-  "packs/firstmate/checks/file-size-cap/check.yaml": b157,
-  "packs/firstmate/checks/file-size-cap/run": b158,
-  "packs/firstmate/checks/fixture-modules/check.yaml": b159,
-  "packs/firstmate/checks/fixture-modules/run": b160,
-  "packs/firstmate/checks/follow-up-triage/check.yaml": b161,
-  "packs/firstmate/checks/gate-approval/check.yaml": b162,
-  "packs/firstmate/checks/gate-branch/check.yaml": b163,
-  "packs/firstmate/checks/gate-ci/check.yaml": b164,
-  "packs/firstmate/checks/gate-design/check.yaml": b165,
-  "packs/firstmate/checks/gate-failfirst/check.yaml": b166,
-  "packs/firstmate/checks/gate-rebase/check.yaml": b167,
-  "packs/firstmate/checks/gate-scope/check.yaml": b168,
-  "packs/firstmate/checks/lints/check.yaml": b169,
-  "packs/firstmate/checks/main-ci/check.yaml": b170,
-  "packs/firstmate/checks/main-ci/run": b171,
-  "packs/firstmate/checks/no-impl-detail/check.yaml": b172,
-  "packs/firstmate/checks/overlap/check.yaml": b173,
-  "packs/firstmate/checks/plan-covers-done-lines/check.yaml": b174,
-  "packs/firstmate/checks/plan-covers-done-lines/run": b175,
-  "packs/firstmate/checks/questions-listed/check.yaml": b176,
-  "packs/firstmate/checks/questions-listed/run": b177,
-  "packs/firstmate/checks/report-schema/check.yaml": b178,
-  "packs/firstmate/checks/report-schema/run": b179,
-  "packs/firstmate/checks/retro-trigger/check.yaml": b180,
-  "packs/firstmate/checks/review-depth/check.yaml": b181,
-  "packs/firstmate/checks/review-verdict/check.yaml": b182,
-  "packs/firstmate/checks/scope/check.yaml": b183,
-  "packs/firstmate/checks/self-update/check.yaml": b184,
-  "packs/firstmate/checks/self-update/run": b185,
-  "packs/firstmate/checks/shard-budget/check.yaml": b186,
-  "packs/firstmate/checks/spec-schema/check.yaml": b187,
-  "packs/firstmate/checks/spec-schema/run": b188,
-  "packs/firstmate/checks/ui-captures/check.yaml": b189,
-  "packs/firstmate/evals/coordinator.json": b190,
-  "packs/firstmate/manifest.yaml": b191,
-  "packs/firstmate/policies.yaml": b192,
-  "packs/firstmate/skills/designer.md": b193,
-  "packs/firstmate/skills/firstmate.md": b194,
-  "packs/firstmate/skills/reviewer.md": b195,
-  "packs/firstmate/skills/worker.md": b196,
-  "packs/firstmate/workflows/code-firstmate.wf.yaml": b197,
-  "skins/captain/LICENSE.txt": b198,
-  "skins/captain/ORIGIN.txt": b199,
-  "skins/captain/captain.css": b200,
-  "skins/captain/captain.js": b201,
-  "skins/captain/index.html": b202,
-  "skins/captain/manifest.json": b203,
-  "skins/kit/README.md": b204,
-  "skins/kit/skin-kit.js": b205,
-  "skins/terminal/index.html": b206,
-  "skins/terminal/manifest.json": b207,
-  "skins/voyage/index.html": b208,
-  "skins/voyage/manifest.json": b209,
-  "skins/voyage/voyage.css": b210,
-  "skins/voyage/voyage.js": b211,
-  "templates/sandbox-app/.crew/app.json": b212,
-  "templates/sandbox-app/app/README.md": b213,
-  "templates/sandbox-app/app/build.ts": b214,
-  "templates/sandbox-app/app/server.ts": b215,
-  "templates/sandbox-app/app/shop.ts": b216,
-  "templates/sandbox-app/test/shop.test.ts": b217,
-  "templates/sandbox-repo/.crew/gates.json": b218,
-  "templates/sandbox-repo/.github/CODEOWNERS": b219,
-  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md": b220,
-  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md": b221,
-  "templates/sandbox-repo/.github/pull_request_template.md": b222,
-  "templates/sandbox-repo/.github/workflows/ci.yml": b223,
-  "templates/sandbox-repo/CONTRIBUTING.md": b224,
-  "templates/sandbox-repo/README.md": b225,
-  "templates/sandbox-repo/README_SANDBOX.md": b226,
-  "templates/sandbox-repo/package.json": b227,
-  "templates/sandbox-repo/scripts/lint.ts": b228,
-  "templates/sandbox-repo/scripts/test-shard.ts": b229,
-  "templates/sandbox-repo/src/money.ts": b230,
-  "templates/sandbox-repo/test/format.test.ts": b231,
-  "templates/sandbox-repo/test/money.test.ts": b232,
-  "templates/sandbox-repo/tsconfig.json": b233,
-  "manual/code-firstmate/coordinator.md": b234,
-  "manual/code-firstmate/designer.md": b235,
-  "manual/code-firstmate/github.md": b236,
-  "manual/code-firstmate/reviewer.md": b237,
-  "manual/code-firstmate/worker.md": b238,
-  "manual/coffee-kit/overview.md": b239,
-  "manual/coffee-kit/worker.md": b240,
-  "manual/documents/writer.md": b241,
-  "manual/file-organization/overview.md": b242,
-  "manual/hello-crew-studio/overview.md": b243,
-  "manual/images/overview.md": b244,
-  "manual/index.md": b245,
-  "manual/studio/agents.md": b246,
-  "manual/studio/crew.md": b247,
-  "manual/studio/deliver.md": b248,
-  "manual/studio/firstmate.md": b249,
-  "manual/studio/pages/prs.md": b250,
-  "manual/studio/pages/review-room.md": b251,
-  "manual/studio/pages.md": b252,
-  "manual/video/editor.md": b253,
-  "manual/web-prototype/designer.md": b254,
-  "docs/acceptance.md": b255,
-  "docs/architecture.md": b256,
-  "docs/check-contract.md": b257,
-  "docs/ci.md": b258,
-  "docs/code-firstmate-pipeline.md": b259,
-  "docs/live-acceptance.md": b260,
-  "docs/local-execution.md": b261,
-  "docs/milestones-m6-m8.md": b262,
-  "docs/pack-genesis.md": b263,
-  "docs/setup-and-reference.md": b264,
-  "docs/units/agent-skills.md": b265,
-  "docs/units/backbone-nav.md": b266,
-  "docs/units/board.md": b267,
-  "docs/units/branch-intake.md": b268,
-  "docs/units/captain-card-ime.md": b269,
-  "docs/units/card-zh-quality.md": b270,
-  "docs/units/chat-attachments.md": b271,
-  "docs/units/check-runtime.md": b272,
-  "docs/units/claude-native-capability.md": b273,
-  "docs/units/cli-mcp-grant.md": b274,
-  "docs/units/cloud-handoff.md": b275,
-  "docs/units/code-firstmate-smoke.md": b276,
-  "docs/units/codex-auth-timestamp.md": b277,
-  "docs/units/codex-independent-login.md": b278,
-  "docs/units/codex-login-welcome.md": b279,
-  "docs/units/codex-toolchain.md": b280,
-  "docs/units/coffee-local-render-jobs.md": b281,
-  "docs/units/coffee-staffing-recovery.md": b282,
-  "docs/units/compare-transcripts.md": b283,
-  "docs/units/crew-studio-agents.md": b284,
-  "docs/units/default-workflow-catalog.md": b285,
-  "docs/units/first-workflow-tutorial.md": b286,
-  "docs/units/firstmate-general-cli.md": b287,
-  "docs/units/firstmate-generated-media.md": b288,
-  "docs/units/firstmate-project-registration.md": b289,
-  "docs/units/firstmate-staffing.md": b290,
-  "docs/units/fix-backbone-nav-r2.md": b291,
-  "docs/units/fix-backbone-nav-r3.md": b292,
-  "docs/units/fix-backbone-nav.md": b293,
-  "docs/units/fix-legacy-a1-credentials.md": b294,
-  "docs/units/fix-legacy-c-privacy.md": b295,
-  "docs/units/fix-migrate-r2.md": b296,
-  "docs/units/fix-migrate-stream.md": b297,
-  "docs/units/fix-record-smoke-r2.md": b298,
-  "docs/units/fix-round-record-r1.md": b299,
-  "docs/units/fix-round-sandbox-cli.md": b300,
-  "docs/units/fix-round-sandbox-r1.md": b301,
-  "docs/units/fix-runtime-authority.md": b302,
-  "docs/units/fix-runtime-contract.md": b303,
-  "docs/units/fix-runtime-durability.md": b304,
-  "docs/units/fix-runtime-followups.md": b305,
-  "docs/units/fix-runtime-generic.md": b306,
-  "docs/units/fix-runtime-ids.md": b307,
-  "docs/units/fix-runtime-lifetime.md": b308,
-  "docs/units/fix-runtime-r2.md": b309,
-  "docs/units/fix-runtime-sandbox.md": b310,
-  "docs/units/fix-runtime-tests.md": b311,
-  "docs/units/fix-runtime-ui-stream.md": b312,
-  "docs/units/fix-sandbox-repo-r2.md": b313,
-  "docs/units/fix-sandbox-repo.md": b314,
-  "docs/units/fix-sandbox-worktrees-r2.md": b315,
-  "docs/units/fix-sb-nav-leftovers.md": b316,
-  "docs/units/fix-smoke-r1.md": b317,
-  "docs/units/fix-worktrees-r1.md": b318,
-  "docs/units/github-foundation.md": b319,
-  "docs/units/github-review-workflow.md": b320,
-  "docs/units/graph-simple-view.md": b321,
-  "docs/units/graph-tidy.md": b322,
-  "docs/units/image-refine-context.md": b323,
-  "docs/units/inbox-live.md": b324,
-  "docs/units/inbox-studio-cards.md": b325,
-  "docs/units/intent-merge-card.md": b326,
-  "docs/units/issue-eval.md": b327,
-  "docs/units/lan-relay.md": b328,
-  "docs/units/list-tools.md": b329,
-  "docs/units/local-coffee-e2e.md": b330,
-  "docs/units/local-project-add.md": b331,
-  "docs/units/locators.md": b332,
-  "docs/units/login-status-r6.md": b333,
-  "docs/units/login-status-r7.md": b334,
-  "docs/units/login-status-r8.md": b335,
-  "docs/units/login-status-warn.md": b336,
-  "docs/units/migrate-r3.md": b337,
-  "docs/units/native-backbone-board-responsiveness.md": b338,
-  "docs/units/native-backbone-integration.md": b339,
-  "docs/units/native-coffee-board-integration.md": b340,
-  "docs/units/native-coffee-hyperframes.md": b341,
-  "docs/units/native-coffee-image.md": b342,
-  "docs/units/native-coffee-kit.md": b343,
-  "docs/units/native-coffee-real-integration.md": b344,
-  "docs/units/native-coffee-skills.md": b345,
-  "docs/units/native-pack-queue-integration.md": b346,
-  "docs/units/native-queue-vendor-policy.md": b347,
-  "docs/units/native-standalone.md": b348,
-  "docs/units/native-tool-errors.md": b349,
-  "docs/units/non-code-followups.md": b350,
-  "docs/units/non-code-workflows.md": b351,
-  "docs/units/observe.md": b352,
-  "docs/units/onboarding-coffee-journey.md": b353,
-  "docs/units/one-live-stream.md": b354,
-  "docs/units/open-browser.md": b355,
-  "docs/units/pack-genesis-interview-card.md": b356,
-  "docs/units/pack-genesis-interview-verification.md": b357,
-  "docs/units/pack-genesis-native.md": b358,
-  "docs/units/pr-watch.md": b359,
-  "docs/units/projects.md": b360,
-  "docs/units/public-attribution-privacy.md": b361,
-  "docs/units/redaction-rules-r2.md": b362,
-  "docs/units/redaction-rules.md": b363,
-  "docs/units/remote-ci-reconcile.md": b364,
-  "docs/units/remote-ci-run-end-fixture.md": b365,
-  "docs/units/remote-gates-merge.md": b366,
-  "docs/units/review-depth-followups.md": b367,
-  "docs/units/review-modes.md": b368,
-  "docs/units/review-room.md": b369,
-  "docs/units/reviewer-depth.md": b370,
-  "docs/units/round-record.md": b371,
-  "docs/units/round-sandbox.md": b372,
-  "docs/units/run-end-and-remove.md": b373,
-  "docs/units/run-graph-navigation.md": b374,
-  "docs/units/sandbox-repo.md": b375,
-  "docs/units/secrets-migrate-r5.md": b376,
-  "docs/units/secrets-redaction-r3.md": b377,
-  "docs/units/secrets-redaction-r4.md": b378,
-  "docs/units/secrets-v1-model.md": b379,
-  "docs/units/server-lifetime.md": b380,
-  "docs/units/shared-github-poller.md": b381,
-  "docs/units/shared-media-library.md": b382,
-  "docs/units/sidebar-workflow-create.md": b383,
-  "docs/units/skill-packages.md": b384,
-  "docs/units/spec-scope-bootstrap.md": b385,
-  "docs/units/startup-firstmate.md": b386,
-  "docs/units/startup-recursion.md": b387,
-  "docs/units/takeover-codex.md": b388,
-  "docs/units/takeover.md": b389,
-  "docs/units/task-round.md": b390,
-  "docs/units/transcripts-attempts-followups.md": b391,
-  "docs/units/transcripts-attempts.md": b392,
-  "docs/units/transcripts.md": b393,
-  "docs/units/ui-test-waits.md": b394,
-  "docs/units/visual-sandbox.md": b395,
-  "docs/units/web-open-task-reopen.md": b396,
-  "docs/units/web-terminal.md": b397,
-  "docs/units/workflow-definition-export.md": b398,
-  "docs/units/workflow-overview.md": b399,
-  "docs/units/workflow-packages.md": b400,
-  "docs/units/workflow-rename.md": b401,
-  "docs/units/workflow-semantic-comparison.md": b402,
-  "docs/units/worktrees.md": b403,
-  "docs/v2-spec.md": b404,
-  "docs/w29-local-sandbox.md": b405,
+  "workflows/skills/change-reviewer.md": b6,
+  "workflows/skills/change-worker.md": b7,
+  "workflows/skills/firstmate-workflow-design/SKILL.md": b8,
+  "workflows/skills/issue-categorizer.md": b9,
+  "workflows/skills/issue-triager.md": b10,
+  "workflows/skills/pack-author.md": b11,
+  "workflows/skills/pack-genesis-author.md": b12,
+  "workflows/skills/pack-genesis-coordinator.md": b13,
+  "workflows/skills/startup-founder.md": b14,
+  "workflows/skills/startup-judge.md": b15,
+  "workflows/skills/v2/designer.md": b16,
+  "workflows/skills/v2/film-editor.md": b17,
+  "workflows/skills/v2/image.md": b18,
+  "workflows/skills/v2/writer.md": b19,
+  "workflows/studio.retro.yaml": b20,
+  "workflows/v2/coffee-kit.wf.yaml": b21,
+  "workflows/v2/crew-change.wf.yaml": b22,
+  "workflows/v2/documents.wf.yaml": b23,
+  "workflows/v2/file-organization.wf.yaml": b24,
+  "workflows/v2/firstmate-connect-github.wf.yaml": b25,
+  "workflows/v2/firstmate-grant-merge.wf.yaml": b26,
+  "workflows/v2/firstmate-proposal.wf.yaml": b27,
+  "workflows/v2/firstmate-register-project.wf.yaml": b28,
+  "workflows/v2/firstmate-staffing.wf.yaml": b29,
+  "workflows/v2/github-review.wf.yaml": b30,
+  "workflows/v2/hello-crew-studio.wf.yaml": b31,
+  "workflows/v2/images.wf.yaml": b32,
+  "workflows/v2/issue-categories.wf.yaml": b33,
+  "workflows/v2/issue-triage.wf.yaml": b34,
+  "workflows/v2/local-project-register.wf.yaml": b35,
+  "workflows/v2/pack-genesis.wf.yaml": b36,
+  "workflows/v2/pr-follow.wf.yaml": b37,
+  "workflows/v2/pr-watch-apply-depends.wf.yaml": b38,
+  "workflows/v2/review-room-dir-host.wf.yaml": b39,
+  "workflows/v2/review-room-host.wf.yaml": b40,
+  "workflows/v2/startup-recursion.wf.yaml": b41,
+  "workflows/v2/templates/film.html": b42,
+  "workflows/v2/trivial-lane.wf.yaml": b43,
+  "workflows/v2/video.wf.yaml": b44,
+  "workflows/v2/web-prototype.wf.yaml": b45,
+  "packs/coffee-kit/checks/bundle-ready/check.yaml": b46,
+  "packs/coffee-kit/checks/designer/check.yaml": b47,
+  "packs/coffee-kit/checks/reviewer/check.yaml": b48,
+  "packs/coffee-kit/manifest.yaml": b49,
+  "packs/coffee-kit/skills/designer.md": b50,
+  "packs/coffee-kit/skills/hyperframes.md": b51,
+  "packs/coffee-kit/skills/image.md": b52,
+  "packs/coffee-kit/skills/reviewer.md": b53,
+  "packs/coffee-kit/skills/website.md": b54,
+  "packs/core/checks/artifact-ready/check.yaml": b55,
+  "packs/core/checks/brief-quality/check.yaml": b56,
+  "packs/core/checks/brief-quality/run": b57,
+  "packs/core/checks/lane-ready/check.yaml": b58,
+  "packs/core/checks/pack-genesis-measure/check.yaml": b59,
+  "packs/core/checks/pack-genesis-preview/check.yaml": b60,
+  "packs/core/checks/ste-wording/check.yaml": b61,
+  "packs/core/checks/ste-wording/run": b62,
+  "packs/core/evals/coordinator.json": b63,
+  "packs/core/manifest.yaml": b64,
+  "packs/core/skills/accessible-ui/SKILL.md": b65,
+  "packs/core/skills/code-review/SKILL.md": b66,
+  "packs/core/skills/commit-and-pr-text/SKILL.md": b67,
+  "packs/core/skills/coordinator.md": b68,
+  "packs/core/skills/data-viz/SKILL.md": b69,
+  "packs/core/skills/fail-first-testing/SKILL.md": b70,
+  "packs/core/skills/film-direction/SKILL.md": b71,
+  "packs/core/skills/image-prompting/SKILL.md": b72,
+  "packs/core/skills/plain-writing/NOTICE.md": b73,
+  "packs/core/skills/plain-writing/SKILL.md": b74,
+  "packs/core/skills/security-review/SKILL.md": b75,
+  "packs/core/skills/studio-baton/NOTICE.md": b76,
+  "packs/core/skills/studio-baton/SKILL.md": b77,
+  "packs/core/skills/studio-baton/diagram-design/LICENSE": b78,
+  "packs/core/skills/studio-baton/diagram-design/SKILL.md": b79,
+  "packs/core/skills/studio-baton/diagram-design/assets/template.html": b80,
+  "packs/core/skills/studio-baton/diagram-design/references/output-spec.md": b81,
+  "packs/core/skills/studio-baton/diagram-design/references/semantic-patterns.md": b82,
+  "packs/core/skills/studio-baton/diagram-design/references/style-guide.md": b83,
+  "packs/core/skills/studio-baton/diagram-design/references/type-architecture.md": b84,
+  "packs/core/skills/studio-baton/diagram-design/references/type-data-flow.md": b85,
+  "packs/core/skills/studio-baton/diagram-design/references/type-db-schema.md": b86,
+  "packs/core/skills/studio-baton/diagram-design/references/type-dependency.md": b87,
+  "packs/core/skills/studio-baton/diagram-design/references/type-deployment.md": b88,
+  "packs/core/skills/studio-baton/diagram-design/references/type-er.md": b89,
+  "packs/core/skills/studio-baton/diagram-design/references/type-flowchart.md": b90,
+  "packs/core/skills/studio-baton/diagram-design/references/type-layers.md": b91,
+  "packs/core/skills/studio-baton/diagram-design/references/type-sequence.md": b92,
+  "packs/core/skills/studio-baton/diagram-design/references/type-state.md": b93,
+  "packs/core/skills/studio-baton/diagram-design/references/type-swimlane.md": b94,
+  "packs/core/skills/studio-baton/diagram-design/references/type-timeline.md": b95,
+  "packs/core/skills/studio-baton/diagram-design/references/type-tree.md": b96,
+  "packs/core/skills/studio-baton/references/diagrams.md": b97,
+  "packs/core/skills/studio-baton/references/extraction.md": b98,
+  "packs/core/skills/studio-baton/references/pipeline.md": b99,
+  "packs/core/skills/studio-baton/references/spec.md": b100,
+  "packs/core/skills/studio-baton/requirements.txt": b101,
+  "packs/core/skills/studio-baton/scripts/export_pdf.py": b102,
+  "packs/core/skills/studio-baton/scripts/figures.py": b103,
+  "packs/core/skills/studio-baton/scripts/render.py": b104,
+  "packs/core/skills/studio-baton/scripts/snapshot.py": b105,
+  "packs/core/skills/studio-baton/scripts/verify.py": b106,
+  "packs/core/skills/studio-baton/templates/packet.html": b107,
+  "packs/core/skills/technical-writing/SKILL.md": b108,
+  "packs/core/skills/translation-zh-tw/SKILL.md": b109,
+  "packs/core/skills/visual-design-review/SKILL.md": b110,
+  "packs/core/skills/web-interaction/SKILL.md": b111,
+  "packs/core/workflows/refine-demo.wf.yaml": b112,
+  "packs/documents/evals/writer.json": b113,
+  "packs/documents/manifest.yaml": b114,
+  "packs/documents/workflows/document.flow.yaml": b115,
+  "packs/file-organization/checks/plan-gates/check.yaml": b116,
+  "packs/file-organization/evals/organizer.json": b117,
+  "packs/file-organization/manifest.yaml": b118,
+  "packs/file-organization/rules.yaml": b119,
+  "packs/file-organization/skills/organizer.md": b120,
+  "packs/file-organization/workflows/organize.flow.yaml": b121,
+  "packs/firstmate/checks/caller-coverage/check.yaml": b122,
+  "packs/firstmate/checks/caller-coverage/run": b123,
+  "packs/firstmate/checks/ci/check.yaml": b124,
+  "packs/firstmate/checks/ci/run": b125,
+  "packs/firstmate/checks/covering-suites/check.yaml": b126,
+  "packs/firstmate/checks/covering-suites/run": b127,
+  "packs/firstmate/checks/design-scope/check.yaml": b128,
+  "packs/firstmate/checks/design-verdict/check.yaml": b129,
+  "packs/firstmate/checks/designer-compare/check.yaml": b130,
+  "packs/firstmate/checks/done-lines-observable/check.yaml": b131,
+  "packs/firstmate/checks/done-lines-provable/check.yaml": b132,
+  "packs/firstmate/checks/done-lines-provable/run": b133,
+  "packs/firstmate/checks/door-classify/check.yaml": b134,
+  "packs/firstmate/checks/env-preflight/check.yaml": b135,
+  "packs/firstmate/checks/fail-first/check.yaml": b136,
+  "packs/firstmate/checks/fail-first/run": b137,
+  "packs/firstmate/checks/file-size-cap/check.yaml": b138,
+  "packs/firstmate/checks/file-size-cap/run": b139,
+  "packs/firstmate/checks/fixture-modules/check.yaml": b140,
+  "packs/firstmate/checks/fixture-modules/run": b141,
+  "packs/firstmate/checks/follow-up-triage/check.yaml": b142,
+  "packs/firstmate/checks/gate-approval/check.yaml": b143,
+  "packs/firstmate/checks/gate-branch/check.yaml": b144,
+  "packs/firstmate/checks/gate-ci/check.yaml": b145,
+  "packs/firstmate/checks/gate-design/check.yaml": b146,
+  "packs/firstmate/checks/gate-failfirst/check.yaml": b147,
+  "packs/firstmate/checks/gate-rebase/check.yaml": b148,
+  "packs/firstmate/checks/gate-scope/check.yaml": b149,
+  "packs/firstmate/checks/lints/check.yaml": b150,
+  "packs/firstmate/checks/main-ci/check.yaml": b151,
+  "packs/firstmate/checks/main-ci/run": b152,
+  "packs/firstmate/checks/no-impl-detail/check.yaml": b153,
+  "packs/firstmate/checks/overlap/check.yaml": b154,
+  "packs/firstmate/checks/plan-covers-done-lines/check.yaml": b155,
+  "packs/firstmate/checks/plan-covers-done-lines/run": b156,
+  "packs/firstmate/checks/questions-listed/check.yaml": b157,
+  "packs/firstmate/checks/questions-listed/run": b158,
+  "packs/firstmate/checks/report-schema/check.yaml": b159,
+  "packs/firstmate/checks/report-schema/run": b160,
+  "packs/firstmate/checks/retro-trigger/check.yaml": b161,
+  "packs/firstmate/checks/review-depth/check.yaml": b162,
+  "packs/firstmate/checks/review-verdict/check.yaml": b163,
+  "packs/firstmate/checks/scope/check.yaml": b164,
+  "packs/firstmate/checks/self-update/check.yaml": b165,
+  "packs/firstmate/checks/self-update/run": b166,
+  "packs/firstmate/checks/shard-budget/check.yaml": b167,
+  "packs/firstmate/checks/spec-schema/check.yaml": b168,
+  "packs/firstmate/checks/spec-schema/run": b169,
+  "packs/firstmate/checks/ui-captures/check.yaml": b170,
+  "packs/firstmate/evals/coordinator.json": b171,
+  "packs/firstmate/manifest.yaml": b172,
+  "packs/firstmate/policies.yaml": b173,
+  "packs/firstmate/skills/designer.md": b174,
+  "packs/firstmate/skills/firstmate.md": b175,
+  "packs/firstmate/skills/reviewer.md": b176,
+  "packs/firstmate/skills/worker.md": b177,
+  "packs/firstmate/workflows/code-firstmate.wf.yaml": b178,
+  "skins/captain/LICENSE.txt": b179,
+  "skins/captain/ORIGIN.txt": b180,
+  "skins/captain/captain.css": b181,
+  "skins/captain/captain.js": b182,
+  "skins/captain/index.html": b183,
+  "skins/captain/manifest.json": b184,
+  "skins/kit/README.md": b185,
+  "skins/kit/skin-kit.js": b186,
+  "skins/terminal/index.html": b187,
+  "skins/terminal/manifest.json": b188,
+  "skins/voyage/index.html": b189,
+  "skins/voyage/manifest.json": b190,
+  "skins/voyage/voyage.css": b191,
+  "skins/voyage/voyage.js": b192,
+  "templates/sandbox-app/.crew/app.json": b193,
+  "templates/sandbox-app/app/README.md": b194,
+  "templates/sandbox-app/app/build.ts": b195,
+  "templates/sandbox-app/app/server.ts": b196,
+  "templates/sandbox-app/app/shop.ts": b197,
+  "templates/sandbox-app/test/shop.test.ts": b198,
+  "templates/sandbox-repo/.crew/gates.json": b199,
+  "templates/sandbox-repo/.github/CODEOWNERS": b200,
+  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/bug_report.md": b201,
+  "templates/sandbox-repo/.github/ISSUE_TEMPLATE/feature_request.md": b202,
+  "templates/sandbox-repo/.github/pull_request_template.md": b203,
+  "templates/sandbox-repo/.github/workflows/ci.yml": b204,
+  "templates/sandbox-repo/CONTRIBUTING.md": b205,
+  "templates/sandbox-repo/README.md": b206,
+  "templates/sandbox-repo/README_SANDBOX.md": b207,
+  "templates/sandbox-repo/package.json": b208,
+  "templates/sandbox-repo/scripts/lint.ts": b209,
+  "templates/sandbox-repo/scripts/test-shard.ts": b210,
+  "templates/sandbox-repo/src/money.ts": b211,
+  "templates/sandbox-repo/test/format.test.ts": b212,
+  "templates/sandbox-repo/test/money.test.ts": b213,
+  "templates/sandbox-repo/tsconfig.json": b214,
+  "manual/code-firstmate/coordinator.md": b215,
+  "manual/code-firstmate/designer.md": b216,
+  "manual/code-firstmate/github.md": b217,
+  "manual/code-firstmate/reviewer.md": b218,
+  "manual/code-firstmate/worker.md": b219,
+  "manual/coffee-kit/overview.md": b220,
+  "manual/coffee-kit/worker.md": b221,
+  "manual/documents/writer.md": b222,
+  "manual/file-organization/overview.md": b223,
+  "manual/hello-crew-studio/overview.md": b224,
+  "manual/images/overview.md": b225,
+  "manual/index.md": b226,
+  "manual/studio/agents.md": b227,
+  "manual/studio/crew.md": b228,
+  "manual/studio/deliver.md": b229,
+  "manual/studio/firstmate.md": b230,
+  "manual/studio/pages/prs.md": b231,
+  "manual/studio/pages/review-room.md": b232,
+  "manual/studio/pages.md": b233,
+  "manual/video/editor.md": b234,
+  "manual/web-prototype/designer.md": b235,
+  "docs/acceptance.md": b236,
+  "docs/architecture.md": b237,
+  "docs/check-contract.md": b238,
+  "docs/ci.md": b239,
+  "docs/code-firstmate-pipeline.md": b240,
+  "docs/live-acceptance.md": b241,
+  "docs/local-execution.md": b242,
+  "docs/milestones-m6-m8.md": b243,
+  "docs/pack-genesis.md": b244,
+  "docs/setup-and-reference.md": b245,
+  "docs/units/agent-skills.md": b246,
+  "docs/units/backbone-nav.md": b247,
+  "docs/units/board.md": b248,
+  "docs/units/branch-intake.md": b249,
+  "docs/units/captain-card-ime.md": b250,
+  "docs/units/card-zh-quality.md": b251,
+  "docs/units/chat-attachments.md": b252,
+  "docs/units/check-runtime.md": b253,
+  "docs/units/claude-native-capability.md": b254,
+  "docs/units/cli-mcp-grant.md": b255,
+  "docs/units/cli.md": b256,
+  "docs/units/cloud-handoff.md": b257,
+  "docs/units/code-firstmate-smoke.md": b258,
+  "docs/units/codex-auth-timestamp.md": b259,
+  "docs/units/codex-independent-login.md": b260,
+  "docs/units/codex-login-welcome.md": b261,
+  "docs/units/codex-toolchain.md": b262,
+  "docs/units/coffee-local-render-jobs.md": b263,
+  "docs/units/coffee-staffing-recovery.md": b264,
+  "docs/units/compare-transcripts.md": b265,
+  "docs/units/crew-studio-agents.md": b266,
+  "docs/units/default-workflow-catalog.md": b267,
+  "docs/units/first-workflow-tutorial.md": b268,
+  "docs/units/firstmate-general-cli.md": b269,
+  "docs/units/firstmate-generated-media.md": b270,
+  "docs/units/firstmate-project-registration.md": b271,
+  "docs/units/firstmate-staffing.md": b272,
+  "docs/units/fix-backbone-nav-r2.md": b273,
+  "docs/units/fix-backbone-nav-r3.md": b274,
+  "docs/units/fix-backbone-nav.md": b275,
+  "docs/units/fix-legacy-a1-credentials.md": b276,
+  "docs/units/fix-legacy-c-privacy.md": b277,
+  "docs/units/fix-migrate-r2.md": b278,
+  "docs/units/fix-migrate-stream.md": b279,
+  "docs/units/fix-record-smoke-r2.md": b280,
+  "docs/units/fix-round-record-r1.md": b281,
+  "docs/units/fix-round-sandbox-cli.md": b282,
+  "docs/units/fix-round-sandbox-r1.md": b283,
+  "docs/units/fix-runtime-authority.md": b284,
+  "docs/units/fix-runtime-contract.md": b285,
+  "docs/units/fix-runtime-durability.md": b286,
+  "docs/units/fix-runtime-followups.md": b287,
+  "docs/units/fix-runtime-generic.md": b288,
+  "docs/units/fix-runtime-ids.md": b289,
+  "docs/units/fix-runtime-lifetime.md": b290,
+  "docs/units/fix-runtime-r2.md": b291,
+  "docs/units/fix-runtime-sandbox.md": b292,
+  "docs/units/fix-runtime-tests.md": b293,
+  "docs/units/fix-runtime-ui-stream.md": b294,
+  "docs/units/fix-sandbox-repo-r2.md": b295,
+  "docs/units/fix-sandbox-repo.md": b296,
+  "docs/units/fix-sandbox-worktrees-r2.md": b297,
+  "docs/units/fix-sb-nav-leftovers.md": b298,
+  "docs/units/fix-smoke-r1.md": b299,
+  "docs/units/fix-worktrees-r1.md": b300,
+  "docs/units/github-foundation.md": b301,
+  "docs/units/github-review-workflow.md": b302,
+  "docs/units/graph-simple-view.md": b303,
+  "docs/units/graph-tidy.md": b304,
+  "docs/units/image-refine-context.md": b305,
+  "docs/units/inbox-live.md": b306,
+  "docs/units/inbox-studio-cards.md": b307,
+  "docs/units/intent-merge-card.md": b308,
+  "docs/units/issue-eval.md": b309,
+  "docs/units/lan-relay.md": b310,
+  "docs/units/list-tools.md": b311,
+  "docs/units/local-coffee-e2e.md": b312,
+  "docs/units/local-project-add.md": b313,
+  "docs/units/locators.md": b314,
+  "docs/units/login-status-r6.md": b315,
+  "docs/units/login-status-r7.md": b316,
+  "docs/units/login-status-r8.md": b317,
+  "docs/units/login-status-warn.md": b318,
+  "docs/units/migrate-r3.md": b319,
+  "docs/units/native-backbone-board-responsiveness.md": b320,
+  "docs/units/native-backbone-integration.md": b321,
+  "docs/units/native-coffee-board-integration.md": b322,
+  "docs/units/native-coffee-hyperframes.md": b323,
+  "docs/units/native-coffee-image.md": b324,
+  "docs/units/native-coffee-kit.md": b325,
+  "docs/units/native-coffee-real-integration.md": b326,
+  "docs/units/native-coffee-skills.md": b327,
+  "docs/units/native-pack-queue-integration.md": b328,
+  "docs/units/native-queue-vendor-policy.md": b329,
+  "docs/units/native-standalone.md": b330,
+  "docs/units/native-tool-errors.md": b331,
+  "docs/units/non-code-followups.md": b332,
+  "docs/units/non-code-workflows.md": b333,
+  "docs/units/observe.md": b334,
+  "docs/units/onboarding-coffee-journey.md": b335,
+  "docs/units/one-live-stream.md": b336,
+  "docs/units/open-browser.md": b337,
+  "docs/units/pack-genesis-interview-card.md": b338,
+  "docs/units/pack-genesis-interview-verification.md": b339,
+  "docs/units/pack-genesis-native.md": b340,
+  "docs/units/pr-watch.md": b341,
+  "docs/units/projects.md": b342,
+  "docs/units/public-attribution-privacy.md": b343,
+  "docs/units/redaction-rules-r2.md": b344,
+  "docs/units/redaction-rules.md": b345,
+  "docs/units/remote-ci-reconcile.md": b346,
+  "docs/units/remote-ci-run-end-fixture.md": b347,
+  "docs/units/remote-gates-merge.md": b348,
+  "docs/units/review-depth-followups.md": b349,
+  "docs/units/review-modes.md": b350,
+  "docs/units/review-room.md": b351,
+  "docs/units/reviewer-depth.md": b352,
+  "docs/units/round-record.md": b353,
+  "docs/units/round-sandbox.md": b354,
+  "docs/units/run-end-and-remove.md": b355,
+  "docs/units/run-graph-navigation.md": b356,
+  "docs/units/sandbox-repo.md": b357,
+  "docs/units/secrets-migrate-r5.md": b358,
+  "docs/units/secrets-redaction-r3.md": b359,
+  "docs/units/secrets-redaction-r4.md": b360,
+  "docs/units/secrets-v1-model.md": b361,
+  "docs/units/server-lifetime.md": b362,
+  "docs/units/shared-github-poller.md": b363,
+  "docs/units/shared-media-library.md": b364,
+  "docs/units/sidebar-workflow-create.md": b365,
+  "docs/units/skill-packages.md": b366,
+  "docs/units/spec-scope-bootstrap.md": b367,
+  "docs/units/startup-firstmate.md": b368,
+  "docs/units/startup-recursion.md": b369,
+  "docs/units/takeover-codex.md": b370,
+  "docs/units/takeover.md": b371,
+  "docs/units/task-round.md": b372,
+  "docs/units/transcripts-attempts-followups.md": b373,
+  "docs/units/transcripts-attempts.md": b374,
+  "docs/units/transcripts.md": b375,
+  "docs/units/ui-test-waits.md": b376,
+  "docs/units/visual-sandbox.md": b377,
+  "docs/units/web-open-task-reopen.md": b378,
+  "docs/units/web-terminal.md": b379,
+  "docs/units/workflow-definition-export.md": b380,
+  "docs/units/workflow-overview.md": b381,
+  "docs/units/workflow-packages.md": b382,
+  "docs/units/workflow-rename.md": b383,
+  "docs/units/workflow-semantic-comparison.md": b384,
+  "docs/units/worktrees.md": b385,
+  "docs/v2-spec.md": b386,
+  "docs/w29-local-sandbox.md": b387,
 };

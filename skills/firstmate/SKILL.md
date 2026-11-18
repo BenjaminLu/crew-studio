@@ -28,7 +28,7 @@ procedures; this is the index.
 | --- | --- | --- | --- |
 | `task` | `task:R-162` | `#/run/:id` | A Task: its workflow, status, the step it is on, the cards it waits on, its pull request and, when it failed, why. |
 | `card` | `card:SC-248` | `#/inbox/:id` | A card waiting for the captain (or answered): its kind, Task, options and how urgent it is. Reading one never answers it. |
-| `room` | `room:PR-0123456789ab-1645` | `#/room/:id` | A review room: the pull request or branch under review, the captain's questions, where the tutor's lesson is, the Explain-with runs and versions, errors and costs. |
+| `room` | `room:PR-0123456789ab-1645` | `#/room/:id` | A review room: the pull request or branch under review, its pages (baton's by default: each version, the skill and head it was made with), the captain's questions about them, errors and costs. |
 | `pr` | `pr:owner/repo#1645` | `#/prs` | A watched pull request: CI, approvals, reviews, evidence, dependencies and the next step; a merged one until production, with the environment and pods it waits on. Studio's last snapshot; never reads GitHub. |
 | `workflow` | `workflow:code-firstmate` | `#/workflow/:id` | A workflow in the catalog: its version, steps and roles, its inputs, and whether a person can start it now (and why not). |
 | `project` | `project:harbor-app` | `#/project/:id` | A registered project (project:studio: work in no project): whether new work can start, what needs the captain, what runs, its health, GitHub link and sensitive paths. |
