@@ -52,8 +52,8 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   An older room with none of these fields shows its steps numbered, its pictures as before but never code.
 - **The play bar floats on the board** (`playBar`): the caption of the point being read, the previous point, a dot per
   point, the next point (past a scene's last point is the next scene's first, and the board flies there), play / pause
-  (from where it stands, or from the start when the scene is whole), replay, the scene before and after (« ») and the
-  voice. On a lesson chapter not being played it is a small pill (play, replay, the voice) that leaves the chapter and its
+  (from where it stands, or from the start when the scene is whole), replay and the scene before and after (« »). There is
+  no voice menu. On a lesson chapter not being played it is a small pill (play, replay) that leaves the chapter and its
   question cards clear. The keyboard: → ← (or n p) the next point of a scene being played, else the next region (shown
   whole); a Space tap plays or pauses, Space held pans; + − 0 zoom; Escape closes what is open over the room.
 - **The rail lists every answer** (a group per turn under its question, the welcome first, a lesson chapter by chapter, a
@@ -70,8 +70,8 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   arrowhead 120ms), 180ms apart, their labels written in (clip-path, 400ms); a scene's title gets a highlighter (450ms); a
   chart's bars grow (600ms); a check's mark is drawn (250ms); a new point slides in. A step of a diagram draws only the part
   it adds, a redraw draws nothing again, and with reduced motion the final picture shows at once. One beat a point: the
-  picture's step, the point and the caption move together; a point stays max(2.6 s, 170 ms a character), or as long as
-  the voice reads it. Studio lays a flowchart out left to right or top down, whichever reads larger in the box. The caption
+  picture's step, the point and the caption move together; a point stays max(2.6 s, 170 ms a character), then the next
+  one follows. Studio lays a flowchart out left to right or top down, whichever reads larger in the box. The caption
   is a paper strip.
 - **On a phone** (390×844): the room is still one screen: the board (its answers and its questions as sheets from the
   bottom, its first open on the answers), the play bar on it (the caption, a point back and on, play, replay), and in place
@@ -155,8 +155,8 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   original shows. Translations are kept per turn and language in the room (`translations`), so switching back costs
   nothing; a `review-room-translate` ledger entry records each one (the turns kept and dropped, the job, the cost).
   Studio's own scenes (the welcome scene, what reviewers asked, what changed) switch for free from Studio's own strings
-  (their Chinese lines are kept beside the English, `zh`); a reviewer's quoted words are never translated. The voice follows
-  the language shown: this Mac's voice in that language, or the vendor's narration of the translated text.
+  (their Chinese lines are kept beside the English, `zh`); a reviewer's quoted words are never translated. The captions
+  follow the language shown.
 - **Regenerate with another tutor** ("Regenerate with…" / 換一位導師重講, on any finished tutor scene): the models this
   machine can run, from the facts adaptive staffing uses (`usableModels`: codex, claude, cursor, …), each with how independent
   it is from the change's author (another vendor; "same vendor as the author"; the author's own model; "unknown" when the
@@ -182,7 +182,7 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   translation still runs is saved when that ends, never with a half-finished scene; a save already in flight is followed, not
   dropped. Every save runs after the one before it, whatever its room, so two saves never share a version number. A version is `room.json` and its
   `assets/`: the room's view with its scenes in every language made, the board, its pictures (the illustrations, the app's
-  screenshots and cached narration copied in), every citation resolved to the text it pointed at (diff hunks, ledger
+  and screenshots copied in), every citation resolved to the text it pointed at (diff hunks, ledger
   entries, commits, sources, reviewers' notes), the check with the captain's answers and results, the transcript, the cost,
   (never a refused text: an illustration prompt the privacy filter refused is left out, a refused or failed web source keeps
   only that it was refused, in Studio's own fixed words, never its query, its address or the proxy's message),
@@ -192,22 +192,18 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   review, notes, approval or compare, and the Library refuses any write to it (`room-snapshot-read-only`) except its
   deletion (`DELETE /api/artifacts/room-<id>`, the desktop captain: the artifact and all its versions; the room then no
   longer links it, and a later save makes it again from v1). The replay is
-  the same room, read-only: no prompt, no paid action (no turn, regeneration, translation or vendor voice); captions, this
-  Mac's voice and the language switch over the languages saved with it still work. Nothing is written to GitHub.
-- **Voice** (off by default; captions are always on): the tutor vendor's own neural voice when it has one (an OpenAI or
-  Codex tutor with an OpenAI key: `POST /api/review-room/<card>/speech`, generated once per scene, cached in the room's
-  folder, a ledger entry `review-room-voice`; the narration goes only to the vendor that answered that scene, as the
-  scene recorded it, and only while the seat still runs on that vendor; one request per scene at a time; never on an
-  answered card), or one of this Mac's on-device voices, the best first (Premium, Enhanced, Siri and neural voices, the
-  compact ones last; the captain's own language and region first among equals). A voice the browser would send to a
-  server is never offered, nor is any of macOS's novelty voices (Albert, Bad News, Bahh, Bells, Boing, Bubbles, Cellos,
-  Good News, Jester, Organ, Superstar, Trinoids, Whisper, Wobble, Zarvox, …). Its robotic legacy voices (MacinTalk's
-  Fred, Junior, Ralph, Kathy, …; the Eloquence voices Eddy, Flo, Grandma, …) are left out too, unless this Mac has
-  nothing else in the captain's language. Voices are told apart by name: an older macOS gives every voice, the good
-  ones too, the same `com.apple.speech.synthesis.voice.` address. A Mac voice picked before it was dropped falls back to
-  the best one there is. While a voice plays, the points appear as it reaches them. Leaving the room stops its playback
-  and its mic at once, and nothing the room finishes later (its poll, a live update, playback, a turn or a citation it
-  sent, the mic) redraws the page the captain moved on to.
+  the same room, read-only: no prompt, no paid action (no turn, regeneration or translation); captions, playback and the
+  language switch over the languages saved with it still work. Nothing is written to GitHub.
+- **No voice.** The room speaks nothing: no text-to-speech engine, no voice picker, no narration route. Playback is
+  captions only, each point for its reading time (above). Rooms made while it had a voice load as before: Studio ignores
+  their old voice fields, and the clips they made stay where they are on disk (`voice-t<n>-<hash>.mp3` and
+  `kvoice-<hash>.wav` in a room's `<room>-images/` folder, under the data folder's or a Task's `review-room/`; the clips'
+  index `voice-clips.json` beside `review-room/`, if any), plus Doctor's old voice downloads in
+  `~/.crew-studio/tools/voice` and `~/.crew-studio/models/kokoro-multi-lang-v1_0`). Studio never reads or deletes them;
+  the captain may delete them by hand. Starting a room over moves its folder, old clips included, into `.archive/` like
+  its pictures.
+- Leaving the room stops its playback and its mic at once, and nothing the room finishes later (its poll, a live
+  update, playback, a turn or a citation it sent, the mic) redraws the page the captain moved on to.
 - A picture's chip shows its title cut at a word, with an ellipsis, and the whole title on hover.
 - **Voice questions**: push to talk, only where the browser recognises speech on this device
   (`SpeechRecognition.available({processLocally: true})`); the transcript fills the question field and is sent only when
@@ -280,7 +276,7 @@ A room has one subject and keeps one identity across that subject's heads:
   on GitHub (`…/blob/<commit>/<path>#L10-L24`), so it never moves. The room (`data/review-room/dir/<id>.json`) knows the
   directory's parts (each folder and file right under it, with how many files) and its README.
   It looks and behaves as a pull request's room: the same board, cards, rail, play bar, full screen, transcript, language
-  switch, voice, questions on the board (and on words selected), quick actions how, why, teach and the check, regenerate, the
+  switch, questions on the board (and on words selected), quick actions how, why, teach and the check, regenerate, the
   tutor picker, arrival and paste starting the analysis, the Library and starting over. What only a pull request has is not
   there: its state on GitHub, new commits, a diff and its line counts, the merge check and the reviewers' digest. Its header
   says where it is pinned (`[data-dir-pin]`) and opens that commit on GitHub; its welcome charts its parts by files. The
@@ -411,7 +407,7 @@ boxes, lines and other labels (and masked by the paper), a cycle's way back bowe
 same way bowed apart, a state's way back to itself a loop beside it; a decision as the question over the
 option taken and the ones turned down, dashed, each listed under it with the record that shows it (its citation is the
 decision's own, so the Library resolves it); the state map with every transition numbered, a row per transition that
-shows what it writes. A lesson's chapter is read whole; the play bar can still narrate it point by point. A translation
+shows what it writes. A lesson's chapter is read whole; the play bar can still step through it point by point. A translation
 covers the board's text and its drawings' words (`figures`, per board item in a fixed order, kept only when every word
 came back as short as the drawing holds: the drawing's title, its labels, an item's name and mechanism; 简体 from 繁體 through OpenCC). The board replays from the Library snapshot, offline.
 
@@ -588,7 +584,7 @@ arrival and paste.
 translation runs). It asks first, saying what goes (the answers, the board, the translations, the generated pictures) and
 what stays (the Library's snapshots, the Task's ledger). Studio moves the room's file and its pictures' folder into
 `.archive/<room>-<time>/` beside it (never deleted), drops every copy it keeps in memory and bumps the room's generation,
-so a background job still holding the old room (a picture being drawn, a voice, a Library save) writes nothing back; the
+so a background job still holding the old room (a picture being drawn, a Library save) writes nothing back; the
 next view is a fresh room (a pull request's at once, from the pull request as Studio last read it, its Library link kept).
 A `review-room-reset` ledger entry records who and when, with no content; a pull request room with no Task behind it
 (no paid turn yet, so no ledger to write to) records the same fields in its archive's `reset.json`. A Task's room keeps its
@@ -666,8 +662,7 @@ the per-subject record (`review-room-stats.json`) keys a branch as `branch:R-n` 
   keeps the probe's model check). The offer says whose pick it is (`picked`:
   room, studio, auto or regenerate) and the label says "Picked by the captain …". The approved reviewer picked runs as the
   seat's own member; any other model runs as the seat's adaptive member, its receipt naming it (`adaptive.picked`: staffing
-  admits a member the captain picked even when this machine does not list it as runnable; one Studio chose must be). The vendor's voice goes only to the vendor of the tutor that answered a scene, and only while the room's tutor
-  is still that vendor.
+  admits a member the captain picked even when this machine does not list it as runnable; one Studio chose must be).
 - **Verified by Studio.** Before the paid turn, Studio reads what this machine has again (the offer may change: a changed
   offer is answered with the current one) and verifies the chosen member itself when it is signed in but not verified yet
   (`engine.deps.ensurePick`: one bounded request per model, kept for its window), recorded on the Task's ledger
@@ -1125,13 +1120,12 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     and flies there; full screen for every scene. — review-room-ui "the board opens on the latest scene …", "the board takes
     most of the screen …", "the transcript lists each question …", "Play starts the scene again …", "the next point brings
     the next step …"; review-room-board-only-ui (each item, each failing where the stage was).
-13. Voice and voice questions: off by default; on-device voices only; the vendor's voice once per scene, the points
-    following it; push to talk on-device only, the transcript shown before it is sent. — review-room-ui "voice is off by
-    default …", "with this Mac's voice each point is spoken …", "the vendor's voice is asked for the whole scene once …",
-    "the points appear as the narration reaches them", "the mic is offered only after …", "holding the mic fills the
-    question …", "without on-device recognition the mic stays off …", "a saved voice no longer offered falls back …",
-    "once the captain leaves a room, its poll and its playback no longer redraw …", "on an older macOS the good voices are
-    offered …", "when this Mac has only legacy voices …", "leaving the room stops its playback and its mic at once", "what
+13. No voice; voice questions: playback is captions only, at reading pace, with no voice menu and no speech or audio
+    request; a room with old voice data loads; push to talk on-device only, the transcript shown before it is sent.
+    — review-room-ui "the play bar has no voice menu …", "playback steps through the points at reading pace …", "the
+    mic is offered only after …", "holding the mic fills the question …", "without on-device recognition the mic stays
+    off …", "once the captain leaves a room, its poll and its playback no longer redraw …", "leaving the room stops its
+    playback and its mic at once", "what
     the room finishes after the captain left …"; the answer is the final message only — review-room "only the tutor's
     final message is the answer …", "text streamed without a closing message counts as one message …", "a tutor that ends
     after a tool call with no final message fails the turn …"; a chip's title — review-room-ui "a long picture title in
@@ -1204,11 +1198,11 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     "390×844: the board opens on its answers' sheet …".
 28. The explanation's language switches live: a kept translation at once (简體 through OpenCC), a missing one after one
     confirmation; the translation round has no tool and no code; one that loses a citation or breaks the board's limits is
-    not kept; switching back runs nothing; the voice follows the language. — review-room "the room knows which answers are
+    not kept; switching back runs nothing. — review-room "the room knows which answers are
     not in a language yet", "translating is a small paid round …", "the translation round gets no tool …", "a translation
     that lost a citation is not kept …", "confirmed once, the next translation runs without asking again …", "switching to
     a language already kept runs nothing …"; review-room-ui "a kept translation shows at once …", "a translation is text …",
-    "the voice follows the language shown …", "简体 comes from the 繁體 text …", "a language not kept yet asks to confirm …",
+    "简体 comes from the 繁體 text …", "a language not kept yet asks to confirm …",
     "confirmed, the translation is sent …".
 29. Regenerate with another model: the room lists this machine's models with their independence, a held one pickable
     with its warning, and takes a model entered by hand; a pick asks to confirm its own paid round; the same question runs
@@ -1312,7 +1306,7 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     `body.rr-fs`, a full-viewport layout that holds while the request is pending or when it is refused (said nowhere). The
     sidebar, Firstmate, the header, the prompt bar, the transcript, the board's rail and the questions panel are hidden; a
     request granted after leaving is undone at once; the board's pins, popover, Next, zoom, toasts, the citation panel and
-    the play bar (the caption, scenes, points, playback, the voice) stay. The camera re-fits: a locked one aims again, one moved by
+    the play bar (the caption, scenes, points, playback) stay. The camera re-fits: a locked one aims again, one moved by
     hand keeps the middle of the board. Esc (after what is open over the board), the browser's own exit and Exit full
     screen return to the same scene, the focus on the control. A phone gets the layout only; nothing is remembered.
     — review-room-board-ui "the board fills the window …", "only the board is visible …", "a refused Fullscreen API …";
@@ -1368,14 +1362,14 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     this machine listed and pickable, one not verified or held with why as a warning; any model entered by hand ("Other
     model…"), stored and run like any pick; only a malformed pick refused; the independence shown, never enforced; a pick
     that cannot run fails with the reason and is never swapped for another vendor; Automatic unchanged; the receipt names the
-    picked member; the vendor's voice only to the answering tutor's vendor. — review-room-admission "the room has a tutor
+    picked member. — review-room-admission "the room has a tutor
     picker …", "the picker lists every model …", "the room names the providers …", "a model not verified or held can be
     picked …", "a picked model not verified yet is verified by Studio first …", "a model entered by hand is accepted …",
     "the turn runs on the model entered by hand …", "a model entered by hand that its vendor does not run fails visibly …",
     "a malformed pick … is refused …", "the room's own pick is its tutor …", "a turn runs on the picked tutor …", "a room
     without its own pick runs on Studio's default …", "a picked tutor that is held is never swapped …", "Studio's default
-    can be a model entered by hand …", "Automatic (no pick) never takes a held model …", "a scene a codex tutor answered is
-    not narrated …"; review-room-board-only-ui "the header's tutor opens a picker …", "picking a model sets this room's
+    can be a model entered by hand …", "Automatic (no pick) never takes a held model …";
+    review-room-board-only-ui "the header's tutor opens a picker …", "picking a model sets this room's
     tutor …", "a model that is out of quota can be picked …", "“Other model…” takes any model id …", "the header names a
     tutor entered by hand with its warning …", "Studio's default takes a held model …", "a picked tutor that cannot run is
     shown as such …".
@@ -1400,5 +1394,5 @@ Not in this unit: Firstmate offering to open a room from its chat; background po
 same way for every vendor); rendering fresh screenshots from the room (the room shows the Task's own captures: a new
 render makes a git worktree of the base, a repository write the room never does); the vendor's speech-to-text (voice
 questions are recognised on this device only); illustrations made when the merge card is created (they start when the
-captain first opens the room, so no image is paid for a room nobody opens); a saved room's vendor narration that was never
-generated (only narration already cached is copied into the snapshot).
+captain first opens the room, so no image is paid for a room nobody opens); any spoken narration (removed: the room has no
+voice).

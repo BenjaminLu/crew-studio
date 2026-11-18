@@ -4,7 +4,7 @@
 // model before it starts. Every claim shows its basis: a citation opens the diff hunk, the ledger entry, the commit or
 // the web source it rests on; a claim without one reads "Inference". Model text only ever goes into text nodes.
 (() => {
-const RR = { tutorMenu: null, step: new Map(), explain: new Map(), arrived: new Set(), imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), audio: null, rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
+const RR = { tutorMenu: null, step: new Map(), explain: new Map(), arrived: new Set(), imgWant: new Map(), resetAsk: new Set(), rscroll: new Map(), jump: new Map(), tsel: new Map(), rooms: new Map(), loading: new Set(), confirm: new Map(), draft: new Map(), posting: new Set(), err: new Map(), cite: new Map(), poll: null, shot: new Map(), zoom: null,
   scene: new Map(), reveal: new Map(), moved: new Set(), ready: new Map(), list: null, lang: new Map(), ver: new Map(), regen: new Map(), trConfirm: new Set(), drawn: new Map(), titled: new Set(), lastK: new Map(), pick: new Map(), other: new Map(), seen: new Map(), drawer: new Set(), fold: new Set(), playing: null, timer: null, mic: null, rec: null, heard: false };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -1050,112 +1050,24 @@ function showItem(r, id) {
   if (i >= 0) { stopPlay(); RR.scene.set(card, i); RR.pick.set(`${card}/${scenes[i].key}`, id); }
   rerender();
 }
-// ---------- narration: captions always; a voice of this Mac by default (on-device, free), off only when the captain says so ----------
-// The voice is the tutor vendor's own neural voice when it has one (the narration goes only to that vendor, the one the
-// tutor already uses; generated once per scene and kept in the room), else a voice of this Mac (on-device only: a voice
-// the browser would send to a server is never offered), the best first (Premium, Enhanced, Siri).
-const prefs = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
-// never offered: macOS's novelty voices; left out while anything better is there: its robotic legacy ones (MacinTalk,
-// Eloquence). By name: an older macOS gives every voice, the good ones too, a com.apple.speech.synthesis.voice. address
-const NOVELTY = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|jester|organ|pipe organ|superstar|trinoids|whisper|wobble|zarvox)$/i;
-const LEGACY = /^(agnes|bruce|fred|junior|kathy|princess|ralph|vicki|victoria|eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley)$/i;
-const baseName = (v) => String(v.name || "").replace(/\s*\(.*\)\s*$/, "").trim();
-// the best first: Premium, then Enhanced (Safari says so only in the voice's address), Siri and neural voices, the compact ones last
-const voiceRank = (v) => { const s = `${v.name} ${v.voiceURI || ""}`; return /premium/i.test(s) ? 4 : /enhanced/i.test(s) ? 3 : /siri|neural|natural/i.test(s) ? 2 : /compact/i.test(s) ? 0 : 1; };
-const localVoices = () => { try { const want = (CUR.lang || uiLang()).toLowerCase(), l = want.slice(0, 2), exact = (v) => (v.lang || "").toLowerCase().replace("_", "-") === want ? 1 : 0;
-  const mine = (window.speechSynthesis?.getVoices?.() || []).filter((v) => v.localService && v.lang?.toLowerCase().startsWith(l) && !NOVELTY.test(baseName(v)));
-  // Taiwan Mandarin has no Premium voice; the captain picked Eddy (Chinese (Taiwan)) to sit beside Mei-Jia, so it is not left out there
-  const twEddy = (v) => l === "zh" && /^eddy$/i.test(baseName(v)) && /tw/i.test(v.lang || "");
-  const good = mine.filter((v) => !LEGACY.test(baseName(v)) || twEddy(v));
-  const rank = (v) => (twEddy(v) ? -1 : voiceRank(v)); // Eddy sits beside Mei-Jia, never ahead of it, however compact Mei-Jia is
-  return (good.length ? good : mine).sort((a, b) => rank(b) - rank(a) || exact(b) - exact(a)); } catch { return []; } };
-// this Mac's local neural voice (Kokoro, src/voice): offered when Studio says its engine is ready; a room in the Library
-// (lib:…) has no folder to keep clips in. Picked, it speaks each point from a clip Studio makes once and keeps in the room.
-const KV = { stat: null, asked: 0, clips: new Map() };
-/** ask Studio again (fresh: it looks at the model again): when the picker opens and when the page comes back into focus,
- *  so a model installed or removed in Doctor shows in the room without a reload */
-const kokoroRefresh = (fresh = true) => { if (Date.now() - KV.asked < 1500) return; KV.asked = Date.now();
-  api(`/api/voice/status${fresh ? "?fresh=1" : ""}`).then((s) => { const was = JSON.stringify(KV.stat); KV.stat = s; if (JSON.stringify(s) !== was) rerender(); }).catch(() => {}); };
-const kokoroStat = () => { if (!KV.stat && Date.now() - KV.asked > 30000) kokoroRefresh(false); return KV.stat; };
-addEventListener("focus", () => { if (S.route?.name === "room") kokoroRefresh(); });
-addEventListener("hashchange", () => { if (S.route?.name === "room") kokoroRefresh(); });
-const kokoroReady = (card) => !!kokoroStat()?.ready && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/.test(String(card || S.route?.arg || ""));
-const kokoroVoice = () => (LANG_BASE(CUR.lang) === "en" ? kokoroStat()?.voices?.en : kokoroStat()?.voices?.zh) || "";
-/** mixed Chinese and English: "switch" speaks Latin runs with the English voice (the default), "same" keeps one voice */
-const voiceMix = () => (prefs.get("crew.room.voice.mix") === "same" ? "same" : "switch");
-const rawVoicePref = () => prefs.get("crew.room.voice") || "auto";
-/** the voice in effect: Kokoro only while it is ready (else this Mac's best voice speaks instead of silence) */
-const voicePref = () => { const p = rawVoicePref(); return p === "kokoro" && !kokoroReady() ? "auto" : p; };
-/** the Mac voice to speak with: the one picked, or, when that one is no longer offered (a robotic voice picked before), the best there is */
-const chosenLocal = () => { const p = voicePref(); if (p !== "auto" && !p.startsWith("local:")) return null; const vs = localVoices(); return (p === "auto" ? null : vs.find((v) => v.voiceURI === p.slice(6))) || vs[0] || null; };
-/** speak a point; when the browser refuses (no click yet, a voice gone) the caller's reading-pace timer takes over (fail) */
-function speak(text, done, fail, best = false) {
-  const v = best ? localVoices()[0] : chosenLocal(); if (!v) return false;
-  try { const u = new SpeechSynthesisUtterance(text); u.voice = v; u.lang = v.lang; u.onend = done; u.onerror = () => fail(); window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); return true; } catch { return false; }
-}
-// a browser lists its voices late: the picker and the default voice follow when they arrive
-try { window.speechSynthesis?.addEventListener?.("voiceschanged", () => { if (S.route?.name === "room") rerender(); }); } catch {}
-function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; RR.playKey = null; try { window.speechSynthesis?.cancel(); } catch {} try { RR.audio?.pause(); } catch {} RR.audio = null; try { KV.clip?.pause(); } catch {} KV.clip = null; KV.gen = (KV.gen || 0) + 1; dropPendingClips(); }
-/** a point's clip in the local voice: asked for once per text, voice language and mix (the next point's is asked for while
- *  one plays). A request playback no longer needs (paused, left, another mix) is cancelled, so Studio stops making it. */
-function kokoroClip(card, text) {
-  const lang = LANG_BASE(CUR.lang), mix = voiceMix(), key = `${card}|${lang}|${mix}|${text}`;
-  if (!KV.clips.has(key)) {
-    const ac = new AbortController(), entry = { ac, settled: false };
-    entry.job = fetch(`/api/review-room/${enc(card)}/voice`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, lang, mix }), signal: ac.signal })
-      .then(async (res) => { let j = {}; try { j = await res.json(); } catch {} if (!res.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${res.status}`), { code: j.code }); return j.src; })
-      .finally(() => { entry.settled = true; });
-    entry.job.catch(() => { if (KV.clips.get(key) === entry) KV.clips.delete(key); });
-    KV.clips.set(key, entry); if (KV.clips.size > 300) KV.clips.delete(KV.clips.keys().next().value);
-  }
-  return KV.clips.get(key).job;
-}
-/** a clip whose address no longer plays (its file was dropped: the room started over, the clips' bounds): asked for again */
-const forgetClip = (card, text) => KV.clips.delete(`${card}|${LANG_BASE(CUR.lang)}|${voiceMix()}|${text}`);
-function dropPendingClips(card) { for (const [key, e] of [...KV.clips]) if (!e.settled && (!card || key.startsWith(`${card}|`))) { e.ac.abort(); KV.clips.delete(key); } }
-/** speak point k with the local voice; the caption is the point's text, shown as it starts. A clip that fails: this Mac's voice, else reading pace */
-async function sayKokoro(card, sc, k, text, next, paced, again = false) {
-  const after = sc.points[k + 1], gen = KV.gen;
-  let src; try { src = await kokoroClip(card, text); } catch (e) { if (RR.playing !== card || KV.gen !== gen) return; if (e.code !== "not_a_point") RR.err.set(card, T(`The local voice could not speak: ${e.message}`, `本機語音無法朗讀：${e.message}`)); return void (speak(text, next, paced, true) || paced()); }
-  if (RR.playing !== card || KV.gen !== gen || !onRoom(card)) return;
-  if (after && !after.q) kokoroClip(card, plain(after.text)).catch(() => {});
-  const a = new Audio(src); KV.clip = a;
-  a.onended = () => { if (KV.clip === a) { KV.clip = null; next(); } };
-  const mac = () => speak(text, next, paced, true) || paced();
-  // the clip is gone (the room started over, the bounds dropped it): ask for it once more, then this Mac's voice
-  a.onerror = () => { if (KV.clip !== a) return; KV.clip = null; forgetClip(card, text); if (!again) sayKokoro(card, sc, k, text, next, paced, true); else mac(); };
-  try { await a.play(); } catch { if (KV.clip === a) { KV.clip = null; mac(); } }
-}
-/** show one more point of the current scene; while playing, the next one follows when its caption has been read (or spoken) */
+// ---------- playback: captions only, no voice. Each point shows for its reading time, then the next one follows ----------
+/** how long a point's caption stays before the next one: its reading time, at least 2.6 s */
+const readMs = (text) => Math.max(2600, [...text].length * 170);
+function stopPlay() { RR.explain.clear(); clearTimeout(RR.timer); RR.timer = null; RR.playing = null; RR.playKey = null; }
+/** show one more point of the current scene; while playing, the next one follows when its caption has been read */
 function advance(card) {
   if (!onRoom(card)) return stopPlay();
   const r = RR.rooms.get(card); if (!r) return; const scenes = scenesOf(r), sc = scenes[sceneState(card, scenes)]; if (!sc) return;
   const k = revealOf(card, sc); if (k >= sc.points.length || sc.quiz) { stopPlay(); rerender(); return; }
   RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, k + 1); rerender();
-  if (RR.playing !== card || RR.audio) return;
-  const text = plain(sc.points[k].text), next = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), 400); };
-  const paced = () => { if (RR.playing === card) RR.timer = setTimeout(() => advance(card), Math.max(2600, [...text].length * 170)); };
-  // Studio's own welcome scene is not a tutor's point: this Mac's voice reads it
-  if (voicePref() === "kokoro") return void (sc.welcome ? speak(text, next, paced, true) || paced() : sayKokoro(card, sc, k, text, next, paced));
-  if (speak(text, next, paced)) return;
-  paced();
-}
-/** the vendor's voice for a whole scene: the points appear as the audio reaches them (by their share of the text) */
-async function playVendor(card, sc) {
-  try { const out = await postJ(`/api/review-room/${enc(card)}/speech`, { scene: sc.key.replace(/-\d+$|-quiz$/, ""), lang: LANG_BASE(CUR.lang) }); if (RR.playing !== card) return;
-    const texts = sc.points.map((p) => plain(p.text)), total = texts.reduce((n, t) => n + t.length, 0) || 1; let acc = 0; const at = texts.map((t) => { const s = acc / total; acc += t.length; return s; });
-    const a = new Audio(out.src); RR.audio = a;
-    a.ontimeupdate = () => { if (RR.audio !== a || !a.duration) return; if (!onRoom(card)) return stopPlay(); const f = a.currentTime / a.duration, k = at.filter((s) => s <= f + 1e-6).length; if (k > revealOf(card, sc)) { RR.reveal.set(`${card}/${sc.key}`, k); rerender(); } };
-    a.onended = () => { if (RR.audio === a && !onRoom(card)) return stopPlay(); if (RR.audio === a) { RR.reveal.set(`${card}/${sc.key}`, sc.points.length); stopPlay(); rerender(); } };
-    await a.play(); }
-  catch (e) { RR.err.set(card, T(`The voice could not play: ${e.message}`, `語音無法播放：${e.message}`)); RR.audio = null; advance(card); }
+  if (RR.playing !== card) return;
+  RR.timer = setTimeout(() => advance(card), readMs(plain(sc.points[k].text)));
 }
 /** play the scene: from where it stands, or from its start when it is already whole (from: 0 replays it) */
 function play(card, sc, from) {
   const k = revealOf(card, sc), start = from ?? (k >= sc.points.length ? 0 : Math.max(0, k - 1));
-  // playing takes over from a step picked before (a dot, a number): the step shown is the one being read, on either voice
+  // playing takes over from a step picked before (a dot, a number): the step shown is the one being read
   stopPlay(); RR.playing = card; RR.playKey = sc.key; RR.pick.delete(`${card}/${sc.key}`); RR.step.delete(`${card}/${sc.key}`); RR.reveal.set(`${card}/${sc.key}`, start);
-  const r = RR.rooms.get(card); if (voicePref() === "vendor" && r?.offer?.voice && sc.t && !sc.studio) { RR.reveal.set(`${card}/${sc.key}`, 1); rerender(); return void playVendor(card, sc); }
   advance(card);
 }
 const curScene = (card) => { const r = RR.rooms.get(card); if (!r) return {}; const scenes = scenesOf(r), i = sceneState(card, scenes); return { r, scenes, i, sc: scenes[i] }; };
@@ -1174,17 +1086,6 @@ function stepPoint(card, dir) {
 /** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind a chip instead of pulling the board away */
 const markMoved = (card) => { if (RR.rooms.get(card)?.running != null) RR.moved.add(card); };
 const goScene = (card, n) => { markMoved(card); const { scenes } = curScene(card); if (!scenes?.length) return; stopPlay(); RR.scene.set(card, Math.max(0, Math.min(scenes.length - 1, n))); rerender(); };
-function voicePicker(r) {
-  const vs = localVoices(), vendor = r.offer?.voice, pref = voicePref(), alt = pref.startsWith("local:") ? chosenLocal() : null, cur = alt ? `local:${alt.voiceURI}` : pref;
-  const kokoro = kokoroReady(r.card.id) ? [["kokoro", T(`Kokoro local neural voice (${kokoroVoice()})`, `Kokoro 本機神經語音（${kokoroVoice()}）`)]] : [];
-  const mix = pref === "kokoro" ? h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Mixed Chinese and English", "中英混合")), h("select", { class: "input", "data-voice-mix": "", "aria-label": T("Mixed Chinese and English", "中英混合"),
-    onchange: (e) => { prefs.set("crew.room.voice.mix", e.target.value === "switch" ? null : e.target.value); stopPlay(); rerender(); } },
-    [["switch", T("English words in an English voice", "英文詞換英文聲音")], ["same", T("One voice for everything", "全部同一個聲音")]].map(([v, l]) => h("option", { value: v, selected: v === voiceMix() }, l)))) : null;
-  const opts = [...(vs.length ? [["auto", T(`This Mac's best voice (${vs[0].name})`, `這台 Mac 最好的聲音（${vs[0].name}）`)]] : []), ...kokoro, ["off", T("Voice off (captions only)", "語音關（只有字幕）")], ...(vendor ? [["vendor", T(`${vendor.vendor} neural voice (${vendor.model}; paid, only to the tutor's own vendor)`, `${vendor.vendor} 神經語音（${vendor.model}；付費，只送到導師本身的供應商）`)]] : []), ...vs.map((v) => [`local:${v.voiceURI}`, T(`This Mac: ${v.name}`, `這台 Mac：${v.name}`)])];
-  const pick = h("label", { class: "rr-voice" }, h("span", { class: "sr" }, T("Voice", "語音")), h("select", { class: "input", "data-voice": "", "aria-label": T("Voice", "語音"), onfocus: () => kokoroRefresh(), onmousedown: () => kokoroRefresh(),
-    onchange: (e) => { prefs.set("crew.room.voice", e.target.value === "auto" ? null : e.target.value); stopPlay(); rerender(); } }, opts.map(([v, l]) => h("option", { value: v, selected: v === cur || (v === "off" && !opts.some(([x]) => x === cur)) }, l))));
-  return mix ? h("span", { class: "rr-voices" }, pick, mix) : pick;
-}
 // ---------- the check on the board: multiple choice, graded by Studio (no model) the moment the captain picks ----------
 const LETTERS = "ABCD";
 async function pickOption(card, q, i, at) {
@@ -1446,17 +1347,17 @@ function sceneCard(r, scenes, j, W) {
         sc.questions.length ? h("div", { class: "rr-sceneq", "data-scene-check": "" }, h("b", {}, T("Questions for you (answer in the prompt below)", "問你的問題（在下方輸入框回答）")), h("ol", {}, sc.questions.map((q) => h("li", { "data-check-result": q.result ? (q.result.correct ? "correct" : "missed") : "open" }, q.q, q.result ? h("span", { class: `rr-mark ${q.result.correct ? "ok" : "miss"}` }, q.result.correct ? T(" ✓ correct", " ✓ 正確") : T(" ✗ missed: re-explained", " ✗ 沒答對：已重新講解")) : null)))) : null)));
 }
 /** The play bar, floating on the board: the caption of the point being read, a point back, a dot per point, a point on,
- *  play / pause, replay, the scene before and after, the voice */
+ *  play / pause, replay, the scene before and after */
 function playBar(r, scenes, i) {
   const card = r.card.id, sc = scenes[i]; if (!sc) return null;
   const n = sc.points.length, k = sc.quiz ? n : revealOf(card, sc), running = sc.t?.status === "running";
   const cur = sc.quiz ? null : sc.points[k - 1], caption = cur ? plain(cur.text) : running ? T("The tutor is working…", "導師作答中…") : "";
-  // a lesson's chapter is read, not played: until it plays the bar is a small pill (play, replay, the voice) that leaves the
+  // a lesson's chapter is read, not played: until it plays the bar is a small pill (play, replay) that leaves the
   // chapter and its question cards clear
   const playBtn = h("button", { type: "button", class: "rr-ibtn primary", "data-play": "", "aria-pressed": String(RR.playing === card), disabled: !n || sc.quiz, onclick: () => togglePlay(card), "aria-label": RR.playing === card ? T("Pause", "暫停") : T("Play", "播放"), title: T("Play / pause (Space)", "播放／暫停（空白鍵）") }, ic(RR.playing === card ? "pause" : "play"));
   const replay = h("button", { type: "button", class: "rr-ibtn", "data-replay": "", disabled: !n || sc.quiz, onclick: () => play(card, sc, 0), "aria-label": T("Replay this scene", "這個場景重播"), title: T("Replay this scene", "這個場景重播") }, ic("replay"));
   if (sc.chapter && sc.t?.action === "teach" && sc.t.status === "done" && RR.playing !== card && k >= n)
-    return h("div", { class: "rb-play mini", "data-playbar": card, role: "group", "aria-label": T("Playback", "播放") }, h("div", { class: "rr-playbar" }, playBtn, replay, h("span", { class: "rb-play-l" }, T("Play this chapter", "播放這一章")), voicePicker(r)));
+    return h("div", { class: "rb-play mini", "data-playbar": card, role: "group", "aria-label": T("Playback", "播放") }, h("div", { class: "rr-playbar" }, playBtn, replay, h("span", { class: "rb-play-l" }, T("Play this chapter", "播放這一章"))));
   const dot = (m) => h("button", { type: "button", class: "rr-dot", "data-dot": `${i}:${m}`, "aria-current": m === k ? "step" : null, "aria-label": T(`Point ${m}`, `第 ${m} 點`), onclick: () => { markMoved(card); stopPlay(); RR.step.set(`${card}/${sc.key}`, m - 1); RR.reveal.set(`${card}/${sc.key}`, m); rerender(); } }, h("i"));
   return h("div", { class: "rb-play", "data-playbar": card, role: "group", "aria-label": T("Captions and playback", "字幕與播放") },
     h("div", { class: "rr-caption", "data-caption": "", "aria-live": "polite" }, h("span", { class: "rr-who" }, sc.studio || !sc.t ? "Studio" : T("Tutor", "導師")), h("span", { class: "rr-ctext", "data-caption-text": "" }, caption)),
@@ -1468,8 +1369,7 @@ function playBar(r, scenes, i) {
       h("span", { class: "rr-scenenav" },
         h("button", { type: "button", class: "rr-mini", "data-scene-prev": "", disabled: i === 0, onclick: () => goScene(card, i - 1), "aria-label": T("Previous scene", "上一個場景") }, "«"),
         h("span", { class: "faint", "data-scene-pos": `${i + 1}/${scenes.length}` }, T(`Scene ${i + 1} of ${scenes.length}`, `場景 ${i + 1} / ${scenes.length}`)),
-        h("button", { type: "button", class: "rr-mini", "data-scene-next": "", disabled: i === scenes.length - 1, onclick: () => goScene(card, i + 1), "aria-label": T("Next scene", "下一個場景") }, "»")),
-      voicePicker(r)));
+        h("button", { type: "button", class: "rr-mini", "data-scene-next": "", disabled: i === scenes.length - 1, onclick: () => goScene(card, i + 1), "aria-label": T("Next scene", "下一個場景") }, "»"))));
 }
 /** the captain looked elsewhere while a turn ran: its answer, when ready, waits behind this chip on the board */
 function readyChip(r, scenes) {
@@ -1510,7 +1410,7 @@ function promptBar(r) {
   const card = r.card.id, busy = r.running != null || RR.posting.has(card), offer = r.offer, conf = RR.confirm.get(card), err = RR.err.get(card);
   const answers = (r.turns || []).filter((t) => !t.studio && t.status === "done").length;
   const tbtn = h("button", { type: "button", class: "rr-ibtn rr-tbtn", "data-transcript-toggle": card, "data-answers": answers, "aria-expanded": String(RR.drawer.has(card)), "aria-label": T("Transcript", "紀錄"), title: T("Transcript", "紀錄"), onclick: () => { RR.drawer.has(card) ? RR.drawer.delete(card) : RR.drawer.add(card); rerender(); } }, ic("list"));
-  if (r.snapshot) return h("div", { class: "rr-bar rr-dock" }, h("p", { class: "faint rr-dock-note", "data-room-closed": "", "data-room-readonly": r.snapshot.artifact }, T("A review room saved in the Library: a read-only replay. Captions and this Mac's voice play; nothing here asks a model or pays.", "存在成品庫的審查室：唯讀重播。字幕和這台 Mac 的語音照常播放；這裡不會呼叫模型，也不付費。")), tbtn);
+  if (r.snapshot) return h("div", { class: "rr-bar rr-dock" }, h("p", { class: "faint rr-dock-note", "data-room-closed": "", "data-room-readonly": r.snapshot.artifact }, T("A review room saved in the Library: a read-only replay. Its captions play; nothing here asks a model or pays.", "存在成品庫的審查室：唯讀重播。字幕照常播放；這裡不會呼叫模型，也不付費。")), tbtn);
   if (!r.open) return h("div", { class: "rr-bar rr-dock" }, h("p", { class: "faint rr-dock-note", "data-room-closed": "" }, r.closed ? T(r.closed.en, r.closed.zh) : T("The merge card is answered: this room is read-only now.", "合併卡已回覆：審查室現在只能閱讀。")), tbtn);
   if (offer?.error) return h("div", { class: "rr-bar rr-dock" }, h("p", { class: "rr-err rr-dock-note", "data-room-unavailable": "" }, offer.error), tbtn);
   if (RR.mic == null) void micReady(card);
@@ -1602,7 +1502,6 @@ async function resetRoom(card) {
   if (RR.posting.has(card)) return; RR.posting.add(card); RR.err.delete(card); rerender();
   try { await postJ(`/api/review-room/${enc(card)}/reset`, {});
     stopPlay(); clearTimeout(RR.poll); RR.poll = null;
-    for (const key of [...KV.clips.keys()]) if (key.startsWith(`${card}|`)) KV.clips.delete(key); // its clips were deleted with it
     for (const m of [RR.scene, RR.seen, RR.confirm, RR.draft, RR.cite, RR.err, RR.reveal, RR.ready, RR.rscroll, RR.jump, RR.lang]) m.delete(card);
     for (const set of [RR.moved, RR.resetAsk, RR.drawer, RR.regen]) set.delete(card);
     for (const m of [RR.ver, RR.pick, RR.drawn, RR.tsel, RR.lastK, RR.shot]) for (const key of [...m.keys()]) if (key.startsWith(`${card}/`)) m.delete(key);

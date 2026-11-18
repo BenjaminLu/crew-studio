@@ -60,7 +60,7 @@ const ROOM = { card: { id: "SC-50", run: "R-050", node: "merge-card", title: { e
   diffstat: { files: [{ path: "src/percent.ts", added: 4, removed: 0 }, { path: "test/percent.test.ts", added: 3, removed: 1 }], total: { files: 2, added: 7, removed: 1 }, from: "git" },
   check: { questions: [{ n: 1, q: "What does percent(1999, 15) return?", turn: 1, at: "t", result: { correct: true, note: "300", turn: 2 } }, { n: 2, q: "Where could rounding go wrong?", turn: 1, at: "t", result: { correct: false, note: "halves", turn: 2 } }] }, summary };
 
-// speech, stubbed: two on-device voices and one the browser would send to a server; on-device recognition; an audio player
+// speech, stubbed: a browser with voices and an audio player that record any use (the room must use neither); on-device recognition
 const stubs = ([mic]) => {
   window.__spoken = []; const mac = (name, uri, lang = "en-US") => ({ name, lang, localService: true, voiceURI: uri });
   // this Mac's voices as Chrome and Safari list them: novelty and legacy (MacinTalk, Eloquence) voices among the good ones
@@ -72,7 +72,11 @@ const stubs = ([mic]) => {
   window.SpeechSynthesisUtterance = function (t) { this.text = t; };
   class Rec { static async available(o) { window.__micAsked = o; return mic; } start() { window.__rec = this; window.__recStarted = { lang: this.lang, local: this.processLocally }; setTimeout(() => this.onresult && this.onresult({ results: [[{ transcript: "why do halves round up" }]] }), 10); } stop() { window.__recStopped = true; this.onend && this.onend(); } }
   window.SpeechRecognition = Rec;
-  window.Audio = function (src) { const a = { src, currentTime: 0, duration: 10, ontimeupdate: null, onended: null, play: async () => { window.__audio = a; }, pause() {} }; return a; };
+  // the reading-pace timers (2.6 s or more): which were set and which cleared, so a test can tell playback stopped
+  window.__paceSet = []; window.__paceCleared = []; const st = window.setTimeout, ct = window.clearTimeout;
+  window.setTimeout = function (fn, ms, ...a) { const id = st.call(window, fn, ms, ...a); if (ms >= 2600) window.__paceSet.push(id); return id; };
+  window.clearTimeout = function (id) { if (window.__paceSet.includes(id)) window.__paceCleared.push(id); return ct.call(window, id); };
+  window.__audios = []; window.Audio = function (src) { const a = { src, currentTime: 0, duration: 10, ontimeupdate: null, onended: null, play: async () => { window.__audio = a; }, pause() {} }; window.__audios.push(src); return a; };
 };
 async function open(width, lang, mic = "available") {
   const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 960 } });
@@ -83,11 +87,12 @@ async function open(width, lang, mic = "available") {
   await ctx.route(/\/api\/review-room\/SC-50(\?open=1)?$/, (r) => r.fulfill({ json: roomNow }));
   await ctx.route(/\/api\/review-room\/SC-50\/image\/B1-9\.png$/, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
   await ctx.route(/\/api\/wruns\/R-050\/captures\//, (r) => r.fulfill({ body: PNG, contentType: "image/png" }));
-  await ctx.route(/\/api\/review-room\/SC-50\/speech$/, (r) => { speech.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { src: "/api/review-room/SC-50/audio/voice-t1-0123456789ab.mp3", cached: false, vendor: "openai", model: "gpt-4o-mini-tts" } }); });
   await ctx.route(/\/api\/review-room\/SC-50\/cite\?/, (r) => { const ref = new URL(r.request().url()).searchParams.get("ref"); cites.push(ref); if (ref === "source:4") return r.fulfill({ json: { kind: "source", n: 4, ok: true, url: "javascript:alert(2)" } }); r.fulfill({ json: { kind: "diff", path: "src/percent.ts", from: 2, to: 3, head: H, text: "@@ -0,0 +1,4 @@\n+  return Math.round((amount * pct) / 100);" } }); });
   await ctx.route(/\/api\/review-room\/SC-50\/turn$/, async (r) => { posts.push(JSON.parse(r.request().postData() || "{}")); await new Promise((res) => (hold = res));
     roomNow = { ...ROOM, running: 3, turns: [...ROOM.turns, { n: 3, action: "ask", text: "why do halves round up", lang, status: "running", provider: "codex", model: "gpt-6", answer: "" }] }; r.fulfill({ json: roomNow }); });
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message));
+  // any request for a voice (Studio's old voice routes, a room's speech, clip or audio): the room must make none
+  p.on("request", (q) => { if (/\/api\/voice\/|\/api\/review-room\/[^/?]+\/(speech|voice|audio)\b/.test(q.url())) speech.push(q.url()); });
   return { ctx, p, posts, cites, speech, release: () => hold?.() };
 }
 /** a control on the board's canvas pressed as such: what it does is under test, not where the camera left it (on a slower
@@ -168,36 +173,16 @@ try {
     await p.click('[data-jump="t0"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t0"]'); });
     await press(p, '[data-visual-pick="B0-1"]');
     ok(!!(await p.$(".rb-region.cur [data-visual] [data-illustration-pending]")) && /paid generated image, made once/.test(await p.textContent(".rb-region.cur [data-visual] [data-paid-image]")), "the opening picture still being drawn shows a placeholder, labelled as a paid generated image made once");
-    // voice: this Mac's best voice by default; on-device voices only, the best first; the vendor's own voice for the whole scene
-    await p.click('[data-jump="t1"]').catch(() => {});
-    const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
-    ok(JSON.stringify(voices) === JSON.stringify(["auto", "off", "vendor", "local:ava", "local:com.apple.voice.enhanced.en-US.Zoe", "local:com.apple.voice.compact.en-US.Samantha"]) && (await p.$eval("[data-voice]", (e) => e.value)) === "auto", "this Mac's best voice speaks by default (off is a choice); the choices are the tutor vendor's own voice and this Mac's on-device voices, the best first (none a browser would send away, no novelty or robotic legacy voice)", JSON.stringify(voices));
-    // a voice picked before it was dropped (a robotic one) is not kept as silence: the best voice there is takes its place
-    await p.evaluate(() => localStorage.setItem("crew.room.voice", "local:fred")); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); });
-    ok((await p.$eval("[data-voice]", (e) => e.value)) === "local:ava", "a saved voice no longer offered falls back to the best one on this Mac", await p.$eval("[data-voice]", (e) => e.value));
-    await p.selectOption("[data-voice]", "off");
-    // an older macOS: Safari gives every voice, the good ones too, a com.apple.speech.synthesis.voice. address
-    const voicesWith = async (list) => { await p.evaluate((l) => { window.__voices = l; }, list); await p.click("[data-point-next]").catch(() => {}); await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); }); return p.$$eval("[data-voice] option", (els) => els.map((e) => e.value)); };
-    const old = (n) => ({ name: n, lang: "en-US", localService: true, voiceURI: `com.apple.speech.synthesis.voice.${n.replace(/ /g, "")}` });
-    let vs = await voicesWith(["Samantha", "Zarvox", "Alex", "Fred", "Bad News"].map(old));
-    ok(JSON.stringify(vs) === JSON.stringify(["auto", "off", "vendor", "local:com.apple.speech.synthesis.voice.Samantha", "local:com.apple.speech.synthesis.voice.Alex"]), "on an older macOS the good voices are offered though they share the legacy address; novelty and legacy voices are still left out", JSON.stringify(vs));
-    vs = await voicesWith(["Fred", "Zarvox", "Ralph", "Bubbles"].map(old));
-    ok(JSON.stringify(vs) === JSON.stringify(["auto", "off", "vendor", "local:com.apple.speech.synthesis.voice.Fred", "local:com.apple.speech.synthesis.voice.Ralph"]), "when this Mac has only legacy voices, they are offered rather than none; a novelty voice never is", JSON.stringify(vs));
-    await voicesWith(null);
-    await p.selectOption("[data-voice]", "local:ava"); await p.click("[data-replay]"); await p.waitForFunction(() => window.__spoken.length >= 2);
-    ok(await p.evaluate(() => window.__spoken[0][0] === "An amount in cents goes into percent ." || /^An amount in cents goes into percent/.test(window.__spoken[0][0])) && await p.evaluate(() => window.__spoken[0][1] === "ava"), "with this Mac's voice each point is spoken as it appears", JSON.stringify(await p.evaluate(() => window.__spoken)));
-    await p.click("[data-play]").catch(() => {}); await p.evaluate(() => { window.__spoken = []; });
-    // a voice the browser refuses (no click yet): the points keep their reading pace, never racing through
-    await p.evaluate(() => { window.__speakFails = true; }); await p.click("[data-replay]"); await p.waitForTimeout(1500); s = await stage(p);
-    ok(s.points <= 2 && (await p.evaluate(() => window.__spoken.length)) >= 1, "a refused voice falls back to reading pace: the points do not race through", JSON.stringify(s));
-    await p.click("[data-play]").catch(() => {}); await p.evaluate(() => { window.__speakFails = false; window.__spoken = []; });
-    await p.selectOption("[data-voice]", "vendor"); await p.click("[data-play]"); await p.waitForFunction(() => !!window.__audio);
-    ok(speech.length === 1 && speech[0].scene === "t1" && (await p.evaluate(() => window.__audio.src)) === "/api/review-room/SC-50/audio/voice-t1-0123456789ab.mp3", "the vendor's voice is asked for the whole scene once and played", JSON.stringify(speech));
-    await p.evaluate(() => { const a = window.__audio; a.currentTime = 6; a.ontimeupdate(); }); s = await stage(p);
-    ok(s.points >= 3 && s.points < 5, "the points appear as the narration reaches them", JSON.stringify(s));
-    await p.evaluate(() => window.__audio.onended()); s = await stage(p);
-    ok(s.at === "5/5" && (await p.evaluate(() => window.__spoken.length)) === 0, "when it ends every point is shown; no browser voice spoke over it", JSON.stringify(s));
-    await p.selectOption("[data-voice]", "off");
+    // no voice: the play bar has no voice menu, and playback steps through the points at reading pace with captions only
+    await p.click('[data-jump="t1"]').catch(async () => { await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); });
+    { const bar = await p.$eval("[data-board] [data-playbar]", (b) => ({ voice: !!document.querySelector("[data-voice], [data-voice-mix], .rr-voice, .rr-voices"), selects: b.querySelectorAll("select").length, text: b.textContent, play: !!b.querySelector("[data-play]"), replay: !!b.querySelector("[data-replay]") }));
+      ok(!bar.voice && bar.selects === 0 && !/Voice|語音/.test(bar.text) && bar.play && bar.replay, "the play bar has no voice menu: play and replay only, no voice picker anywhere in the room", JSON.stringify(bar)); }
+    await p.click("[data-replay]"); await p.waitForTimeout(1500); s = await stage(p);
+    ok(s.points === 1 && /An amount in cents goes into percent/.test(s.caption), "playback steps through the points at reading pace: the first point's caption stays while it is read", JSON.stringify(s));
+    await p.waitForFunction(() => document.querySelectorAll("[data-board] .rb-region.cur .rr-point:not(.later)").length >= 2, null, { timeout: 12000 }).catch(() => {}); s = await stage(p);
+    const quiet = await p.evaluate(() => ({ spoken: window.__spoken.length, audios: window.__audios.length }));
+    ok(s.points === 2 && /rounded to whole cents/.test(s.caption) && !quiet.spoken && !quiet.audios && !speech.length, "then the next point and its caption follow by themselves; nothing is spoken, no audio plays, no voice is asked of Studio", JSON.stringify({ s, quiet, speech }));
+    await p.click("[data-play]").catch(() => {});
     // a spoken question: on-device recognition, push to talk, the transcript shown before it is sent
     ok(await p.evaluate(() => JSON.stringify(window.__micAsked)) === JSON.stringify({ langs: ["en"], processLocally: true }), "the mic is offered only after the browser says it recognises speech on this device");
     await p.dispatchEvent("[data-mic]", "pointerdown"); await p.waitForSelector("[data-heard]");
@@ -368,14 +353,6 @@ try {
     let s6 = await stage(p);
     ok(/An amount in cents goes into percent/.test(before) && s6.title === "百分比怎麼算" && /以分為單位的金額進入/.test(s6.caption) && !trs.length && !posts.length && await p.$eval("[data-room-lang]", (e) => e.dataset.roomLang) === "zh-TW", "a kept translation shows at once: the title, the points and the caption switch language, nothing is asked or paid", JSON.stringify({ before, s6 }));
     ok(await p.evaluate(() => !window.__pwned && !document.querySelector(".rr-point img")) && s6.visual === "B1-1", "a translation is text: markup in it stays text, and the board's pictures are the original's", JSON.stringify(s6));
-    const voices = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value));
-    ok(voices.includes("local:mj") && !voices.includes("local:ava"), "the voice follows the language shown: this Mac's Chinese voice now", JSON.stringify(voices));
-    ok(JSON.stringify(voices.filter((v) => v.startsWith("local:"))) === JSON.stringify(["local:mj", "local:com.apple.eloquence.zh-TW.Eddy"]), "Taiwan Mandarin offers Mei-Jia first and Eddy beside it; the other legacy voices stay out", JSON.stringify(voices));
-    await p.evaluate(() => { window.__voices = [{ name: "Eddy (Chinese (Taiwan))", lang: "zh-TW", localService: true, voiceURI: "com.apple.eloquence.zh-TW.Eddy" }, { name: "Mei-Jia", lang: "zh-TW", localService: true, voiceURI: "com.apple.voice.compact.zh-TW.Mei-Jia" }]; });
-    await p.click('[data-lang-pick="zh-TW"]'); await p.waitForTimeout(100);
-    const compact = await p.$$eval("[data-voice] option", (els) => els.map((e) => e.value).filter((v) => v.startsWith("local:")));
-    ok(JSON.stringify(compact) === JSON.stringify(["local:com.apple.voice.compact.zh-TW.Mei-Jia", "local:com.apple.eloquence.zh-TW.Eddy"]), "a compact Mei-Jia still comes before Eddy: Eddy never becomes this Mac's best voice", JSON.stringify(compact));
-    await p.evaluate(() => { window.__voices = null; }); await p.click('[data-lang-pick="zh-TW"]');
     await p.click('[data-lang-pick="zh-CN"]'); s6 = await stage(p);
     ok(s6.title === "百分比怎么算" && !trs.length, "简体 comes from the 繁體 text through OpenCC: nothing paid", JSON.stringify(s6));
     await p.click('[data-lang-pick="en"]'); await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t2"]');
@@ -423,11 +400,11 @@ try {
     p.on("request", (q) => { if (/\/api\/review-room\/SC-50/.test(q.url())) live.push(q.url()); });
     await p.goto(`${base}/#/room/lib:room-sc-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     const ro = await p.evaluate(() => ({ note: document.querySelector("[data-room-readonly]")?.textContent, paid: ["[data-room-action]", "[data-room-text]", "[data-room-send]", "[data-mic]", "[data-welcome-teach]", "[data-regen]", "[data-room-save]", "[data-room-check]", "[data-translate-start]"].filter((q) => document.querySelector(q)),
-      snap: document.querySelector("[data-room-snapshot]")?.dataset.roomSnapshot, vers: [...document.querySelectorAll("[data-snapshot-version]")].map((e) => e.dataset.snapshotVersion), focus: document.body.dataset.focus === "room", voice: !!document.querySelector("[data-voice]"), vendor: !!document.querySelector('[data-voice] option[value="vendor"]') }));
+      snap: document.querySelector("[data-room-snapshot]")?.dataset.roomSnapshot, vers: [...document.querySelectorAll("[data-snapshot-version]")].map((e) => e.dataset.snapshotVersion), focus: document.body.dataset.focus === "room", voice: !!document.querySelector("[data-voice], .rr-voice"), play: !!document.querySelector("[data-playbar] [data-play]") }));
     for (let k = 0; k < 30 && await p.$("[data-scene-prev]:not([disabled])"); k++) { await p.click("[data-scene-prev]"); await p.waitForTimeout(30); }
     const wel = await p.evaluate(() => { return { welcome: !!document.querySelector('[data-board]') && /This room is only about/.test(document.querySelector("[data-board]").textContent), skipped: !!document.querySelector("[data-auto-skipped]") }; });
     ok(wel.welcome && !wel.skipped, "a saved room's welcome never shows an auto-teach notice, even from a snapshot that still carries one", JSON.stringify(wel));
-    ok(/read-only replay/.test(ro.note || "") && !ro.paid.length && ro.snap === "room-sc-50@2" && JSON.stringify(ro.vers) === JSON.stringify(["1", "2"]) && ro.focus && ro.voice && !ro.vendor, "a saved room opens from the Library in the room itself, read-only: no prompt, no paid control, its versions listed, this Mac's voice still there", JSON.stringify(ro));
+    ok(/read-only replay/.test(ro.note || "") && !ro.paid.length && ro.snap === "room-sc-50@2" && JSON.stringify(ro.vers) === JSON.stringify(["1", "2"]) && ro.focus && !ro.voice && ro.play && /Its captions play/.test(ro.note || ""), "a saved room opens from the Library in the room itself, read-only: no prompt, no paid control, its versions listed, captions playback and no voice", JSON.stringify(ro));
     await p.click("[data-transcript-toggle]"); await p.click('[data-jump="t1"]'); await p.click("[data-replay]"); await p.click("[data-play]"); await p.click("[data-point-next]"); await press(p, '[data-board] [data-cite="diff:src/percent.ts:L2-3"]');
     await p.waitForSelector("[data-cite-panel] .rr-diff");
     ok(/Math\.round/.test(await p.textContent("[data-cite-panel]")) && !cites.length && !live.length, "a citation opens from the snapshot itself: nothing asked of the live room or the cache", JSON.stringify({ cites, live }));
@@ -960,10 +937,10 @@ try {
     await p.waitForFunction(() => document.querySelector("[data-mic]")?.disabled === false);
     await p.dispatchEvent("[data-mic]", "pointerdown"); await p.waitForSelector("[data-heard]");
     await p.click(".rb-region.cur [data-cite]"); await p.click('[data-room-action="how"]'); await p.click("[data-room-start]"); await p.waitForSelector("[data-room-busy]");
-    await p.click("[data-play]");
-    await p.evaluate(() => { window.__cancels = 0; window.__recStopped = false; location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]'); await p.waitForSelector("[data-room-list]:not([data-room-list-loading])"); await p.waitForTimeout(300);
-    const eager = await p.evaluate(() => ({ cancels: window.__cancels, rec: window.__recStopped }));
-    ok(eager.cancels > 0 && eager.rec === true, "leaving the room stops its playback and its mic at once", JSON.stringify(eager));
+    await p.click("[data-play]"); const pace = await p.evaluate(() => window.__paceSet.at(-1));
+    await p.evaluate(() => { window.__recStopped = false; location.hash = "#/room"; }); await p.waitForSelector('[data-pr-box="home"]'); await p.waitForSelector("[data-room-list]:not([data-room-list-loading])"); await p.waitForTimeout(300);
+    const eager = await p.evaluate((id) => ({ pace: id, cleared: window.__paceCleared.includes(id), rec: window.__recStopped }), pace);
+    ok(eager.pace != null && eager.cleared && eager.rec === true, "leaving the room stops its playback and its mic at once", JSON.stringify(eager));
     await p.evaluate(() => { window.__redraws = 0; new MutationObserver(() => window.__redraws++).observe(document.querySelector("#view"), { childList: true }); document.querySelector('[data-pr-url="home"]').dataset.mark = "1"; });
     release(); citeHold?.(); await p.evaluate(() => { window.__rec?.onresult?.({ results: [[{ transcript: "late words" }]] }); window.__rec?.onend?.(); });
     await p.waitForTimeout(3000);
@@ -975,7 +952,7 @@ try {
     await p.goto(`${base}/#/room/SC-50`); await p.waitForSelector("[data-board]", { timeout: 15000 });
     await p.waitForFunction(() => document.querySelector("[data-mic]")?.disabled === true);
     ok(/裝置上的語音辨識/.test(await p.getAttribute("[data-mic]", "title")), "without on-device recognition the mic stays off and says why");
-    ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] header")) && /語音關/.test(await p.textContent("[data-voice]")), "zh-TW: the board, the transcript and the voice choice read in Chinese");
+    ok(/場景 3 \/ 3/.test(await p.textContent("[data-scene-pos]")) && /紀錄/.test(await p.textContent("[data-transcript] header")) && !(await p.$("[data-voice]")), "zh-TW: the board and the transcript read in Chinese; no voice choice");
     ok(await noScroll(p), "no sideways scroll at 390");
     // a phone: the board opens on its answers' sheet; a tap picks one: its picture on top (a flowchart laid out top down, its
     // labels at least 14px), its points under it, the play bar's caption on the board, a read-only note instead of the prompt
@@ -1139,8 +1116,12 @@ try {
 
   // ---------- the real routes: a card that does not exist, a write needs the desktop session ----------
   { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(`${base}/#/board`);
-    const r = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999"); const b = await fetch("/api/review-room/SC-999/turn", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); const c = await fetch("/api/review-room/SC-999/speech", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code, c.status]; });
-    ok(r[0] === 404 && r[1] === 404 && r[2] === "not_found" && r[3] === 404, "the real routes answer: no room, no turn and no voice for a card that does not exist", JSON.stringify(r));
+    const r = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999"); const b = await fetch("/api/review-room/SC-999/turn", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code]; });
+    ok(r[0] === 404 && r[1] === 404 && r[2] === "not_found", "the real routes answer: no room and no turn for a card that does not exist", JSON.stringify(r));
+    // Studio has no voice route any more: the voice status, Doctor's test phrase, a room's speech, clip or audio
+    const gone = await p.evaluate(async () => { const at = async (u, post) => { const x = await fetch(u, post ? { method: "POST", headers: { "content-type": "application/json" }, body: "{}" } : {}); let j = null; try { j = await x.json(); } catch {} return [u, x.status, j?.code ?? null]; };
+      return [await at("/api/voice/status"), await at("/api/voice/test", true), await at("/api/review-room/SC-999/speech", true), await at("/api/review-room/SC-999/voice", true), await at("/api/review-room/SC-999/audio/voice-t1-0123456789ab.mp3"), await at("/api/review-room/SC-999/voice/kvoice-0123456789abcdef.wav")]; });
+    ok(gone.every(([, st, code]) => st === 404 && code !== "not_found"), "no voice route is left: the voice status, the test phrase and a room's speech, clip and audio routes are unknown to Studio", JSON.stringify(gone));
     const raw = await fetch(`${base}/api/review-room/SC-999/turn`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     ok(raw.status === 401 || raw.status === 403, "a write without Studio's session is refused", String(raw.status));
     { const g = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999/reset"), b = await fetch("/api/review-room/SC-999/reset", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code]; });
