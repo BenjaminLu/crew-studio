@@ -17,6 +17,7 @@ import { join } from "node:path";
 import type { Engine, Run } from "./runtime/engine";
 import { grantableKinds, readObserve, type ObserveScope } from "./observe/grant-scope";
 import type { GrantView as ObserveGrant } from "./observe/registry";
+import type { CliGrantFile } from "./studio-home";
 
 export const GRANT_TTLS = ["1h", "8h", "eod"] as const;
 export type GrantTtl = (typeof GRANT_TTLS)[number];
@@ -77,7 +78,17 @@ const windowOf = (u: CliGrant["usage"], now = Date.now()) => (u ?? []).filter((x
 
 export class CliGrants {
   private unknownAt = 0; private unknownQuiet = 0; private overAt = new Map<string, { at: number; quiet: number }>();
-  constructor(readonly dataDir: string, private audit: Audit = () => {}) { try { this.migrate(); } catch {} }
+  /** cli: where the crew-studio CLI's grant files go (~/.crew-studio/grants) and Studio's address to write in them; none: no
+   *  CLI files (an in-process test) */
+  constructor(readonly dataDir: string, private audit: Audit = () => {}, private cli: { dir: string; url: () => string } | null = null) { try { this.migrate(); } catch {} }
+  /** The CLI grant file of a grant (docs/units/cli.md): ~/.crew-studio/grants/<id>.json. */
+  cliFile(id: string) { return this.cli ? join(this.cli.dir, `${id}.json`) : null; }
+  private writeCliFile(g: CliGrant, token: string) {
+    if (!this.cli) return; const f = this.cliFile(g.id)!; mkdirSync(this.cli.dir, { recursive: true, mode: 0o700 }); chmodSync(this.cli.dir, 0o700);
+    const body: CliGrantFile = { schema: 1, name: g.id, id: g.id, token, scopes: g.scopes, project: g.project || null, expiresAt: g.expiresAt, url: this.cli.url() };
+    writeFileSync(f + ".tmp", JSON.stringify(body, null, 1) + "\n", { mode: 0o600 }); chmodSync(f + ".tmp", 0o600); renameSync(f + ".tmp", f);
+  }
+  private dropCliFile(id: string) { const f = this.cliFile(id); if (f) rmSync(f, { force: true }); }
   private file() { return join(this.dataDir, "cli-grants.json"); }
   tokenFile(id: string) { return join(this.dataDir, "grants", id); }
   private read(): CliGrant[] { try { const j = JSON.parse(readFileSync(this.file(), "utf8")); return Array.isArray(j) ? j.filter(isRecord).map(migrateGrant) : []; } catch { return []; } }
@@ -98,7 +109,7 @@ export class CliGrants {
     const effective = rest.observe ? { ...rest.observe, kinds: observeGrant({ ...g, scopes: ["observe"] })?.kinds ?? [] } : rest.observe;
     return { ...rest, ...(rest.observe ? { observe: effective } : {}), state, file: state === "active" && existsSync(this.tokenFile(g.id)) ? this.tokenFile(g.id) : null,
       budget: { ...used, maxCalls: ROLLING.calls(), maxBytes: ROLLING.bytes(), usedUp: full, freesAt: full && u.length ? new Date(u[0].at + ROLLING.windowMs).toISOString() : null } }; }
-  list(): GrantView[] { const all = this.read(); for (const g of all) if (this.stateOf(g) !== "active") rmSync(this.tokenFile(g.id), { force: true }); return all.map((g) => this.view(g)).reverse(); }
+  list(): GrantView[] { const all = this.read(); for (const g of all) if (this.stateOf(g) !== "active") { rmSync(this.tokenFile(g.id), { force: true }); this.dropCliFile(g.id); } return all.map((g) => this.view(g)).reverse(); }
   active(id: string) { const g = this.get(id); return !!g && this.stateOf(g) === "active"; }
 
   /** The captain issues a grant (called only from the board's authenticated, same-site route). */
@@ -119,6 +130,7 @@ export class CliGrants {
       revokedAt: null, revokedBy: null, createdBy: by, calls: 0, tokenHash: sha(token), runs: [] };
     const dir = join(this.dataDir, "grants"); mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700);
     const f = this.tokenFile(id); writeFileSync(f, token + "\n", { mode: 0o600 }); chmodSync(f, 0o600);
+    this.writeCliFile(g, token);
     this.write([...this.read(), g]);
     this.audit("cli_grant_issued", `external CLI grant ${id} issued (${scopes.join(", ")}${g.project ? ` for ${g.project}` : ""}) until ${g.expiresAt}`, { grant: id, scope, scopes, project: g.project, observe: observe ? { preset: observe.preset, kinds: observe.kinds, untrusted: observe.untrusted } : null, expiresAt: g.expiresAt, by });
     return { grant: this.view(g), file: f };
@@ -127,7 +139,7 @@ export class CliGrants {
   revoke(id: string, by: string): GrantView {
     const all = this.read(), g = all.find((x) => x.id === id); if (!g) throw new Error("no such grant");
     if (!g.revokedAt) { g.revokedAt = new Date().toISOString(); g.revokedBy = by; this.write(all); }
-    rmSync(this.tokenFile(id), { force: true });
+    rmSync(this.tokenFile(id), { force: true }); this.dropCliFile(id);
     this.audit("cli_grant_revoked", `external CLI grant ${id} revoked`, { grant: id, project: g.project, by });
     return this.view(g);
   }
@@ -136,7 +148,16 @@ export class CliGrants {
   static claims(token: string) { return token.startsWith("csg_"); }
 
   /** The grant a token belongs to, counted as one call; else the HTTP refusal (403 revoked, expired or unknown; 429 over its calls). */
-  use(token: string, tool: string): { ok: true; grant: CliGrant } | { ok: false; status: number; error: string } {
+  /** A token's grant without counting a call (the CLI's whoami): the same refusals as use(), no audit, no budget. */
+  peek(token: string): { ok: true; grant: GrantView } | { ok: false; status: number; error: string } {
+    const m = TOKEN.exec(token), g = m ? this.read().find((x) => x.id === m[1]) : undefined;
+    if (!g) return { ok: false, status: 403, error: "no valid external CLI grant" };
+    const a = Buffer.from(sha(token)), b = Buffer.from(g.tokenHash); if (a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false, status: 403, error: "no valid external CLI grant" };
+    if (g.revokedAt) return { ok: false, status: 403, error: `grant ${g.id} was revoked by the captain at ${g.revokedAt}` };
+    if (Date.parse(g.expiresAt) <= Date.now()) return { ok: false, status: 403, error: `grant ${g.id} expired at ${g.expiresAt}` };
+    return { ok: true, grant: this.view(g) };
+  }
+  use(token: string, tool: string): { ok: true; grant: CliGrant } | { ok: false; status: number; error: string; freesAt?: string } {
     const m = TOKEN.exec(token), all = this.read(), g = m ? all.find((x) => x.id === m[1]) : undefined;
     const refuse = (status: number, error: string, why: string) => { if (why === "unknown") { const now = Date.now(); if (now - this.unknownAt < 60_000) { this.unknownQuiet++; return { ok: false as const, status, error }; } this.unknownAt = now; }
       const quiet = why === "unknown" && this.unknownQuiet ? this.unknownQuiet : 0; this.unknownQuiet = 0; this.audit("cli_grant_refused", `external CLI call ${tool} refused: ${why}`, { grant: g?.id ?? null, tool, why, ...(quiet ? { unloggedBefore: quiet } : {}) }); return { ok: false as const, status, error }; };
@@ -144,7 +165,7 @@ export class CliGrants {
     const a = Buffer.from(sha(token)), b = Buffer.from(g.tokenHash);
     if (a.length !== b.length || !timingSafeEqual(a, b)) return refuse(403, "no valid external CLI grant", "unknown");
     if (g.revokedAt) return refuse(403, `grant ${g.id} was revoked by the captain at ${g.revokedAt}`, "revoked");
-    if (Date.parse(g.expiresAt) <= Date.now()) { rmSync(this.tokenFile(g.id), { force: true }); return refuse(403, `grant ${g.id} expired at ${g.expiresAt}`, "expired"); }
+    if (Date.parse(g.expiresAt) <= Date.now()) { rmSync(this.tokenFile(g.id), { force: true }); this.dropCliFile(g.id); return refuse(403, `grant ${g.id} expired at ${g.expiresAt}`, "expired"); }
     if (g.calls >= maxCalls()) return refuse(429, `grant ${g.id} reached its limit of ${maxCalls()} calls; ask the captain for a new grant`, "call limit");
     // the bytes of calls still answering are held at RESERVE_BYTES each, so concurrent or slow callers cannot pass the budget
     const now = Date.now(), w = windowOf(g.usage, now), bytes = w.reduce((n, x) => n + x.bytes, 0);
@@ -152,10 +173,10 @@ export class CliGrants {
       const held = w.filter((x) => x.pending).length;
       const error = `grant ${g.id} used its hourly budget (${w.length} of ${ROLLING.calls()} calls, ${bytes} of ${ROLLING.bytes()} bytes in the last hour${held ? `, ${held} of them still answering and holding ${RESERVE_BYTES} bytes each` : ""}; every call holds ${RESERVE_BYTES} bytes up front until its answer is counted); it frees up from ${again}`;
       // one audit line a minute per grant while it is over (with how many were not written), not one per call
-      const o = this.overAt.get(g.id); if (o && now - o.at < 60_000) { o.quiet++; return { ok: false, status: 429, error }; }
+      const o = this.overAt.get(g.id); if (o && now - o.at < 60_000) { o.quiet++; return { ok: false, status: 429, error, freesAt: again }; }
       const quiet = o?.quiet ?? 0; this.overAt.set(g.id, { at: now, quiet: 0 });
       this.audit("cli_grant_refused", `external CLI call ${tool} refused: hourly budget`, { grant: g.id, tool, why: "hourly budget", ...(quiet ? { unloggedBefore: quiet } : {}) });
-      return { ok: false, status: 429, error }; }
+      return { ok: false, status: 429, error, freesAt: again }; }
     g.calls += 1; g.lastUsedAt = new Date(now).toISOString(); g.usage = [...w, { at: now, bytes: RESERVE_BYTES, pending: true }]; this.write(all);
     this.audit("cli_grant_used", `external CLI grant ${g.id} called ${tool}`, { grant: g.id, tool });
     return { ok: true, grant: g };

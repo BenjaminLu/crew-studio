@@ -13,6 +13,7 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { SERVER_INSTRUCTIONS } from "./observe/instructions";
 import { negotiateProtocolVersion } from "./mcp-protocol";
+import { findGrant, NoGrant, request, type Conn } from "./studio-client";
 
 // one fixed order whatever order Studio answers in, so a client's prompt cache sees the same tool list every time
 const byName = (tools: any) => Array.isArray(tools) ? [...tools].sort((a, b) => { const x = String(a?.name ?? ""), y = String(b?.name ?? ""); return x < y ? -1 : x > y ? 1 : 0; }) : tools;
@@ -20,19 +21,22 @@ const byName = (tools: any) => Array.isArray(tools) ? [...tools].sort((a, b) => 
 const flag = (name: string) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] ?? "" : null; };
 const GRANT_FILE = flag("--grant-file");
 if (GRANT_FILE === "") { process.stderr.write("crew-studio mcp: --grant-file needs a path\n"); process.exit(2); }
-const URL_ = flag("--url") || process.env.CREW_STUDIO_URL || "http://127.0.0.1:4210";
 const readToken = (f: string) => { try { return readFileSync(f, "utf8").trim(); } catch { return ""; } };
 // a Studio-owned session hands the token as a 0600 file (CREW_TOOL_TOKEN_FILE), so it is never on a command line; so does a grant
-const TOKEN = GRANT_FILE ? readToken(GRANT_FILE) : process.env.CREW_TOOL_TOKEN_FILE ? readToken(process.env.CREW_TOOL_TOKEN_FILE) : process.env.CREW_TOOL_TOKEN ?? "";
+let TOKEN = GRANT_FILE ? readToken(GRANT_FILE) : process.env.CREW_TOOL_TOKEN_FILE ? readToken(process.env.CREW_TOOL_TOKEN_FILE) : process.env.CREW_TOOL_TOKEN ?? "";
 if (GRANT_FILE && !TOKEN) { process.stderr.write(`crew-studio mcp: cannot read the grant file ${GRANT_FILE} (revoked, or never issued)\n`); process.exit(2); }
 const SOCKET = process.env.CREW_STUDIO_SOCKET ?? "";
+// a plain client (no token, no socket): its grant is found as the crew-studio CLI finds one (--grant, CREW_STUDIO_GRANT, the
+// only file in ~/.crew-studio/grants), so a client's whole config is `command: crew-studio, args: ["mcp"]`
+let URL_ = flag("--url") || process.env.CREW_STUDIO_URL || "http://127.0.0.1:4210";
+if (!TOKEN && !SOCKET) { try { const g = findGrant(flag("--grant") || null).grant; TOKEN = g.token; if (!flag("--url") && !process.env.CREW_STUDIO_URL) URL_ = g.url; }
+  catch (e: any) { process.stderr.write(`crew-studio mcp: ${e instanceof NoGrant ? e.message : String(e?.message ?? e)}\n`); process.exit(7); } }
+const conn: Conn = { url: URL_, socket: SOCKET || null, token: TOKEN };
 const out = (o: unknown) => process.stdout.write(JSON.stringify(o) + "\n");
 const call = async (path: string, body?: unknown) => {
-  const r = await fetch((SOCKET ? "http://localhost" : URL_) + path, { ...(SOCKET ? { unix: SOCKET } : {}), method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", "x-crew-tool-token": TOKEN },
-    body: body === undefined ? undefined : JSON.stringify(body) });
-  const text = await r.text();
-  if (!r.ok) throw new Error(GRANT_FILE ? `HTTP ${r.status} ${text.slice(0, 500)}` : text.slice(0, 500) || `HTTP ${r.status}`);
-  return JSON.parse(text);
+  const r = await request(conn, path, body);
+  if (r.status < 200 || r.status >= 300) { const text = JSON.stringify(r.body ?? {}); throw new Error(GRANT_FILE || TOKEN.startsWith("csg_") ? `HTTP ${r.status} ${text.slice(0, 500)}` : String(r.body?.error ?? text).slice(0, 500) || `HTTP ${r.status}`); }
+  return r.body;
 };
 
 /** studio_get as a resource template: studio://{kind}/{id} */

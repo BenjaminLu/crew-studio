@@ -87,6 +87,7 @@ import { classify, orgDefaults } from "./doors";
 import { installPackGenesis } from "./pack-genesis";
 import { createRuntime } from "./runtime";
 import { CliGrants, createGrantTools, installGrantViews, GRANT_SCOPES } from "./cli-grants";
+import { cliGrantsDir } from "./studio-home";
 import { KIND_GROUPS, KIND_LABELS, OBSERVE_PRESETS } from "./observe/grant-scope";
 import { NEVER_GRANTABLE, STUDIO_WIDE } from "./observe/registry";
 import { amendmentsNotice } from "./runtime/refine";
@@ -536,7 +537,7 @@ const runtime = createRuntime({prs:()=>prWatch,focus,
   install: [(engine, c) => { installCode(engine, { dataDir: c.dataDir, projects: c.projects, improve, poller:githubPoller, artifacts: m3.store }); packGenesis = installPackGenesis(engine, { dataDir: c.dataDir, artifacts: m3.store }); prWatch.install(engine); }], skills: improve.skills });
 nativeEngineForPolicy = runtime.engine;
 // external CLI grants (docs/units/cli-mcp-grant.md): issued and revoked on the board only; a grant token reaches four run tools, or the pull request list's
-const cliGrants = new CliGrants(DATA, (type, summary, data) => { try { studioLog.emit({ type, workflow: "cli-grant", actor: type === "cli_grant_issued" || type === "cli_grant_revoked" ? "captain" : "external-cli", summary, data }); } catch {} });
+const cliGrants = new CliGrants(DATA, (type, summary, data) => { try { studioLog.emit({ type, workflow: "cli-grant", actor: type === "cli_grant_issued" || type === "cli_grant_revoked" ? "captain" : "external-cli", summary, data }); } catch {} }, { dir: cliGrantsDir(), url: () => `http://127.0.0.1:${server?.port ?? PORT}` });
 installGrantViews(runtime.engine, cliGrants);
 const grantTools = createGrantTools({ engine: runtime.engine, grants: cliGrants, firstmate: () => runtime.firstmate, prs: () => prWatch.tools, observe: (g) => runtime.observeFor(g) });
 /** the line the board shows to copy: the MCP helper with the grant's token file (and Studio's URL when not the default port) */
@@ -974,14 +975,20 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
       // an external CLI grant (src/cli-grants.ts): only the tools of its scope; revoked, expired or unknown is 403 on the next call
       if (CliGrants.claims(wt)) {
         const name = p === "/api/tools" ? "tools/list" : decodeURIComponent(p.slice("/api/tools/".length));
-        const u = cliGrants.use(wt, name); if (!u.ok) return json({ error: u.error }, u.status);
-        if (p === "/api/tools") { const l = grantTools.list(u.grant); cliGrants.charge(u.grant.id, Buffer.byteLength(JSON.stringify(l))); return json(l); }
+        // the crew-studio CLI's whoami (GET /api/tools?whoami=1): which grant this is, its scopes, budget and expiry and the tools
+        // it lists; counted as no call
+        if (p === "/api/tools" && url.searchParams.get("whoami") === "1") { const g = cliGrants.peek(wt); if (!g.ok) return json({ error: g.error }, g.status);
+          const { file: _f, runs: _r, createdBy: _c, revokedBy: _rb, ...view } = g.grant as any; return json({ grant: view, tools: grantTools.list(cliGrants.get(g.grant.id)!).map((t) => t.name) }); }
+        const u = cliGrants.use(wt, name); if (!u.ok) return json({ error: u.error, ...(u.freesAt ? { freesAt: u.freesAt } : {}) }, u.status);
+        // what is left of the grant's hourly budget after this call, for the crew-studio CLI's output (docs/units/cli.md)
+        const quota = () => { const g = cliGrants.get(u.grant.id); return g ? JSON.stringify(cliGrants.view(g).budget) : "{}"; };
+        if (p === "/api/tools") { const l = grantTools.list(u.grant); cliGrants.charge(u.grant.id, Buffer.byteLength(JSON.stringify(l))); return new Response(JSON.stringify(l), { headers: { "content-type": "application/json", "cache-control": "no-store", "x-crew-grant-quota": quota() } }); }
         if (!grantTools.list(u.grant).some((t) => t.name === name)) return json({ error: `no such tool: ${name} (studio exposes ${grantTools.list(u.grant).map((t) => t.name).join(", ")})` }, 404);
         const raw = await req.text(); if (raw.length > 65_536) return json({ error: "arguments too large" }, 413);
         let args: any = {}; try { args = raw ? JSON.parse(raw) : {}; } catch {}
         // what a call returns counts toward the grant's hourly bytes
         let out: unknown; try { out = await grantTools.call(u.grant, name, args); } catch (e: any) { out = { error: String(e?.message ?? e) }; }
-        const body = JSON.stringify(out); cliGrants.charge(u.grant.id, Buffer.byteLength(body)); return new Response(body, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+        const body = JSON.stringify(out); cliGrants.charge(u.grant.id, Buffer.byteLength(body)); return new Response(body, { headers: { "content-type": "application/json", "cache-control": "no-store", "x-crew-grant-quota": quota() } });
       }
       const tk = tokens.get(req.headers.get("x-crew-tool-token") ?? "");
       if (!tk || tk.expires < Date.now()) return json({ error: "no valid tool token" }, 403);
