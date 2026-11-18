@@ -137,7 +137,7 @@ function cliGrants() {
   const pick = { scopes: new Set(["project"]), preset: "project", kinds: new Set(), untrusted: false };
   let data = null, fresh = null;
   const needsProject = () => pick.scopes.has("project") || (pick.scopes.has("observe") && pick.preset === "project");
-  const summary = (g) => { const sc = g.scopes || [g.scope || "project"]; return sc.map((x) => x === "observe" ? `${SCOPE.observe}: ${PRESET[g.observe?.preset] ?? ""}${g.observe?.untrusted ? T(" + external text", "＋外部文字") : ""}` : x === "project" ? `${SCOPE.project} · ${g.project}` : SCOPE.prs).join(" · "); };
+  const summary = (g) => { const sc = g.scopes || [g.scope || "project"]; return sc.map((x) => x === "observe" ? `${SCOPE.observe}: ${PRESET[g.observe?.preset] ?? ""}${g.observe?.untrusted ? T(" + external text", "＋外部文字") : ""}` : x === "project" ? `${SCOPE.project} · ${g.project}` : T("Pull request list", "PR 列表")).join(" · "); };
   const draw = () => {
     const projects = data?.projects ?? [], grants = data?.grants ?? [], groups = data?.observe?.groups ?? [];
     const check = (scope) => h("label", { class: "bb-set bb-grant-pick" }, h("input", { type: "checkbox", name: "grantScope", value: scope, id: `grantScope-${scope}`, checked: pick.scopes.has(scope) || null,

@@ -54,7 +54,9 @@
 .bb-grant-presets{display:flex;flex-wrap:wrap;gap:6px 14px}
 .bb-grant-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .bb-grant-group{display:grid;gap:4px}
-.bb-grant-group>div{display:flex;flex-wrap:wrap;gap:4px 10px}
+.bb-grant-group>div{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:center}
+.bb-grant-groups{align-items:start}
+.bb-grant-group .bb-set,.bb-grant-presets .bb-set,.bb-grant-scopes .bb-set{padding:4px 2px;gap:6px;align-items:center}
 .bb-grant-h{min-width:0}.bb-grant-h>span{overflow-wrap:anywhere}
 .bb-grant-list{display:grid;gap:8px}
 .bb-grant{display:grid;gap:6px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
