@@ -24,10 +24,11 @@ export function manualFor(workflow: string, role: string | null | undefined, fal
   const ids = new Set(manualIds());
   return [role ? `${workflow}/${role}` : null, `${workflow}/overview`].find((c) => c && ids.has(c)) ?? (ids.has(fallback) ? fallback : "studio/agents");
 }
-/** What studio_manual returns: the index and the page list without a section, else the page (or the valid ids). */
-export function studioManual(section?: unknown): { section: string; text: string; sections: string[] } | { error: string; sections: string[] } {
+/** What studio_manual returns: the index and the page list without a section (with Studio's own index), else the page (or the valid ids). */
+/** `studio`: Studio's own index (rules, kinds, tools: src/observe/guide.ts studioIndex), added to the index page's answer. */
+export function studioManual(section?: unknown, studio?: () => unknown): { section: string; text: string; sections: string[]; studio?: unknown } | { error: string; sections: string[] } {
   const sections = manualIds().filter((s) => s !== "index");
-  if (section === undefined || section === null || section === "" || section === "index") return { section: "index", text: manualPage("index") ?? "", sections };
+  if (section === undefined || section === null || section === "" || section === "index") return { section: "index", text: manualPage("index") ?? "", sections, ...(studio ? { studio: studio() } : {}) };
   if (typeof section !== "string") return { error: "section is a page id such as code-firstmate/worker", sections };
   const id = section.trim().replace(/^manual\//, "").replace(/\.md$/, "");
   const text = manualPage(id);

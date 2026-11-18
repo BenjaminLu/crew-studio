@@ -221,7 +221,7 @@ try {
   ok(order[0] === F.ids.doorCard && J(order) === J(summary) && /studio_now/.test(line), "the live status line renders studio_now's summary (same cards, same order)", J([order, summary]));
   ok(J(NATIVE_TOOL_NAMES.slice(0, 4)) === J([...OBSERVE_TOOLS]) && new Set(STUDIO_TOOLS.map((t) => t.name)).size === STUDIO_TOOLS.length, "the native tool index starts with the read tools and names each tool once");
   const seed = nativeFreshText("/ws");
-  ok(OBSERVE_TOOLS.every((n) => seed.includes(n)) && /call studio_now first/.test(seed) && /Report status only from the turn's live status line or studio_work_status, never from memory/.test(seed), "the seed names the read tools from the index and keeps its status rule", "");
+  ok(OBSERVE_TOOLS.every((n) => seed.includes(n)) && /Where studio_now is listed, call it first/.test(seed) && /Report status only from the turn's live status line or studio_work_status, never from memory/.test(seed), "the seed names the read tools from the index and keeps its status rule", "");
 
   // ---------- Claude and Codex: the same names and schemas; MCP structured content ----------
   const both = [...O.specs, { type: "function" as const, name: "studio_manual", description: "x", inputSchema: { type: "object" } }];
