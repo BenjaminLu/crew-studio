@@ -36,7 +36,7 @@ What: every merge card carries the same prominent "Open review room" (開啟審�
   questions) with no drawing and no step picture stays one column of numbered steps, 540 wide, as it was; when one of its
   steps names a picture it gets the illustration too. Lesson regions are 840 wide with a drawing (steps 300) and 780 for a
   text chapter with pictures (steps 440), 340 on a phone, so a chapter reads at
-  the camera's 0.88 at 1440 with the questions panel open. **A transition explains itself**: every connector of a drawing
+  the camera's 0.9 at 1440 with the conversation pane open (narrower when the board is: review-board.js regionMax). **A transition explains itself**: every connector of a drawing
   Studio draws (a flowchart, a lifecycle, an architecture, a sequence's step, a tutor's figure's `data-edge`) has a wide
   invisible line (`data-edge-hit`) and is clickable; a click opens what that step does and why it was built this way (the
   tutor's `explain` entry for it, a transition's `detail` and `why`), with what it rests on; with nothing recorded it says so
@@ -418,19 +418,34 @@ came back as short as the drawing holds: the drawing's title, its labels, an ite
 **The lesson board.** The camera owns the view: the viewport never scrolls itself (a place reached with Tab is brought into
 view by the camera). Drag or Space and drag pans; the wheel, a pinch and ± zoom at the pointer; "Fit all"; the zoom as a
 percentage; a minimap in the rail with the outline (each chapter, its questions and the open ones). Three levels of detail
-by scale: far (under 0.42) shows only each chapter's number, its title, one line and two badges (open, understood), no card,
-pin or line; mid (under 0.7) keeps each question's card short without its actions; near is the whole chapter. Regions sit
-three a row (one on a phone), each as wide as its chapter and its questions' cards, so a card added re-flows the board and
-nothing overlaps. "Next" (n, →; back p, ←) and the outline fly to a chapter at a readable scale (0.88 or more on a desktop,
-the phone's width on a phone); a chapter not reached yet is a placeholder ("Not covered yet"); the chapters read are kept in
-the room (`lesson.visited`, `POST /api/review-room/<room>/lesson {op: visit, scene}`). A last region lists the questions
-asked on the way, as the notes panel beside the board does.
+by scale: far (under 0.42) shows only each chapter's number, its title, one line and two badges (open, understood), no pin;
+mid (under 0.7) and near show the chapter with its pins. Regions sit three a row (one on a phone), each as wide as its
+chapter, so nothing overlaps; a chapter with a drawing is never wider than the board shows at 0.92 beside the conversation
+pane (680 at least); when that leaves its drawing under 400 beside the steps, the steps go over the drawing, which takes the chapter's width. "Next" (n, →; back p, ←) and the outline fly to a chapter whole at a readable scale (0.9 or more at 1440
+and wider, 0.88 or more at 1280, the phone's width on a phone); a chapter not reached yet is a placeholder ("Not covered
+yet"); the chapters read are kept in the room (`lesson.visited`, `POST /api/review-room/<room>/lesson {op: visit, scene}`).
+A last region lists the questions asked on the way, as the conversation pane does.
+
+**The conversation pane.** The questions asked on the board and the tutor's answers are read in the pane at the board's
+right (the Firstmate panel's place and the explain chat's look), never on the canvas: each question in the order asked
+(its pin's number, the newest at the bottom), its head (the words asked about, its chapter, its cards, its state), then its
+cards at full size (14 px, line height 1.6, a paragraph at most 72 characters wide): the answer with its citations, a
+drawing the answer made at the pane's width (a click opens it whole in the figure viewer), its follow-ups (an example or a deeper one under its card, one step in; a
+rephrasing a version tab), "Got it ✓"; an understood or folded-in question is one chip that opens it. The pane scrolls on
+its own (never the page), keeps where it was across a redraw and opens at the newest; the ask box at its foot asks a
+follow-up in one's own words on the question in focus (else the newest about the chapter in view). A question picked in the
+pane (or ⤢ on its card, or a click on a card's empty space) flies the camera to its chapter with its place in view and lit,
+the other chapters dimmed, Escape returning the camera; a pin on the board, or a chapter's "n questions" badge, opens the
+pane on its question(s); a chapter picked in the rail or by Next scrolls the pane to its questions and marks them. A
+question being asked (its plan to confirm) waits in its card in the pane, which opens for it. The pane keeps the room's
+splitter (dragged, or the arrow keys; its width kept on this browser, `crew.roomPane.board`); 320 px at 1440 by default,
+growing on a wider screen. Under 1180 px it lies over the board ("Questions" opens it), on a phone it is a bottom sheet.
 
 **Asking on the board.** Every sentence of a point, a risk, a drawing's node, edge or transition (Studio's and a
 `figure_svg` figure's `data-node` / `data-edge`), a transition's row, a transaction's field, a call and its fields, a
 turned-down option, a before / after box and a sequence step is a place: a click, or Enter on it, opens a popover (a bottom
 sheet on a phone) with 詳細一點, 舉個例子, 為什麼這樣做, 看程式碼, 我不懂這句 (say it another way) and a question of one's own.
-The first paid question opens a card beside the place showing the plan once, with "Start follow-ups at once (this room)"
+The first paid question opens a card in the conversation pane showing the plan once, with "Start follow-ups at once (this room)"
 checked; confirmed with it checked, the room keeps that agreement bound to the plan's fingerprint (`followUps`: the
 provider, model and effort, `followPrint`) and every later question starts at once, its card marked "follow-up n · paid · model"; after ten (`FOLLOW_LIMIT`, counted
 by Studio and started over by each confirmation with the box checked; confirmed with it unchecked, the agreement ends) the
@@ -445,13 +460,13 @@ pictures and never sends the place's words as the captain's: they go only fenced
 "Ask on a computer", and the popover stays open; show the code stays. A room holds at most 200 threads, a thread 50 cards and a card 5
 versions (`LESSON_LIMITS`), refused with a clear error. The tutor's prompt carries the place: its chapter and scene, what was clicked and its
 words (fenced), the citations under it with their diff hunks, the thread so far and what the chip asks. Its answer is a
-card of a **thread** branching beside the place, a numbered pin on the place: "Thinking" and what the tutor has said so far
-while it works, then the answer as text with its citations; a deeper answer and a why go below their card, an example
-beside it, a rephrasing is a version tab of the same card. Show the code is free: in a GitHub pull request's room it opens the
+card of a **thread** in the conversation pane, a numbered pin on the place: "Thinking" and what the tutor has said so far
+while it works, then the answer as text with its citations; a deeper answer, a why and an example go under their card, one
+step in, a rephrasing is a version tab of the same card. Show the code is free: in a GitHub pull request's room it opens the
 pull request's files on GitHub at those lines in a new window (`openCite`; a code card there is only that link), otherwise a code card holding the citation, read through the citation
 check (`op: code`). A question is **not understood yet** (還沒懂, red) only when the captain said so (我不懂這句, say it another
-way, or "not yet" on an understood one) and has not marked it understood since. "Got it ✓" marks a question understood (`op: resolve`) and folds its cards into a chip; ⤢ frames the
-thread and dims the rest, Escape returns the camera where it was. "Tidy the board" (`op: tidy`, no model, nothing paid) folds
+way, or "not yet" on an understood one) and has not marked it understood since. "Got it ✓" marks a question understood (`op: resolve`) and folds its cards into a chip; ⤢ flies to its
+place, lit, and dims the other chapters, Escape returns the camera where it was. "Tidy the board" (`op: tidy`, no model, nothing paid) folds
 every answered question that is not 還沒懂 into its chapter as "↳ Folded in from your questions #n": the first sentence of each card's shown
 answer, its citations kept; the 還沒懂 ones stay on the board, and asking again on a folded place opens it again.
 Before / after shows the chapter's original text. "Only the chapters with questions" frames those and dims the rest.
@@ -1283,9 +1298,9 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
 39. The lesson board: the camera owns the view; far shows only each chapter's number, title, one line and question badges;
     Next frames a chapter at 0.85 or more at 1440; unread chapters are placeholders and reading one is kept; every place asks
     through a popover inside the screen (a bottom sheet on a phone); a paid chip confirms inline in its card; answers stream
-    into their card; deeper below, example beside, rephrasing a version tab; show the code free; got it folds; focus and
-    Escape; tidy with before / after; nothing overlaps; pins on their place; keyboard; phone outline first; snapshot
-    read-only. — review-room-board-ui (each rule); review-room-ui "a finished lesson is the lesson board …", "the lesson is a
+    into their card in the conversation pane; deeper and example below, rephrasing a version tab; show the code free; got it
+    folds; focus and Escape; tidy with before / after; nothing overlaps; pins on their place; keyboard; phone outline first;
+    snapshot read-only. — review-room-board-ui (each rule); review-room-ui "a finished lesson is the lesson board …", "the lesson is a
     board the camera moves over …", "a chapter picked in the rail flies the board to it …", "a transition picked shows what
     it writes and asks there …", "on a phone the lesson is the board …".
 40. Questions on the board are the room's turns, kept on the shared locator schema: refused without the confirmation (a
@@ -1372,6 +1387,12 @@ or `ROOM_SHOTS`). `tests/review-room-anywhere.ts` covers the branch and pull req
     an answer shows “Ask about this” …", "it opens the board's ask popover on those words …", "the question waits for its
     confirmation …", "words selected in the caption …", "a mouse drag across words selects them …", "a drag on the paper pans
     the board as before …", "in full screen too …", "on a phone a selection …".
+47. The board's questions and answers are read in the conversation pane, not on the canvas: the newest answer whole at the
+    pane's foot at 13 px or more at 1280, 1440 and 1920; no answer card on the canvas (the pins stay); every chapter flown to
+    whole at 0.9 or more at 1440 and 1920 (0.88 at 1280); a question picked in the pane flies to its chapter with its place lit;
+    a chapter picked, its badge or a pin scrolls the pane to its questions; the splitter's width is kept across a reload; the
+    ask box's follow-up waits for its confirmation in the pane; a phone's sheet and a narrow window's overlay never scroll
+    sideways. — review-room-conv-ui (each rule); review-room-board-ui "a question is read in the conversation pane …".
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository,
 a stub host Task, a scripted tutor) is new and fails on the base, where neither subject exists.
 

@@ -100,3 +100,31 @@ select{max-width:100%}
 .x-skinbar2{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-size:13px}
 .x-skinlayer iframe{width:100%;height:100%;border:0;display:block;background:var(--bg)}
 body.skin-on .fab{display:none}
+/* #/improve's tabs, and the retro's candidates */
+.x-tabs{margin:0 0 4px}
+.x-tabs .tb-tab{text-decoration:none}
+.x-tabs .tb-tab[aria-current="page"]{border-color:var(--text);background:var(--surface);font-weight:600}
+.x-cand{display:flex;gap:10px;align-items:flex-start;justify-content:space-between}
+.x-cand-b{min-width:0;display:grid;gap:4px}
+.x-cand-note{font-size:14px;overflow-wrap:anywhere}
+.x-cand-x{flex:none}
+.x-other{padding:10px 16px}.x-other summary{cursor:pointer}
+.x-other-l{display:grid;gap:4px;margin-top:8px;font-size:13px}
+/* the quick note: 記問題（!） on the pull request, review room and Task pages */
+.qn-btn{white-space:nowrap}
+.qn-btn kbd{font:inherit;font-size:11px;padding:0 4px;border:1px solid var(--border-strong);border-radius:4px;color:var(--text-2);margin-left:2px}
+.qn-head>div:first-child{flex:1 1 280px;min-width:0}
+.qn-head>.qn-btn{align-self:flex-start;flex:none}
+.rr-head>.qn-btn{flex:none}
+.x-kind{font-size:12px;color:var(--text-2);padding:1px 8px;border:1px solid var(--border);border-radius:999px}
+.x-cand-title{font-size:13px;overflow-wrap:anywhere}
+.x-cand-refs{flex-wrap:wrap}
+@media (max-width:640px){.qn-btn .qn-lbl{display:none}.toast.x-toast{bottom:88px}}
+.qn-pop{position:fixed;z-index:95;width:min(440px,calc(100vw - 32px));box-sizing:border-box;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-2);padding:10px;display:grid;gap:8px}
+.qn-pop input{width:100%;box-sizing:border-box;font:inherit;font-size:14px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.qn-pop input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.qn-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}
+.qn-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-width:0;padding:2px 4px 2px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2)}
+.qn-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px}
+.qn-chip button{border:0;background:none;color:var(--text-2);cursor:pointer;padding:0 4px;min-height:20px;font:inherit}
+.qn-chip button:hover{color:var(--text)}
