@@ -78,14 +78,14 @@ try {
 
     // ---- an answer that ends with the captain on the room is read; one that ends with the window hidden is not ----
     { let running = 1; const asked = []; const watch = async (r) => { const res = await r.fetch(), j = await res.json(); asked.push(r.request().url()); await r.fulfill({ json: { ...j, running } }); }, url = new RegExp(`/api/review-room/${reviewing}(\\?open=1)?$`);
-      await p.route(url, watch); await p.click(`[data-room-link="${reviewing}"]`); await p.waitForSelector("[data-board]", { timeout: 15000 }); await p.waitForTimeout(300);
+      await p.route(url, watch); await p.click(`[data-room-link="${reviewing}"]`); await p.waitForSelector("[data-review-room]", { timeout: 15000 }); await p.waitForTimeout(300);
       asked.length = 0; await p.evaluate(() => Object.defineProperty(document, "hidden", { configurable: true, get: () => true })); running = null; await p.waitForTimeout(3200);
       ok(asked.length && !asked.some((u) => u.endsWith("?open=1")), "a turn that ends while the window is hidden is not marked read", JSON.stringify(asked));
       await p.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); });
       ok(await (async () => { for (let i = 0; i < 40 && !asked.some((u) => u.endsWith("?open=1")); i++) await p.waitForTimeout(100); return asked.some((u) => u.endsWith("?open=1")); })(), "coming back to the window reads the answer that came meanwhile", JSON.stringify(asked));
       asked.length = 0; await p.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); await p.waitForTimeout(300);
       ok(!asked.some((u) => u.endsWith("?open=1")), "coming back with nothing new reads nothing: that read would go to GitHub", JSON.stringify(asked));
-      running = 1; await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-room-zones]"); await p.click(`[data-room-link="${reviewing}"]`); await p.waitForSelector("[data-board]"); await p.waitForTimeout(300);
+      running = 1; await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-room-zones]"); await p.click(`[data-room-link="${reviewing}"]`); await p.waitForSelector("[data-review-room]"); await p.waitForTimeout(300);
       asked.length = 0; running = null;
       ok(await (async () => { for (let i = 0; i < 40 && !asked.some((u) => u.endsWith("?open=1")); i++) await p.waitForTimeout(100); return asked.some((u) => u.endsWith("?open=1")); })(), "a turn that ends with the captain on the room reads it as an arrival (?open=1), so it does not wait for them on the list", JSON.stringify(asked));
       await p.unroute(url, watch); await p.evaluate(() => { location.hash = "#/room"; }); await p.waitForSelector("[data-room-zones]"); }
