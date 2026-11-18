@@ -1,9 +1,13 @@
-// The worker src/terminal-screen.ts draws a terminal's screen in, so a costly output never holds Studio's server: it gets
-// {raw, cols, rows} and answers the Screen once. Its parent stops it when it takes too long.
+// The worker src/terminal-screen.ts draws a terminal's screen in, so a costly output never holds Studio's server. It lives
+// as long as Studio and draws one read at a time: {id, raw, cols, rows, budgetMs} in, {id, screen} out. A read over its
+// budget answers a "plain" screen (drawScreen stops feeding the emulator), so the worker is never stopped mid-work.
 import { drawScreen } from "./terminal-screen";
 
 declare const self: Worker;
-self.onmessage = async (e: MessageEvent) => {
-  const { raw, cols, rows } = e.data as { raw: string; cols: number; rows: number };
-  try { postMessage(await drawScreen(String(raw ?? ""), Number(cols), Number(rows))); } catch { postMessage(null); }
+let queue: Promise<unknown> = Promise.resolve();
+self.onmessage = (e: MessageEvent) => {
+  const { id, raw, cols, rows, budgetMs } = e.data as { id: number; raw: string; cols: number; rows: number; budgetMs: number };
+  queue = queue.then(async () => {
+    try { postMessage({ id, screen: await drawScreen(String(raw ?? ""), Number(cols), Number(rows), Number(budgetMs)) }); } catch { postMessage({ id, screen: null }); }
+  });
 };
