@@ -386,6 +386,9 @@ const segCross = (p, q, r, t) => { const d = (q[0] - p[0]) * (t[1] - r[1]) - (q[
  *  that went well). The ways back along that row, and the skips over a state on it, are arcs above it, nested by span (the
  *  shorter inside). The states that end badly or need attention sit in the lane below, the others in the lane above, each
  *  under the median of the states it meets, in the order that crosses the fewest connectors. */
+/** past these a lifecycle is laid out in rows and an architecture's layers in bands (the old caps were 10 states and 12 nodes,
+ *  so every drawing that fit them is laid out as before) */
+const STATE_ROW = 12, ARCH_BAND = 8;
 function statePlace(nodes, edges, fs) {
   const ids = nodes.map((n) => n.id), cls = new Map(nodes.map((n) => [n.id, n.cls || ""])), back = backEdges(ids, edges), { rank, pred } = longestPaths(ids, edges, back);
   const bad = (id) => /\b(seal|amber)\b/.test(cls.get(id)), ends = ids.filter((id) => !edges.some((e) => e.from === id && e.to !== id)), good = ends.filter((id) => !bad(id));
@@ -393,6 +396,12 @@ function statePlace(nodes, edges, fs) {
   const main = [end]; while (pred.has(main[0]) && !main.includes(pred.get(main[0]))) main.unshift(pred.get(main[0]));
   while (main.length > 2 && bad(main[main.length - 1])) main.pop();
   const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(110, Math.max(0, ...edges.map(chipW)) + 44)), box = new Map(), col = new Map();
+  // a large machine (more than STATE_ROW states) is not one row thousands wide: its states in rows, in the order they are
+  // reached, each row read the other way from the last (a snake), so a step forward stays a short line; the router curves the rest
+  if (ids.length > STATE_ROW) { const order = [...ids].sort((a, b) => rank.get(a) - rank.get(b) || ids.indexOf(a) - ids.indexOf(b)), K = Math.ceil(Math.sqrt(order.length * 1.6));
+    const cw = Math.max(...order.map((id) => size.get(id).w)) + gap, rh = Math.max(...order.map((id) => size.get(id).h)) + 96;
+    order.forEach((id, i) => { const row = Math.floor(i / K), c = row % 2 ? K - 1 - (i % K) : i % K, z = size.get(id); box.set(id, { x: c * cw + (cw - gap - z.w) / 2, y: row * rh, w: z.w, h: z.h, lines: z.lines }); });
+    return { box, back }; }
   const H0 = Math.max(...main.map((id) => size.get(id).h)); let x = 0;
   main.forEach((id, c) => { const z = size.get(id); col.set(id, c); box.set(id, { x, y: -z.h / 2, w: z.w, h: z.h, lines: z.lines }); x += z.w + gap; });
   // along the main row: the first step forward between two neighbours is a straight line; every other one an arc above
@@ -433,7 +442,11 @@ function archPlace(nodes, edges, fs) {
     const bc = (id) => { const ns = edges.filter((e) => e.from !== e.to && (e.to === id || e.from === id)).map((e) => (e.to === id ? e.from : e.to)).filter((o) => rank.get(o) !== r).map((o) => pos.get(o)); return ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : pos.get(id); };
     c.sort((a, b) => bc(a) - bc(b) || ids.indexOf(a) - ids.indexOf(b)); c.forEach((id, i) => pos.set(id, i - (c.length - 1) / 2)); });
   const size = new Map(nodes.map((n) => [n.id, nodeSize(n, fs)])), gap = Math.min(170, Math.max(100, Math.max(0, ...edges.map(chipW)) + 40)), box = new Map(); let x = 0;
-  cols.forEach((c) => { const w = Math.max(0, ...c.map((id) => size.get(id).w)), hs = c.map((id) => size.get(id).h), total = hs.reduce((a, b) => a + b, 0) + (c.length - 1) * 72; let y = -total / 2;
+  // more than ARCH_BAND layers: the layers in bands of ARCH_BAND, one under the other, so a long chain is not one row
+  // thousands wide (a band's middle is under the last band's bottom; one band is laid out exactly as before)
+  const totals = cols.map((c) => c.reduce((a, id) => a + size.get(id).h, 0) + (c.length - 1) * 72), mids = []; { let bottom = 0;
+    for (let b = 0; b * ARCH_BAND < cols.length; b++) { const hb = Math.max(...totals.slice(b * ARCH_BAND, (b + 1) * ARCH_BAND)), mid = b ? bottom + 140 + hb / 2 : 0; mids.push(mid); bottom = mid + hb / 2; } }
+  cols.forEach((c, ci) => { if (ci && ci % ARCH_BAND === 0) x = 0; const w = Math.max(0, ...c.map((id) => size.get(id).w)), hs = c.map((id) => size.get(id).h), total = totals[ci]; let y = mids[Math.floor(ci / ARCH_BAND)] - total / 2;
     c.forEach((id, i) => { const s = size.get(id); box.set(id, { x: x + (w - s.w) / 2, y, w: s.w, h: s.h, lines: s.lines }); y += hs[i] + 72; }); x += w + gap; });
   return { box, back };
 }
@@ -466,7 +479,9 @@ function curveSvg(nodes, edges, placed, opt = {}) {
   const inBox = ([x, y], b, pad) => x > b.x - pad && x < b.x + b.w + pad && y > b.y - pad && y < b.y + b.h + pad;
   const segDist = ([px, py], [ax, ay], [bx, by]) => { const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l)) : 0; return Math.hypot(px - ax - t * dx, py - ay - t * dy); };
   const near = (p, pts, d) => { for (let k = 1; k < pts.length; k++) if (segDist(p, pts[k - 1], pts[k]) < d) return true; return false; };
-  const drawn = [], boxes0 = [...box.values()], chips = []; // drawn: [{i, P, pts, chip}]
+  const drawn = [], boxes0 = [...box.values()], chips = []; // drawn: [{i, P, pts, bb, chip}]
+  const bbOf = (pts) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const [x, y] of pts) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } return { x0, y0, x1, y1 }; };
+  const bbMeet = (a, b, pad) => a.x0 - pad <= b.x1 && b.x0 - pad <= a.x1 && a.y0 - pad <= b.y1 && b.y0 - pad <= a.y1;
   const over = (r, o, pad) => r.x < o.x + o.w + pad && r.x + r.w + pad > o.x && r.y < o.y + o.h + pad && r.y + r.h + pad > o.y;
   // a connector's chip: on it, at its middle or as near it as a place clear of the boxes, the chips and the other connectors allows
   const chipFor = (e, P) => { if (!e.label) return null; const w = chipW(e), hh = 20;
@@ -482,12 +497,14 @@ function curveSvg(nodes, edges, placed, opt = {}) {
     if (pts.slice(4, -4).some((p) => ends.some((b) => inBox(p, b, -2)))) hard++;
     // along another connector: a stretch of 12px or more within 3px of it, away from the boxes they meet at (a crossing at
     // a fair angle is shorter)
-    const step = pts.slice(1).reduce((n, p, k) => n + Math.hypot(p[0] - pts[k][0], p[1] - pts[k][1]), 0) / (pts.length - 1);
-    for (const d of drawn) { let run = 0, best = 0, hit = 0; for (const p of pts) { if (boxes0.some((b) => inBox(p, b, 10))) { run = 0; continue; } if (near(p, d.pts, 3)) { run += step; hit = 1; best = Math.max(best, run); } else run = 0; }
+    const step = pts.slice(1).reduce((n, p, k) => n + Math.hypot(p[0] - pts[k][0], p[1] - pts[k][1]), 0) / (pts.length - 1), pb = bbOf(pts);
+    // a connector whose box is apart from this one's can neither run along it nor cross it: skipped (the same verdict, and a
+    // large drawing, 96 connectors, lays out in a moment instead of minutes)
+    for (const d of drawn) { if (!bbMeet(pb, d.bb, 4)) continue; let run = 0, best = 0, hit = 0; for (const p of pts) { if (boxes0.some((b) => inBox(p, b, 10))) { run = 0; continue; } if (near(p, d.pts, 3)) { run += step; hit = 1; best = Math.max(best, run); } else run = 0; }
       if (best >= 12) hard++; cross += crossings(e, pts, d); }
     const onChip = chips.filter((c) => pts.some((p) => inBox(p, c, 2))).length, chip = chipFor(e, P);
     return { hard, cross, pts, chip, cost: hard * 1000 + onChip * 400 + (chip ? chip.cost * 0.6 : 0) + cross * 260 }; };
-  const keep = (i, c) => { drawn.push({ i, P: c.P, pts: c.pts, chip: c.chip }); if (c.chip) chips.push(c.chip.r); };
+  const keep = (i, c) => { drawn.push({ i, P: c.P, pts: c.pts, bb: bbOf(c.pts), chip: c.chip }); if (c.chip) chips.push(c.chip.r); };
   // the order: the plain steps forward first (they take the straight lines), then the longer ones, the ways back, the loops
   const span = (e) => Math.hypot(...[0, 1].map((k) => cen(box.get(e.to))[k] - cen(box.get(e.from))[k]));
   const order = edges.map((e, i) => i).filter((i) => box.has(edges[i].from) && box.has(edges[i].to)).sort((i, j) => {
@@ -509,7 +526,7 @@ function curveSvg(nodes, edges, placed, opt = {}) {
     return cands.reduce((a, b) => { const s = (x) => x.cost + Math.abs(x.bow - pref) * 0.8; return s(b) < s(a) ? b : a; }); };
   for (const i of order) keep(i, route(i));
   // twice more, each connector again with every other one in place: one routed early now sees the ones that came after it
-  for (let pass = 0; pass < 2; pass++) for (const i of order) { const k = drawn.findIndex((d) => d.i === i), [d] = drawn.splice(k, 1); if (d.chip) chips.splice(chips.indexOf(d.chip.r), 1); keep(i, route(i)); }
+  for (let pass = 0; pass < (order.length > 40 ? 1 : 2); pass++) for (const i of order) { const k = drawn.findIndex((d) => d.i === i), [d] = drawn.splice(k, 1); if (d.chip) chips.splice(chips.indexOf(d.chip.r), 1); keep(i, route(i)); }
   drawn.sort((a, b) => a.i - b.i);
   const svg = sv("svg", { class: "rr-flow rr-ortho rr-curve", role: "img", preserveAspectRatio: "xMidYMid meet" });
   const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }, grow = (x, y) => { ext.x0 = Math.min(ext.x0, x); ext.y0 = Math.min(ext.y0, y); ext.x1 = Math.max(ext.x1, x); ext.y1 = Math.max(ext.y1, y); };
@@ -569,6 +586,13 @@ function txView(tx) {
 }
 /** every transition as a numbered row: from → to, what it writes (its transaction, when the tutor read one), the code it rests on */
 function transitionRows(card, it, sel, pick, lab) {
+  // a long list (more than 16, the old cap) folds under one line, opened with a click, as a sequence's step list does
+  const n = (it.transitions || []).length, key = `${card}/${it.id}/trans`;
+  if (n > 16) return h("details", { class: "rp-translist", "data-trans-list": it.id, open: RR.fold.has(key), ontoggle: (e) => { const was = RR.fold.has(key); if (e.target.open) RR.fold.add(key); else RR.fold.delete(key); if (was !== e.target.open) rerender(); } },
+    h("summary", {}, T(`Every transition (${n})`, `每一個轉換（${n}）`)), transitionList(card, it, sel, pick, lab));
+  return transitionList(card, it, sel, pick, lab);
+}
+function transitionList(card, it, sel, pick, lab) {
   return h("ol", { class: "rp-trans", "aria-label": T("Every transition", "每一個轉換") }, (it.transitions || []).map((t, i) => h("li", { class: i === sel ? "on" : "", "data-transition": i, "aria-current": i === sel ? "true" : null },
     h("button", { type: "button", class: "rp-tn", "data-transition-row": i, onclick: () => pick(i, t) }, NUMS[i] || String(i + 1)),
     h("div", {}, h("b", {}, `${lab.get(t.from) ?? t.from} → ${lab.get(t.to) ?? t.to}`), t.label ? h("span", { class: "rp-tl" }, ` · ${t.label}`) : null,
@@ -753,9 +777,9 @@ function turnIn(r, t, lang) {
 function localTurn(r, t, lang) {
   if (t.studio || t.status !== "done") return t;
   const w = turnIn(r, t, lang); if (!w) return { ...t, untranslated: true };
-  if (w.own) return lang === t.lang ? t : { ...t, answer: w.answer, scenes: t.scenes?.map((sc) => ({ ...sc, title: w.conv(sc.title), points: sc.points.map((p) => ({ ...p, text: w.conv(p.text), ...(p.detail ? { detail: w.conv(p.detail) } : {}) })) })), claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(c.text) } : c) };
+  if (w.own) return lang === t.lang ? t : { ...t, answer: w.answer, scenes: t.scenes?.map((sc) => ({ ...sc, title: w.conv(sc.title), ...(sc.body ? { body: w.conv(sc.body) } : {}), points: sc.points.map((p) => ({ ...p, text: w.conv(p.text), ...(p.detail ? { detail: w.conv(p.detail) } : {}) })) })), claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(c.text) } : c) };
   let i = 0;
-  return { ...t, answer: w.answer, scenes: t.scenes?.map((sc, m) => ({ ...sc, title: w.conv(w.scenes[m]?.title ?? sc.title), points: sc.points.map((p, j) => ({ ...p, text: w.conv(w.scenes[m]?.points[j] ?? p.text), ...(p.detail ? { detail: w.conv(w.scenes[m]?.details?.[j] || p.detail) } : {}) })) })),
+  return { ...t, answer: w.answer, scenes: t.scenes?.map((sc, m) => ({ ...sc, title: w.conv(w.scenes[m]?.title ?? sc.title), ...(sc.body ? { body: w.scenes[m]?.body ? w.conv(w.scenes[m].body) : sc.body, bodyUntranslated: !w.scenes[m]?.body } : {}), points: sc.points.map((p, j) => ({ ...p, text: w.conv(w.scenes[m]?.points[j] ?? p.text), ...(p.detail ? { detail: w.conv(w.scenes[m]?.details?.[j] || p.detail) } : {}) })) })),
     claims: t.claims?.map((c) => ["claim", "aside", "heading"].includes(c.kind) ? { ...c, text: w.conv(w.claims[i++] ?? c.text) } : c) };
 }
 /** Studio's own scene lines in the room's language (a reviewer's words, the quote, stay as written) */
@@ -781,7 +805,7 @@ function langToggle(r) {
     const missing = missingIn(r, l).length, some = (r.turns || []).some((t) => t.status === "done" && !t.studio && turnIn(r, t, l));
     // a room that takes no turn shows only what it has: a language with at least one answer in it (the rest as written)
     const can = !missing || (r.open && !r.snapshot && !r.offer?.error) || ((r.snapshot || !r.open) && some);
-    return h("button", { type: "button", class: "rr-lang", "data-lang-pick": l, "aria-pressed": String(cur === l), disabled: !can || r.running != null, title: missing ? (can ? T("Not translated yet: a small paid round", "還沒翻譯：一次小的付費回合") : T("Not in this language", "沒有這個語言的版本")) : "", onclick: () => switchLang(r, l) }, label); }));
+    return h("button", { type: "button", class: "rr-lang", "data-lang-pick": l, "aria-pressed": String(cur === l), disabled: !can || r.running != null, title: missing ? (can ? T("Not translated yet: paid (the confirmation says how many jobs)", "還沒翻譯：付費（確認時會說要幾個工作）") : T("Not in this language", "沒有這個語言的版本")) : "", onclick: () => switchLang(r, l) }, label); }));
 }
 // ---------- the scenes: each answer is one or more, a picture beside the tutor's points, played point by point ----------
 const ACTION_LABEL = { ask: ["Question", "提問"], how: ["How", "怎麼運作"], why: ["Why", "為什麼"], teach: ["Teach me", "教我"], "merge-check": ["Before merging", "合併前檢查"], quiz: ["Check me", "考考我"], reviews: ["Digest reviews", "整理審查意見"], since: ["What changed since last time", "上次之後改了什麼"], reviewers: ["What reviewers asked", "審查者問了什麼"] };
@@ -884,7 +908,7 @@ function scenesOf(r) {
       const ORDER = r.subject?.kind === "dir" ? DIR_CHAPTER_ORDER : CHAPTER_ORDER, used = new Set(t.scenes.map((s) => s.picture)), rank = (s) => (ORDER.includes(s.chapter) ? ORDER.indexOf(s.chapter) : -1);
       const ordered = t.action === "teach" ? t.scenes.map((s, m) => [s, m]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]) : t.scenes.map((s, m) => [s, m]);
       ordered.forEach(([s, m], o) => { const pic = r.board.find((b) => b.id === s.picture), last = o === t.scenes.length - 1;
-        out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, chapter: s.chapter || null, skip: !!s.skip, pic: pic || null, title: s.title, question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
+        out.push({ key: m ? `t${t.n}-${m + 1}` : `t${t.n}`, turn: t.n, t, chapter: s.chapter || null, skip: !!s.skip, pic: pic || null, title: s.title, body: s.skip ? "" : s.body || "", bodyCites: s.bodyCites || [], question: m ? null : t.text, visuals: [pic, ...(last ? turnBoard.filter((b) => !used.has(b.id) && !b.group) : [])].filter(Boolean), points: s.points, questions: last ? questions : [] }); });
     } else {
     const heading = claims.find((c) => c.kind === "heading"), { points, extra } = legacyPoints(`t${t.n}`, claims);
     // the scene's title: the answer's heading, else the question itself (shown once, never as "Question: …" beside itself)
@@ -921,6 +945,31 @@ const stepBtn = (card, sc, m, cur) => h("button", { type: "button", class: `rr-s
 /** the focus keys of a step, with an edge's two ends: what the illustration zooms to */
 const focusOf = (p) => (Array.isArray(p?.focus) ? p.focus.filter((f) => typeof f === "string" && f).slice(0, 8) : []);
 /** a step's detail, under the illustration */
+/** a scene's full explanation (its body: the tutor's markdown, src/domain/review-room.ts SCENE_LIMITS.body) under its points:
+ *  folded to its first lines, the whole a click away (kept open across redraws). Only a small markdown: headings, lists, fenced
+ *  code, paragraphs, **bold** and `code` and citations inline; every word through text nodes, never markup */
+function mdBody(card, text, cites) {
+  const out = [], lines = String(text || "").split("\n"); let i = 0;
+  while (i < lines.length) { const l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    if (/^\s*```/.test(l)) { const code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]); i++; out.push(h("pre", { class: "rr-pre rr-sbody-pre" }, code.join("\n"))); continue; }
+    const hd = /^\s*(#{1,6})\s+(.*)$/.exec(l); if (hd) { out.push(h(hd[1].length <= 3 ? "h4" : "h5", { class: "rr-sbody-h" }, inline(card, hd[2], cites))); i++; continue; }
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) { const ordered = /^\s*\d/.test(l), items = [];
+      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) { let it = lines[i++].replace(/^\s*([-*+]|\d+[.)])\s+/, ""); while (i < lines.length && lines[i].trim() && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) it += " " + lines[i++].trim(); items.push(h("li", {}, inline(card, it, cites))); }
+      out.push(h(ordered ? "ol" : "ul", { class: "rr-sbody-list" }, items)); continue; }
+    const para = []; while (i < lines.length && lines[i].trim() && !/^\s*(```|#{1,6}\s|[-*+]\s|\d+[.)]\s)/.test(lines[i])) para.push(lines[i++].trim());
+    if (!para.length) para.push(lines[i++].trim());
+    out.push(h("p", {}, inline(card, para.join(" "), cites))); }
+  return out;
+}
+function sceneBody(card, sc) {
+  if (!sc?.body || sc.skip || sc.quiz) return null; const key = `${card}/${sc.key}/body`, open = RR.fold.has(key), cjk = (sc.body.match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length, words = sc.body.split(/\s+/).filter(Boolean).length;
+  const size = cjk > words ? T(`${cjk} characters`, `${cjk} 字`) : T(`${words} words`, `${words} 詞（英文）`);
+  return h("details", { class: "rr-sbody", "data-scene-body": sc.key, open,
+    ontoggle: (e) => { const was = RR.fold.has(key); if (e.target.open) RR.fold.add(key); else RR.fold.delete(key); if (was !== e.target.open) rerender(); } },
+    h("summary", { "data-scene-body-toggle": "" }, h("b", {}, T("The full explanation", "完整說明")), h("span", { class: "faint" }, ` · ${size}${sc.bodyUntranslated ? T(" · not translated yet: as written", " · 還沒翻譯：照原文") : ""}`)),
+    h("div", { class: "rr-sbody-text", "data-scene-body-text": "" }, mdBody(card, sc.body, sc.bodyCites)));
+}
 const stepDetail = (sc, cur) => { const d = cur != null ? sc.points[cur]?.detail : null; return d ? h("p", { class: "rr-stepdetail", "data-step-detail": cur + 1 }, h("b", {}, T(`Step ${cur + 1}`, `第 ${cur + 1} 步`)), " ", plain(d)) : null; };
 /** the code a card rests on, as links: a pull request on GitHub opens there at those lines, anything else in the citation panel */
 function codeRefs(card, r, items) {
@@ -1233,6 +1282,55 @@ function tutorMenu(r) {
 // ---------- a finished lesson is the lesson board (public/review-board.js): its chapters are regions of a canvas ----------
 const POINTS_TONE = { watch: ["risk", ["risk", "風險"]], reviewers: ["warn", ["reviewer", "審查"]], roads: ["ok", ["not taken", "沒走"]], questions: ["", ["open", "待解"]] };
 /** a figure in the report: the drawing Studio lays out from the tutor's data, its title and what it rests on */
+/** a drawing's own size as Studio lays it out (a lifecycle, an architecture, a sequence, a tutor's figure: their layout does not
+ *  depend on the box), memoised; null for a picture that fits any column (a flowchart is laid out for its box) */
+const FIG_SIZE = new Map();
+function figSize(card, it) {
+  if (!it || !["states", "arch", "sequence", "svg"].includes(it.type)) return null;
+  const k = `${card}/${it.id}/${[it.states, it.transitions, it.nodes, it.edges, it.actors, it.steps].map((x) => x?.length ?? 0).join(".")}`; if (FIG_SIZE.has(k)) return FIG_SIZE.get(k);
+  let out = null;
+  try { if (it.type === "svg") { const vb = String(it.tree?.a?.viewBox || "").split(/[ ,]+/).map(Number); if (vb[2] > 0 && vb[3] > 0) out = { w: vb[2], h: vb[3] }; }
+    else { const svg = it.type === "sequence" ? sequenceView(it, null) : it.type === "arch" ? archView(card, it).querySelector("svg") : it.states?.length ? (() => { const g = statesGraph(it); return curveSvg(g.nodes, g.edges, statePlace(g.nodes, g.edges, 15)); })() : null;
+      const vb = svg?.viewBox?.baseVal; if (vb?.width) out = { w: vb.width, h: vb.height }; } } catch { out = null; }
+  if (FIG_SIZE.size > 400) FIG_SIZE.clear(); FIG_SIZE.set(k, out); return out;
+}
+/** a drawing too large to read in its column (under three quarters of its drawn size there): the board keeps it as a preview
+ *  in a region of the usual size, and "View drawing" opens it at its own scale (figViewer) */
+const LEGIBLE = 0.75;
+const isBig = (card, it, col) => { const z = figSize(card, it); return !!z && z.w * LEGIBLE > col; };
+/** the button under a big drawing's preview */
+const viewBtn = (card, it) => h("button", { type: "button", class: "rr-mini rr-figview-btn", "data-fig-view": it.id, title: T("Open this drawing at its own size: pan and zoom", "以原尺寸打開這張圖：可拖曳、縮放"),
+  onpointerdown: (e) => e.stopPropagation(), onclick: (e) => { e.stopPropagation(); figViewer(card, it); } }, T("View drawing", "檢視圖"));
+/** a sequence's steps as a list (beside a large drawing, as a lifecycle lists its transitions) */
+const seqList = (it, open) => (it?.type === "sequence" && (it.steps || []).length > 16 ? h("details", { class: "rp-seqlist", "data-seq-list": it.id, open: !!open },
+  h("summary", {}, T(`Every step (${it.steps.length})`, `每一步（${it.steps.length}）`)), h("ol", {}, it.steps.map((st, i) => h("li", { "data-seq-step": i + 1 }, h("b", {}, `${st.from} → ${st.to}`), ` · ${st.label}${st.frame ? ` [${st.frame}${st.frameLabel ? ` ${st.frameLabel}` : ""}]` : ""}`)))) : null);
+/** a big drawing at its own scale, over the room: vector, panned by scrolling or dragging, zoomed by its buttons (or ctrl +
+ *  wheel); Escape or Close ends it and gives the focus back. Its own DOM, outside the room's redraws */
+function figViewer(card, it) {
+  document.querySelector("[data-fig-viewer]")?.remove();
+  const r = RR.rooms.get(card), back = document.activeElement, fig = reportFigure(card, r, it, { w: 2400, h: 2000 }), svg = fig.querySelector("svg"), vb = svg?.viewBox?.baseVal;
+  const W = vb?.width || 800; let z = 1;
+  const pane = h("div", { class: "rr-figview-pane", "data-fig-pane": "" }, fig, seqList(r ? figIn(r, it) : it, true));
+  const zoomLbl = h("span", { class: "rr-figview-z", "data-fig-zoom": "" }, "100%");
+  const set = (nz) => { z = Math.max(0.2, Math.min(3, nz)); if (svg) { svg.style.width = `${Math.round(W * z)}px`; svg.style.height = "auto"; } zoomLbl.textContent = `${Math.round(z * 100)}%`; };
+  const close = () => { el.remove(); removeEventListener("keydown", key, true); removeEventListener("pointerup", up); removeEventListener("hashchange", close); try { (document.querySelector(`[data-fig-view="${CSS.escape(it.id)}"]`) || back)?.focus?.({ preventScroll: true }); } catch {} };
+  const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === "Tab") { const f = [...el.querySelectorAll("button, summary, a[href], [tabindex]:not([tabindex='-1'])")].filter((x) => !x.disabled && x.getClientRects().length); if (!f.length) return;
+      const i = f.indexOf(document.activeElement); if (e.shiftKey ? i <= 0 : i === f.length - 1 || i < 0) { e.preventDefault(); (e.shiftKey ? f[f.length - 1] : f[0]).focus(); } } else if ((e.key === "+" || e.key === "=") && !e.metaKey) set(z * 1.25); else if (e.key === "-" && !e.metaKey) set(z / 1.25); };
+  const btn = (label, attr, f, aria) => h("button", { type: "button", class: "rr-mini", [attr]: "", "aria-label": aria || label, onclick: f }, label);
+  const closeBtn = btn(T("Close", "關閉"), "data-fig-close", close);
+  const el = h("div", { class: "rr-figview", role: "dialog", "aria-modal": "true", "aria-label": itemTitle(it), "data-fig-viewer": it.id },
+    h("div", { class: "rr-figview-bar" }, h("b", {}, itemTitle(it)), h("span", { class: "rr-figview-tools" },
+      btn("−", "data-fig-out", () => set(z / 1.25), T("Zoom out", "縮小")), zoomLbl, btn("+", "data-fig-in", () => set(z * 1.25), T("Zoom in", "放大")),
+      btn(T("Fit", "符合"), "data-fig-fit", () => set((pane.clientWidth - 32) / W)), btn("1:1", "data-fig-one", () => set(1), T("Its own size", "原尺寸")), closeBtn)), pane);
+  // a drag on the paper pans (a click on a connector or a row still picks it)
+  let drag = null; pane.addEventListener("pointerdown", (e) => { if (e.button !== 0 || e.target.closest("button, a, summary, [data-transition-row]")) return; drag = { x: e.clientX, y: e.clientY, l: pane.scrollLeft, t: pane.scrollTop }; });
+  pane.addEventListener("pointermove", (e) => { if (!drag) return; pane.scrollLeft = drag.l - (e.clientX - drag.x); pane.scrollTop = drag.t - (e.clientY - drag.y); });
+  const up = () => (drag = null); addEventListener("pointerup", up); addEventListener("hashchange", close); pane.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); set(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
+  if (svg) { svg.classList.add("rr-figview-svg"); svg.removeAttribute("width"); svg.removeAttribute("height"); }
+  document.body.append(el); set(1); addEventListener("keydown", key, true); closeBtn.focus({ preventScroll: true });
+  return el;
+}
 function reportFigure(card, r, it, box) {
   // a lesson's figure reads at its drawn size, left to right where it fits: its region's column
   BOX = box || (innerWidth <= 760 ? { narrow: true, w: innerWidth - 56, h: 1400 } : { w: Math.min(1180, innerWidth - 420), h: 640 });
@@ -1240,17 +1338,29 @@ function reportFigure(card, r, it, box) {
     : v.type === "states" ? statemapView(card, v) : v.type === "sequence" ? sequenceView(v, drawnOf(card, v)) : v.type === "svg" ? svgFigureView(card, v) : v.type === "calls" ? callsView(card, v) : itemView(card, v, null); } finally { BOX = null; }
   // never blown up: at most a little over the size it was laid out at
   for (const sg of [body, ...(body.querySelectorAll ? body.querySelectorAll("svg") : [])]) if (sg?.tagName === "svg" && sg.viewBox?.baseVal?.width) sg.style.maxWidth = `${Math.round(sg.viewBox.baseVal.width * 1.15)}px`;
-  return h("figure", { class: `rp-fig rp-fig-${v.type}`, "data-report-figure": v.id, "data-figure-type": v.type }, h("div", { class: "rp-figbody" }, body),
-    h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)));
+  const big = !!box && box.w < 2000 && isBig(card, it, box.w);
+  // a big drawing: "View drawing" right under the preview (above any list the figure carries), and a click on the preview's
+  // paper opens it too (a connector or a box keeps its own click)
+  let bar = null; if (big) { const sg = body.matches?.("svg") ? body : body.querySelector("svg"); bar = h("div", { class: "rr-bigbar", "data-big-figure": it.id }, viewBtn(card, it));
+    if (sg) { sg.classList.add("rr-preview"); sg.addEventListener("click", (e) => { if (e.target.closest(".rr-pickable, [data-edge-hit], [data-akey], [data-transition-pick], [data-elabel], [data-node]")) return; e.stopPropagation(); figViewer(card, it); }); }
+    if (sg && sg !== body && sg.parentElement) { sg.after(bar); bar = null; } }
+  const fig = h("figure", { class: `rp-fig rp-fig-${v.type}${big ? " rr-bigprev" : ""}`, "data-report-figure": v.id, "data-figure-type": v.type, ...(big ? { "data-big-figure": "" } : {}) }, h("div", { class: "rp-figbody" }, body), bar,
+    h("figcaption", {}, h("span", { class: "vbadge", "data-type": v.type }, typeLabel(v.type)), h("b", {}, itemTitle(v)), basisRow(card, v)), big ? seqList(v) : null);
+  return fig;
 }
 /** a lesson kept without some of its chapters (the tutor left them out after Studio's follow-ups): said so, naming them */
 function gapsNote(r, t) {
-  if (t?.status !== "done" || !t.gaps?.length) return null;
-  const name = (id) => (r.subject?.kind === "dir" && DIR_CHAPTER[id]) || CHAPTER[id] || [id, id];
-  return h("p", { class: "rr-err rr-gaps", role: "note", "data-lesson-gaps": t.gaps.join(" ") }, T(`Incomplete: missing ${t.gaps.map((id) => name(id)[0]).join("; ")}`, `不完整：缺少 ${t.gaps.map((id) => name(id)[1]).join("、")}`));
+  if (t?.status !== "done" || (!t.gaps?.length && !t.stopped)) return null;
+  const name = (id) => (r.subject?.kind === "dir" && DIR_CHAPTER[id]) || CHAPTER[id] || [id, id], n = t.jobs?.length || 1;
+  const why = t.stopped === "no-progress" ? T(`stopped after ${n} rounds: two rounds in a row added nothing`, `${n} 回合後停止：連續兩回合沒有新內容`) : t.stopped === "ceiling" ? T(`stopped at the ceiling of ${n} rounds`, `到上限 ${n} 回合停止`) : t.stopped === "cancelled" ? T(`stopped after ${n} rounds: cancelled`, `${n} 回合後停止：已取消`)
+    : t.stopped === "timeout" ? T(`stopped after ${n} rounds: a round ran out of time`, `${n} 回合後停止：有一回合超時`) : t.stopped === "failed" ? T(`stopped after ${n} rounds: a round failed${t.followUpError ? ` (${clip(t.followUpError, 120)})` : ""}`, `${n} 回合後停止：有一回合失敗${t.followUpError ? `（${clip(t.followUpError, 120)}）` : ""}`) : "";
+  if (!t.gaps?.length) return h("p", { class: `${t.stopped === "failed" || t.stopped === "timeout" ? "rr-err" : "rr-stopnote"} rr-gaps`, role: "note", "data-lesson-stopped": t.stopped }, T(`Not marked complete by the tutor: ${why}`, `導師沒有標記完整：${why}`));
+  return h("p", { class: "rr-err rr-gaps", role: "note", "data-lesson-gaps": t.gaps.join(" "), "data-lesson-stopped": t.stopped || null }, T(`Incomplete: missing ${t.gaps.map((id) => name(id)[0]).join("; ")}${why ? ` (${why})` : ""}`, `不完整：缺少 ${t.gaps.map((id) => name(id)[1]).join("、")}${why ? `（${why}）` : ""}`));
 }
-/** a lesson can take more than its one paid round: Studio hands a lesson that left chapters out back to its tutor (src/domain/review-room.ts LESSON_FOLLOW_UPS) */
-const LESSON_ROUNDS = () => T(" (up to 3 if the tutor leaves chapters out)", "（導師漏了章節時最多 3 回合）");
+/** a lesson is not one round: Studio hands it back to its tutor, round after round (each one paid), until it is complete, at most
+ *  the ceiling the server says (src/domain/review-room.ts lessonRounds, view().lessonRounds) */
+const roundCeiling = () => [...RR.rooms.values()].find((r) => r?.lessonRounds)?.lessonRounds || 12;
+const LESSON_ROUNDS = () => { const n = roundCeiling(); return T(`, then more paid rounds until the lesson is complete (it stops when two rounds in a row add nothing, at most ${n} rounds)`, `，之後繼續付費回合直到這一課完整（連續兩回合沒有新內容就停，最多 ${n} 回合）`); };
 /** a lesson auto-teach started (on arrival in the room, or on a paste): said so, with what it ran on, and the room's switch to
  *  stop it starting by itself next time */
 function autoNote(r, t) {
@@ -1306,6 +1416,7 @@ function sceneCard(r, scenes, j, W) {
   let pic; BOX = box; try { pic = sc.quiz ? h("div", { class: "rr-quizzes" }, sc.points.map((p) => quizView(card, r, p.q, null))) : v ? itemView(card, v, prev) : h("div", { class: "rr-drawing faint", "data-visual-drawing": "" }, T("The tutor is drawing…", "導師正在畫…")); } finally { BOX = null; }
   const answers = (r.turns || []).some((t) => !t.studio && !t.hidden && !t.thread);
   if (focus.length) queueMicrotask(zoomFocus);
+  const big = !sc.quiz && !!v && isBig(card, v, box.w);
   return h("div", { class: `rp-card rb-scard${sc.quiz ? " quiz" : ""}`, "data-scene-card": sc.key },
     first ? sceneHead(r, sc) : null,
     h("div", { class: "rr-stitle" },
@@ -1314,6 +1425,7 @@ function sceneCard(r, scenes, j, W) {
       h("h2", { class: "rr-hand", "data-scene-title": "", title: sc.title }, h("span", { class: `rr-hl${firstTitle && !reduceMotion() ? " rr-anim" : ""}`, "aria-hidden": "true" }), sc.quiz ? T("Check me", "考考我") : sc.title)),
     h("div", { class: `rr-scene${sc.quiz ? "" : " rr-steps"}` },
       h("figure", { class: "rr-visual", "data-visual": sc.quiz ? "quiz" : v?.id || "", "data-illustration-of": sc.quiz ? null : cur != null ? cur + 1 : "all", "data-zoom-focus": focus.length ? focus.join(",") : null, onclick: sc.quiz ? null : edgeClick(card, sc, v) }, pic,
+        big ? h("div", { class: "rr-bigbar", "data-big-figure": v.id }, viewBtn(card, v)) : null, big ? seqList(figIn(r, v)) : null,
         sc.quiz ? null : stepDetail(sc, cur), sc.quiz ? null : explainPop(card, r, sc, v), sc.quiz ? null : codeRefs(card, r, codes),
         pics.length > 1 ? h("div", { class: "rr-vstrip", role: "group", "aria-label": T("Pictures in this scene", "這個場景的圖") }, pics.map((b) => h("button", { type: "button", class: `rr-vchip${b === v ? " on" : ""}`, "data-visual-pick": b.id, "aria-pressed": String(b === v), title: b.title, onclick: () => { const at = sc.points.findIndex((p) => (p.cites || []).some((c) => c.ref === `board:${b.id}`)); RR.pick.set(`${card}/${sc.key}`, b.id); if (at >= 0 && revealOf(card, sc) < sc.points.length) RR.reveal.set(`${card}/${sc.key}`, Math.max(k, at + 1)); rerender(); } }, KIND_LABEL[b.kind] ? T(KIND_LABEL[b.kind][0].split(" ·")[0], KIND_LABEL[b.kind][1].split(" ·")[0]) : typeLabel(b.type), ` ${clip(itemTitle(b), 24)}`))) : null),
       h("div", { class: "rr-points" },
@@ -1321,6 +1433,7 @@ function sceneCard(r, scenes, j, W) {
         sc.t && sc.t.status !== "done" && first ? (running ? h("p", { class: "faint", "data-turn-running": "" }, T(`The tutor is working (${sc.t.provider} · ${sc.t.model})…`, `導師作答中（${sc.t.provider} · ${sc.t.model}）…`)) : h("p", { class: "rr-err", "data-turn-failed": sc.t.status }, sc.t.status === "interrupted" ? T("Interrupted: Studio stopped during this turn.", "中斷：這一回合進行時 Studio 停止了。") : `${T("Failed", "失敗")}: ${sc.t.error || ""}`)) : null,
         sc.quiz ? quizSide(r, sc) : n ? h("ol", { class: "rr-pointlist", "data-points": n }, sc.points.map(pointView)) : null,
         n && !sc.quiz ? h("p", { class: "rr-ppage faint", "data-point-pos": `${k}/${n}` }, T(`Point ${k} of ${n}`, `第 ${k} 點 / 共 ${n} 點`)) : null,
+        sceneBody(card, sc),
         // the welcome's one action: the lesson, a paid turn that asks to confirm first; before any answer, what the board is for
         sc.welcome && !r.snapshot && r.autoTeach?.skipped ? h("p", { class: "rr-err", "data-auto-skipped": "" }, T(`Studio did not start the lesson by itself: ${r.autoTeach.skipped}`, `Studio 沒有自動開始這一課：${r.autoTeach.skipped}`)) : null,
         // what arriving starts (on this Mac only: a phone reads the room and starts nothing)
@@ -1415,7 +1528,9 @@ function promptBar(r) {
         h("button", { type: "button", class: "btn", "data-existing-again": "", onclick: () => askTurn(card, conf.action, conf.text, true) }, T("Explain again (paid)", "重新講一次（付費）")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf?.action === "translate" ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-translate-confirm": conf.lang, "aria-label": T("Confirm the translation", "確認翻譯") },
-      h("p", {}, T(`Translate this room's explanation (~US$${r.translate?.estimate ?? "?"}): one small paid round on ${offer?.provider} · ${offer?.model ?? "default model"}. Text only: no code is read; citations, the board and its pictures stay as they are. Asked once for this room; switching back costs nothing.`, `翻譯這間房間的解說（約 US$${r.translate?.estimate ?? "?"}）：在 ${offer?.provider} · ${offer?.model ?? "預設模型"} 上一次小的付費回合。只翻文字：不讀程式碼；引用、白板和圖都不變。這間房間只問一次；切回原文不用錢。`)),
+      (() => { const jobs = offer?.translate?.jobs ?? r.translate?.jobs ?? 1, est = offer?.translate?.estimate ?? r.translate?.estimate ?? "?";
+        return h("p", { "data-translate-jobs": jobs }, T(`Translate this room's explanation (~US$${est}): ${jobs === 1 ? "one small paid round" : `${jobs} paid jobs (the titles and points, then the scenes' full explanations in ${jobs - 1})`} on ${offer?.provider} · ${offer?.model ?? "default model"}. Text only: no code is read; citations, the board and its pictures stay as they are. Asked again only when a translation needs more jobs than this; switching back costs nothing.`,
+          `翻譯這間房間的解說（約 US$${est}）：在 ${offer?.provider} · ${offer?.model ?? "預設模型"} 上${jobs === 1 ? "一次小的付費回合" : ` ${jobs} 個付費工作（標題和要點一個，完整說明 ${jobs - 1} 個）`}。只翻文字：不讀程式碼；引用、白板和圖都不變。之後的翻譯要更多工作時才會再問；切回原文不用錢。`)); })(),
       h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", "data-translate-start": "", disabled: RR.posting.has(card), onclick: () => startTranslate(r, conf.lang, offer?.translate?.hash, true) }, T("Translate", "翻譯")),
         h("button", { type: "button", class: "btn ghost", "data-room-cancel": "", onclick: () => { RR.confirm.delete(card); RR.lang.delete(card); rerender(); } }, T("Cancel", "取消")))) :
     conf ? h("div", { class: "rr-pop rr-confirm", role: "group", "data-room-confirm": conf.action, "aria-label": T("Confirm the paid round", "確認付費回合") },
@@ -1676,7 +1791,7 @@ addEventListener("keydown", (e) => {
 // the board, built with the room's own helpers (public/review-board.js)
 const BOARD = window.crewReviewBoard({ RR, clip, plain, inline, inferenceBadge, reviewerBadge, openCite, postJ, api, enc, rerender, redraw, onRoom, chapterName, reportFigure, diffPre, localTurn, roomLang, autoNote, reduceMotion, uiLang, POINTS_TONE, schedule, githubDiffUrl, fsToggle,
   sceneCard, sceneLabel, sceneHead, playBar, readyChip, stepReveal, togglePlay, stopPlay, markMoved, revealOf, isFs,
-  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual });
+  stepOf, stepBtn, focusOf, stepDetail, zoomFocus, isCode, codeRefs, explainBox, fallbackVisual, sceneBody });
 const onList = () => S.route?.name === "room" && !S.route.arg;
 /** the list read again. Only the rows are drawn again when they are there (public/list-tools.js ltItems): the search box stays the
  *  same element, a composition in it unbroken */

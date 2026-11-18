@@ -16,7 +16,7 @@ const { ok, end } = suite("review-room-anywhere");
 const root = join(import.meta.dir, "..");
 const { prepareSandbox, registerSandbox } = await import("../src/sandbox-repo");
 const { installCode } = await import("../src/domain/code");
-const { installReviewRoom, parsePrUrl, prRoomId, ROOM_TOOLS } = await import("../src/domain/review-room");
+const { installReviewRoom, parsePrUrl, prRoomId, ROOM_TOOLS, SCENE_LIMITS, STEP_LIMITS, FIGURE_LIMITS } = await import("../src/domain/review-room");
 const { Projects } = await import("../src/doors");
 const { GitHubPrAdapter } = await import("../src/adapters/github");
 const { must, setGitHome } = await import("../src/git");
@@ -29,6 +29,7 @@ function scriptedTutor(H: any, script: any[][], prompts: { text: string }[]) {
       for (const [name, args] of script.shift() ?? []) {
         if (name === "say") { yield { type: "delta", text: args } as any; continue; }
         if (name === "wait") { await args; continue; }
+        if (name === "throw") throw new Error(args);
         const res = await fetch(`${ctx.studioUrl}/api/tools/${name}`, { method: "POST", headers: { "content-type": "application/json", "x-crew-tool-token": ctx.token }, body: JSON.stringify(args) }); const j = await res.json(); TOOLRES.push([name, j]);
         yield { type: "toolStart", id: name, name, args } as any; yield { type: "toolEnd", id: name, rows: null, error: j?.error ?? null, result: JSON.stringify(j) } as any; }
       yield { type: "turnEnd", status: "ok", usage: { usd: 0.01, inTokens: 1, outTokens: 1 } } as any; } }; } });
@@ -143,22 +144,22 @@ const TOOLRES: [string, any][] = [];
       ["scene_show", { chapter: "change", title: "Rounding", picture: `B${nB}-2`, points: [{ text: "It rounds [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Halves go up.", cites: [] }] }],
       ["chapter_skip", { chapter: "lifecycle", reason: "No state field or transition in this diff [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
       ["chapter_skip", { chapter: "sequence", reason: "No call across services or I/O [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
-      ["lesson_check", {}], ["say", "The lesson [diff:src/percent.ts]."]]);
+      ["lesson_check", { complete: true }], ["say", "The lesson [diff:src/percent.ts]."]]);
     const r1 = TOOLRES.length, pB = prompts.length; await room.start(t.id, { action: "teach", confirm: on.offer.hash }, "captain"); await room.settle(t.id);
     const tb = (room.view(t.id) as any).turns.at(-1), tools1 = (runArgs.at(-1)?.tools ?? []).map((x: any) => x.name), chk = TOOLRES.slice(r1).filter(([n]) => n === "lesson_check").map(([, j]) => j)[0];
-    ok(prompts.length - pB === 1 && !("jobs" in tb) && !("gaps" in tb) && Math.abs((tb.cost?.usd ?? 0) - 0.01) < 1e-9, "a complete lesson takes no follow-up: one job, one round's cost", JSON.stringify({ n: prompts.length - pB, jobs: tb.jobs, gaps: tb.gaps, cost: tb.cost }));
+    ok(prompts.length - pB === 1 && !("jobs" in tb) && !("gaps" in tb) && Math.abs((tb.cost?.usd ?? 0) - 0.01) < 1e-9, "a complete lesson (every chapter it owes, and the tutor says so) takes no follow-up: one job, one round's cost", JSON.stringify({ n: prompts.length - pB, jobs: tb.jobs, gaps: tb.gaps, cost: tb.cost }));
     ok(tb.status === "done" && JSON.stringify(tb.scenes.map((x: any) => [x.chapter, !!x.skip])) === JSON.stringify([["what", false], ["talks", false], ["change", false], ["lifecycle", true], ["sequence", true]]) && chk?.ok === true
       && tb.scenes[3].points[0].cites[0].ok === true && (room.view(t.id) as any).board.find((b: any) => b.id === `B${nB}-1`)?.inferred === true,
       "a lesson with what, talks and change, and lifecycle and sequence left out with a cited reason, is kept; the architecture is marked inferred (no design document cited)", JSON.stringify([tb.status, tb.error, tb.scenes?.map((x: any) => x.chapter)]));
     ok(tools1.includes("illustrate") && /Generated pictures are ON/.test(prompts.at(-1)?.text ?? "") && on.images === true, "with pictures turned on, the tutor may illustrate (paid, at most two a turn)", JSON.stringify(tools1));
     const nD = (room.view(t.id) as any).turns.length + 1, rD = TOOLRES.length, dec = { type: "decision", title: "Halves", question: "How does a half cent round?", chosen: "Up", because: "The spec says so", rejected: [{ option: "Down", why: "Reverted", cite: `commit:${th}` }] };
-    script.push([["board_draw", { items: [dec] }], ...Array.from({ length: 10 }, (_, i) => ["scene_show", { chapter: "decisions", title: `Choice ${i + 1}`, picture: `B${nD}-1`, points: [{ text: "Up [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Two.", cites: [] }] }]),
+    script.push([["board_draw", { items: [dec] }], ...Array.from({ length: SCENE_LIMITS.scenes - 2 }, (_, i) => ["scene_show", { chapter: "decisions", title: `Choice ${i + 1}`, picture: `B${nD}-1`, points: [{ text: "Up [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Two.", cites: [] }] }]),
       ["chapter_skip", { chapter: "talks", reason: "这个改动只改了一个函数 [diff:src/percent.ts]。", cites: ["diff:src/percent.ts"] }],
       ["scene_show", { chapter: "what", title: "一个百分比工具", points: [{ text: "新增 percent [diff:src/percent.ts]。", cites: ["diff:src/percent.ts"] }, { text: "取整到分。", cites: [] }] }],
       ["chapter_skip", { chapter: "lifecycle", reason: "没有状态 [diff:src/percent.ts]。", cites: ["diff:src/percent.ts"] }], ["lesson_check", {}], ["say", "课程 [diff:src/percent.ts]。"]]);
     await room.start(t.id, { action: "teach", lang: "zh-CN", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
     const td = (room.view(t.id) as any).turns.at(-1), rd2 = TOOLRES.slice(rD), sk = rd2.filter(([n]) => n === "chapter_skip").map(([, j]) => j), lc = rd2.filter(([n]) => n === "lesson_check").map(([, j]) => j)[0], board = (room.view(t.id) as any).board.find((b: any) => b.id === `B${nD}-1`);
-    ok(sk[0]?.skipped === "talks" && td.scenes.find((x: any) => x.chapter === "talks")?.title === "谁跟谁说话" && td.scenes.at(-1)?.chapter === "what" && /at most 12 scenes a turn/.test(sk[1]?.error ?? "") && JSON.stringify(lc?.missing) === JSON.stringify(["change", "lifecycle", "sequence"]),
+    ok(sk[0]?.skipped === "talks" && td.scenes.find((x: any) => x.chapter === "talks")?.title === "谁跟谁说话" && td.scenes.at(-1)?.chapter === "what" && new RegExp(`at most ${SCENE_LIMITS.scenes} scenes a turn`).test(sk[1]?.error ?? "") && JSON.stringify(lc?.missing) === JSON.stringify(["change", "lifecycle", "sequence"]),
       "a lesson's chapters come in any order (what after the decisions); talks may be left out with a cited reason (its title in the turn's language, 简体 too); a chapter left out counts toward the scene limit; lesson_check names only what is missing", JSON.stringify({ sk, lc, chapters: td.scenes.map((x: any) => x.chapter) }));
     ok(board?.cites.some((c: any) => c.ref === `commit:${th}` && c.ok) && board.rejected[0].cite.ok, "a rejected option's citation is the decision's own too (the Library resolves it)", JSON.stringify(board?.cites)); }
   // ---- a lesson that leaves chapters out is handed them back in the same turn: the follow-up fills them, both rounds paid ----
@@ -172,7 +173,7 @@ const TOOLRES: [string, any][] = [];
       ["scene_show", { chapter: "change", title: "Rounding", picture: `B${nG}-2`, points: [{ text: "It rounds [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Halves go up.", cites: [] }] }],
       ["chapter_skip", { chapter: "lifecycle", reason: "No state field or transition in this diff [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
       ["chapter_skip", { chapter: "sequence", reason: "No call across services or I/O [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
-      ["lesson_check", {}], ["say", "Added the change; lifecycle and sequence left out [diff:src/percent.ts]."]]);
+      ["lesson_check", { complete: true }], ["say", "Added the change; lifecycle and sequence left out [diff:src/percent.ts]."]]);
     await room.start(t.id, { action: "teach", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await until(() => prompts.length - pG === 2, 30000);
     const mid = JSON.parse(JSON.stringify((room.view(t.id) as any).turns.at(-1))); open(); await room.settle(t.id);
     ok(mid.n === nG && mid.status === "running" && JSON.stringify(mid.gaps) === JSON.stringify(["change", "lifecycle", "sequence"]),
@@ -183,6 +184,78 @@ const TOOLRES: [string, any][] = [];
     ok(prompts.length - pG === 2 && tg.jobs?.length === 2 && tg.jobs[0] === tg.job && Math.abs((tg.cost?.usd ?? 0) - 0.02) < 1e-9 && /The first part/.test(tg.answer) && /Added the change/.test(tg.answer)
       && /STUDIO'S FOLLOW-UP/.test(fu) && /- change \(The change itself\)/.test(fu) && /- lifecycle \(Its life, state by state\)/.test(fu) && /- sequence \(One request, in order\)/.test(fu) && !/^- (what|talks) \(/m.test(fu) && /scene 2 \[talks\]: Who calls it \(picture B/.test(fu),
       "one follow-up, asking only for the missing chapters and naming the scenes already shown; both jobs kept, their costs summed, both answers in the transcript", JSON.stringify({ n: prompts.length - pG, jobs: tg.jobs, cost: tg.cost, answer: tg.answer })); }
+  // ---- quality, not a count: a lesson goes on round after round while it makes progress, until the tutor says it is complete;
+  //      two rounds in a row that change nothing end it, and so does the ceiling. Each round is paid and recorded ----
+  { const full = (n: number) => [["board_draw", { items: [{ type: "arch", title: "Pricing", nodes: [{ id: "cart", label: "Cart", kind: "actor" }, { id: "percent", label: "percent()", kind: "service" }], edges: [{ from: "cart", to: "percent", label: "calls", cite: "diff:src/percent.ts" }] },
+        { type: "item", title: "Rounding", name: "percent()", before: "Fractions kept", after: "Whole cents", mechanism: "Math.round", cites: ["diff:src/percent.ts"] }] }],
+      ["scene_show", { chapter: "what", title: "A percent helper", points: [{ text: "It adds percent [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "It rounds to the cent.", cites: [] }] }],
+      ["scene_show", { chapter: "talks", title: "Who calls it", picture: `B${n}-1`, points: [{ text: "The cart calls it [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Nothing else does.", cites: [] }] }],
+      ["scene_show", { chapter: "change", title: "Rounding", picture: `B${n}-2`, points: [{ text: "It rounds [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Halves go up.", cites: [] }] }],
+      ["chapter_skip", { chapter: "lifecycle", reason: "No state field or transition in this diff [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
+      ["chapter_skip", { chapter: "sequence", reason: "No call across services or I/O [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }],
+      ["lesson_check", {}], ["say", "The outline [diff:src/percent.ts]."]];
+    const more = (scene: number, text: string) => [["scene_body", { scene, body: `${text} [diff:src/percent.ts]` }], ["say", `More on scene ${scene}.`]];
+    const start = async () => { const v: any = room.view(t.id), n = v.turns.length + 1, p0 = prompts.length, j0 = runArgs.length;
+      await room.start(t.id, { action: "teach", confirm: v.offer.hash }, "captain"); await room.settle(t.id);
+      return { n, prompts: prompts.length - p0, jobs: runArgs.length - j0, tq: (room.view(t.id) as any).turns.at(-1), rec: E.trusted(t.id).entries.filter((x: any) => x.record === "review-room-turn").at(-1) as any, follow: prompts.slice(p0 + 1).map((x) => x.text) }; };
+    // 1. it progresses for five rounds (more than the old three), then the tutor says it is complete
+    { const n = (room.view(t.id) as any).turns.length + 1; script.push(full(n), more(3, "Round two: why halves go up."), [["scene_show", { chapter: "decisions", title: "Halves", picture: `B${n}-2`, points: [{ text: "Up, as the spec says [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Down was never on record.", cites: [] }] }], ["say", "A decision."]],
+        more(3, "Round four: the edge case of a negative amount."), [["lesson_check", { complete: true }], ["say", "Complete."]]);
+      const r = await start(), lc = TOOLRES.filter(([x]) => x === "lesson_check").map(([, j]) => j).at(-1);
+      ok(r.prompts === 5 && r.jobs === 5 && r.tq.jobs?.length === 5 && r.tq.complete === true && !("stopped" in r.tq) && !("gaps" in r.tq) && r.tq.status === "done" && Math.abs((r.tq.cost?.usd ?? 0) - 0.05) < 1e-9 && lc?.complete === true,
+        "a lesson that keeps making progress is handed back past three rounds, each one paid and summed, until the tutor says it is complete", JSON.stringify({ prompts: r.prompts, jobs: r.tq.jobs?.length, complete: r.tq.complete, stopped: r.tq.stopped, cost: r.tq.cost }));
+      ok(/Round two: why halves go up\. \[diff:src\/percent\.ts\]\n\nRound four: the edge case/.test(r.tq.scenes.find((x: any) => x.chapter === "change")?.body ?? "") && r.rec?.data.rounds === 5 && r.rec.data.complete === true && !("stopped" in r.rec.data)
+        && r.follow.length === 4 && r.follow.every((x) => /STUDIO'S FOLLOW-UP: the lesson is not finished \(round \d of at most 12\)/.test(x) && /you have not said it is complete/.test(x)) && /scene 3 \[change\]: Rounding \(picture B\d+-2\) \(body: \d+ characters\)/.test(r.follow.at(-1)!),
+        "each round's follow-up says which round of the ceiling it is, that the lesson is not marked complete, and what each scene's body holds; the ledger records the rounds and that it is complete", JSON.stringify({ rec: r.rec?.data && { rounds: r.rec.data.rounds, complete: r.rec.data.complete }, follow: r.follow.at(-1)?.slice(-900) })); }
+    // 2. it progresses for two rounds, then two rounds change nothing: it stops there (four rounds), marked
+    { const n = (room.view(t.id) as any).turns.length + 1; script.push(full(n), more(1, "Round two adds the why."), [["lesson_check", {}], ["say", "Nothing new."]], [["say", "Still nothing."]]);
+      const r = await start();
+      ok(r.prompts === 4 && r.tq.jobs?.length === 4 && r.tq.stopped === "no-progress" && !r.tq.complete && r.tq.status === "done" && r.rec?.data.stopped === "no-progress" && r.rec.data.rounds === 4,
+        "a lesson stops after two rounds in a row that change nothing on the board (not at a fixed count): kept, marked as stopped for no progress, on its ledger entry", JSON.stringify({ prompts: r.prompts, jobs: r.tq.jobs?.length, stopped: r.tq.stopped, rec: r.rec?.data?.stopped })); }
+    // 3. the ceiling: a tutor that never stops changing the board ends at the configured ceiling (bounded)
+    { const n = (room.view(t.id) as any).turns.length + 1; process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS = "3";
+      script.push(full(n), more(1, "Two."), more(1, "Three."), more(1, "Four, never asked for."));
+      const r = await start(); delete process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS; script.length = 0;
+      ok(r.prompts === 3 && r.tq.jobs?.length === 3 && r.tq.stopped === "ceiling" && r.rec?.data.stopped === "ceiling" && /round 3 of at most 3/.test(r.follow.at(-1) ?? ""),
+        "a lesson that still changes the board at the ceiling stops there, marked (CREW_REVIEW_ROOM_LESSON_ROUNDS)", JSON.stringify({ prompts: r.prompts, stopped: r.tq.stopped })); }
+    // 4. "complete" while a chapter is missing is refused, and never recorded as complete; a round that fails ends the lesson,
+    //    marked failed with its error (not shown as a lesson that simply ended)
+    { const n = (room.view(t.id) as any).turns.length + 1, r0 = TOOLRES.length;
+      script.push([["scene_show", { chapter: "what", title: "A percent helper", points: [{ text: "It adds percent [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "It rounds.", cites: [] }] }],
+        ["lesson_check", { complete: true }], ["say", "Done, I say [diff:src/percent.ts]."]], [["throw", "the vendor went away"]]);
+      const r = await start(), lc = TOOLRES.slice(r0).filter(([x]) => x === "lesson_check").map(([, j]) => j)[0];
+      ok(lc?.complete === false && /not complete: talks, change, lifecycle, sequence still missing/.test(lc?.notComplete ?? "") && !r.tq.complete && r.rec?.data.complete === false && r.tq.n === n,
+        "lesson_check {complete: true} with chapters missing is refused (saying which) and the lesson is never recorded complete", JSON.stringify({ lc, complete: r.tq.complete, rec: r.rec?.data?.complete }));
+      ok(r.tq.jobs?.length === 2 && r.tq.stopped === "failed" && /vendor went away/.test(r.tq.followUpError ?? "") && r.rec?.data.stopped === "failed" && r.tq.status === "done",
+        "a round that fails ends the lesson marked failed, its error kept, on the ledger too", JSON.stringify({ jobs: r.tq.jobs?.length, stopped: r.tq.stopped, err: r.tq.followUpError })); }
+    { const M = await import("../src/domain/review-room"), env = (v: string | undefined, f: () => number) => { if (v === undefined) delete process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS; else process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS = v; const x = f(); delete process.env.CREW_REVIEW_ROOM_LESSON_ROUNDS; return x; };
+      const tm = (v: string | undefined) => { if (v === undefined) delete process.env.CREW_REVIEW_ROOM_TIMEOUT_MS; else process.env.CREW_REVIEW_ROOM_TIMEOUT_MS = v; const x = M.roundTimeoutMs(); delete process.env.CREW_REVIEW_ROOM_TIMEOUT_MS; return x; };
+      ok(env(undefined, M.lessonRounds) === 12 && env("999", M.lessonRounds) === 30 && env("1", M.lessonRounds) === 2 && env("nope", M.lessonRounds) === 12 && tm(undefined) === 30 * 60_000 && tm("1") === 10_000 && tm(String(10 * 3600_000)) === 2 * 3600_000
+        && M.lessonNext({ gaps: [], complete: true, rounds: 12, idle: 2, ceiling: 12 }) === "complete" && M.lessonNext({ gaps: ["change"], complete: true, rounds: 3, idle: 0, ceiling: 12 }) === "continue" && M.lessonNext({ gaps: [], complete: false, rounds: 3, idle: 0, ceiling: 12, cancelled: true }) === "cancelled",
+        "the ceiling is 12 rounds by default and the round's time 30 minutes, each env override held within its bounds; complete means nothing missing and the tutor said so", JSON.stringify([env(undefined, M.lessonRounds), tm(undefined)]));
+      const a = runArgs.at(-1);
+      ok(a?.maxTools === 200 && a?.timeoutMs === 30 * 60_000, "a tutor round gets 200 tool calls and 30 minutes", JSON.stringify([a?.maxTools, a?.timeoutMs])); } }
+  // ---- a scene's full explanation: a long markdown body, its citations checked, appended in parts, bounded only for safety ----
+  { const n = (room.view(t.id) as any).turns.length + 1, r0 = TOOLRES.length, long = Array.from({ length: 60 }, (_, i) => `### Part ${i + 1}\n\nThe amount is multiplied, then rounded half up${i % 10 === 0 ? " [diff:src/percent.ts]" : ""}; ${"a negative amount is refused before it is rounded, ".repeat(4)}`).join("\n\n");
+    script.push([["board_draw", { items: [{ type: "note", text: "Percent." }] }],
+      ["scene_show", { title: "How a price is made", picture: `B${n}-1`, points: [{ text: "It rounds [diff:src/percent.ts].", cites: ["diff:src/percent.ts"] }, { text: "Halves go up.", cites: [] }], body: long }],
+      ["scene_show", { title: "Too long", picture: `B${n}-1`, points: [{ text: "One.", cites: [] }, { text: "Two.", cites: [] }], body: "x".repeat(SCENE_LIMITS.body + 1) }],
+      ["scene_body", { scene: 1, body: "### The rest\n\n- the cart [diff:src/percent.ts]\n- the ledger [diff:src/nope.ts]" }],
+      ["scene_body", { scene: 9, body: "nothing" }], ["say", "How it works [diff:src/percent.ts]."]]);
+    await room.start(t.id, { action: "how", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    const rr = TOOLRES.slice(r0), sh = rr.filter(([x]) => x === "scene_show").map(([, j]) => j), sb = rr.filter(([x]) => x === "scene_body").map(([, j]) => j), tq = (room.view(t.id) as any).turns.at(-1), sc = tq.scenes?.[0];
+    ok(long.length > 10_000 && sh[0]?.scene === 1 && sh[0].body === long.trim().length && new RegExp(`body is at most ${SCENE_LIMITS.body} characters`).test(sh[1]?.error ?? "") && sb[0]?.scene === 1 && /scene is the number of a scene/.test(sb[1]?.error ?? ""),
+      "a scene takes a long markdown body (over ten thousand characters), one over the safety bound is refused saying so, scene_body appends to a scene this turn showed", JSON.stringify({ sh, sb }));
+    ok(sc?.body?.startsWith("### Part 1\n\nThe amount") && sc.body.endsWith("- the ledger [diff:src/nope.ts]") && sc.body.includes("\n\n### The rest\n\n- the cart") && sc.bodyCites?.find((c: any) => c.ref === "diff:src/percent.ts")?.ok === true && sc.bodyCites?.find((c: any) => c.ref === "diff:src/nope.ts")?.ok === false && tq.scenes.length === 1,
+      "the body is stored whole, its line breaks kept, the appended part after it, each citation in it checked (one that does not resolve marked so)", JSON.stringify({ len: sc?.body?.length, cites: sc?.bodyCites }));
+    // the next turn's prompt (an understanding check's too) carries the scene bodies
+    script.push([["say", "Checked [diff:src/percent.ts]."]]); const pQ = prompts.length;
+    await room.start(t.id, { action: "quiz", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
+    ok(/Its scenes' full explanations:\n### How a price is made\n### Part 1/.test(prompts[pQ]?.text ?? "") && /FULL EXPLANATIONS: a scene's title and points are the board's glanceable layer/.test(prompts[pQ]?.text ?? ""),
+      "the next turn's prompt, an understanding check's too, carries the scenes' full explanations, and every prompt tells the tutor to write them in full, split across tool calls", (prompts[pQ]?.text ?? "").slice(0, 200));
+    const M = await import("../src/domain/review-room");
+    ok(M.keepBody("A [diff:a.ts]\n\nB", "甲 [diff:a.ts]\n\n乙") === "甲 [diff:a.ts]\n\n乙" && M.keepBody("A [diff:a.ts]", "甲") === null && M.keepBody(undefined, "甲") === null && M.keepBody("A", "") === null,
+      "a translated body is kept only whole, every citation kept; otherwise the original's shows", "keepBody"); }
   // ---- a lesson with no answer, or with nothing to show, still fails ----
   { const pE = prompts.length; script.push([["board_draw", { items: [{ type: "note", text: "Thinking." }] }]]);
     await room.start(t.id, { action: "teach", confirm: (room.view(t.id) as any).offer.hash }, "captain"); await room.settle(t.id);
@@ -226,7 +299,7 @@ const TOOLRES: [string, any][] = [];
         "a figure's data-cite is checked like any citation: one that resolves is kept and joins the figure's cites (the Library resolves it), one that does not is dropped", JSON.stringify({ edge: edge?.a, draft: draft?.a, cites: svgIt?.cites })); }
     ok(svgIt?.type === "svg" && svgIt.kind === "state" && svgIt.entity === "orders.status" && svgIt.transitions[0].tx.tables[0].fields[0].now === "priced" && svgIt.transitions[0].cite.ok && !JSON.stringify(svgIt.tree).includes("script"),
       "the figure is kept as Studio's tree of allowed elements, with its entity and each transition's transaction", JSON.stringify(svgIt?.transitions));
-    ok(inv?.entity === "invoices.state" && inv.states[0].mark === "changed" && !("mark" in inv.states[1]) && inv.transitions[0].tx.outside[0].kind === "cache" && /transition 1: tx:/.test(bd?.errors?.[0] ?? "") && callIt?.calls[0].tx.tables[0].table === "orders" && callIt.calls[0].errors[0].code === "400" && /calls is 1 to 6/.test(bd?.errors?.[1] ?? ""),
+    ok(inv?.entity === "invoices.state" && inv.states[0].mark === "changed" && !("mark" in inv.states[1]) && inv.transitions[0].tx.outside[0].kind === "cache" && /transition 1: tx:/.test(bd?.errors?.[0] ?? "") && callIt?.calls[0].tx.tables[0].table === "orders" && callIt.calls[0].errors[0].code === "400" && new RegExp(`calls is 1 to ${FIGURE_LIMITS.calls}`).test(bd?.errors?.[1] ?? ""),
       "a lifecycle names its entity, the states this change adds or changes, and each transition's transaction (tables, guard, fields was → now, writes outside); every call has its request, response, errors and transaction; a malformed one is refused", JSON.stringify(bd?.errors));
     ok(sh[0]?.scene && sh[1]?.scene && /every transition cites the code that makes it/.test(sh[2]?.error ?? "") && sh[3]?.scene && tf.scenes.filter((x: any) => x.chapter === "lifecycle").length === 2,
       "a lesson may show one lifecycle for each entity; a lifecycle with a transition that cites nothing is refused; every call has a chapter of its own", JSON.stringify(sh.map((x: any) => x.error ?? x.scene)));
@@ -244,7 +317,7 @@ const TOOLRES: [string, any][] = [];
         { type: "states", title: "Paying", states: [{ id: "open", label: "Open" }, { id: "paid", label: "Paid" }], transitions: [{ from: "open", to: "paid", label: "pay", cite: "diff:src/percent.ts", why: "Paid once: the guard stops a second pay" }] }] }],
       ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", why: "Priced before it is shown" }], explain: [ex("draft>paid")] }],
       ["figure_svg", { kind: "state", title: "Orders", entity: "orders.status", svg: stateSvg(58), transitions: [{ edge: "draft>priced", label: "price", cite: "diff:src/percent.ts", why: "Priced before it is shown" }], explain: [ex("draft>priced", "Prices the order")] }],
-      ["scene_show", { title: "Bad steps", picture: `B${nS}-1`, points: [{ text: "One [diff:src/percent.ts].", cites: ["diff:src/percent.ts"], picture: "B99-9" }, { text: "Two.", focus: "A", detail: "d".repeat(170) }] }],
+      ["scene_show", { title: "Bad steps", picture: `B${nS}-1`, points: [{ text: "One [diff:src/percent.ts].", cites: ["diff:src/percent.ts"], picture: "B99-9" }, { text: "Two.", focus: "A", detail: "d".repeat(STEP_LIMITS.detail.latin + 10) }] }],
       ["scene_show", { title: "How a price is made", picture: `B${nS}-1`, points: [{ text: "The amount goes in [diff:src/percent.ts].", cites: ["diff:src/percent.ts"], focus: ["A", "A>B"], detail: "The cart passes cents, never a float." },
         { text: "It is rounded to whole cents.", picture: `B${nS}-4`, focus: ["step:2"], detail: "Math.round, half up." }, { text: "The cart shows it." }] }],
       ["say", "Steps [diff:src/percent.ts]."]]);
@@ -265,7 +338,7 @@ const TOOLRES: [string, any][] = [];
     const ft = M.figureTexts(it(6)), ft0 = M.figureTexts({ ...it(6), transitions: it(6).transitions.map(({ why: _w, ...x }: any) => x) }), fm = M.figureTexts(it(1));
     ok(ft.length === ft0.length + 1 && ft.at(-1) === "Paid once: the guard stops a second pay" && JSON.stringify(ft.slice(0, ft0.length)) === JSON.stringify(ft0) && JSON.stringify(fm) === JSON.stringify(["The flow", "Hands the amount over", "One place rounds, so every caller agrees", "Rounds to whole cents", "One place rounds, so every caller agrees"]),
       "a translation carries the new words after the ones an older translation holds: a drawing without them keeps its length", JSON.stringify({ ft, fm }));
-    ok(typeof M.keepDetails === "function" && JSON.stringify(M.keepDetails(["a", ""], ["甲", ""])) === '["甲",""]' && M.keepDetails(["a", ""], ["甲"]) === null && M.keepDetails(["", ""], undefined) === null && M.keepDetails(["a"], ["金".repeat(90)]) === null,
+    ok(typeof M.keepDetails === "function" && JSON.stringify(M.keepDetails(["a", ""], ["甲", ""])) === '["甲",""]' && M.keepDetails(["a", ""], ["甲"]) === null && M.keepDetails(["", ""], undefined) === null && M.keepDetails(["a"], ["金".repeat(STEP_LIMITS.detail.cjk + 10)]) === null,
       "a translated scene keeps its steps' details only when every one came back within the board's limit; otherwise the original shows", "keepDetails");
     const long = `${"a".repeat(45)}>${"b".repeat(45)}#2`;
     ok(!M.explainErrors([{ edge: long, does: "d" }], [long]).length && !M.stepErrors([{ focus: [long] }], () => true).length, "an edge between two long node ids (as figure_svg keeps it) can be explained and focused", JSON.stringify(M.explainErrors([{ edge: long, does: "d" }], [long]))); } }
