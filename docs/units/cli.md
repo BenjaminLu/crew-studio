@@ -152,6 +152,15 @@ but a shell, the CLI and the skill. It gets no MCP server and no hint about whic
 - **What the agents do not load.** Claude runs with `--setting-sources project` (the temporary project), `--strict-mcp-config`
   and `--no-session-persistence`. Codex runs with `--ignore-user-config` and `--ephemeral`, in its workspace-write sandbox
   with network on. Neither loads the captain's settings, hooks or plugins, and neither keeps a transcript.
+- **What the agents do not write.**
+  - The project folder is no git repository. In a new repository root, Codex writes a trust decision into the captain's
+    `~/.codex/config.toml`. Instead, the trust for the run is given on the command line
+    (`-c projects."<dir>".trust_level`).
+  - Claude runs with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so it makes no `~/.claude/projects` folder for the run.
+  - Both CLIs still update their own caches and state: Claude Code's `~/.claude.json`, and Codex's caches and logs.
+- **What the agent may run.** Its `crew-studio` is a guard in front of the CLI that refuses `launch`, `open`, `serve`,
+  `skill` and `mcp`. The Studio home, runtime and data folders are temporary, and Codex's shell gets a temporary HOME.
+  Claude keeps the captain's HOME, since it signs in from there, so its `--allowedTools` is narrowed to the read commands.
 - **Questions.**
   - 1 to 7 are Firstmate's questions, through an everything-readable grant with external text in. Question 6, a terminal
     waiting for input, has to be answered "this grant cannot see terminals" (exit 3).
