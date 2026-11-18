@@ -745,7 +745,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 // This window's page, item and dialog, sent to Studio half a second after they settle, for Firstmate's studio_now. Only ids
 // and the labels Studio itself draws, capped; never what is being typed, never a picture. A window in the background sends
 // nothing; with sharing off (Settings, or the Firstmate panel's label) nothing is sent.
-const FOCUS = { sharing: true, sel: null, dialog: null, timer: 0, last: "" };
+const FOCUS = { sharing: true, sel: null, dialog: null, timer: 0, last: "", sent: { ok: true, label: null, at: 0 } };
 const FOCUS_PAGES = { board: ["Board", "看板"], inbox: ["Inbox", "收件匣"], run: ["Task", "任務"], runs: ["Tasks", "任務列表"], room: ["Review room", "審查室"], prs: ["Pull requests", "Pull requests"],
   crew: ["Crew", "船員"], team: ["Crew", "船員"], activity: ["Activity", "事件"], workflow: ["Workflow", "流程"], workflows: ["Workflows", "流程"], library: ["Library", "成品庫"], settings: ["Settings", "設定"],
   terminals: ["Terminals", "終端機"], doctor: ["Doctor", "健康檢查"], projects: ["Projects", "專案"], project: ["Project", "專案"], skills: ["Skills", "技能"], firstmate: ["Firstmate", "Firstmate"] };
@@ -762,7 +762,12 @@ function tellFocus() { clearTimeout(FOCUS.timer); FOCUS.timer = setTimeout(sendF
 function sendFocus() {
   if (!FOCUS.sharing || document.visibilityState === "hidden") return;
   const body = JSON.stringify(focusNow()); if (body === FOCUS.last) return; FOCUS.last = body;
-  fetch("/api/focus", { method: "POST", headers: { "content-type": "application/json" }, body }).then((r) => r.json()).then((j) => { if (j && j.sharing === false && FOCUS.sharing) { FOCUS.sharing = false; window.onFocusLabel?.(); } }).catch(() => {});
+  // what Studio last received is what the panel's label shows (a report that did not arrive greys it)
+  const label = JSON.parse(body).label;
+  fetch("/api/focus", { method: "POST", headers: { "content-type": "application/json" }, body }).then(async (r) => { const j = await r.json().catch(() => null);
+    if (j && j.sharing === false && FOCUS.sharing) FOCUS.sharing = false;
+    FOCUS.sent = r.ok && j?.kept !== false ? { ok: true, label, at: Date.now() } : { ok: false, label: FOCUS.sent.label, at: FOCUS.sent.at }; if (!r.ok) FOCUS.last = ""; window.onFocusLabel?.(); })
+    .catch(() => { FOCUS.sent = { ok: false, label: FOCUS.sent.label, at: FOCUS.sent.at }; FOCUS.last = ""; window.onFocusLabel?.(); });
 }
 window.studioFocus = {
   /** the item selected on this page (a room's scene): {kind, id, label} with a label Studio draws, or null */
@@ -770,6 +775,8 @@ window.studioFocus = {
   /** a dialog this page opened (its Studio title), or null when it closed */
   dialog(name) { FOCUS.dialog = name ? String(name).slice(0, 60) : null; tellFocus(); },
   label: () => focusNow().label,
+  /** what Studio last received from this window: {ok, label, at} */
+  delivery: () => ({ ...FOCUS.sent, label: FOCUS.sent.label ?? focusNow().label, at: FOCUS.sent.at || Date.now() }),
   get sharing() { return FOCUS.sharing; },
   async setSharing(on) { try { const r = await fetch("/api/focus/sharing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ on: !!on }) }); const j = await r.json(); if (typeof j?.sharing === "boolean") FOCUS.sharing = j.sharing; } catch {}
     FOCUS.last = ""; if (FOCUS.sharing) tellFocus(); else window.onFocusLabel?.(); return FOCUS.sharing; },
@@ -777,6 +784,8 @@ window.studioFocus = {
 fetch("/api/focus").then((r) => r.json()).then((j) => { if (typeof j?.sharing === "boolean") { FOCUS.sharing = j.sharing; window.onFocusLabel?.(); if (j.sharing) tellFocus(); } }).catch(() => {});
 // a window coming back on screen says again what it shows: it may be the one the captain uses now
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { FOCUS.last = ""; tellFocus(); } });
+// two windows both on screen: the one the captain clicks into is the one used last
+addEventListener("focus", () => { FOCUS.last = ""; tellFocus(); });
 // persist = false keeps a first-run (browser) language unstored until the captain picks one in Settings
 function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lang = l; if (l !== "en") lastZh = l; if (persist) store.set("crew.lang", l); document.documentElement.lang = l;
   tellLang();
