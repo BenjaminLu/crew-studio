@@ -759,4 +759,4 @@ window.crewNativeToolFailureView=function(f){
 // review_configuration is never quiet: its fix is the captain's (a startup model in Settings, unavailable staffing defaults, node settings)
 window.crewNativeToolRecoverable=function(f){return f.diagnosticRecorded!==false&&(["read_current_state","discuss_staffing","list_workflows","list_projects","prepare_project_work","propose_work"].includes(f.nextAction)||/^(invalid_params|staffing_answer_invalid|draft_invalid)$/.test(f.code)&&!["captain_review","report_reference","review_configuration"].includes(f.nextAction));};
 const nativeLogItemBase=logItem;
-logItem=function(it,i){return it.nativeFailure?window.crewNativeToolFailureView(it.nativeFailure):nativeLogItemBase(it,i);};
+logItem=function(it,i,all){return it.nativeFailure?window.crewNativeToolFailureView(it.nativeFailure):nativeLogItemBase(it,i,all);};

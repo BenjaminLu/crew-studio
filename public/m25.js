@@ -45,6 +45,44 @@ getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false);
 })();
 loadMain();
 
+// ---------- what Firstmate's answers cite (docs/units/observe.md) ----------
+// A ref in an answer (task:R-162, card:SC-248, room:PR-…-1645, pr:owner/repo#1645) is a chip that opens its page; hovering it
+// says which read tool read it in this turn, and when, or that nothing in this conversation read it.
+const REF_RE = /\b(?:task:R-\d+|card:SC-\d+|room:(?:SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})|pr:[\w.-]+\/[\w.-]+#\d+)/g;
+const refRoute = (ref) => { const k = ref.slice(0, ref.indexOf(":")), id = ref.slice(ref.indexOf(":") + 1); return k === "task" ? `#/run/${id}` : k === "card" ? `#/inbox/${id}` : k === "room" ? `#/room/${encodeURIComponent(id)}` : "#/prs"; };
+/** the last tool call before this answer (back to the captain's message) that read the ref */
+function refRead(ref, log, at) {
+  const id = ref.slice(ref.indexOf(":") + 1);
+  for (let j = at - 1; j >= 0 && j >= at - 80; j--) { const x = log[j]; if (!x) continue; if (x.kind === "captain") break;
+    if (x.kind === "tool" && (String(x.text || "").includes(ref) || String(x.text || "").includes(id))) return x; }
+  return null;
+}
+function refChips(frag, log, at) {
+  const box = document.createElement("div"); box.append(frag);
+  const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT), texts = [];
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) { REF_RE.lastIndex = 0; if (!n.parentElement?.closest("a") && REF_RE.test(n.nodeValue)) texts.push(n); }
+  for (const n of texts) { REF_RE.lastIndex = 0; const out = document.createDocumentFragment(), v = n.nodeValue; let last = 0, m;
+    while ((m = REF_RE.exec(v))) { if (m.index > last) out.append(v.slice(last, m.index)); const ref = m[0], read = refRead(ref, log, at), tool = read ? (read.tool || toolShort(String(read.text).split(" ")[0])) : null;
+      const when = read ? new Date(read.at).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" }) : "";
+      const tip = read ? T(`Read with ${tool} at ${when}. Opens its page.`, `${when} 用 ${tool} 讀取。點一下打開頁面。`) : T("Not read in this conversation. Opens its page.", "這次對話沒有讀過。點一下打開頁面。");
+      out.append(h("a", { class: "chip ref-chip", href: refRoute(ref), "data-ref": ref, "data-ref-read": read ? tool : "", title: tip, "aria-label": `${ref}: ${tip}`, style: "font-size:12px;padding:0 6px;font-family:var(--mono, monospace)" }, ref)); last = m.index + ref.length; }
+    if (last < v.length) out.append(v.slice(last)); REF_RE.lastIndex = 0; n.replaceWith(out); }
+  REF_RE.lastIndex = 0;
+  const done = document.createDocumentFragment(); done.append(...box.childNodes); return done;
+}
+// "看得到：…": what this window shares with Firstmate (studio_now); a click pauses sharing, another shares again
+function paintSees() {
+  const b = $("#fmSees"); if (!b) return; const f = window.studioFocus, phone = MS.me?.kind === "phone";
+  const hide = phone || !f; b.style.display = hide ? "none" : ""; if (hide) return;
+  const on = f.sharing; b.setAttribute("aria-pressed", String(on)); b.dataset.sharing = on ? "1" : "0";
+  b.textContent = on ? T(`Sees: ${f.label()}`, `看得到：${f.label()}`) : T("Not sharing your screen", "沒有分享畫面");
+  b.title = on ? T("Firstmate sees this page's name and the item you selected, never what you type. Click to pause.", "Firstmate 看得到頁面和選取項目的名稱，看不到你輸入中的文字。點一下暫停分享。") : T("Click to share your page with Firstmate again.", "點一下恢復與 Firstmate 分享頁面。");
+  const box = $("#focusShare"); if (box) box.checked = on;
+}
+window.onFocusLabel = paintSees;
+(function mountSees() { const b = h("button", { type: "button", class: "chip fm-sees", id: "fmSees", "data-fm-sees": "", style: "margin:6px 12px 0;max-width:calc(100% - 24px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;justify-self:start",
+  onclick: async () => { await window.studioFocus?.setSharing(!window.studioFocus.sharing); paintSees(); } }); ($("#chatMode") || $(".chat-head")).after(b); paintSees(); })();
+
 // ---------- chat: mode switch, header, log ----------
 const askStatus = ask, renderStatus = renderChat, chatInfoStatus = showChatInfo;
 function modeSeg() { return h("div", {id:"chatMode",class:"tk-row",style:"margin:8px 12px 0"},h("b",{},"Firstmate"),h("a",{href:"#/activity",class:"btn ghost sm",onclick:()=>openChat(false)},T("Activity & context (read-only)","事件與背景（唯讀）"))); }
@@ -203,14 +241,14 @@ function toolGroup(items) {
       h("span", { class: "faint tool-group-last" }, toolActivity(visible.at(-1)).label)),
     h("div", { class: "tool-group-items" }, visible.map(toolLine)));
 }
-function logItem(it, i) {
+function logItem(it, i, all = []) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
   if (it.external) return externalView(it.external);
   if (it.connected) return h("div", { class: "faint", "data-main": "connected", "data-connected-host": it.connected.host, role: "status", style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--accent-text);display:flex;gap:6px;align-items:center;flex-wrap:wrap" },
     icon("check", "ic sm"), h("b", { style: "color:var(--accent-text)" }, T("Firstmate connected", "Firstmate 已連接")), h("span", { class: "vbadge" }, hostLabel(it.connected)), h("span", {}, new Date(it.at).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" })));
   if (it.attachmentRefusal) return externalView({ source: "studio", class: "attachment", code: it.attachmentRefusal, message: it.text.replace(/^Not sent: /, ""), reason: { en: "An attachment could not be sent.", "zh-TW": "附件無法送出。" } });
-  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(I18N.chatText(lang, it.text))));
+  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, refChips(md(I18N.chatText(lang, it.text)), all, i)));
   if (it.kind === "tool") return toolLine(it);
   // a wake Studio wrote (an escalation, an agent question): its human summary; the raw prompt stays in the log on disk (S23)
   if (it.kind === "wake" && it.shown?.length) return h("div", { class: "faint", "data-main": "wake", "data-wake-shown": it.shown.length, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, h("b", {}, T("Sent to Firstmate", "交給 Firstmate") + " · "), it.shown.map((x) => L(x)).join("\n"));
@@ -236,7 +274,7 @@ renderChat = function (stick = true) {
       const sep = sessionSep(x, all[i - 1], all, v); if (sep) { flushTools(); kids.push(sep); }
       // Error and refusal cards are always outside a collapsed activity group.
       if (x.kind === "tool" && !x.external && !x.attachmentRefusal) tools.push(x);
-      else { flushTools(); const el = logItem(x, i); if (el) kids.push(el); }
+      else { flushTools(); const el = logItem(x, i, all); if (el) kids.push(el); }
     }); flushTools();
     const thinking = MS.thinking !== null && !MS.live;
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live", "data-thinking": thinking ? "1" : null }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, thinking ? T("thinking…", "思考中…") : T("working…", "處理中…"))),
