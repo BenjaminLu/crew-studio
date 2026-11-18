@@ -22,7 +22,7 @@ function actionButton(it) {
   if (a.kind === "cloud-handoff") return h("button", { class: "btn", "data-cloud-handoff-setup": "open", onclick: openCloudHandoff }, icon("tool", "ic sm"), T("Set up cloud hand-off…", "設定交給雲端接手…"));
   if (a.kind === "phone") return h("a", { class: "btn", href: "#/remote" }, icon("monitor", "ic sm"), T("Phone page", "手機頁"));
   // the crew-studio CLI (src/cli-install.ts): ~/.local/bin/crew-studio, pointing at this Studio
-  if (a.kind === "cli-install") return h("button", { class: "btn primary", "data-cli-install": "", onclick: async (e) => { e.currentTarget.disabled = true;
+  if (a.kind === "cli-install") return h("button", { class: "btn primary", "data-cli-install": "1", onclick: async (e) => { e.currentTarget.disabled = true;
     try { const r = await postJ("/api/cli/install", {}); if (r.error) throw new Error(r.error); toast(r.cli?.onPath ? T(`Installed: ${r.cli.bin}`, `已安裝：${r.cli.bin}`) : T(`Installed. Add to ${r.cli.profile}: ${r.cli.pathLine}`, `已安裝。請加進 ${r.cli.profile}：${r.cli.pathLine}`)); }
     catch (err) { toast(String(err.message || err)); } DOC.data = null; render(); loadDoctor(); } }, icon("download", "ic sm"), T("Install the CLI", "安裝 CLI"));
   return null;

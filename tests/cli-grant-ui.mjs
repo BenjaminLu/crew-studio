@@ -41,6 +41,7 @@ try {
     await p.click("#grantIssue");
     const cmd = p.locator("[data-cli-grants] [data-grant-command][data-fresh]"); await cmd.waitFor({ timeout: 10000 });
     const line = await cmd.textContent(), id = await cmd.getAttribute("data-grant-command");
+    ok((await p.inputValue("#grantName")) === "", `${key}: the name field is empty again after issuing`);
     const file = join(data, "grants", id), token = readFileSync(file, "utf8").trim();
     // the dialog shows the name, reach and expiry, and one line to test it with the CLI; no per-client snippet
     const cliFile = join(process.env.CREW_STUDIO_HOME, "grants", `${name}.json`);

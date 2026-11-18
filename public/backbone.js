@@ -173,7 +173,7 @@ function cliGrants() {
     const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: !ok || null, onclick: async () => { issue.disabled = true;
       const body = { scopes: [...pick.scopes], ttl: ttl.value, ...(pick.name ? { name: pick.name } : {}), ...(needsProject() || (mayPickProject() && project.value) ? { project: project.value } : {}),
         ...(pick.scopes.has("observe") ? { observe: { preset: pick.preset, untrusted: pick.untrusted, ...(pick.preset === "custom" ? { kinds: [...pick.kinds] } : {}) } } : {}) };
-      try { fresh = (await req("/api/cli-grants", body)).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
+      try { fresh = (await req("/api/cli-grants", body)).grant.id; pick.name = ""; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
     const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
     box.replaceChildren(
       h("h2", { style: "margin:0;font-size:16px" }, T("External CLI grants", "外部 CLI 授權")),
