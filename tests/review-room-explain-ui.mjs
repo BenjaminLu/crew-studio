@@ -83,7 +83,77 @@ const ASK_OFFER = { ...OFFER, kind: "ask", hash: "c0ffee0000000002" };
 const SL = (x) => ({ args: "", limit: null, limits: { cpuS: 300, fileMB: 60, wallS: 600, diskMB: 120 }, exit: null, signal: null, ms: 0, hosts: [], refused: [], refusal: null, stderr: "", ...x });
 const run = (n, kind, status, extra = {}) => ({ n, kind, skill: { id: "walkthrough", v: 1, name: "walkthrough", sha256: "x" }, status, by: "captain", at: new Date(Date.now() - 4 * 60_000).toISOString(), ended: status === "running" ? null : new Date().toISOString(), provider: "claude", model: "claude-opus-5", effort: null, confirm: "c", limitMin: 120, rounds: [{ n: 1, job: "J1" }], cost: { usd: 0.42 }, error: null, progress: [], from: null, version: null, ...extra });
 
+/** the version menu on the output's line: opened when it is not, then a version picked from it */
+const openVersions = async (pg) => { if (!(await pg.$("[data-explain-vermenu]"))) { await pg.click("[data-explain-versions]"); await pg.waitForSelector("[data-explain-vermenu]"); } };
+const pickVersion = async (pg, n) => { await openVersions(pg); await pg.click(`[data-explain-version="${n}"]`); };
+/** Generate again: the stage's own button while nothing is made yet, else the one in the version menu */
+const again = async (pg) => { if (!(await pg.$("[data-explain-empty] [data-explain-again]"))) await openVersions(pg); await pg.click("[data-explain-again]"); };
+const versionsLoaded = (pg, n) => pg.waitForFunction((k) => document.querySelector("[data-explain-versions] .rx-vercount")?.textContent === String(k), n, { timeout: 15000 });
+
 try {
+  // ---------- the output's line: no column left of the output; the board / output switch and the version menu, by mouse and keys ----------
+  { const c9 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await c9.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await c9.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const html = versions.filter((v) => v.kind === "html" && v.n !== 4);
+    let W = { skills: [], log: [], settings: { limitMin: 120 }, busy: false, selected: { id: "walkthrough", v: 1 }, versions: html, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1 })] }; const sel = [];
+    await c9.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await c9.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await c9.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: W }));
+    await c9.route(new RegExp(`/api/review-room/${ID}/explain/select$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); sel.push(b.skill); W = { ...W, selected: b.skill ? { id: b.skill, v: 1 } : null }; r.fulfill({ json: W }); });
+    const w = await c9.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector('[data-explain-frame="2"]', { timeout: 15000 }); await w.waitForTimeout(200);
+    const geo = await w.evaluate(() => { const r = (s) => document.querySelector(s)?.getBoundingClientRect(), body = r(".rx-body"), stage = r(".rx-body > .rx-stage"), chat = r(".rx-body > .rx-chat"), slot = r(".rx-slot");
+      const left = [...document.querySelector(".rx-body").children].filter((e) => e.getClientRects().length && e.getBoundingClientRect().right <= stage.left + 1 && e.getBoundingClientRect().width > 0).map((e) => e.className);
+      return { left, stageGap: Math.round(stage.left - body.left), stageW: Math.round(stage.width), free: Math.round(chat.left - body.left), slotW: Math.round(slot.width), line: Math.round(r("[data-x-line]")?.height ?? 999) }; });
+    ok(!geo.left.length && geo.stageGap <= 2 && geo.stageW >= geo.free - 2 && geo.slotW >= geo.stageW - 2 && geo.line <= 44,
+      "1440: nothing sits left of the output (no rail): the output takes the whole width beside the chat, its line one row high", JSON.stringify(geo));
+    const line = await w.evaluate(() => ({ sw: document.querySelector("[data-explain-switch]")?.dataset.explainSwitch, pressed: document.querySelector("[data-explain-output]")?.getAttribute("aria-pressed"), btn: document.querySelector("[data-explain-versions]")?.textContent, exp: document.querySelector("[data-explain-versions]")?.getAttribute("aria-expanded") }));
+    ok(line.sw === "output" && line.pressed === "true" && /walkthrough v2/.test(line.btn) && /2/.test(line.btn) && line.exp === "false", "the output's line: Board | Output (Output pressed) and the version menu's button naming the shown version and the count", JSON.stringify(line));
+    // the version menu by keyboard: Enter opens it on the shown version, ↓ moves, Enter shows that one and gives the focus back
+    await w.focus("[data-explain-versions]"); await w.keyboard.press("Enter"); await w.waitForSelector("[data-explain-vermenu]"); await w.waitForTimeout(80);
+    ok(await w.evaluate(() => document.activeElement?.dataset.explainVersion === "2" && document.activeElement.getAttribute("aria-current") === "true" && document.querySelector("[data-explain-versions]").getAttribute("aria-expanded") === "true"), "Enter opens the menu with the focus on the shown version (aria-current)", await w.evaluate(() => document.activeElement?.outerHTML.slice(0, 90)));
+    const mb = await w.evaluate(() => { const m = document.querySelector("[data-explain-vermenu]").getBoundingClientRect(), at = document.elementFromPoint(m.left + 20, m.top + 40); return { over: !!at?.closest("[data-explain-vermenu]"), inView: m.right <= innerWidth && m.bottom <= innerHeight }; });
+    ok(mb.over && mb.inView, "the menu draws over the output's frame, inside the window", JSON.stringify(mb));
+    await w.keyboard.press("ArrowDown"); ok(await w.evaluate(() => document.activeElement?.dataset.explainVersion === "1"), "↓ moves to the next version");
+    await w.keyboard.press("Enter"); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(100);
+    ok(!(await w.$("[data-explain-vermenu]")) && /walkthrough v1/.test(await w.$eval("[data-explain-versions]", (e) => e.textContent)) && (await w.evaluate(() => document.activeElement?.hasAttribute("data-explain-versions"))), "Enter shows that version, closes the menu and gives the focus back to its button");
+    await w.keyboard.press("Enter"); await w.waitForFunction(() => !!document.activeElement?.closest("[data-explain-vermenu]")); await w.keyboard.press("Escape"); await w.waitForTimeout(80);
+    ok(!(await w.$("[data-explain-vermenu]")) && (await w.evaluate(() => document.activeElement?.hasAttribute("data-explain-versions"))), "Esc closes the menu, the focus back on its button");
+    await w.click("[data-explain-versions]"); await w.waitForSelector("[data-explain-vermenu]"); await w.mouse.click(700, 600); await w.waitForTimeout(80);
+    ok(!(await w.$("[data-explain-vermenu]")) && (await w.$eval("[data-explain-versions]", (e) => e.getAttribute("aria-expanded"))) === "false", "a click elsewhere (over the output's frame too) closes the menu");
+    await w.focus("[data-explain-versions]"); await w.keyboard.press("Enter"); await w.waitForFunction(() => !!document.activeElement?.closest("[data-explain-vermenu]")); await w.keyboard.press("End"); await w.keyboard.press("Tab"); await w.waitForTimeout(80);
+    ok(!(await w.$("[data-explain-vermenu]")) && (await w.evaluate(() => document.activeElement && document.activeElement !== document.body)), "Tab out of the menu closes it; the focus goes on, never lost", await w.evaluate(() => document.activeElement?.outerHTML.slice(0, 80)));
+    // the switch by keyboard: Board, then from the board's own tools back to the output
+    await w.focus("[data-explain-tutor]"); await w.keyboard.press("Enter"); await w.waitForSelector("[data-board]"); await w.waitForTimeout(150);
+    const onBoard = await w.evaluate(() => ({ sw: document.querySelector("[data-board] .rb-tools [data-explain-switch]")?.dataset.explainSwitch, pressed: document.querySelector("[data-board] [data-explain-tutor]")?.getAttribute("aria-pressed"), focus: document.activeElement?.hasAttribute("data-explain-tutor"), layer: document.querySelector("[data-x-layer]")?.hidden }));
+    ok(sel.at(-1) === null && onBoard.sw === "board" && onBoard.pressed === "true" && onBoard.focus && onBoard.layer !== false, "Board (Enter): the board, its tools start with the same switch (Board pressed, the focus kept on it); the output's layer is gone", JSON.stringify({ sel, onBoard }));
+    await w.keyboard.press("Tab"); ok(await w.evaluate(() => document.activeElement?.hasAttribute("data-explain-output")), "Tab reaches Output");
+    await w.keyboard.press("Enter"); await w.waitForSelector("[data-explain-frame]"); await w.waitForTimeout(150);
+    ok(sel.at(-1) === "walkthrough" && (await w.$eval("[data-explain-switch]", (e) => e.dataset.explainSwitch)) === "output", "Output (Enter) brings the skill's output back, free (no confirmation)", JSON.stringify(sel));
+    await w.click("[data-explain-tutor]"); await w.waitForSelector("[data-board]"); await w.click("[data-board] [data-explain-output]"); await w.waitForSelector("[data-explain-frame]");
+    ok(sel.slice(-2).join(",") === ",walkthrough", "and by mouse, both ways", JSON.stringify(sel));
+    // a run in progress polls the room every 2.5 s and redraws the line: the open menu keeps the focus where it was
+    W = { ...W, running: 9, runs: [...W.runs, run(9, "ask", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForTimeout(300);
+    await w.focus("[data-explain-versions]"); await w.keyboard.press("Enter"); await w.waitForFunction(() => !!document.activeElement?.closest("[data-explain-vermenu]"));
+    const was = await w.evaluate(() => document.activeElement?.dataset.explainVersion);
+    await w.waitForTimeout(3200);
+    const polled = await w.evaluate(() => ({ v: document.activeElement?.dataset.explainVersion, inMenu: !!document.activeElement?.closest("[data-explain-vermenu]"), exp: document.querySelector("[data-explain-versions]")?.getAttribute("aria-expanded") }));
+    await w.keyboard.press("ArrowDown"); const moved = await w.evaluate(() => !!document.activeElement?.closest("[data-explain-vermenu]") && document.activeElement.dataset.explainVersion);
+    ok(polled.inMenu && polled.v === was && polled.exp === "true" && moved && moved !== was, "during a run, a poll that redraws the open menu keeps the focus on the same version; ↓ still moves in the menu", JSON.stringify({ was, polled, moved }));
+    await w.keyboard.press("Escape"); W = { ...W, running: null, runs: W.runs.slice(0, -1) }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForTimeout(300);
+    await w.screenshot({ path: join(shots, "15-line-1440.png") });
+    // a phone's width: the line stays usable, nothing scrolls sideways, the menu fits the screen
+    await w.setViewportSize({ width: 390, height: 844 }); await w.waitForTimeout(200);
+    await w.click("[data-explain-versions]"); await w.waitForSelector("[data-explain-vermenu]"); await w.waitForTimeout(80);
+    const ph = await w.evaluate(() => { const b = (s) => document.querySelector(s).getBoundingClientRect(), m = b("[data-explain-vermenu]"), sw = b("[data-explain-switch]"), vb = b("[data-explain-versions]");
+      return { over: document.documentElement.scrollWidth > innerWidth + 1, menu: m.left >= 0 && m.right <= innerWidth, sw: sw.width > 60 && sw.right <= innerWidth, vb: vb.width > 60 && vb.right <= innerWidth }; });
+    ok(!ph.over && ph.menu && ph.sw && ph.vb, "390: the switch and the version menu fit the screen; no sideways scroll", JSON.stringify(ph));
+    await w.screenshot({ path: join(shots, "15-line-390.png") });
+    await c9.close();
+  }
+
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await ctx.addInitScript(() => { try { if (!sessionStorage.getItem("keep-lang")) localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
     // no speech in this test (the room's voice controls read the voices; headless Chromium has none)
@@ -158,8 +228,8 @@ try {
   ok(posts.at(-1)[0] === "generate" && posts.at(-1)[1].skill === "walkthrough" && posts.at(-1)[1].confirm === OFFER.hash, "Confirm and start sends the skill and the exact confirmation", JSON.stringify(posts.at(-1)));
   const prog = await p.$eval("[data-explain-progress]", (e) => e.textContent);
   const steps = await p.$$eval("[data-explain-steps] > li", (es) => es.map((e) => e.className));
-  ok(/walkthrough is making the explanation/.test(prog) && /drawing the rounding figure/.test(prog) && /Studio tells you when it is done/.test(prog) && /of the 120 min safety limit/.test(prog) && !!(await p.$("[data-explain-generating]")) && !!(await p.$('[data-explain-progress] [role="progressbar"]')) && steps.join(",") === "done,now,todo,todo",
-    "the run shows live progress: done, current and upcoming steps, a bar of the time used, in the stage and in the rail", prog);
+  ok(/walkthrough is making the explanation/.test(prog) && /drawing the rounding figure/.test(prog) && /Studio tells you when it is done/.test(prog) && /of the 120 min safety limit/.test(prog) && /walkthrough · generating…/.test(await p.$eval("[data-explain-versions]", (e) => e.textContent)) && !!(await p.$('[data-explain-progress] [role="progressbar"]')) && steps.join(",") === "done,now,todo,todo",
+    "the run shows live progress: done, current and upcoming steps, a bar of the time used, in the stage and on the version menu's button", prog);
   const callRows = () => p.$$eval("[data-explain-progress] li.rx-callrow", (es) => es.map((e) => ({ mark: e.querySelector(".d").textContent, cls: e.className, sum: e.querySelector("summary").textContent })));
   let cr = await callRows();
   ok(cr.length === 6 && cr[5].mark === "⚠" && /wait\.sh — hit the time limit \(5 s\)/.test(cr[5].sum), "a time limit names the call's own wall clock (its timeout_s), not the configured one", JSON.stringify(cr[5]));
@@ -255,10 +325,12 @@ try {
   ok(ans.cites.join("|") === "src/percent.ts:L3|commit:abc1234" && /output is now v2: added a note on halves/.test(ans.upd) && /onerror/.test(ans.text) && !ans.img && !(await p.evaluate(() => window.__pwned)), "the answer shows its citations and says the output is now v2; the model's text stays text", JSON.stringify(ans));
   ok(/▭ Step 1 · rounding/.test(await p.$eval('[data-explain-q-run="3"]', (e) => e.textContent)), "the question in the chat shows what was boxed");
   await p.waitForSelector('[data-explain-frame="2"]', { timeout: 5000 });
-  ok(await p.$$eval("[data-explain-version]", (es) => es.map((e) => e.dataset.explainVersion).join(",")) === "1,2" && (await p.$eval('[data-explain-version="2"]', (e) => e.classList.contains("on"))), "v2 is in the rail and shown");
+  await openVersions(p);
+  ok(await p.$$eval("[data-explain-version]", (es) => es.map((e) => e.dataset.explainVersion).join(",")) === "2,1" && (await p.$eval('[data-explain-version="2"]', (e) => e.classList.contains("on"))), "v2 is in the version menu (newest first) and shown");
+  await p.keyboard.press("Escape"); await p.waitForFunction(() => !document.querySelector("[data-explain-vermenu]"));
   await p.screenshot({ path: join(shots, "6-answer-v2.png") });
-  await p.click('[data-explain-version="1"]'); await p.waitForSelector('[data-explain-frame="1"]');
-  ok(await p.$eval('[data-explain-version="1"]', (e) => e.classList.contains("on")), "an older version is viewable again");
+  await pickVersion(p, 1); await p.waitForSelector('[data-explain-frame="1"]');
+  ok(/walkthrough v1/.test(await p.$eval("[data-explain-versions]", (e) => e.textContent)) && !(await p.$("[data-explain-vermenu]")), "an older version is viewable again; the menu's button names it and the menu closes");
   await p.focus("[data-explain-box]"); await p.keyboard.press("Enter"); await p.waitForSelector("[data-explain-overlay]"); await p.waitForTimeout(80);
   ok(await p.evaluate(() => document.activeElement?.hasAttribute("data-explain-overlay")), "the box mode takes the focus");
   await p.keyboard.press("Enter"); await p.waitForSelector('[data-explain-scope="region"]', { timeout: 5000 });
@@ -268,9 +340,9 @@ try {
 
   // ---------- a video output: pause at a frame and ask ----------
   X = { ...X, versions };
-  await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector('[data-explain-version="3"]');
+  await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await versionsLoaded(p, 4);
   onSelect = (r) => { const b = JSON.parse(r.request().postData() || "{}"); X = { ...X, selected: b.skill ? { id: b.skill, v: 1 } : null }; answer(r, X); };
-  await p.click('[data-explain-version="3"]'); await p.waitForSelector("[data-explain-video]"); await p.waitForSelector("[data-explain-pause]");
+  await pickVersion(p, 3); await p.waitForSelector("[data-explain-video]"); await p.waitForSelector("[data-explain-pause]");
   ok(posts.at(-1)[0] === "select" && posts.at(-1)[1].skill === "explainer-video" && (await p.$eval("[data-explain-picker]", (e) => e.dataset.explainPicker)) === "explainer-video" && (await p.$eval("[data-explain-skillname]", (e) => e.textContent)) === "explainer-video",
     "showing another skill's version switches the room to that skill: header and chat name it", JSON.stringify(posts.at(-1)));
   ok(/\/explain\/media\/3\/clip\.mp4$/.test(await p.$eval("[data-explain-video]", (e) => e.getAttribute("src"))), "a video is shown in Studio's own player");
@@ -322,7 +394,7 @@ try {
   const rbusy = await p.$eval("[data-explain-retry]", (e) => ({ disabled: e.disabled, title: e.title })).catch(() => null);
   ok(rbusy?.disabled === true && /Wait for the skill/.test(rbusy.title) && (await mine("Which frame is this?")).length === 1, "while the skill works, Retry is off and says why (the refused question stays, once)", JSON.stringify(rbusy));
   X = { ...X, running: null, runs: X.runs.slice(0, -1) }; await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector("[data-explain-retry]:not([disabled])", { timeout: 5000 }).catch(() => {});
-  await p.click('[data-explain-version="2"]'); await p.waitForSelector('[data-explain-frame="2"]', { timeout: 5000 });
+  await pickVersion(p, 2); await p.waitForSelector('[data-explain-frame="2"]', { timeout: 5000 });
   onAsk = (r) => answer(r, X); const nposts = posts.length;
   await p.click("[data-explain-retry]", { timeout: 2000 }).catch(() => {}); await p.waitForFunction((n) => !document.querySelector("[data-explain-pending]") , nposts, { timeout: 3000 }).catch(() => {});
   const rv = posts.slice(nposts).find(([op]) => op === "ask")?.[1];
@@ -330,7 +402,7 @@ try {
 
   // ---------- a page that tries to navigate itself out of Studio ----------
   onSelect = (r) => { const b = JSON.parse(r.request().postData() || "{}"); X = { ...X, selected: b.skill ? { id: b.skill, v: 1 } : null }; answer(r, X); };
-  await p.click('[data-explain-version="4"]'); await p.waitForSelector('[data-explain-frame="4"]'); await p.waitForTimeout(2000);
+  await pickVersion(p, 4); await p.waitForSelector('[data-explain-frame="4"]'); await p.waitForTimeout(2000);
   ok(!probeHits.length, "the output cannot carry anything out by navigating its frame: Studio's page refuses frames outside Studio", probeHits.join(","));
 
   // ---------- a run that ends while the captain is elsewhere: Studio says so ----------
@@ -347,6 +419,7 @@ try {
   await p.click("[data-explain-tutor]"); await p.waitForSelector("[data-board]"); await p.waitForTimeout(100);
   ok(posts.at(-1)[0] === "select" && posts.at(-1)[1].skill === null && (await p.$eval("[data-explain-picker]", (e) => e.dataset.explainPicker)) === "tutor" && (await p.$eval("[data-x-layer]", (e) => e.hidden)), "picking the tutor again brings the board back; the output's layer is gone");
   await ctx.close();
+
 
   // ---------- zh-TW at 390 on a paired phone: the reason in Chinese; the phone reads only ----------
   { const c2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -475,10 +548,12 @@ try {
     let Y = { ...X, selected: { id: "walkthrough", v: 1 }, versions: withMade, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })] };
     const c5 = await browser.newContext({ viewport: { width: 1440, height: 900 } }); await routes(c5, () => Y);
     const w = await c5.newPage(); w.on("pageerror", (e) => errors.push(e.message));
-    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector('[data-explain-version="4"]', { timeout: 15000 });
-    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]');
+    await w.goto(`${base}/#/room/${ID}`); await versionsLoaded(w, 4);
+    await pickVersion(w, 1); await w.waitForSelector('[data-explain-frame="1"]');
+    await openVersions(w);
     const railMade = await w.$$eval("[data-explain-verprompt]", (es) => Object.fromEntries(es.map((e) => [e.dataset.explainVerprompt, e.textContent])));
-    ok(/^✎ Include an error-code table/.test(railMade[1]) && /^\? Why round here\?/.test(railMade[2]) && /the skill's default/.test(railMade[4]) && !railMade[3], "the rail says what each version was made from: the instructions, a follow-up's question, the skill's default", JSON.stringify(railMade));
+    ok(/^✎ Include an error-code table/.test(railMade[1]) && /^\? Why round here\?/.test(railMade[2]) && /the skill's default/.test(railMade[4]) && !railMade[3], "the version menu says what each version was made from: the instructions, a follow-up's question, the skill's default", JSON.stringify(railMade));
+    await w.keyboard.press("Escape");
     const head = await w.$eval("[data-explain-made]", (e) => ({ kind: e.dataset.explainMade, open: e.open, text: e.querySelector("summary").textContent }));
     ok(head.kind === "prompt" && !head.open && /Made with your instructions: Include an error-code table/.test(head.text), "the version view names the instructions it was made with, folded", JSON.stringify(head));
     await w.click("[data-explain-made] > summary");
@@ -531,7 +606,7 @@ try {
     ok(gens.at(-1)?.prompt === "" && gens.at(-1).confirm === OFFER.hash, "cleared, the run is the skill's default (an empty prompt, its own confirmation)", JSON.stringify(gens.at(-1)));
     // a confirmation for one text does not start another: Studio asks again with the new offer
     Y = { ...Y, versions: withMade, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })], running: null }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector('[data-explain-frame="4"],[data-explain-frame="1"]');
-    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]');
+    await pickVersion(w, 1); await w.waitForSelector('[data-explain-frame="1"]');
 
     // ---------- full screen: native on the layer (the frame is not reloaded); Esc / ✕ brings the room back where it was ----------
     await w.setViewportSize({ width: 900, height: 700 }); await w.waitForTimeout(150);
@@ -574,10 +649,10 @@ try {
     ok(/Step 1 · rounding/.test(await w.$eval("[data-x-scope]", (e) => e.textContent)), "after full screen, boxing a region still reads what lies there");
     // a video: its own player's native full screen
     await w.click("[data-explain-clear]");
-    failSelect = true; await w.click('[data-explain-version="3"]'); await w.waitForSelector("[data-explain-error]", { timeout: 5000 }); failSelect = false;
-    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(150);
+    failSelect = true; await pickVersion(w, 3); await w.waitForSelector("[data-explain-error]", { timeout: 5000 }); failSelect = false;
+    await pickVersion(w, 1); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(150);
     ok(!(await w.$("[data-explain-error]")), "an error from showing one version is gone once another version is shown");
-    await w.click('[data-explain-version="3"]'); await w.waitForSelector("[data-explain-video]");
+    await pickVersion(w, 3); await w.waitForSelector("[data-explain-video]");
     await w.click("[data-explain-full]"); await w.waitForFunction(() => !!window.crewRoomExplain.full() && !!document.fullscreenElement, null, { timeout: 5000 });
     ok(await w.evaluate(() => document.fullscreenElement?.tagName === "VIDEO" && document.fullscreenElement.hasAttribute("data-explain-video")), "a video goes full screen in its own player", await w.evaluate(() => document.fullscreenElement?.tagName));
     ok(!(await w.$("[data-explain-newtab]")), "a video has no Open in new tab (Studio's own player shows it)");
@@ -585,7 +660,7 @@ try {
 
     // ---------- Open in new tab: a fresh capability, Studio's page framing the version exactly as here ----------
     await w.setViewportSize({ width: 1440, height: 900 });
-    await w.click('[data-explain-version="1"]'); await w.waitForSelector('[data-explain-frame="1"]');
+    await pickVersion(w, 1); await w.waitForSelector('[data-explain-frame="1"]');
     const roomSrc = await w.$eval('[data-explain-frame="1"]', (e) => e.getAttribute("src"));
     const [tab] = await Promise.all([c5.waitForEvent("page"), w.click("[data-explain-newtab]")]);
     await tab.waitForLoadState("load");
@@ -598,7 +673,7 @@ try {
     ok(/origin:null/.test(tprobe) && /parent:blocked/.test(tprobe) && /fetch:blocked/.test(tprobe) && /abs:blocked/.test(tprobe) && /storage:zh/.test(tprobe) && /^sandbox allow-scripts; default-src 'none'/.test(innerCsp) && /connect-src 'none'/.test(innerCsp),
       "in the new tab the page is still an opaque origin with no network, under the same output CSP", JSON.stringify({ tprobe, innerCsp }));
     await tab.setViewportSize({ width: 1440, height: 900 }); await tab.screenshot({ path: join(shots, "13-new-tab.png") }); await tab.close();
-    await w.click('[data-explain-version="4"]'); await w.waitForSelector('[data-explain-frame="4"]');
+    await pickVersion(w, 4); await w.waitForSelector('[data-explain-frame="4"]');
     const hits0 = probeHits.length, [tab4] = await Promise.all([c5.waitForEvent("page"), w.click("[data-explain-newtab]")]); await tab4.waitForLoadState("load"); await tab4.waitForTimeout(2000);
     ok(probeHits.length === hits0, "a page that navigates its frame away carries nothing out of the new tab either", probeHits.join(",")); await tab4.close();
     await c5.close();
@@ -637,7 +712,7 @@ try {
       const Z = { ...X, selected: { id: "walkthrough", v: 1 }, versions: withMade, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })] };
       await routes(c6, () => Z);
       const q = await c6.newPage(); q.on("pageerror", (e) => errors.push(e.message));
-      await q.goto(`${base}/#/room/${ID}`); await q.waitForSelector('[data-explain-version="1"]', { timeout: 15000 }); await q.click('[data-explain-version="1"]'); await q.waitForSelector('[data-explain-frame="1"]');
+      await q.goto(`${base}/#/room/${ID}`); await q.waitForSelector("[data-explain-versions]", { timeout: 15000 }); await pickVersion(q, 1); await q.waitForSelector('[data-explain-frame="1"]');
       await q.click("[data-explain-made] > summary"); await q.waitForTimeout(150);
       const tag = `${width}-${scheme}-${lang}`;
       const m1 = await q.evaluate(() => ({ over: document.documentElement.scrollWidth > innerWidth + 1, full: (() => { const b = document.querySelector("[data-explain-full]"); b?.scrollIntoView({ block: "center" }); const r = b?.getBoundingClientRect(); return !!r && r.width > 0 && r.right <= innerWidth + 1; })(), head: document.querySelector("[data-explain-made] summary")?.textContent || "" }));
@@ -821,8 +896,8 @@ try {
       Y = { ...Y, selected: { id: "walkthrough", v: 1 }, running: 2, runs: [...Y.runs, run(2, "generate", "running", { rounds: [], cost: null })] }; r.fulfill({ json: Y }); });
     const w = await c7.newPage(); w.on("pageerror", (e) => errors.push(e.message));
     const push = () => w.evaluate((id) => { for (const t of ["review-explain", "review-room"]) LIVE.es.dispatchEvent(new MessageEvent(t, { data: JSON.stringify({ card: id }) })); }, ID);
-    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector(from === "tutor" ? "[data-explain-picker]" : "[data-explain-again]", { timeout: 15000 });
-    if (from === "tutor") { await w.click("[data-explain-open]"); await w.click('[data-explain-skill="walkthrough"]'); } else await w.click("[data-explain-again]");
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector(from === "tutor" ? "[data-explain-picker]" : "[data-explain-again], [data-explain-versions]", { timeout: 15000 });
+    if (from === "tutor") { await w.click("[data-explain-open]"); await w.click('[data-explain-skill="walkthrough"]'); } else await again(w);
     await w.waitForSelector("[data-explain-start]:not([disabled])");
     await w.click("[data-explain-start]"); for (let i = 0; i < 60 && !release; i++) await w.waitForTimeout(50);
     await push(); await w.waitForTimeout(300); await w.keyboard.press("Escape"); await w.waitForTimeout(150);
@@ -862,18 +937,18 @@ try {
     await c8.route(new RegExp(`/api/review-room/${ID}/explain/generate$`), async (r) => { await new Promise((go) => (releaseGen = go)); r.fulfill(REFUSAL); });
     await c8.route(/\/api\/review-room\/explain\/settings$/, async (r) => { if (r.request().method() !== "POST") return r.continue(); await new Promise((go) => (releaseLimit = go)); r.fulfill({ json: { limitMin: 90 } }); });
     const w = await c8.newPage(); w.on("pageerror", (e) => errors.push(e.message));
-    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-again]", { timeout: 15000 });
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-again], [data-explain-versions]", { timeout: 15000 });
     // the safety limit changed, then Cancel before Studio saved it: the dialog does not come back with the new limit
-    await w.click("[data-explain-again]"); await w.waitForSelector("[data-explain-start]:not([disabled])");
+    await again(w); await w.waitForSelector("[data-explain-start]:not([disabled])");
     await w.fill("[data-explain-limit]", "90"); await w.press("[data-explain-limit]", "Tab"); for (let i = 0; i < 60 && !releaseLimit; i++) await w.waitForTimeout(50);
     await w.click(".rx-modal .rx-foot .btn:not(.primary)"); await w.waitForTimeout(150); releaseLimit?.(); await w.waitForTimeout(600);
     ok(!!releaseLimit && !(await w.$("[data-explain-confirm]")), "the limit saved after the dialog was cancelled: it stays closed");
     await w.keyboard.press("Escape"); await w.waitForTimeout(150); // whatever came back, out of the way
     // the captain left the room while the run was being started, and came back; then the server refused it
-    await w.click("[data-explain-again]"); await w.waitForSelector("[data-explain-start]:not([disabled])"); await w.click("[data-explain-start]");
+    await again(w); await w.waitForSelector("[data-explain-start]:not([disabled])"); await w.click("[data-explain-start]");
     for (let i = 0; i < 60 && !releaseGen; i++) await w.waitForTimeout(50);
     await w.evaluate(() => { location.hash = "#/board"; }); await w.waitForTimeout(400);
-    await w.evaluate((id) => { location.hash = `#/room/${id}`; }, ID); await w.waitForSelector("[data-explain-again]", { timeout: 10000 }); await w.waitForTimeout(400);
+    await w.evaluate((id) => { location.hash = `#/room/${id}`; }, ID); await w.waitForSelector("[data-explain-again], [data-explain-versions]", { timeout: 10000 }); await w.waitForTimeout(400);
     releaseGen(); await w.waitForTimeout(600);
     const left = await w.evaluate(() => ({ open: !!document.querySelector("[data-explain-confirm]"), err: document.querySelector("[data-explain-error]")?.textContent || "" }));
     ok(!left.open && /not signed in/.test(left.err), "a run refused after the captain left its dialog: no dialog comes back; the room says why", JSON.stringify(left));
