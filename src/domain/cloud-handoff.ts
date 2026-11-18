@@ -215,6 +215,14 @@ export function sessionUrlOff(repo: string, commit: string): boolean {
   try { return JSON.parse(r.out)?.attribution?.sessionUrl === false; } catch { return false; }
 }
 
+/** The completion condition's test command as the repository declares it: a package.json test script as written, a
+ *  .crew/gates.json argv shell-quoted; never Studio's own sandbox wrapper around it (the cloud agent runs it in its shell). */
+export function declaredTestCommands(c: { test: string[] | null; testSource: string | null }): string[] {
+  if (!c.test?.length) return [];
+  const pkg = "package.json scripts.test: "; if (c.testSource?.startsWith(pkg)) return [c.testSource.slice(pkg.length)];
+  return [c.test.map((a) => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`).join(" ")];
+}
+
 // ---------- the external wait ----------
 export type HandoffWait = { version: 1; handler: typeof HANDOFF_HANDLER; grant: string; repository: string; branch: string; baseHead: string; baseCommit: string;
   attempt: number; sessionId: string; sessionUrl: string; firedAt: number; branches: Record<string, string> };

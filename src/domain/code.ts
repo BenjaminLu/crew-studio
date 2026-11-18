@@ -46,7 +46,7 @@ import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
 import { unverifiedClaim } from "./report-verification";
 import { installReviewRoom } from "./review-room";
-import { installCloudHandoff } from "./cloud-handoff";
+import { installCloudHandoff, declaredTestCommands } from "./cloud-handoff";
 import type { WebBackend } from "../review-web";
 
 export { git, must };
@@ -373,7 +373,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const shellOk = (x: X) => { if (!x.ctx.worktree || !existsSync(x.ctx.worktree)) throw new Error("the run's worktree is gone"); return x.ctx.worktree as string; };
   // a running build round handed to a cloud agent and taken back (src/domain/cloud-handoff.ts)
   installCloudHandoff(engine, { dataDir: o.dataDir, adapterOf: selectedAdapter, poller: o.poller, provider: o.cloudProvider, intervalMs: o.cloudIntervalMs,
-    testCommands: (x) => { try { const c = cfgOf(x); return c.test?.length ? [c.test.join(" ")] : []; } catch { return []; } },
+    // the command as the repository declares it (a package.json script as written, a .crew/gates.json argv shell-quoted),
+    // never Studio's own wrapper around it: the cloud agent runs it in its own shell
+    testCommands: (x) => { try { return declaredTestCommands(cfgOf(x)); } catch { return []; } },
     acceptCloudHead: async (x, a, from, to) => {
       if (!x.ctx.wt) throw new Error("the Task has no worktree");
       const key = wkey(x), round = await W.startRound(key.project, key.task, `${x.run.id}/cloud-take-back#${x.visit}`, { write: true, skipInstall: true, remote: () => a.remoteGit() });

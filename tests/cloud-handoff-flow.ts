@@ -76,6 +76,7 @@ try {
   ok(/instruction, not something the provider enforces/.test(c.instruction.en) && /不會強制/.test(c.instruction.zh) && /cannot|no way to estimate/i.test(c.quota.en) && !!c.sessionUrlWarning && c.after[0] === "Review request",
     "the confirm view: the branch, the honest instruction wording, no cost estimate, the sessionUrl warning, what Studio runs after", JSON.stringify(c).slice(0, 400));
   ok(c.prompt.includes(`Push your commits to ${c.branch} only`) && c.tests.every((t: string) => c.prompt.includes(t)) && c.doneLines.every((d: string) => c.prompt.includes(d)) && c.tests.length > 0, "the prompt names the branch, the test commands and the done lines the confirm view shows (acceptance 8)", JSON.stringify(c.tests));
+  ok(JSON.stringify(c.tests) === '["bun scripts/test-shard.ts"]', "the test command is the one the repository declares (.crew/gates.json), not Studio's sandbox wrapper", JSON.stringify(c.tests));
 
   // ---------- a 429: one fire, no retry, Retry-After shown (acceptance 2) ----------
   fire.set({ status: 429, retryAfter: "120" });
