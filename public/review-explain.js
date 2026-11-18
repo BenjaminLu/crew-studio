@@ -2,8 +2,9 @@
 // captain's own skills instead of the built-in tutor's board. The header's picker chooses; a skill's run is paid and confirmed
 // (the model, who pays, the cost so far and an estimate, the materials, the expected time, the safety limit, the isolation); it
 // runs in the background with live progress and a Stop, and Studio says when it ends; every generation and every follow-up that
-// changes the output is a version in the left rail; the chat on the right asks follow-ups, about the whole output, a region boxed
-// on it, or a paused video frame (a question asked while the first output is still being made waits for it).
+// changes the output is a version in the menu on the output's one-line bar (no column of its own); the chat on the right asks
+// follow-ups, about the whole output, a region boxed on it, or a paused video frame (a question asked while the first output is
+// still being made waits for it).
 // An output page lives in a sandboxed iframe (allow-scripts only: an opaque origin) on a page Studio serves with a CSP that allows
 // no network. The frame sits in a layer of its own over the stage, so a redraw of the room never reloads it; its helper answers
 // "what lies in this rectangle" through postMessage, and only the frame Studio made is listened to. Model text only ever goes
@@ -13,7 +14,7 @@
 // and opens in a tab of its own (a fresh capability, framed exactly as here).
 (() => {
 const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), sel: new Map(), draft: new Map(), caps: new Map(),
-  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set() };
+  posting: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null };
 const enc = encodeURIComponent;
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -30,7 +31,7 @@ const hhmm = (t) => String(t || "").slice(11, 16);
 const ts = (s) => { const t = Math.max(0, Math.floor(s || 0)); return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; };
 const skillName = (st, sid) => st?.skills?.find((s) => s.id === sid)?.name || sid;
 const latest = (st) => st?.versions?.at(-1) || null;
-/** the version shown: the one picked in the rail, else the newest of the selected skill, else the newest */
+/** the version shown: the one picked in the version menu, else the newest of the selected skill, else the newest */
 const shownVersion = (id) => { const st = state(id); if (!st) return null; const n = X.shown.get(id), sid = st.selected?.id;
   return st.versions.find((v) => v.n === n) || [...st.versions].reverse().find((v) => v.skill.id === sid) || latest(st); };
 /** the skill the room is explained with now: the shown version's (what a follow-up runs), else the selected one */
@@ -72,14 +73,17 @@ function flushQueue(id) { const q = X.queue.get(id), st = state(id); if (!q || !
 window.liveListen?.("review-explain", (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} if (!d.card || !X.st.has(d.card)) return;
   // on the room, or a run it knew of still going elsewhere: read it (so its end is told even off the room)
   if (onRoom(d.card) || state(d.card)?.running != null) load(d.card); });
-/** a redraw of only the explainer's parts when they are on the page (the rail, the stage, the chat's messages, the ask box's
+/** a redraw of only the explainer's parts when they are on the page (the output's line, the stage, the chat's messages, the ask box's
  *  state); the output's frame (in its layer) and the question being written stay as they are */
 function refresh(id) {
   if (!onRoom(id)) return; const el = document.querySelector(`[data-explain-room="${CSS.escape(id)}"]`);
   const r = window.crewReviewRoomData?.(id);
   if (!el || !r || !active(id)) { render(); return; }
   const st = state(id); tickStart();
-  for (const [sel, make] of [["[data-x-rail]", () => rail(r, st)], ["[data-x-stage]", () => stage(r, st)], ["[data-x-msgs]", () => msgs(r, st)], ["[data-x-scope]", () => scope(r, st)], ["[data-x-askrow]", () => askRow(r, st)]]) { const old = el.querySelector(sel); if (old) old.replaceWith(make()); }
+  // a poll redraws the output's line, the open version menu with it: the control that had the focus there gets it back
+  const kept = focusIn(el.querySelector("[data-x-line]"));
+  for (const [sel, make] of [["[data-x-line]", () => bar(r, st)], ["[data-x-stage]", () => stage(r, st)], ["[data-x-msgs]", () => msgs(r, st)], ["[data-x-scope]", () => scope(r, st)], ["[data-x-askrow]", () => askRow(r, st)]]) { const old = el.querySelector(sel); if (old) old.replaceWith(make()); }
+  if (kept) { const back = el.querySelector(kept); if (back) back.focus({ preventScroll: true }); else if (kept.includes("data-explain-version=")) el.querySelector("[data-explain-versions]")?.focus({ preventScroll: true }); }
   syncAsk(r, st);
   const pk = document.querySelector("[data-explain-picker]"); if (pk) pk.replaceWith(picker(r));
   focusLater();
@@ -365,13 +369,13 @@ function promptField(c, o) {
 }
 /** the picker's menu and the paid run's confirmation, over whichever way the room is shown */
 const dialogs = (r) => { if (X.pick || X.confirm) focusLater(); return [pickerDialog(r), confirmDialog(r)]; };
-// ---------- the room: versions on the left, the output in the middle, the chat on the right ----------
+// ---------- the room: the output under its line (the switch, the versions), the chat on the right ----------
 function view(r) {
   const id = r.card.id, st = state(id);
   if (!st) return h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"));
   // shown with its skill: a question that waited for this room's first output goes now (once; behind its confirmation)
   queueMicrotask(() => { tickStart(); syncAsk(r, st); flushQueue(id); });
-  return h("div", { class: "rx-body", "data-explain-room": id }, rail(r, st), h("main", { class: "rx-stage" }, stage(r, st)), window.crewRoomPane?.handle("explain") ?? null, chat(r, st), dialogs(r));
+  return h("div", { class: "rx-body", "data-explain-room": id }, h("main", { class: "rx-stage" }, bar(r, st), stage(r, st)), window.crewRoomPane?.handle("explain") ?? null, chat(r, st), dialogs(r));
 }
 /** show a version; one made by another skill switches the room to that skill (so the header, the chat and Generate agree) */
 async function showVersion(r, v) {
@@ -379,18 +383,58 @@ async function showVersion(r, v) {
   if (st.selected?.id !== v.skill.id) { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: v.skill.id })); } catch (e) { X.err.set(id, bi(e.message)); } }
   render();
 }
-function rail(r, st) {
+/** the focused control inside a part about to be redrawn, as a selector that finds its replacement */
+function focusIn(part) {
+  const a = document.activeElement; if (!part || !a || !part.contains(a)) return null;
+  if (a.dataset.explainVersion) return `[data-explain-version="${CSS.escape(a.dataset.explainVersion)}"]`;
+  if (a.matches("[data-explain-made] > summary")) return "[data-explain-made] > summary";
+  const k = ["explainVersions", "explainAgain", "explainTutor", "explainOutput", "explainReuse"].find((x) => x in a.dataset);
+  return k ? `[data-${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}]` : null;
+}
+/** the room's two ways, as one small switch: Studio tutor's board, or the skill's output */
+async function switchTo(id, sid) {
+  X.verMenu = null;
+  try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: sid })); if (sid === null) X.shown.delete(id); } catch (e) { X.err.set(id, bi(e.message)); }
+  render(); focusLater(sid === null ? "[data-explain-tutor]" : "[data-explain-output]");
+}
+function switcher(r) {
+  // on the board: only once there is an output to go back to (a skill with nothing made yet is a paid run, the picker's)
+  const id = r.card.id, st = state(id); if (!st || r.snapshot || (!active(id) && !st.versions.length)) return null;
+  const on = active(id), v = shownVersion(id);
+  return h("span", { class: "rb-seg rx-seg", role: "group", "aria-label": T("Show the board or the output", "顯示白板或產出頁"), "data-explain-switch": on ? "output" : "board" },
+    h("button", { type: "button", "data-explain-tutor": "", "aria-pressed": String(!on), title: T("Studio tutor's board", "Studio 導師的白板"), onclick: () => (on ? switchTo(id, null) : null) }, T("Board", "白板")),
+    h("button", { type: "button", "data-explain-output": "", "aria-pressed": String(on), title: v ? `${v.skill.name} v${v.n}` : "", onclick: () => (on ? null : switchTo(id, v.skill.id)) }, T("Output", "產出頁")));
+}
+/** the output's own line over the stage: the switch, the version menu (every version, a run in progress, Generate again) and
+ *  what the shown version was made from; one line, so the output has the room's whole width */
+function bar(r, st) {
+  const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate";
+  return h("div", { class: "rx-line", "data-x-line": "" },
+    switcher(r),
+    st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
+        title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
+      // a long skill name is cut, never the version, the count or "generating"
+      h("span", { class: "rx-vername" }, gen ? run.skill.name : cur ? cur.skill.name : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
+      h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
+    cur && !gen ? versionHead(r, st, cur) : h("span", { class: "rx-linefill" }),
+    // under the menu, a clear layer over the page (and the output's frame, which keeps its own clicks): a click there closes it
+    X.verMenu === id ? [h("div", { class: "rx-verscrim", "data-explain-verscrim": "", onpointerdown: (e) => { e.preventDefault(); closeVerMenu(); } }), verMenu(r, st)] : null);
+}
+function verMenu(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), sid = st.selected?.id;
-  return h("aside", { class: "rx-rail", "data-x-rail": "" },
+  const keys = (e) => { const items = [...e.currentTarget.querySelectorAll("button:not([disabled])")], i = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
+    else if (e.key === "Home" || e.key === "End") { e.preventDefault(); (e.key === "Home" ? items[0] : items.at(-1))?.focus(); } };
+  return h("div", { class: "rx-vermenu", id: "rx-vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
+      onfocusout: (e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && !e.relatedTarget.closest("[data-explain-versions]")) closeVerMenu(); } },
     h("h6", {}, T("Outputs", "產出")),
-    h("button", { type: "button", class: "rx-ver", "data-explain-tutor": "", onclick: async () => { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: null })); } catch (e) { X.err.set(id, bi(e.message)); } render(); } },
-      h("span", { class: "k" }, T("Tutor", "導師")), T("The board", "原本的白板"), h("small", {}, T("Studio's own", "Studio 內建"))),
-    st.versions.map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null, onclick: () => showVersion(r, v) },
+    run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, run.skill.name), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
+    [...st.versions].reverse().map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null,
+        onclick: () => { X.verMenu = null; showVersion(r, v); focusLater("[data-explain-versions]"); } },
       h("span", { class: "k" }, `${v.skill.name} v${v.n}`), v.summary || v.entry, h("small", {}, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
       madeFrom(v) ? h("small", { class: "rx-verprompt", "data-explain-verprompt": v.n, title: madeFrom(v).full }, madeFrom(v).short) : null)),
-    run && run.kind === "generate" ? h("div", { class: "rx-ver on", "data-explain-generating": "" }, h("span", { class: "k" }, run.skill.name), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
     // one Generate: here once an output exists; before that the stage has it
-    sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => openConfirm(r, sid, "generate", "[data-explain-again]", cur.skill.id === sid && typeof cur.prompt === "string" ? cur.prompt : undefined) }, T("Generate a new version", "重新產生一版")) : null,
+    sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => { X.verMenu = null; openConfirm(r, sid, "generate", "[data-explain-versions]", cur.skill.id === sid && typeof cur.prompt === "string" ? cur.prompt : undefined); } }, T("Generate a new version", "重新產生一版")) : null,
     h("p", { class: "faint rx-note" }, T("Every generation, and every follow-up that changes the output, is kept as a version: pick an older one to compare.", "每次產生、每次追問改了產出，都留一版；點舊版可以對照。")));
 }
 /** what a version was made from, in a line: a generation's instructions (or the skill's default), a follow-up's question */
@@ -405,7 +449,8 @@ function versionHead(r, st, v) {
   const m = madeFrom(v), sid = st.selected?.id, can = r.open && !readOnly() && !liveRun(st) && sid === v.skill.id;
   const key = `${r.card.id}/${v.n}`;
   return h("details", { class: "rx-vhead", "data-explain-made": m?.kind || "none", open: X.madeOpen.has(key) ? true : null, ontoggle: (e) => { if (e.target.open) X.madeOpen.add(key); else X.madeOpen.delete(key); } },
-    h("summary", {}, h("b", {}, `${v.skill.name} v${v.n}`), " · ",
+    // the version's name is on the menu's button beside it
+    h("summary", {},
       !m ? T("made before instructions were kept", "這版沒有留下指示")
       : m.kind === "prompt" ? [T("Made with your instructions: ", "依你的指示產生："), h("span", { class: "rx-vprompt" }, m.short.replace(/^✎ /, ""))]
       : m.kind === "default" ? T("Made with the skill's default (no instructions)", "照 skill 預設產生（沒有額外指示）")
@@ -428,7 +473,6 @@ function stage(r, st) {
   const media = v.kind === "video" || v.kind === "image", asking = run && run.kind === "ask";
   const page = v.kind === "html" || v.kind === "markdown" || v.kind === "text";
   return h("div", { class: "rx-stagein", "data-x-stage": "" },
-    versionHead(r, st, v),
     // the layer with the output is placed over this slot (it is not part of the page's redraws)
     h("div", { class: "rx-slot", "data-x-slot": `${id}/${v.n}` }),
     h("div", { class: "rx-tools" },
@@ -711,10 +755,17 @@ function tick() {
 function tickStart() { if (!L.on) { L.on = true; requestAnimationFrame(tick); } }
 addEventListener("keydown", (e) => { if (e.key !== "Escape") return; const id = S.route?.name === "room" ? S.route.arg : null; if (!id) return;
   if (X.confirm || X.pick) { e.preventDefault(); e.stopPropagation(); closeDialog(); }
+  else if (X.verMenu === id) { closeVerMenu(); document.querySelector("[data-explain-versions]")?.focus(); e.preventDefault(); }
   else if (X.boxing === id) { X.boxing = null; refresh(id); focusLater("[data-explain-box]"); e.preventDefault(); }
   else if (L.full) { exitFull(); e.preventDefault(); }
   else if (X.sel.has(id) && !e.target?.closest?.("textarea")) { clearSel(id); e.preventDefault(); } }, true);
-addEventListener("hashchange", () => { if (L.full) exitFull(); X.boxing = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
+/** the version menu closes in place (no redraw: the control the focus went to stays the same element) */
+function closeVerMenu() {
+  X.verMenu = null; document.querySelectorAll("[data-explain-vermenu],[data-explain-verscrim]").forEach((e) => e.remove());
+  if (want?.includes("[data-explain-vermenu]")) want = null; // a focus still on its way into the menu does not land elsewhere
+  document.querySelector("[data-explain-versions]")?.setAttribute("aria-expanded", "false");
+}
+addEventListener("hashchange", () => { if (L.full) exitFull(); X.boxing = null; X.verMenu = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
 
-window.crewRoomExplain = { ensure, state, active, picker, view, load, dialogs, full: () => L.full };
+window.crewRoomExplain = { ensure, state, active, picker, switcher, view, load, dialogs, full: () => L.full };
 })();
