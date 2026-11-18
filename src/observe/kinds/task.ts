@@ -32,12 +32,14 @@ export function workStatus(engine: Engine, limit = 50) {
 function taskData(s: Sources, r: Run, full: boolean): Record<string, unknown> {
   const engine = s.engine, row = (s.taskRow ?? ((x: Run) => taskRow(engine, x)))(r), withheld = withheldOf(engine, r), st = runState(engine, r);
   const child = r.workflow === PROPOSAL && typeof r.ctx?.childRun === "string" ? engine.get(r.ctx.childRun) : undefined;
-  const f = r.failure;
+  const f = r.failure, external = !!row.origin;
   const out: Record<string, unknown> = {
     id: row.id, workflow: row.workflow, workflowName: st.workflowName, version: row.version, status: row.status, result: row.result, project: row.project,
     createdAt: row.createdAt, updatedAt: row.updatedAt, endedAt: row.endedAt, archived: row.archived, merged: row.merged, cancelReason: row.cancelReason,
     current: row.current, waitingOn: (st.waitingOn ?? []).map((w) => (withheld ? { card: w.card, node: w.node, kind: w.kind } : w)), pr: st.pr ?? null, childRun: row.childRun,
-    ...(withheld ? {} : { title: row.title, request: full ? row.request : String(row.request ?? "").slice(0, 400) }),
+    // an external CLI grant's Task: its title and request are the CLI's words, not the captain's (src/cli-grants.ts)
+    ...(withheld ? {} : external ? { externalTitle: row.title, externalRequest: full ? row.request : String(row.request ?? "").slice(0, 200), origin: { grant: (row.origin as any)?.grant ?? null } }
+      : { title: row.title, request: full ? row.request : String(row.request ?? "").slice(0, 200) }),
     ...(r.workflow === PROPOSAL ? { dispatched: !!child, execution: child ? { ...runState(engine, child), title: withheldOf(engine, child) ? null : child.title } : null } : {}),
     ...(typeof r.params?._firstmateProposal === "string" ? { proposal: r.params._firstmateProposal } : {}),
     ...(f ? { failure: { class: f.class, code: f.code, at: f.at, node: f.node, title: f.title, meaning: f.meaning, fix: f.fix, where: f.where, message: f.message } } : {}),
@@ -51,7 +53,8 @@ function taskData(s: Sources, r: Run, full: boolean): Record<string, unknown> {
 }
 const entity = (s: Sources, r: Run): Entity => {
   const withheld = withheldOf(s.engine, r);
-  return { id: r.id, title: withheld ? `${r.id} (a Task whose text is withheld from Firstmate)` : `${r.id} ${String(taskRow(s.engine, r).title ?? "").slice(0, 60)}`.trim(), updatedAt: r.updatedAt ?? null, withheld, project: s.engine.projectRow(r),
+  const row = taskRow(s.engine, r);
+  return { id: r.id, title: withheld ? `${r.id} (a Task whose text is withheld from Firstmate)` : row.origin ? `${r.id} (started by an external CLI)` : `${r.id} ${String(row.title ?? "").slice(0, 60)}`.trim(), updatedAt: r.updatedAt ?? null, withheld, project: s.engine.projectRow(r),
     data: taskData(s, r, false), full: () => taskData(s, r, true) };
 };
 
@@ -65,7 +68,8 @@ registerKind({
     ...["id", "workflow", "workflowName", "version", "status", "result", "project", "createdAt", "updatedAt", "endedAt", "archived", "merged", "current", "waitingOn", "pr", "childRun", "dispatched", "proposal", "withheld",
       "failure.class", "failure.code", "failure.at", "failure.node", "failure.title", "failure.meaning", "failure.fix", "failure.where", "events", "cards",
       "execution.id", "execution.workflow", "execution.workflowName", "execution.version", "execution.status", "execution.result", "execution.waitingOn", "execution.pr"].map((path) => ({ path, trust: "studio" as const })),
-    { path: "title", trust: "captain" }, { path: "request", trust: "captain" }, { path: "cancelReason", trust: "captain" }, { path: "execution.title", trust: "captain" },
+    { path: "title", trust: "captain" }, { path: "request", trust: "captain" }, { path: "origin.grant", trust: "studio" },
+    { path: "externalTitle", trust: "untrusted", source: "a Task title an external CLI wrote" }, { path: "externalRequest", trust: "untrusted", source: "a Task request an external CLI wrote" }, { path: "cancelReason", trust: "captain" }, { path: "execution.title", trust: "captain" },
     { path: "error", trust: "untrusted", source: "the failing step's error output" },
     { path: "failure.message", trust: "untrusted", source: "the failing step's underlying message" },
   ],

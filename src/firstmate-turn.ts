@@ -22,11 +22,11 @@ export function routingNote(text: string, workflowOf: (kind: string) => string |
 const STATUS_SHOWN = NOW_SHOWN;
 const quoted = (t: unknown) => JSON.stringify(String(t ?? "").replace(/\s+/g, " ").slice(0, 48));
 /** A redacted Task (engine.redacted: a peer's Studio, issue text): its title and its cards' titles are untrusted words, never shown to Firstmate. */
-const titleOf = (x: { withheld?: string }, title?: string) => (x.withheld ? (/peer/.test(x.withheld) ? '"(work from a peer\'s Studio: its text is withheld)"' : '"(untrusted text: withheld)"') : quoted(title));
+const titleOf = (x: { withheld?: string; external?: boolean }, title?: string) => (x.withheld ? (/peer/.test(x.withheld) ? '"(work from a peer\'s Studio: its text is withheld)"' : '"(untrusted text: withheld)"') : x.external ? '"(started by an external CLI)"' : quoted(title));
 /** One line: what waits for the captain and what runs, now: a rendering of studio_now's summary (src/observe/now.ts), so the
  *  line and the tool never disagree. Never empty: "nothing waits for you" is a status too. */
 export function liveStatus(engine: Engine): string {
-  const n = nowSummary({ engine }, { focus: false });
+  const n = nowSummary({ engine }, { focus: false, recent: false });
   const waiting = n.waiting.slice(0, STATUS_SHOWN).map((w: any) => `${w.run} ${w.workflow} ${titleOf(w, w.taskTitle)} (${w.kind} card ${w.card}${w.withheld ? "" : `: ${quoted(w.title)}`})`);
   const runs = n.running.slice(0, STATUS_SHOWN).map((r: any) => `${r.run} ${r.workflow} ${titleOf(r, r.title)} ${r.status}`);
   const more = (k: number) => (k > STATUS_SHOWN ? `, and ${k - STATUS_SHOWN} more` : "");

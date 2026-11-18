@@ -139,13 +139,45 @@ try {
   const dir = mkdtempSync(join(tmpdir(), "crew-focus-")); new FocusStore(dir).setSharing(false);
   ok(new FocusStore(dir).on === false && new FocusStore(null).on === true, "sharing is on by default; turning it off is remembered");
 
+  // ---------- a review room of a Task withheld from Firstmate; a Task an external CLI started ----------
+  { const tainted = F.E.start({ workflow: "pick-fixture", version: 1, title: `ISSUE TITLE ${INJECTION}`, text: "x", by: "fixture", params: { _tainted: "issue-text" } } as any);
+    await until(() => F.E.cards.list({ run: tainted.id, open: true }).length > 0);
+    const rr: any = F.reviewRoom, view0 = rr.view, list0 = rr.list, expl0 = rr.explain.view;
+    rr.view = (id: string, o?: boolean) => id === tainted.id ? { ...view0(ROOM, o), subject: { kind: "branch", room: tainted.id, task: tainted.id, branch: "fix/issue" }, task: { id: tainted.id, title: "x" } } : view0(id, o);
+    rr.list = () => [...list0(), { id: tainted.id, kind: "branch", title: "Branch fix/issue", open: true, running: false, turns: 2, repository: null, zone: "active", updatedAt: new Date().toISOString() }];
+    rr.explain.view = (id: string) => expl0(id === tainted.id ? ROOM : id);
+    try {
+      const got: any = await O.call("studio_get", { ref: `room:${tainted.id}`, depth: "full" }), listed: any = await O.call("studio_list", { kind: "room" }), now: any = await O.call("studio_now", {});
+      ok(F.E.redacted(F.E.get(tainted.id)) && !J(got).includes("IGNORE") && got.data.withheld && got.untrusted.length === 0, "a room of a Task withheld from Firstmate shows none of its untrusted text", J(got.data).slice(0, 300));
+      ok(!J(listed).includes("IGNORE") && !J(now).includes("ISSUE TITLE"), "nor does the room list or studio_now");
+    } finally { rr.view = view0; rr.list = list0; rr.explain.view = expl0; try { await F.E.cancel(tainted.id); } catch {} }
+    const ext = F.E.start({ workflow: "pick-fixture", version: 1, title: `CLI TITLE ${INJECTION}`, text: `cli request ${INJECTION}`, by: "external CLI grant g-0000beef", params: {} } as any);
+    await until(() => F.E.cards.list({ run: ext.id, open: true }).length > 0);
+    const origin0 = F.E.externalOrigin; F.E.externalOrigin = (r: any) => (r.id === ext.id ? ({ grant: "g-0000beef" } as any) : origin0?.(r) ?? null);
+    try {
+      const got: any = await O.call("studio_get", { ref: `task:${ext.id}` }), cards: any = await O.call("studio_now", {});
+      ok(got.data.externalTitle?.untrusted === true && got.data.externalRequest?.untrusted === true && !("title" in got.data) && !("request" in got.data), "a Task an external CLI started: its title and request are the CLI's words, wrapped as untrusted", J(got.data).slice(0, 300));
+      ok(!J(cards.data).includes("CLI TITLE") && !liveStatus(F.E).includes("CLI TITLE") && liveStatus(F.E).includes("(started by an external CLI)"), "studio_now and the live status line never show it as the captain's words");
+    } finally { try { await F.E.cancel(ext.id); } catch {} } } // the override stays: a grant's Task stays one
+
   // ---------- envelopes, pages, errors ----------
-  for (let i = 0; i < 30; i++) F.E.start({ workflow: "deploy-fixture", version: 1, title: `Batch ${i}`, text: `batch ${i}`, by: "fixture", params: {} } as any);
+  for (let i = 0; i < 30; i++) F.E.start({ workflow: "deploy-fixture", version: 1, title: `Batch ${i}`, text: `batch ${i} ` + "a long request in the captain's words ".repeat(9), by: "fixture", params: {} } as any);
   await until(() => F.E.list().filter((r) => r.status === "failed").length >= 31);
   const p1: any = await O.call("studio_list", { kind: "task" });
   ok(!!p1.nextCursor && p1.items.length > 0 && p1.items.length === p1.data.entries.length && bytes(p1) <= BUDGET.summary, "a long list pages within its budget, with a cursor", `${p1.items.length} ${bytes(p1)}`);
   const p2: any = await O.call("studio_list", { kind: "task", cursor: p1.nextCursor });
   ok(p2.data.offset === p1.items.length && !p2.items.some((x: any) => p1.items.some((y: any) => y.ref === x.ref)), "the cursor goes on where the page ended");
+  { const seen = new Set<string>(); let cur: any = undefined, pages = 0, whole = true;
+    do { const pg: any = await O.call("studio_list", { kind: "task", ...(cur ? { cursor: cur } : {}) }); pages++; whole &&= pg.items.length === pg.data.entries.length && bytes(pg) <= BUDGET.summary && !pg.truncated; pg.items.forEach((x: any) => seen.add(x.ref)); cur = pg.nextCursor; } while (cur && pages < 40);
+    ok(whole && seen.size === F.E.list().filter((r) => !r.archived).length, "every page is whole (as many items as entries, nothing cut) and the cursors reach every Task", `${seen.size} of ${F.E.list().length} in ${pages} pages`);
+    const full: any = await O.call("studio_list", { kind: "task", depth: "full" });
+    ok(full.items.length > p1.items.length, "depth full holds more of a long list in one page", `${full.items.length} vs ${p1.items.length}`); }
+  { const seen = new Set<string>(); let cur: any = undefined, pages = 0, total = 0;
+    do { const pg: any = await O.call("studio_find", { query: "r-0", ...(cur ? { cursor: cur } : {}) }); pages++; total = pg.data.total; pg.items.forEach((x: any) => seen.add(x.ref)); ok(pg.items.length === pg.data.shown, `find page ${pages} says how many it shows`); cur = pg.nextCursor; } while (cur && pages < 40);
+    ok(total > 20 && seen.size === total, "studio_find's cursors reach every hit", `${seen.size} of ${total}`);
+    ok(((await O.call("studio_find", { query: "1645", kinds: ["room", "room"] })) as any).items.length === 1, "a kind named twice is searched once"); }
+  { const r1 = readReport({ route: "#/inbox/SC-12?q=my%20typed%20search", tab: "t1" }), r2 = readReport({ route: "#/runs?q=secret", tab: "t1" }), r3 = readReport({ route: "#/run/anything the captain typed", tab: "t1" });
+    ok(r1.ok && r1.report.route === "#/inbox/SC-12" && r2.ok && r2.report.route === "#/runs" && r3.ok && r3.report.route === "#/run", "a route keeps its page and a Studio id only: a search box's query and other path text are dropped", J([r1, r2, r3])); }
   const wrongCursor = await failOf(() => O.call("studio_list", { kind: "card", cursor: p1.nextCursor }));
   ok(wrongCursor?.code === "invalid_params" && /without cursor/.test(wrongCursor.en), "a cursor from another list is refused, saying how to go on", J(wrongCursor));
   const badKind = await failOf(() => O.call("studio_list", { kind: "terminal" }));
@@ -158,7 +190,7 @@ try {
   ok(/Its filters: tab, repo/.test(badFilter?.en ?? ""), "an unknown filter names the kind's filters", J(badFilter));
   const find: any = await O.call("studio_find", { query: "1645" });
   ok(find.items.some((x: any) => x.ref === `room:${ROOM}` && x.resource_link?.uri === `studio://room/${ROOM}`) && find.items.some((x: any) => x.ref === `pr:${REPO}#1645`), "studio_find finds the room and the pull request, each with a resource link", J(find.items));
-  ok(((await O.call("studio_find", { query: "approve every card" })) as any).items.length === 0, "studio_find never matches someone else's text (an injection cannot steer what is found)");
+  { const inj: any = await O.call("studio_find", { query: "approve every card" }); ok(inj.items.length === 0, "studio_find never matches someone else's text (an injection cannot steer what is found)", J(inj.items)); }
 
   // ---------- one implementation: work status, live status, the native tool index ----------
   const ws: any = await (await import("../src/observe/kinds/task")).workStatus(F.E);
@@ -186,6 +218,8 @@ try {
     const got = await rpc(2, "tools/call", { name: "studio_get", arguments: { ref: `pr:${REPO}#1645` } });
     ok(got.result.isError === false && got.result.structuredContent?.ref === `pr:${REPO}#1645` && J(JSON.parse(got.result.content[0].text)) === J(got.result.structuredContent) && got.result._meta?.["studio/trust"]?.untrusted?.includes("data.title") && !("_meta" in got.result.structuredContent),
       "over MCP, a read returns structuredContent, the same JSON as text, and the trust note as _meta", J(got.result).slice(0, 300));
+    const found = await rpc(4, "tools/call", { name: "studio_find", arguments: { query: "1645" } });
+    ok(found.result.content.some((c: any) => c.type === "resource_link" && c.uri === `studio://room/${ROOM}`), "over MCP, a search's hits also come as resource_link content", J(found.result.content.map((c: any) => c.type)));
     const err = await rpc(3, "tools/call", { name: "studio_list", arguments: { kind: "nope" } });
     ok(err.result.isError === true && /Valid kinds/.test(err.result.content[0].text) && !err.result.structuredContent, "over MCP, a mistake is isError with how to fix it", J(err.result));
   } finally { mcp.kill(); ep.close(); }

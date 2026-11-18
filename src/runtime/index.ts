@@ -11,6 +11,7 @@ import { refusesRulesPatch } from "../operating-rules";
 import { taskTitle } from "../task-title";
 import { taskRow } from "./task-row";
 import { createObserve } from "../observe/tools";
+import { NativeToolFailure } from "../host/types";
 import { PolicyUnreadable } from "./checks";
 import { failure, fromError, type FailureCode } from "./failures";
 import {installStartupRecursion,startupCursorAdvice} from '../domain/startup-recursion';
@@ -309,7 +310,7 @@ export function createRuntime(d: RuntimeDeps) {
   const categoriesFlow=installIssueCategories(engine,projects,issueCategories,d.dataDir);
   // Studio's read tools (src/observe/tools.ts): studio_now, studio_find, studio_list, studio_get, the same for Claude and Codex
   const observe=createObserve({engine,taskRow:(r:any)=>taskRow(engine,r),runView:(id:string)=>runView(id),prs:d.prs,focus:d.focus??null});
-  const firstmate={specs:[...observe.specs,...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>observe.has(name)?observe.call(name,args):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  const firstmate={specs:[...observe.specs,...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>observe.has(name)?(owner?.live?.()===false?Promise.reject(new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。')):observe.call(name,args)):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def,defs.ownCrew);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};

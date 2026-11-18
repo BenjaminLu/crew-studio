@@ -52,6 +52,8 @@ try {
   await p.locator("#chatIn").fill("這段是我正在打的字");
   await p.evaluate(() => { location.hash = "#/inbox"; }); await p.waitForTimeout(900);
   ok(!reports.some((r) => JSON.stringify(r.body).includes("正在打的字")), "what the captain is typing is never reported");
+  await p.evaluate(() => { location.hash = "#/runs?q=my%20secret%20search"; }); await p.waitForTimeout(900);
+  ok(reports.at(-1)?.body.route === "#/runs" && !reports.some((r) => /secret/.test(JSON.stringify(r.body))), "a list's search query in the address is never reported", JSON.stringify(reports.at(-1)?.body));
   // a click pauses sharing
   await p.locator("#fmSees").click();
   ok(await seen(p, "#fmSees[data-sharing='0']") && (await p.locator("#fmSees").innerText()) === "沒有分享畫面", "a click on the label pauses sharing; the label says so");

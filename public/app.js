@@ -481,7 +481,7 @@ function modal(title, body, onOk) {
     h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": title }, h("h2", {}, title), body,
       h("div", { class: "actions", style: "justify-content:flex-end" }, h("button", { class: "btn", onclick: close }, T("Cancel", "取消")), ok)));
   root.replaceChildren(back);
-  window.studioFocus?.dialog(title);
+  window.studioFocus?.dialog("dialog"); // that a dialog is open, never its title (a title may carry a name someone else wrote)
   ok.focus();
   back.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
 }
@@ -755,7 +755,8 @@ function focusNow() {
   const { v, rest } = hashRoute(); let id = ""; try { id = rest.map(decodeURIComponent).join("/"); } catch {}
   const ref = v === "run" && /^R-\d+$/.test(id) ? `task:${id}` : v === "inbox" && /^SC-\d+$/.test(id) ? `card:${id}` : v === "room" && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/.test(id) ? `room:${id}` : null;
   const label = [FOCUS_PAGES[v] ? T(...FOCUS_PAGES[v]) : v, v === "room" ? roomShort(id) : ref ? id : "", FOCUS.sel?.label].filter(Boolean).join(" · ").slice(0, 80);
-  return { route: (location.hash || "#/board").slice(0, 200), ref, selection: FOCUS.sel, dialog: FOCUS.dialog, label, tab: TAB_ID, visible: document.visibilityState !== "hidden" };
+  // the page and its Studio id only: a list writes its search box into the address (?q=…), which is never sent
+  return { route: `#/${v}${ref ? `/${id}` : ""}`, ref, selection: FOCUS.sel, dialog: FOCUS.dialog, label, tab: TAB_ID, visible: document.visibilityState !== "hidden" };
 }
 function tellFocus() { clearTimeout(FOCUS.timer); FOCUS.timer = setTimeout(sendFocus, 500); window.onFocusLabel?.(); }
 function sendFocus() {
