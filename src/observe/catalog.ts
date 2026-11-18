@@ -6,9 +6,11 @@ export type ToolEntry = { name: string; group: ToolGroup; /** registered in ever
 
 export const STUDIO_TOOLS: ToolEntry[] = [
   { name: "studio_now", group: "observe", always: true, about: "what the captain is looking at, what waits for them, what runs, the last hour" },
-  { name: "studio_find", group: "observe", always: true, about: "search Tasks, cards, review rooms and pull requests by id or name" },
+  { name: "studio_find", group: "observe", always: true, about: "search every kind (Tasks, cards, rooms, pull requests, workflows, skills, documents…) by id or name" },
   { name: "studio_list", group: "observe", always: true, about: "list one kind with each one's summary" },
   { name: "studio_get", group: "observe", always: true, about: "read one entity by ref" },
+  { name: "studio_logs", group: "observe", always: true, about: "one Task's, room's, pull request's or terminal's log and progress (a terminal's screen only when the captain asks)" },
+  { name: "studio_events", group: "observe", always: true, about: "Studio's event stream, read on with a cursor" },
   { name: "studio_list_workflows", group: "work", always: true, about: "workflows, versions and which one makes each deliverable" },
   { name: "studio_manual", group: "manual", always: true, about: "the operating manual; no section gives the index" },
   { name: "studio_list_projects", group: "projects", always: true, about: "registered projects" },

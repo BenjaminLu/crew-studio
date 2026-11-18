@@ -9,7 +9,7 @@ const lib = (s: Sources): any[] => { try { return s.skills?.()?.library?.() ?? [
 /** A script skill version's state for the captain: the decision on its scripts and its prepared environment. */
 export function skillState(s: Sources, id: string, v: number) {
   let st: any = null; try { st = s.packages?.()?.status?.(id, v) ?? null; } catch { st = null; }
-  if (!st) return null;
+  if (!st || st.state === "markdown") return null;
   return { state: st.state, scripts: st.scripts, hosts: st.hosts ?? [], ready: st.state === "ready", blocking: !!st.blocking,
     decision: st.decision ? { scripts: st.decision.scripts, by: st.decision.by, via: st.decision.via, at: st.decision.at, card: st.decision.card ?? null, hosts: st.decision.hosts ?? [] } : null,
     env: st.env ? { at: st.env.at, npm: !!st.env.npm, python: !!st.env.python, runtimes: st.env.runtimes ?? {} } : null, preparedAt: st.at ?? null,
@@ -29,7 +29,7 @@ const entity = (s: Sources, k: any, v?: number): Entity => { const n = v ?? k.cu
 registerKind({
   kind: "skill", route: "#/skills/:id", listRoute: "#/skills", idPattern: REF, idExample: "baton@v2",
   routeId: (id) => id.replace(/@v(\d+)$/, "@$1"),
-  pages: ["improve", "edit"],
+  pages: ["skill", "improve", "edit"],
   about: "A library skill at a version (skill:baton is its current one): its versions and, for a script skill, the captain's decision on its scripts and whether its environment is prepared.",
   scope: () => null, grantable: true, viewer: "desktop",
   filters: { scripts: { type: "boolean", description: "true: only skills with scripts" }, ready: { type: "boolean", description: "false: only script skills not ready to run" } },

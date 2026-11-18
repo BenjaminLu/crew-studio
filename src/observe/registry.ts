@@ -100,6 +100,14 @@ export const NEVER_GRANTABLE = ["settings", "grant", "peer", "terminal", "focus"
  *  event and the retro (studio_events), the roadmap (a static page: the manual). The coverage test reads these too. */
 export const TOOL_PAGES: Record<string, string> = { board: "studio_now", firstmate: "studio_now", activity: "studio_events", event: "studio_events", retro: "studio_events", roadmap: "studio_manual" };
 
+/** studio_logs' and studio_events' `since`: a cursor they gave ("seq:42"), or a time (ISO 8601). */
+export function sinceOf(since: string | null): { seq: number | null; at: number | null } {
+  if (!since) return { seq: null, at: null };
+  const m = /^seq:(\d{1,12})$/.exec(since); if (m) return { seq: Number(m[1]), at: null };
+  const t = Date.parse(since); return Number.isFinite(t) && /^\d{4}-\d\d-\d\d/.test(since) ? { seq: null, at: t } : { seq: null, at: null };
+}
+export const seqCursor = (n: number) => `seq:${n}`;
+
 const KINDS = new Map<string, KindDef>();
 const checkFields = (kind: string, fields: FieldDecl[]) => {
   const seen = new Set<string>();

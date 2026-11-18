@@ -2,7 +2,8 @@
 // room's page reads them (engine.reviewRoom.list / view / explain.view: the same functions GET /api/review-room returns).
 // Read with opened=false: reading never marks a room opened and never reads GitHub again. Nothing here starts a turn,
 // a translation or an explainer run: those are paid and only the captain starts them on the room's page.
-import { registerKind, type Entity, type Sources } from "../registry";
+import { refOf, registerKind, seqCursor, sinceOf, type Entity, type Sources } from "../registry";
+import { eventView, readEvents, retroStore } from "../events";
 import { CHAPTERS, DIR_CHAPTERS } from "../../domain/review-room";
 import { withheldOf } from "./task";
 
@@ -60,7 +61,18 @@ function roomData(s: Sources, id: string, full: boolean): Record<string, unknown
     } : null,
   };
 }
-const ROOM_ID = /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/;
+/** studio_logs room:…: each tutor round and Explain-with run, oldest first, with its status, cost and why it stopped, and
+ *  the room's events in Studio's log (a round that failed). After `since`, a time or the cursor it gave. */
+function roomLogs(s: Sources, id: string, o: { tail: number; since: string | null }) {
+  const d: any = roomData(s, id, true); if (!d) return null;
+  const since = sinceOf(o.since), after = (at: unknown) => since.at === null || Date.parse(String(at ?? "")) > since.at, withheld = roomWithheld(s, id, d);
+  const turns = [...(d.turns ?? [])].reverse().filter((t: any) => after(t.ended ?? t.at)).slice(-o.tail).map((t: any) => ({ n: t.n, action: t.action, by: t.by, at: t.at, ended: t.ended, status: t.status, provider: t.provider, model: t.model, cost: t.cost, ...(withheld ? {} : { error: t.error }) }));
+  const explain = (d.explain?.runs ?? []).filter((r: any) => after(r.ended ?? r.at)).slice(-o.tail).map((r: any) => ({ n: r.n, kind: r.kind, skill: r.skill, status: r.status, at: r.at, ended: r.ended, provider: r.provider, model: r.model, rounds: r.rounds, cost: r.cost, why: r.why, stop: r.stop, prepare: r.prepare, decided: r.decided, ...(withheld ? {} : { error: r.error }) }));
+  const { hits } = readEvents(s, { since: since.seq !== null ? o.since : null, kinds: null, ref: refOf("room", id) });
+  const store = retroStore(s), events = hits.filter((e) => after(e.ts)).slice(-o.tail).map((e) => eventView(s, e, store));
+  return { cursor: hits.length ? seqCursor(hits.at(-1)!.seq) : o.since, updatedAt: null, data: { turns, explain, events, cost: d.cost, ...(withheld ? { withheld } : {}) } };
+}
+const ROOM_ID =/^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/;
 /** The Task a room belongs to: its own (R-…), its merge card's, or the one its subject names. A room of a Task whose text is
  *  withheld from Firstmate (issue text, a peer's Studio) is withheld too: its tutor's words come from that text. */
 function roomWithheld(s: Sources, id: string, data?: any): string | null {
@@ -96,6 +108,14 @@ registerKind({
     { path: "explain.runs[].summary", trust: "untrusted", source: "the explainer's own summary (a model)" },
     { path: "explain.versions[].summary", trust: "untrusted", source: "the explainer's own summary (a model)" },
     { path: "notes.items[].body", trust: "untrusted", source: "a GitHub reviewer's comment" },
+  ],
+  logs: (s, id, o) => roomLogs(s, id, o),
+  logFields: [
+    ...["turns[].n", "turns[].action", "turns[].by", "turns[].at", "turns[].ended", "turns[].status", "turns[].provider", "turns[].model", "turns[].cost",
+      "explain[].n", "explain[].kind", "explain[].skill", "explain[].status", "explain[].at", "explain[].ended", "explain[].provider", "explain[].model", "explain[].rounds", "explain[].cost", "explain[].why", "explain[].stop", "explain[].prepare", "explain[].decided",
+      "events", "cost", "withheld"].map((path) => ({ path, trust: "studio" as const })),
+    { path: "turns[].error", trust: "untrusted", source: "the tutor round's error output" },
+    { path: "explain[].error", trust: "untrusted", source: "the explainer run's error output" },
   ],
   list: (s, filter) => { const rr = rrOf(s); if (!rr) return []; let rows: any[] = []; try { rows = rr.list(); } catch { rows = []; }
     return rows.filter((r) => (filter.open !== true || r.open) && (!filter.zone || r.zone === filter.zone)).map((r) => entityOf(s, r)); },

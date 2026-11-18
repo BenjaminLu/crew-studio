@@ -79,6 +79,9 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
   await until(() => svc.get(v.id)?.running === false, 5000);
   const meta = JSON.parse(readFileSync(join(d, "terminals", `${v.id}.json`), "utf8"));
   ok(!existsSync(join(d, "terminals", `${v.id}.log`)) && meta.transcript === null && meta.exitCode === 0, "transcripts off: no transcript file, the record stays", JSON.stringify(meta));
+  // the last lines of a screen, as studio_logs gives them when the captain asks (src/observe/kinds/terminal.ts): plain text
+  const t = svc.tail(v.id, 3);
+  ok(!!t && t.at(-1)?.trim() === "hello" && t.every((l) => !/\x1b/.test(l)) && svc.tail("T-none", 3) === null, "tail(): a screen's last non-empty lines, no escape codes; none for an unknown terminal", JSON.stringify(t));
   rmSync(d, { recursive: true, force: true });
 }
 

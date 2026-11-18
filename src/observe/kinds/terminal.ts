@@ -16,6 +16,12 @@ export function terminalRow(t: any) {
 const entity = (t: any): Entity => ({ id: t.id, title: `${t.id} ${t.preset ?? t.kind} (${t.state})`, updatedAt: t.endedAt ?? t.startedAt ?? null, project: t.project?.id ?? null, data: terminalRow(t) });
 const rows = (s: Sources): any[] => { try { return termsOf(s)?.list(true) ?? []; } catch { return []; } };
 const TAIL_MAX = 80;
+/** Did the captain's own message ask to see a terminal's output? It names a terminal and its output or screen. Studio
+ *  decides this from the captain's words, never from the tool's arguments (a model could put anything there). */
+export function captainAskedForScreen(words: string): boolean {
+  const t = String(words ?? "");
+  return /\bterminals?\b|終端|T-[a-z0-9]{1,16}-[0-9a-f]{6}/i.test(t) && /\b(output|screen|tail|log|logs|shows?|print(ed)?|says?)\b|輸出|畫面|螢幕|內容|印了|顯示|寫了什麼|說什麼/i.test(t);
+}
 
 registerKind({
   kind: "terminal", route: "#/terminals", listRoute: "#/terminals", idPattern: /^T-[a-z0-9]{1,16}-[0-9a-f]{6}$/, idExample: "T-mf3k2a-1b2c3d",
