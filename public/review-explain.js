@@ -80,7 +80,10 @@ function refresh(id) {
   const r = window.crewReviewRoomData?.(id);
   if (!el || !r || !active(id)) { render(); return; }
   const st = state(id); tickStart();
+  // a poll redraws the output's line, the open version menu with it: the control that had the focus there gets it back
+  const kept = focusIn(el.querySelector("[data-x-line]"));
   for (const [sel, make] of [["[data-x-line]", () => bar(r, st)], ["[data-x-stage]", () => stage(r, st)], ["[data-x-msgs]", () => msgs(r, st)], ["[data-x-scope]", () => scope(r, st)], ["[data-x-askrow]", () => askRow(r, st)]]) { const old = el.querySelector(sel); if (old) old.replaceWith(make()); }
+  if (kept) { const back = el.querySelector(kept); if (back) back.focus({ preventScroll: true }); else if (kept.includes("data-explain-version=")) el.querySelector("[data-explain-versions]")?.focus({ preventScroll: true }); }
   syncAsk(r, st);
   const pk = document.querySelector("[data-explain-picker]"); if (pk) pk.replaceWith(picker(r));
   focusLater();
@@ -380,6 +383,14 @@ async function showVersion(r, v) {
   if (st.selected?.id !== v.skill.id) { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: v.skill.id })); } catch (e) { X.err.set(id, bi(e.message)); } }
   render();
 }
+/** the focused control inside a part about to be redrawn, as a selector that finds its replacement */
+function focusIn(part) {
+  const a = document.activeElement; if (!part || !a || !part.contains(a)) return null;
+  if (a.dataset.explainVersion) return `[data-explain-version="${CSS.escape(a.dataset.explainVersion)}"]`;
+  if (a.matches("[data-explain-made] > summary")) return "[data-explain-made] > summary";
+  const k = ["explainVersions", "explainAgain", "explainTutor", "explainOutput", "explainReuse"].find((x) => x in a.dataset);
+  return k ? `[data-${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}]` : null;
+}
 /** the room's two ways, as one small switch: Studio tutor's board, or the skill's output */
 async function switchTo(id, sid) {
   X.verMenu = null;
@@ -400,9 +411,10 @@ function bar(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate";
   return h("div", { class: "rx-line", "data-x-line": "" },
     switcher(r),
-    st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-haspopup": "true", "aria-expanded": String(X.verMenu === id),
+    st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
         title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
-      gen ? T(`${run.skill.name} · generating…`, `${run.skill.name} · 產生中…`) : cur ? `${cur.skill.name} v${cur.n}` : T("Versions", "版本"),
+      // a long skill name is cut, never the version, the count or "generating"
+      h("span", { class: "rx-vername" }, gen ? run.skill.name : cur ? cur.skill.name : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
       h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
     cur && !gen ? versionHead(r, st, cur) : h("span", { class: "rx-linefill" }),
     // under the menu, a clear layer over the page (and the output's frame, which keeps its own clicks): a click there closes it
@@ -413,10 +425,10 @@ function verMenu(r, st) {
   const keys = (e) => { const items = [...e.currentTarget.querySelectorAll("button:not([disabled])")], i = items.indexOf(document.activeElement);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
     else if (e.key === "Home" || e.key === "End") { e.preventDefault(); (e.key === "Home" ? items[0] : items.at(-1))?.focus(); } };
-  return h("div", { class: "rx-vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
+  return h("div", { class: "rx-vermenu", id: "rx-vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
       onfocusout: (e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && !e.relatedTarget.closest("[data-explain-versions]")) closeVerMenu(); } },
     h("h6", {}, T("Outputs", "產出")),
-    run && run.kind === "generate" ? h("div", { class: "rx-ver on", "data-explain-generating": "" }, h("span", { class: "k" }, run.skill.name), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
+    run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, run.skill.name), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
     [...st.versions].reverse().map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null,
         onclick: () => { X.verMenu = null; showVersion(r, v); focusLater("[data-explain-versions]"); } },
       h("span", { class: "k" }, `${v.skill.name} v${v.n}`), v.summary || v.entry, h("small", {}, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),

@@ -134,6 +134,15 @@ try {
     ok(sel.at(-1) === "walkthrough" && (await w.$eval("[data-explain-switch]", (e) => e.dataset.explainSwitch)) === "output", "Output (Enter) brings the skill's output back, free (no confirmation)", JSON.stringify(sel));
     await w.click("[data-explain-tutor]"); await w.waitForSelector("[data-board]"); await w.click("[data-board] [data-explain-output]"); await w.waitForSelector("[data-explain-frame]");
     ok(sel.slice(-2).join(",") === ",walkthrough", "and by mouse, both ways", JSON.stringify(sel));
+    // a run in progress polls the room every 2.5 s and redraws the line: the open menu keeps the focus where it was
+    W = { ...W, running: 9, runs: [...W.runs, run(9, "ask", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForTimeout(300);
+    await w.focus("[data-explain-versions]"); await w.keyboard.press("Enter"); await w.waitForFunction(() => !!document.activeElement?.closest("[data-explain-vermenu]"));
+    const was = await w.evaluate(() => document.activeElement?.dataset.explainVersion);
+    await w.waitForTimeout(3200);
+    const polled = await w.evaluate(() => ({ v: document.activeElement?.dataset.explainVersion, inMenu: !!document.activeElement?.closest("[data-explain-vermenu]"), exp: document.querySelector("[data-explain-versions]")?.getAttribute("aria-expanded") }));
+    await w.keyboard.press("ArrowDown"); const moved = await w.evaluate(() => !!document.activeElement?.closest("[data-explain-vermenu]") && document.activeElement.dataset.explainVersion);
+    ok(polled.inMenu && polled.v === was && polled.exp === "true" && moved && moved !== was, "during a run, a poll that redraws the open menu keeps the focus on the same version; ↓ still moves in the menu", JSON.stringify({ was, polled, moved }));
+    await w.keyboard.press("Escape"); W = { ...W, running: null, runs: W.runs.slice(0, -1) }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForTimeout(300);
     await w.screenshot({ path: join(shots, "15-line-1440.png") });
     // a phone's width: the line stays usable, nothing scrolls sideways, the menu fits the screen
     await w.setViewportSize({ width: 390, height: 844 }); await w.waitForTimeout(200);
