@@ -17,6 +17,14 @@
   0ccff28a2fba09eeed5ef33b129cdb6ce402dc11): its SKILL.md, references/diagrams.md and references/spec.md are adapted, not
   vendored as is, in `workflows/skills/baton/` (SKILL.md, diagrams.md, spec.md) for the review room's lesson, whose report
   layout follows its templates/packet.html. The changes and the full MIT License text are in `workflows/skills/baton/NOTICE.md`.
+- **baton, vendored** (MIT License, copyright (c) Benjamin Lu; https://github.com/BenjaminLu/baton, commit
+  c382464ab02a14ad3dda364143c74bff58ddbcfc): SKILL.md, requirements.txt, references/, scripts/ and templates/packet.html,
+  copied byte for byte into `packs/core/skills/studio-baton/`, the review room's built-in default skill, with a subset of
+  **diagram-design** (MIT License, copyright (c) 2025 Cathryn Lavery; commit 5d59b9b6bd4d7abc08bef2bb0fce8cfa525a203c: its
+  LICENSE, skills/diagram-design/SKILL.md, assets/template.html and sixteen references) copied byte for byte into
+  `packs/core/skills/studio-baton/diagram-design/`. The list of files and both licenses are in `packs/core/skills/studio-baton/NOTICE.md`.
+  Its scripts install **OpenCC** (Apache License 2.0, https://github.com/BYVoid/OpenCC) from PyPI, pinned by version and
+  sha256 in its requirements.txt; nothing of OpenCC is shipped with Studio.
 - **diagram-design** (MIT License, copyright (c) 2025 Cathryn Lavery; https://github.com/cathrynlavery/diagram-design, commit
   5d59b9b6bd4d7abc08bef2bb0fce8cfa525a203c): its SKILL.md and the references style-guide, semantic-patterns, output-spec,
   type-state, type-sequence, type-architecture, type-data-flow and type-flowchart are adapted, not vendored as is, in

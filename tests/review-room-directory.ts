@@ -11,6 +11,8 @@ import { checkedTempDir, assertTempRepo } from "./lib/git-hygiene.mjs"; // repos
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { harness, suite } from "./rt-harness";
+// the tutor's lesson on arrival (the board): this suite runs with no default skill (baton is the default otherwise)
+process.env.CREW_REVIEW_EXPLAIN_DEFAULT_SKILL = "";
 const { ok, end } = suite("review-room-directory");
 const { bundledText } = await import("../src/bundled");
 const { installStaffingGuard, StaffingStore } = await import("../src/domain/staffing");
@@ -205,6 +207,19 @@ try {
       script.push([["say", "Again [diff:src/core/sum.ts]."]]); await room.start(fr.id, { action: "why", confirm: fo.hash }, "captain"); await room.settle(fr.id); const g2 = greps.length - g1;
       ok(g1 >= 1 && g2 >= 1, "a filter read that failed is not kept for the commit: the next answer reads it again", JSON.stringify({ g1, g2 })); }
     finally { (Bun as any).spawn = spawn0; } }
+
+  // ---------- baton in a directory room: its materials are the directory's own files at the pinned commit (base is head) ----------
+  { const X = (room as any).explain; X.setSettings({ defaultSkill: "studio-baton" }); X.select(opened.id, "studio-baton"); const n0 = TOOLRES.length;
+    script.push([["mat_list", {}], ["mat_read", { path: "pull-request.md" }], ["mat_read", { path: "head/src/core/sum.ts" }], ["out_write", { path: "index.html", content: "<!doctype html><title>kit</title><h1>kit/src</h1>" }],
+      ["explain_done", { entry: "index.html", summary: "the directory" }]]);
+    const w: any = await X.auto(opened.id, "captain"); ok(w.running != null, "opening the directory's room starts baton by itself", JSON.stringify({ auto: w.auto, err: w.auto?.tried?.error }));
+    for (let i = 0; i < 400 && X.view(opened.id).running != null; i++) await new Promise((r) => setTimeout(r, 50));
+    const res = TOOLRES.slice(n0), list = res.find(([n]) => n === "mat_list")?.[1] ?? [], reads = res.filter(([n]) => n === "mat_read").map(([, j]) => String(j?.text ?? j?.error ?? ""));
+    const heads = (Array.isArray(list) ? list : []).map((f: any) => f.path).filter((p: string) => p.startsWith("head/"));
+    ok(heads.includes("head/src/core/sum.ts") && heads.includes("head/src/api/server.ts") && heads.length >= 4 && /return a \+ b/.test(reads[1] ?? "") && /a directory, not a change/.test(reads[0] ?? ""),
+      "its head/ holds the directory's files (not the empty diff of base..head), and pull-request.md says it is a directory", JSON.stringify({ heads, r0: (reads[0] ?? "").slice(0, 200) }));
+    ok(X.view(opened.id).versions.at(-1)?.entry === "index.html", "and it makes a version", JSON.stringify(X.view(opened.id).runs.at(-1)));
+    X.setSettings({ defaultSkill: null }); X.select(opened.id, null); }
 
   // ---------- the Library, the list, starting over ----------
   const saved: any = await room.saveToLibrary(opened.id, "captain"), snap: any = room.librarySnapshot(saved.artifact);

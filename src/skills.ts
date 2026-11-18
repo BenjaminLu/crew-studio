@@ -275,10 +275,12 @@ export class Skills {
       return this.commit(stage, text, copy.copied.filter((f) => f !== "SKILL.md" && !skippedName(f)), [...copy.refused, ...(skipped.length ? [`${skipped.length} cache file${skipped.length === 1 ? "" : "s"} skipped (__pycache__, *.pyc, .DS_Store)`] : [])], basename(root), meta);
     } finally { rmSync(stage, { recursive: true, force: true }); }
   }
-  private commit(stage: string, text: string, files: string[], skipped: string[], folderName: string, meta: { source: string; sourceKind: LibVersion["sourceKind"]; by: string }) {
+  private commit(stage: string, text: string, files: string[], skipped: string[], folderName: string, meta: { source: string; sourceKind: LibVersion["sourceKind"]; by: string; id?: string }) {
     const sp = splitFrontmatter(text);
     const fm = sp.fm ?? {}; const name = typeof fm.name === "string" && fm.name.trim() ? fm.name.trim() : folderName;
-    const id = name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 41);
+    // a built-in is stored under its folder's name: a vendored skill keeps its upstream frontmatter (packs/core/skills/studio-baton
+    // is upstream baton, name: baton) without taking the id of the captain's own copy
+    const id = meta.id ?? name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 41);
     if (!SAFE.test(id)) throw new SkillImportError(`the skill's name "${name.slice(0, 60)}" gives no usable id (letters, digits and dashes)`);
     const description = typeof fm.description === "string" ? fm.description.trim().slice(0, 1000) : "";
     const ignored = Object.keys(fm).filter((k) => !INFO_KEYS.has(k));
@@ -316,7 +318,7 @@ export class Skills {
         for (const g of bundledList(`packs/${m[1]}/skills/${m[2]}/`)) { const rel = g.slice(`packs/${m[1]}/skills/${m[2]}/`.length); if (rel === "SKILL.md") continue;
           const b = bundledBytes(g); if (!b) continue; mkdirSync(dirname(join(stage, "files", rel)), { recursive: true }); writeFileSync(join(stage, "files", rel), b); files.push(rel); }
         writeFileSync(join(stage, "SKILL.md"), text);
-        this.commit(stage, text, files, [], m[2], { source: `${m[1]} pack`, sourceKind: "builtin", by: "studio (built-in)" });
+        this.commit(stage, text, files, [], m[2], { source: `${m[1]} pack`, sourceKind: "builtin", by: "studio (built-in)", id: m[2] });
       } catch (e: any) { console.warn(`crew-studio: built-in skill ${m[2]}: ${e?.message ?? e}`); }
       finally { rmSync(stage, { recursive: true, force: true }); }
     }
@@ -390,7 +392,9 @@ const textName = (rel: string) => { const n = rel.split("/").pop() ?? ""; const 
  */
 export type SkillFits = { kinds?: string[]; roles?: string[]; formats?: string[] };
 /** fits for built-in skills whose text predates metadata.fits (new text would be a new version under every existing pin) */
-const BUILTIN_FITS: Record<string, SkillFits> = { "plain-writing": { kinds: ["agent", "loop"], roles: ["writer", "coordinator", "reviewer", "author"], formats: ["document"] } };
+const BUILTIN_FITS: Record<string, SkillFits> = { "plain-writing": { kinds: ["agent", "loop"], roles: ["writer", "coordinator", "reviewer", "author"], formats: ["document"] },
+  // upstream baton, copied byte for byte (its SKILL.md carries no metadata.fits): the review room's default explainer
+  "studio-baton": { kinds: ["agent"], roles: ["reviewer", "tutor", "explainer", "writer"], formats: ["web", "document"] } };
 const FIT_WORD = /^[a-z][a-z0-9-]{0,30}$/;
 function readFits(meta: unknown): SkillFits | null {
   const f = meta && typeof meta === "object" ? (meta as any).fits : null; if (!f || typeof f !== "object" || Array.isArray(f)) return null;

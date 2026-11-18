@@ -53,7 +53,7 @@ writeFileSync(join(skillDir, "SKILL.md"), "---\nname: walkthrough\ndescription: 
 const { createServer } = await import("node:http");
 const probe = createServer((q, res) => { probeHits.push(q.url); res.end("got it"); }); await new Promise((r) => probe.listen(probePort, "127.0.0.1", r));
 const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
-const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data,
+const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, CREW_REVIEW_EXPLAIN_DEFAULT_SKILL: "", CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data,
   CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: "/nonexistent/codex", HOME: join(tmp, "home"), CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });
 let appLog = ""; app.stdout.on("data", (d) => (appLog += d)); app.stderr.on("data", (d) => (appLog += d));
 const base = `http://127.0.0.1:${port}`;
@@ -91,6 +91,52 @@ const again = async (pg) => { if (!(await pg.$("[data-explain-empty] [data-expla
 const versionsLoaded = (pg, n) => pg.waitForFunction((k) => document.querySelector("[data-explain-versions] .rx-vercount")?.textContent === String(k), n, { timeout: 15000 });
 
 try {
+  // ---------- baton by default: opening the room starts its generation for this head by itself (no confirmation), once; Try again ----------
+  { const ca = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await ca.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await ca.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const baton = { id: "baton", v: 1, name: "baton", sha256: "x" }, due = { on: true, skill: "baton", head: H, due: true, tried: null };
+    let A = { skills: [{ id: "baton", name: "baton", description: "Hand a change on as one page.", v: 1, source: "builtin", own: false }], log: [], settings: { limitMin: 120, defaultSkill: "baton", autoRun: true }, busy: false,
+      selected: { id: "baton", v: 1 }, tutor: false, auto: due, versions: [], running: null, consent: null, runs: [] };
+    const autos = [], confirms = [];
+    await ca.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await ca.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await ca.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: A }));
+    await ca.route(new RegExp(`/api/review-room/${ID}/explain/(offer|generate)`), (r) => { confirms.push(r.request().url()); r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required" } }); });
+    await ca.route(new RegExp(`/api/review-room/${ID}/explain/auto$`), (r) => { const b = JSON.parse(r.request().postData() || "{}"); autos.push(b);
+      const failed = run(autos.length, "generate", "failed", { skill: baton, opened: true, head: H, why: "provider", error: "The CLI reported an error. Reason: the vendor is down", rounds: [{ n: 1, job: "J1" }] });
+      A = { ...A, auto: { ...due, due: false, why: "done", tried: { head: H, skill: "baton", at: new Date().toISOString(), run: autos.length } }, runs: [...A.runs.slice(0, autos.length - 1), failed] };
+      r.fulfill({ json: A }); });
+    const w = await ca.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-retry]", { timeout: 15000 }); await w.waitForTimeout(300);
+    const st = await w.evaluate(() => ({ ended: document.querySelector("[data-explain-ended]")?.dataset.explainEnded, text: document.querySelector("[data-explain-empty]")?.textContent || "", modal: !!document.querySelector(".rx-modal") }));
+    ok(autos.length === 1 && autos[0].retry === undefined && !confirms.length && !st.modal, "opening a room explained with baton starts its generation by itself: one POST …/explain/auto, no paid confirmation", JSON.stringify({ autos, confirms, st }));
+    ok(st.ended === "provider" && /vendor is down/.test(st.text) && /Try again/.test(st.text), "it failed: the stage says why and offers Try again; nothing retries by itself", JSON.stringify(st));
+    await w.reload(); await w.waitForSelector("[data-explain-retry]", { timeout: 15000 }); await w.waitForTimeout(600);
+    ok(autos.length === 1, "reopening the room (Studio says this head is done) starts nothing more", JSON.stringify(autos));
+    await w.click("[data-explain-retry]"); await w.waitForTimeout(600);
+    ok(autos.length === 2 && autos[1].retry === true && !confirms.length, "Try again asks Studio to start it once more, still without a paid confirmation", JSON.stringify(autos));
+    await ca.close(); }
+  // ---------- the page could not reach Studio to start it: never a "Starting…" that nothing ends ----------
+  { const cb = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await cb.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await cb.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const A = { skills: [], log: [], settings: { limitMin: 120, defaultSkill: "baton", autoRun: true }, busy: false, selected: { id: "baton", v: 1 }, tutor: false, auto: { on: true, skill: "baton", head: H, due: true, tried: null }, versions: [], running: null, consent: null, runs: [] };
+    const autos = [];
+    await cb.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await cb.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await cb.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: A }));
+    await cb.route(new RegExp(`/api/review-room/${ID}/explain/auto$`), (r) => { autos.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 500, json: { error: "Studio is restarting" } }); });
+    const w = await cb.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-retry]", { timeout: 15000 }); await w.waitForTimeout(300);
+    const st = await w.evaluate(() => ({ starting: !!document.querySelector("[data-explain-starting]"), text: document.querySelector("[data-explain-empty]")?.textContent || "" }));
+    ok(autos.length === 1 && !st.starting && /restarting/.test(st.text), "a start that did not reach Studio shows why with Try again, not a Starting… that never ends", JSON.stringify({ autos, st }));
+    await w.click("[data-explain-retry]"); await w.waitForTimeout(600);
+    ok(autos.length === 2 && autos[1].retry === undefined, "Try again sends the opening's start again (Studio never saw the first)", JSON.stringify(autos));
+    await cb.close(); }
+
   // ---------- the output's line: no column left of the output; the board / output switch and the version menu, by mouse and keys ----------
   { const c9 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await c9.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
@@ -224,7 +270,7 @@ try {
     { at: "t", text: "passwd — refused", script: SL({ script: "../../etc/passwd", outcome: "refused", refusalCode: "not-script", refusal: "../../etc/passwd is not a script of walkthrough@v1 (scripts: scripts/build.py, scripts/check.py)" }) },
     { at: "t", text: "wait.sh — time", script: SL({ script: "scripts/wait.sh", outcome: "limit", limit: "time", ms: 5100, limits: { cpuS: 300, fileMB: 60, wallS: 5, diskMB: 120 } }) },
     { at: "t", text: "drawing the rounding figure" }] })], log: [{ ts: "2026-11-01T10:01:00Z", kind: "tool", text: "mat_read {\"path\":\"diff.txt\"}" }] }; answer(r, X); };
-  await p.click("[data-explain-start]"); await p.waitForSelector("[data-explain-progress]");
+  await p.click("[data-explain-start]"); await p.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
   ok(posts.at(-1)[0] === "generate" && posts.at(-1)[1].skill === "walkthrough" && posts.at(-1)[1].confirm === OFFER.hash, "Confirm and start sends the skill and the exact confirmation", JSON.stringify(posts.at(-1)));
   const prog = await p.$eval("[data-explain-progress]", (e) => e.textContent);
   const steps = await p.$$eval("[data-explain-steps] > li", (es) => es.map((e) => e.className));
@@ -251,7 +297,7 @@ try {
   cr = await callRows();
   ok(/build\.py — 完成/.test(cr[0].sum) && /碰到 CPU 上限（300 秒）/.test(cr[3].sum) && /被拒：不是這個 skill 的腳本/.test(cr[4].sum) && /碰到時間上限（5 秒）/.test(cr[5].sum) && /連到 api\.model-vendor\.example/.test(cr[1].sum), "the lines are in the captain's language", JSON.stringify(cr));
   await p.screenshot({ path: join(shots, "3b-progress-zh.png") });
-  await p.evaluate(() => { sessionStorage.removeItem("keep-lang"); localStorage.setItem("crew.lang", "en"); }); await p.reload(); await p.waitForSelector("[data-explain-progress]");
+  await p.evaluate(() => { sessionStorage.removeItem("keep-lang"); localStorage.setItem("crew.lang", "en"); }); await p.reload(); await p.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
   onStop = (r) => { X = { ...X, running: null, runs: [run(1, "generate", "stopped", { stop: "stopped by the captain", why: "captain" })] }; answer(r, X); };
   await p.click("[data-explain-stop]"); await p.waitForSelector("[data-explain-empty]");
   const stopped = await p.$eval("[data-explain-empty]", (e) => ({ text: e.textContent, warn: !!e.querySelector('.rx-state.warn[data-explain-ended="captain"] .rx-ic'), again: document.querySelectorAll("[data-explain-again]").length }));
@@ -261,7 +307,7 @@ try {
   onGenerate = (r) => { X = { ...X, running: 2, runs: [...X.runs, run(2, "generate", "running")] }; answer(r, X); setTimeout(() => { X = { ...X, running: null, runs: [X.runs[0], run(2, "generate", "done", { version: 1 })], versions: versions.slice(0, 1) }; }, 300); };
   onGenerate = (r) => { X = { ...X, running: 2, runs: [...X.runs, run(2, "generate", "running")] }; answer(r, X); };
   await p.click("[data-explain-again]"); await p.waitForSelector("[data-explain-start]:not([disabled])"); await p.click("[data-explain-start]");
-  await p.waitForSelector("[data-explain-progress]");
+  await p.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
   const qbox = await p.$eval("[data-explain-q]", (e) => ({ disabled: e.disabled, ph: e.placeholder, send: document.querySelector("[data-explain-send]").textContent }));
   ok(!qbox.disabled && /sent once the output is ready/.test(qbox.ph) && /Ask when ready/.test(qbox.send), "while the first output is made the captain can already ask", JSON.stringify(qbox));
   await p.fill("[data-explain-q]", "What is the gist?"); await p.click("[data-explain-send]"); await p.waitForSelector("[data-explain-queued]");
@@ -406,7 +452,11 @@ try {
   ok(!probeHits.length, "the output cannot carry anything out by navigating its frame: Studio's page refuses frames outside Studio", probeHits.join(","));
 
   // ---------- a run that ends while the captain is elsewhere: Studio says so ----------
-  X = { ...X, running: 9, runs: [...X.runs, run(9, "generate", "running")] }; await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector("[data-explain-progress]");
+  X = { ...X, running: 9, runs: [...X.runs, run(9, "generate", "running", { head: H })] }; await p.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await p.waitForSelector("[data-explain-genstrip]");
+  // a new version being made while one is shown: the shown one stays, with one strip above it (who runs it and pays, Stop)
+  { const g = await p.evaluate(() => ({ frame: !!document.querySelector("[data-explain-frame]") && !document.querySelector("[data-x-layer]").hidden, card: !!document.querySelector("[data-explain-progress]"),
+      strip: document.querySelector("[data-explain-genstrip]")?.textContent || "", stop: !!document.querySelector("[data-explain-genstrip] [data-explain-stop]") }));
+    ok(g.frame && !g.card && /claude · claude-opus-5/.test(g.strip) && /billed to the claude account/.test(g.strip) && /aaaaaaa/.test(g.strip) && g.stop, "a generation over a shown version keeps the version on the stage, the progress one strip above it (model, who pays, head, Stop)", JSON.stringify(g)); }
   await p.evaluate(() => { location.hash = "#/board"; }); await p.waitForFunction(() => S.route?.name === "board");
   X = { ...X, running: null, runs: [...X.runs.slice(0, -1), run(9, "generate", "done", { version: 4 })] };
   await p.evaluate((id) => window.crewRoomExplain.load(id), ID); await p.waitForSelector("[data-explain-toast]", { timeout: 5000 });
@@ -489,7 +539,8 @@ try {
     const w = await c3.newPage(); w.on("pageerror", (e) => errors.push(e.message));
     await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-q]", { timeout: 15000 });
     await w.fill("[data-explain-q]", "Why?"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-askok]");
-    const hit = async (sel) => w.$eval(sel, (e) => { e.scrollIntoView({ block: "center" }); const b = e.getBoundingClientRect(), at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return { h: Math.round(b.height), top: Math.round(b.top), at: at ? at.tagName + "." + at.className + (at.dataset ? JSON.stringify(Object.keys(at.dataset)) : "") : null, ok: !!at && (at === e || e.contains(at)) }; });
+    // after the scroll, two frames: the output's layer follows its slot on the next frame (the output is taller on a phone)
+    const hit = async (sel) => w.$eval(sel, async (e) => { e.scrollIntoView({ block: "center" }); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); const b = e.getBoundingClientRect(), at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return { h: Math.round(b.height), top: Math.round(b.top), at: at ? at.tagName + "." + at.className + (at.dataset ? JSON.stringify(Object.keys(at.dataset)) : "") : null, ok: !!at && (at === e || e.contains(at)) }; });
     const ok1 = await hit("[data-explain-askok]"), ok2 = await hit("[data-explain-consent]"), list = await w.$eval("[data-x-msgs]", (e) => Math.round(e.getBoundingClientRect().height));
     ok(ok1.ok && ok2.ok && list >= 120, `at ${width} wide the chat's messages have room (${list}px) and its Confirm and ask and consent are clickable`, JSON.stringify({ ok1, ok2, list }));
     await w.click("[data-explain-consent]"); ok(await w.$eval("[data-explain-consent]", (e) => e.checked), `at ${width} wide the consent box takes the click`);
@@ -507,12 +558,12 @@ try {
     await w.screenshot({ path: join(shots, `8-narrow-${width}.png`), fullPage: true });
     if (width === 900) {
       // a question queued during a generation that then stops goes back into the ask box
-      N = { ...N, versions: [], running: 2, runs: [...N.runs, run(2, "generate", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-progress]");
+      N = { ...N, versions: [], running: 2, runs: [...N.runs, run(2, "generate", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
       await w.fill("[data-explain-q]", "What is the gist?"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-queued]");
       await w.click("[data-explain-progress] [data-explain-stop]"); await w.waitForSelector("[data-explain-empty]"); await w.waitForTimeout(150);
       ok(!(await w.$("[data-explain-queued]")) && (await w.$eval("[data-explain-q]", (e) => e.value)) === "What is the gist?", "a question waiting for a generation that stopped goes back into the ask box, not left waiting");
       // a question waiting for a generation that finishes while the captain is away is asked when they come back
-      N = { ...N, running: 3, runs: [...N.runs, run(3, "generate", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-progress]");
+      N = { ...N, running: 3, runs: [...N.runs, run(3, "generate", "running")] }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
       await w.fill("[data-explain-q]", "And the risk?"); await w.click("[data-explain-send]"); await w.waitForSelector("[data-explain-queued]");
       const asked = []; await w.route(new RegExp(`/api/review-room/${ID}/explain/ask$`), (r) => { asked.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: ASK_OFFER } }); });
       await w.evaluate(() => { location.hash = "#/board"; }); await w.waitForFunction(() => S.route?.name === "board");
@@ -590,7 +641,7 @@ try {
     ok(await w.$eval("[data-explain-promptexample]", (e) => e.disabled), "with the checklist in the field, Insert is off (no second copy)");
     await w.click("[data-explain-promptreset]"); await w.waitForFunction((t) => document.querySelector("[data-explain-prompt]").value === t && !document.querySelector("[data-explain-start]").disabled, P2, { timeout: 5000 });
     ok(!(await w.$eval("[data-explain-promptexample]", (e) => e.disabled)), "without it, Insert is on again");
-    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
+    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
     ok(gens.at(-1)?.prompt === P2 && gens.at(-1).confirm === hashOf(P2) && gens.at(-1).skill === "walkthrough", "Confirm sends the instructions with the confirmation of exactly that text", JSON.stringify(gens.at(-1)));
     // a room with nothing made yet: the field is prefilled with what this skill was last asked for (the server's prefill)
     Y = { ...Y, versions: [], runs: [], running: null }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector("[data-explain-empty] [data-explain-again]");
@@ -602,7 +653,7 @@ try {
     await w.fill("[data-explain-prompt]", "y".repeat(1900)); await w.waitForTimeout(50);
     ok(await w.$eval("[data-explain-promptcount]", (e) => e.classList.contains("over") && e.textContent === "1900 / 2000"), "near the cap the counter warns");
     await w.fill("[data-explain-prompt]", ""); await w.waitForFunction(() => !document.querySelector("[data-explain-start]").disabled, null, { timeout: 5000 });
-    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
+    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
     ok(gens.at(-1)?.prompt === "" && gens.at(-1).confirm === OFFER.hash, "cleared, the run is the skill's default (an empty prompt, its own confirmation)", JSON.stringify(gens.at(-1)));
     // a confirmation for one text does not start another: Studio asks again with the new offer
     Y = { ...Y, versions: withMade, runs: [run(1, "generate", "done", { version: 1, prompt: P1 })], running: null }; await w.evaluate(() => window.crewRoomExplain.load(S.route.arg)); await w.waitForSelector('[data-explain-frame="4"],[data-explain-frame="1"]');
@@ -805,7 +856,7 @@ try {
     await w.check('[data-explain-decide="scripts"]');
     ok(!(await w.$eval("[data-explain-start]", (e) => e.disabled)) && (await hint())?.hidden === true, "picking Approve with scripts enables Confirm and the footer line goes");
     onGen = (r, b) => { D = { ...D, selected: { id: "walkthrough", v: 1 }, running: 1, runs: [run(1, "generate", "running", { decided: "approved", prepare: { state: "running", at: "t" }, rounds: [], progress: [{ at: "t", text: "Studio is reading the materials (read-only)" }] })] }; r.fulfill({ json: D }); };
-    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress]");
+    await w.click("[data-explain-start]"); await w.waitForSelector("[data-explain-progress], [data-explain-genstrip]");
     ok(gens.at(-1)?.confirm === PENDING.hash && gens.at(-1)?.skillDecision === "scripts", "Confirm sends the exact confirmation and the pick", JSON.stringify(gens.at(-1)));
     const prep = await w.$eval('[data-explain-prepare="running"]', (e) => e.textContent).catch(() => "");
     ok(/installing the skill's dependencies from its lockfiles/.test(prep), "the run shows Studio installing the skill's dependencies before its first round", prep);

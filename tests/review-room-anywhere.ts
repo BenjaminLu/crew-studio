@@ -12,6 +12,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { harness, suite, until, Y } from "./rt-harness";
 import { githubSimulator } from "./lib/github-simulator";
+// the tutor's lesson on arrival (the board): this suite runs with no default skill (baton is the default otherwise)
+process.env.CREW_REVIEW_EXPLAIN_DEFAULT_SKILL = "";
 const { ok, end } = suite("review-room-anywhere");
 const root = join(import.meta.dir, "..");
 const { prepareSandbox, registerSandbox } = await import("../src/sandbox-repo");

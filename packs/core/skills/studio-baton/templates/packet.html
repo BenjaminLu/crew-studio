@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+:root{
+  /* Palette from the diagram-design style guide, so a diagram drawn by that
+     skill and the page around it are one surface. Its role names map onto the
+     variables the diagrams already reference. */
+  --bg:#f5f5f5;        /* paper */
+  --card:#ffffff;
+  --card-2:#ececec;    /* paper-2 */
+  --fg:#2d3142;        /* ink */
+  --muted:#4f5d75;     /* blue-slate */
+  --soft:#7a8399;
+  --rule:rgba(45,49,66,.12);
+  --rule-strong:#bfc0c0;   /* silver */
+  --accent:#eb6c36;        /* atomic-tangerine — 1–2 focal points per diagram */
+  --accent-tint:rgba(235,108,54,.08);
+  --link:#2e5aa8;
+  --amber:#b8915a;         /* mustard, from the series scale */
+  --seal:#9c6b50;          /* rust-brown */
+  --ok:#7c8f6f;            /* sage */
+  --shadow:0 1px 2px rgba(45,49,66,.06),0 10px 28px rgba(45,49,66,.06);
+
+  /* A display serif, a text sans and a data mono — all from the system, so
+     three real typographic roles cost nothing and never fall back silently. */
+  --serif:"Songti TC","Songti SC","Noto Serif CJK TC","Source Han Serif TC",Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang TC","PingFang SC","Noto Sans CJK TC","Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#2d3142;--card:#393e53;--card-2:#333849;--fg:#f5f5f5;--muted:#bfc0c0;
+    --soft:#8e98ac;--rule:rgba(245,245,245,.12);--rule-strong:rgba(191,192,192,.25);
+    --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#6a95d8;
+    --amber:#d3ad7a;--seal:#b88670;--ok:#9caf8f;
+    --shadow:0 1px 2px rgba(0,0,0,.45),0 12px 32px rgba(0,0,0,.4)}
+}
+:root[data-theme=dark]{--bg:#2d3142;--card:#393e53;--card-2:#333849;--fg:#f5f5f5;--muted:#bfc0c0;
+    --soft:#8e98ac;--rule:rgba(245,245,245,.12);--rule-strong:rgba(191,192,192,.25);
+    --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#6a95d8;
+    --amber:#d3ad7a;--seal:#b88670;--ok:#9caf8f;
+    --shadow:0 1px 2px rgba(0,0,0,.45),0 12px 32px rgba(0,0,0,.4)}
+:root[data-theme=light]{--bg:#f5f5f5;--card:#ffffff;--card-2:#ececec;--fg:#2d3142;--muted:#4f5d75;
+  --soft:#7a8399;--rule:rgba(45,49,66,.12);--rule-strong:#bfc0c0;
+  --accent:#eb6c36;--accent-tint:rgba(235,108,54,.08);--link:#2e5aa8;
+  --amber:#b8915a;--seal:#9c6b50;--ok:#7c8f6f;
+  --shadow:0 1px 2px rgba(45,49,66,.06),0 10px 28px rgba(45,49,66,.06)}
+
+/* One line scales the whole composition, so a 4K screen shows the same
+   design larger rather than the same pixels stranded in the middle. */
+html{font-size:clamp(16px,0.62vw + 12.4px,21px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+  font-size:1rem;line-height:1.68;-webkit-font-smoothing:antialiased;
+  padding:0 1.25rem 0 4.6rem}
+main{max-width:78rem;margin:0 auto}
+
+header.top{padding:3rem 0 1.5rem;border-bottom:2px solid var(--fg);margin-bottom:1.6rem;
+  display:flex;justify-content:space-between;align-items:flex-end;gap:1.5rem;flex-wrap:wrap}
+.eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:.7rem}
+h1{font-family:var(--serif);font-size:clamp(1.6rem,3.4vw,2.4rem);font-weight:600;
+  line-height:1.24;margin:0 0 .55rem;text-wrap:balance;letter-spacing:-.005em}
+.lede{font-size:1.06rem;color:var(--muted);max-width:42rem;margin:0}
+.lede strong{color:var(--fg);font-weight:600}
+.langs{display:flex;border:1px solid var(--rule);border-radius:4px;overflow:hidden;flex:none}
+.langs button{border:0;background:transparent;color:var(--muted);cursor:pointer;
+  padding:.34rem .68rem;font:inherit;font-family:var(--mono);font-size:.72rem;
+  transition:background .16s,color .16s}
+.langs button[aria-pressed=true]{background:var(--fg);color:var(--bg)}
+.langs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* The palette legend sits under each diagram — it explains the drawing, so it
+   lives with the drawing, not in the header two scrolls away. */
+.legend{display:flex;flex-wrap:wrap;gap:.4rem 1.1rem;margin-top:.8rem;
+  font-size:.76rem;color:var(--muted);justify-content:center}
+.legend span{display:inline-flex;align-items:center;gap:.44rem}
+.swatch{width:.7rem;height:.7rem;border-radius:2px;flex:0 0 auto}
+.swatch.subj{background:var(--accent)}
+.swatch.att{background:var(--amber)}
+.swatch.term{background:var(--seal)}
+.swatch.ctx{background:transparent;border:1.5px dashed var(--muted)}
+
+/* The outline is a rail the reader brushes past, not a column that spends a
+   fifth of every page on navigation. The ticks are always there — they say
+   where you are and how much is left — and the full list slides out over the
+   content on approach. The content keeps the whole width, which is what lets
+   the figures and the type be read instead of squinted at. */
+.stage{display:block}
+
+.rail{position:fixed;left:0;top:0;bottom:0;z-index:40}
+.rail-ticks{width:4.6rem;height:100%;display:flex;flex-direction:column;
+  justify-content:center;gap:.3rem;padding:0 .8rem 0 .9rem;
+  border-right:1px solid var(--rule);background:var(--bg)}
+.rail-ticks button{font:inherit;font-family:var(--mono);font-size:.62rem;
+  font-variant-numeric:tabular-nums;color:var(--soft);cursor:pointer;
+  background:none;border:0;padding:.22rem 0;text-align:left;
+  display:flex;align-items:center;gap:.4rem;transition:color .14s}
+.rail-ticks button::after{content:"";flex:1;height:1px;background:var(--rule-strong);
+  transition:background .14s,height .14s}
+.rail-ticks button:hover{color:var(--fg)}
+.rail-ticks button:hover::after{background:var(--fg)}
+.rail-ticks button[aria-current=true]{color:var(--accent)}
+.rail-ticks button[aria-current=true]::after{background:var(--accent);height:2px}
+.rail-ticks button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Off-canvas, never display:none — a tab into it opens it, so the list is
+   reachable without a pointer. */
+.outline{position:absolute;left:0;top:0;bottom:0;width:21rem;overflow-y:auto;
+  background:var(--card);border-right:1px solid var(--rule);
+  /* It floats over the content, so it needs an edge the content does not. */
+  box-shadow:var(--shadow),14px 0 34px -12px rgba(0,0,0,.28);
+  padding:1.6rem 1.2rem;transform:translateX(-101%);
+  transition:transform .22s cubic-bezier(.2,.7,.3,1)}
+.rail:hover .outline,.rail:focus-within .outline,
+.rail.open .outline{transform:none}
+
+@media (max-width:56rem){
+  body{padding-left:1.25rem}
+  .rail{position:static}
+  .rail-ticks{display:none}
+  .outline{position:static;transform:none;width:auto;overflow:visible;
+    border:1px solid var(--rule);border-radius:5px;padding:1rem;margin-bottom:1.3rem}
+}
+.outline h2,.panel h2{font-family:var(--mono);font-size:.68rem;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 .7rem;font-weight:700}
+.outline ol{list-style:none;margin:0;padding:0;counter-reset:step}
+.outline li{counter-increment:step}
+.outline ol button{width:100%;text-align:left;font:inherit;cursor:pointer;
+  background:none;border:1px solid transparent;border-radius:4px;
+  padding:.44rem .6rem .44rem .5rem;color:var(--fg);line-height:1.4;
+  display:flex;gap:.6rem;align-items:baseline;
+  transition:background .13s,border-color .13s}
+.outline ol button::before{content:counter(step,decimal-leading-zero);
+  font-family:var(--mono);font-size:.68rem;color:var(--muted);
+  font-variant-numeric:tabular-nums;flex:none}
+.outline ol button:hover{background:var(--card-2)}
+.outline ol button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.outline ol button[aria-current=true]{background:var(--card);border-color:var(--accent);
+  box-shadow:var(--shadow)}
+.outline ol button[aria-current=true]::before{color:var(--accent)}
+.outline .ttl{font-size:.88rem}
+
+.panel{min-width:0}
+.step{display:none}
+.step.on{display:block}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.step.on{animation:rise .3s cubic-bezier(.2,.7,.3,1) both}
+
+.card{background:var(--card);border:1px solid var(--rule);border-radius:5px;
+  box-shadow:var(--shadow);padding:1.35rem 1.5rem}
+.card h3{font-family:var(--serif);font-size:1.32rem;font-weight:600;line-height:1.3;
+  margin:0 0 .35rem;text-wrap:balance}
+.card .sub{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin:0 0 1rem}
+.lede-body{font-size:1.1rem;line-height:1.6;margin:0}
+/* A name kept as a name. Translating `status_log` would cost the reader the
+   word they need when they go and ask an engineer about it. */
+code,.term{font-family:var(--mono);font-size:.875em;background:var(--card-2);
+  padding:.08em .34em;border-radius:3px;word-break:break-word}
+ul.findings code,ul.findings .term{font-size:.84em}
+
+figure.fig{margin:0}
+.figbody{background:var(--card);border:1px solid var(--rule);border-radius:5px;
+  box-shadow:var(--shadow);padding:1.2rem;overflow-x:auto;text-align:center}
+.figbody svg{max-width:100%;height:auto;display:inline-block}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:.75rem;line-height:1.55}
+
+/* Prose that has been thought about. A section body is a sequence of blocks,
+   not one grey slab: a sub-head where the argument turns, a measure short
+   enough to track, and small figures inline — because a number belongs in a
+   tile and a comparison in a bar, not in the third clause of a sentence. */
+.prose{display:flex;flex-direction:column;gap:1.05rem}
+.prose>h4{font-family:var(--serif);font-size:1.14rem;font-weight:600;
+  margin:.5rem 0 -.45rem;line-height:1.34;text-wrap:balance}
+.prose>h4:first-child{margin-top:0}
+.prose>p{margin:0;font-size:1.05rem;line-height:1.68;max-width:46rem}
+.prose>p.lead{font-size:1.2rem;line-height:1.56;max-width:44rem}
+.prose .aside{border-left:3px solid var(--amber);background:var(--card-2);
+  padding:.8rem 1.05rem;border-radius:3px;font-size:1rem;line-height:1.62;
+  max-width:54rem}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.6rem}
+.stat{border:1px solid var(--rule);border-radius:4px;background:var(--card-2);
+  padding:.8rem .95rem}
+.stat .n{font-family:var(--serif);font-size:1.8rem;line-height:1.08;font-weight:600;
+  font-variant-numeric:tabular-nums;display:block}
+.stat .k{font-size:.84rem;color:var(--muted);line-height:1.45;display:block;
+  margin-top:.35rem}
+.stat.accent{border-color:var(--accent)} .stat.accent .n{color:var(--accent)}
+.stat.warn{border-color:var(--amber)}   .stat.warn .n{color:var(--amber)}
+.stat.seal{border-color:var(--seal)}    .stat.seal .n{color:var(--seal)}
+.stat.ok{border-color:var(--ok)}        .stat.ok .n{color:var(--ok)}
+
+.bars{display:flex;flex-direction:column;gap:.5rem}
+.bars .b{display:grid;grid-template-columns:minmax(7rem,13rem) 1fr auto;gap:.8rem;
+  align-items:center;font-size:.92rem}
+.bars .bk{color:var(--muted);line-height:1.4}
+.bars .bt{height:.66rem;border-radius:2px;background:var(--card-2);overflow:hidden}
+.bars .bt i{display:block;height:100%;background:var(--muted);border-radius:2px}
+.bars .b.accent .bt i{background:var(--accent)}
+.bars .b.warn .bt i{background:var(--amber)}
+.bars .b.ok .bt i{background:var(--ok)}
+.bars .b.seal .bt i{background:var(--seal)}
+.bars .bv{font-family:var(--mono);font-size:.76rem;color:var(--muted);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* Wider than a paragraph because of the label column, still a measure the
+   eye can track back from. Figures may span; text may not. */
+.kv{display:grid;grid-template-columns:auto 1fr;gap:.5rem 1.1rem;margin:0;
+  font-size:.98rem;align-items:baseline;max-width:60rem}
+.kv dt{font-family:var(--mono);font-size:.78rem;color:var(--muted);white-space:nowrap}
+.kv dd{margin:0;line-height:1.6}
+
+/* A finding is a row with a severity stripe, not a bullet: what needs
+   attention has to read before the sentence does. */
+ul.findings{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.55rem}
+ul.findings li{background:var(--card);border:1px solid var(--rule);
+  border-left:3px solid var(--rule-strong);border-radius:4px;
+  padding:.8rem 1rem;font-size:.97rem;box-shadow:var(--shadow);
+  opacity:0;animation:rise .34s cubic-bezier(.2,.7,.3,1) both}
+ul.findings li.risk{border-left-color:var(--seal);background:var(--card)}
+ul.findings li.warn{border-left-color:var(--amber)}
+ul.findings li.ok{border-left-color:var(--accent)}
+ul.findings .tag{display:block;font-family:var(--mono);font-size:.64rem;
+  letter-spacing:.11em;text-transform:uppercase;margin-bottom:.28rem;color:var(--muted)}
+ul.findings li.risk .tag{color:var(--seal)}
+ul.findings li.warn .tag{color:var(--amber)}
+ul.findings li.ok .tag{color:var(--accent)}
+
+/* A vulnerability card: what the attack was, drawn, then problem and fix in
+   plain rows. The reader should never need the PR's code to grasp either. */
+.vuln-sev{display:inline-block;font-family:var(--mono);font-size:.62rem;
+  letter-spacing:.1em;text-transform:uppercase;padding:.12rem .5rem;border-radius:3px;
+  font-weight:700;margin-bottom:.7rem}
+.vuln-sev.p0{background:var(--seal);color:#fff}
+.vuln-sev.p1{background:var(--amber);color:#fff}
+.vuln-sev.p2{background:var(--rule-strong);color:var(--card)}
+.vuln-pf{display:grid;grid-template-columns:auto 1fr;gap:.5rem .9rem;margin-top:1rem;
+  align-items:baseline}
+.vuln-pf dt{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;
+  text-transform:uppercase;font-weight:700;white-space:nowrap}
+.vuln-pf dt.prob{color:var(--seal)} .vuln-pf dt.fix{color:var(--ok)}
+.vuln-pf dd{margin:0;font-size:.97rem;line-height:1.55}
+.vuln-ref{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-top:.7rem}
+/* Code links stay quiet: the identifier is the link, nothing is added. */
+#steps a{color:inherit;text-decoration:underline dotted var(--soft);text-underline-offset:3px}
+#steps a:hover{color:var(--link);text-decoration-color:var(--link)}
+#steps a code{text-decoration:inherit}
+
+/* Transactions-as-transactions: each state edge is one DB transaction. An
+   envelope groups the writes that commit together; anything outside it is
+   marked, because "also a write" is the trap the reference page is built to
+   expose. */
+.txn{border:2px solid var(--accent);border-radius:5px;overflow:hidden;margin:0 0 1rem;
+  background:var(--card);box-shadow:var(--shadow)}
+.txn>.cap{background:var(--accent);color:#fff;padding:.5rem .9rem;
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;font-weight:700;
+  display:flex;justify-content:space-between;gap:.6rem;flex-wrap:wrap}
+.txn>.cap .method{opacity:.9;font-weight:500}
+.txn .rows{padding:.5rem .9rem .9rem}
+.txn .foot{padding:.6rem .9rem;border-top:1px dashed var(--rule);background:var(--card-2);
+  font-size:.85rem;color:var(--muted)}
+.rowblock{margin-top:.85rem}
+.rowblock .rhead{display:flex;align-items:baseline;gap:.55rem;flex-wrap:wrap;margin-bottom:.3rem}
+.rowblock .tbl{font-family:var(--mono);font-size:.82rem;font-weight:700}
+.op{font-family:var(--mono);font-size:.62rem;letter-spacing:.06em;padding:.05rem .38rem;
+  border-radius:3px;border:1px solid var(--rule);color:var(--muted);text-transform:uppercase}
+.op.ins{border-color:var(--accent);color:var(--accent)}
+.op.upd{border-color:var(--amber);color:var(--amber)}
+.rowblock .guard{font-size:.8rem;color:var(--muted);font-family:var(--mono)}
+table.fields{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:.25rem}
+table.fields td{padding:.3rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}
+table.fields tr:last-child td{border-bottom:none}
+table.fields .k{font-family:var(--mono);font-size:.78rem;white-space:nowrap;width:1%;color:var(--muted)}
+table.fields .v{font-family:var(--mono);font-size:.78rem;word-break:break-word}
+table.fields .was{color:var(--muted);text-decoration:line-through;margin-right:.4rem}
+table.fields .now{color:var(--fg);font-weight:600}
+table.fields .now.ver{color:var(--amber)} table.fields .now.term{color:var(--seal)}
+.outside{border:1.5px dashed var(--muted);border-radius:5px;padding:.7rem .9rem;margin-top:.75rem}
+.outside .ocap{font-family:var(--mono);font-size:.62rem;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:.4rem}
+.outside ul{margin:0;padding-left:1.1em;font-size:.86rem} .outside li{margin:.3rem 0}
+.takeaway{border-left:3px solid var(--seal);background:var(--card-2);padding:.7rem .95rem;
+  border-radius:3px;margin-top:.85rem;font-size:.92rem}
+
+/* Arrows draw in so the eye follows the system's order instead of landing on
+   a finished tangle. */
+.figbody svg path[data-edge]{stroke-dasharray:var(--len,600);stroke-dashoffset:var(--len,600);
+  animation:draw .68s cubic-bezier(.3,.8,.4,1) forwards}
+.figbody svg rect[data-node]{opacity:0;animation:pop .34s cubic-bezier(.2,.7,.3,1) forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes pop{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* Interactive state map: click a state, see the DB transaction that produced
+   it, and which rollout stage it sits in. */
+.smap .figbody svg [data-node]{cursor:pointer;transition:opacity .15s}
+.smap .figbody svg [data-node]:hover{opacity:.72}
+.smap .figbody svg [data-node].picked{outline:none}
+/* A shape with nothing behind it must not invite a click it cannot answer. */
+.smap .figbody svg [data-node].inert{cursor:default}
+.smap .figbody svg [data-node].inert:hover{opacity:1}
+.smap-stages{display:flex;gap:.4rem;margin:.9rem 0;flex-wrap:wrap}
+.smap-stage{flex:1;min-width:7rem;text-align:center;font-family:var(--mono);
+  cursor:pointer;
+  font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  border:1px solid var(--rule);border-radius:5px;padding:.5rem .3rem;transition:all .2s}
+.smap-stage:hover:not(.empty){border-color:var(--accent);color:var(--accent)}
+.smap-stage.on{border-color:var(--accent);color:var(--accent);background:var(--card-2);font-weight:700}
+.smap-stage:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* A stage no state belongs to is shown, but plainly not a control. */
+.smap-stage.empty{cursor:default;opacity:.45}
+.smap-hint{color:var(--muted);font-size:.82rem;margin:.2rem 0 0}
+.smap-detail{margin-top:1rem;min-height:2rem}
+.smap-detail:empty::before{content:attr(data-empty);color:var(--muted);font-size:.9rem}
+
+.nav{display:flex;gap:.5rem;margin-top:1.1rem;align-items:center}
+button.act{font:inherit;font-size:.86rem;padding:.44rem .95rem;border-radius:4px;
+  border:1px solid var(--rule);background:var(--card);color:var(--fg);cursor:pointer;
+  transition:border-color .16s,background .16s}
+button.act:hover:not(:disabled){border-color:var(--accent)}
+button.act:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.act:disabled{opacity:.4;cursor:default}
+.tick{font-family:var(--mono);font-size:.74rem;color:var(--muted);
+  font-variant-numeric:tabular-nums;margin-left:.3rem}
+
+/* The handoff is the point of the document, so it is a standing block at the
+   end of the outline rather than something to scroll for. */
+.handoff{margin-top:1.7rem;border:1px solid var(--rule);border-left:3px solid var(--accent);
+  border-radius:4px;background:var(--card-2);padding:1.05rem 1.2rem;
+  display:flex;gap:1.4rem;align-items:center;flex-wrap:wrap}
+.handoff .txt{flex:1 1 24rem;min-width:0}
+.handoff .cap{font-family:var(--mono);font-size:.64rem;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:.35rem}
+.handoff p{margin:0;font-size:.9rem;color:var(--muted);line-height:1.55}
+.handoff .row{display:flex;gap:.4rem;flex-wrap:wrap;flex:0 0 auto}
+/* Print / Save-as-PDF: same palette (exact colours), every step visible, chrome off. */
+@media print{
+  .rail,.langs,.nav,.handoff,.foot button,#theme{display:none!important}
+  .step{display:block!important;page-break-after:always;break-after:page;animation:none!important}
+  .step:last-of-type{page-break-after:auto;break-after:auto}
+  .figbody svg path[data-edge]{stroke-dasharray:none!important;stroke-dashoffset:0!important;animation:none!important}
+  .figbody svg rect[data-node]{opacity:1!important;animation:none!important}
+  body{background:var(--bg)!important}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+body.baton-printing .rail,
+body.baton-printing .langs,
+body.baton-printing .nav,
+body.baton-printing .handoff{display:none!important}
+body.baton-printing .step{display:block!important;animation:none!important;margin-bottom:2rem}
+button.act.primary{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:500}
+button.act.primary:hover{border-color:var(--fg);opacity:.88}
+button.act.primary.done{background:var(--accent);border-color:var(--accent);color:#fff}
+
+dialog#rawbox{border:1px solid var(--rule);border-radius:5px;padding:1rem 1.15rem;
+  background:var(--card);color:var(--fg);width:min(54rem,92vw);max-height:84vh;
+  box-shadow:var(--shadow)}
+dialog#rawbox::backdrop{background:rgba(22,24,29,.5)}
+.rawhead{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:0 0 .5rem}
+.rawhead strong{font-family:var(--serif);font-size:1.05rem;font-weight:600}
+#rawhelp{font-size:.82rem;color:var(--muted);margin:0 0 .6rem;line-height:1.5}
+#rawtext{width:100%;height:min(58vh,32rem);font-family:var(--mono);font-size:.74rem;
+  line-height:1.6;color:var(--fg);background:var(--bg);border:1px solid var(--rule);
+  border-radius:4px;padding:.85rem;resize:vertical;white-space:pre;overflow:auto}
+
+footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:.72rem;color:var(--muted);
+  display:flex;gap:.8rem;flex-wrap:wrap;align-items:center}
+.layer{border:1px solid var(--rule);border-radius:3px;padding:.05rem .38rem}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001s!important;animation-delay:0s!important}
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <div class="eyebrow" id="eyebrow"></div>
+      <h1 id="title"></h1>
+      <p class="lede" id="sub"></p>
+    </div>
+    <div class="langs" role="group">
+      <button data-lang="en">EN</button>
+      <button data-lang="hant">繁</button>
+      <button data-lang="hans">简</button>
+    </div>
+  </header>
+
+  <div class="stage">
+    <div class="rail">
+      <nav class="rail-ticks" id="railticks" aria-hidden="true"></nav>
+      <aside class="outline">
+        <h2 id="outline-h"></h2>
+        <ol id="outline"></ol>
+      </aside>
+    </div>
+
+    <section class="panel">
+      <div id="steps"></div>
+      <div class="nav">
+        <button class="act" id="prev" type="button"></button>
+        <button class="act" id="next" type="button"></button>
+        <span class="tick" id="tick"></span>
+      </div>
+      <div class="handoff">
+        <div class="txt">
+          <div class="cap" id="ho-cap"></div>
+          <p id="ho-help"></p>
+        </div>
+        <div class="row">
+          <button class="act primary" id="cp"></button>
+          <button class="act" id="raw"></button>
+          <button class="act" id="dl"></button>
+          <button class="act" id="pdf" type="button" title="Print / Save as PDF (current language)"></button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="foot" id="foot"></footer>
+</main>
+
+<dialog id="rawbox">
+  <form method="dialog" class="rawhead">
+    <strong id="rawtitle"></strong>
+    <button class="act" id="rawclose">×</button>
+  </form>
+  <p id="rawhelp"></p>
+  <textarea id="rawtext" readonly spellcheck="false"></textarea>
+</dialog>
+
+<script id="baton-data" type="application/json">{{DATA}}</script>
+<!--
+  The packet itself. Everything above is a rendering of what is below; this is
+  the part another agent loads. Plain markdown on purpose — no schema to
+  implement, no integration to build. Copy it, hand it to any coding agent,
+  and it resumes from here.
+-->
+<script id="baton-context" type="text/markdown">{{CONTEXT}}</script>
+
+<script>
+(function(){
+  const D = JSON.parse(document.getElementById('baton-data').textContent);
+  const CTX = document.getElementById('baton-context').textContent;
+  const T = {
+    en:{outline:'Contents',prev:'← Back',next:'Next →',of:(a,b)=>a+' of '+b,smapHint:'Click a state to see the database write behind it.',smapEmpty:'Click a state above.',
+        hocap:'Hand off',
+        hohelp:'The full working history travels with this page. Give it to your own coding agent and keep asking.',
+        cp:'Copy for your AI',copied:'Copied',raw:'View',dl:'.md',pdf:'PDF',
+        rawtitle:'Context packet',
+        rawhelp:'Already selected — press ⌘C / Ctrl+C, then paste into Claude Code, Codex, Cursor, or any coding agent.',
+        lg:['This change','Needs attention','Cannot be undone','Nearby, unchanged']},
+    hant:{outline:'目錄',prev:'← 上一步',next:'下一步 →',of:(a,b)=>a+' / '+b,smapHint:'點一個狀態，看它背後的資料庫寫入。',smapEmpty:'點上面的狀態。',
+        hocap:'交棒',
+        hohelp:'完整的工作歷程就在這一頁裡。交給你自己的 coding agent，可以繼續往下問。',
+        cp:'複製給你的 AI',copied:'已複製',raw:'看原文',dl:'.md',pdf:'PDF',
+        rawtitle:'Context packet',
+        rawhelp:'已經選好了 —— 按 ⌘C / Ctrl+C，貼進 Claude Code、Codex、Cursor 或任何 coding agent。',
+        lg:['這次動到的','要注意','回不去','周邊，沒動']},
+    hans:{outline:'目录',prev:'← 上一步',next:'下一步 →',of:(a,b)=>a+' / '+b,smapHint:'点一个状态，看它背后的数据库写入。',smapEmpty:'点上面的状态。',
+        hocap:'交棒',
+        hohelp:'完整的工作历程就在这一页里。交给你自己的 coding agent，可以继续往下问。',
+        cp:'复制给你的 AI',copied:'已复制',raw:'看原文',dl:'.md',pdf:'PDF',
+        rawtitle:'Context packet',
+        rawhelp:'已经选好了 —— 按 ⌘C / Ctrl+C，贴进 Claude Code、Codex、Cursor 或任何 coding agent。',
+        lg:['这次动到的','要注意','回不去','周边，没动']}
+  };
+  const pick=(v,l)=>(v&&typeof v==='object')?(v[l]??v.en??''):(v??'');
+  let lang = localStorage.getItem('baton-lang') ||
+    ((navigator.language||'en').toLowerCase().startsWith('zh')
+      ? (/(tw|hk|mo|hant)/.test((navigator.language||'').toLowerCase())?'hant':'hans')
+      : 'en');
+  let idx = 0;
+  const secs = D.sections || [];
+
+  const E = x => String(x==null?'':x).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  // A transaction: the envelope of writes that commit together, then the
+  // writes that do not. Rendered from data, never free-form, so the register
+  // check and the reader both see the same field names the code uses.
+  function vulnHTML(s, lang){
+    const P=v=>rich(pick(v,lang));   // problem/fix carry `code` and **bold**
+    const sev=(s.severity||'p1').toLowerCase();
+    const sevlab={p0:'P0 · remote',p1:'P1 · high',p2:'P2 · medium'}[sev]||sev;
+    // severity chip and the diagram now live outside this box (built once);
+    // this rebuilds only the language-dependent text.
+    let h='<dl class="vuln-pf">';
+    if(s.before) h+='<dt class="prob">'+(lang==='en'?'before':'改動前')+'</dt><dd>'+P(s.before)+'</dd>';
+    if(s.after) h+='<dt class="fix">'+(lang==='en'?'after':'改動後')+'</dt><dd>'+P(s.after)+'</dd>';
+    h+='<dt class="prob">'+(lang==='en'?'the problem':(lang==='hant'?'問題':'问题'))+'</dt><dd>'+P(s.problem)+'</dd>';
+    h+='<dt class="fix">'+(lang==='en'?'the fix':(lang==='hant'?'修法':'修法'))+'</dt><dd>'+P(s.fix)+'</dd>';
+    h+='</dl>';
+    if(s.ref) h+='<div class="vuln-ref">'+rich(pick(s.ref,lang))+'</div>';
+    return h;
+  }
+
+  function txnHTML(s, lang){
+    const P = v => E(pick(v, lang));
+    let h='<div class="txn"><div class="cap"><span>&#9679; '+E(s.method||'transaction')+
+      ' &middot; '+(lang==='en'?'ONE TRANSACTION':(lang==='hant'?'同一個交易':'同一个交易'))+
+      '</span><span class="method">'+P(s.summary||'')+'</span></div><div class="rows">';
+    (s.tables||[]).forEach(t=>{
+      h+='<div class="rowblock"><div class="rhead"><span class="tbl">'+E(t.table)+
+        '</span><span class="op '+(t.op==='INSERT'?'ins':'upd')+'">'+E(t.op)+'</span>';
+      if(t.guard) h+='<span class="guard">'+P(t.guard)+'</span>';
+      h+='</div><table class="fields">';
+      (t.fields||[]).forEach(f=>{
+        h+='<tr><td class="k">'+E(f.k)+'</td><td class="v">';
+        if(f.was!=null) h+='<span class="was">'+E(f.was)+'</span>';
+        h+='<span class="now '+(f.tone||'')+'">'+E(f.now)+'</span>';
+        if(f.why) h+='<span style="display:block;font-family:var(--sans);font-size:.8rem;color:var(--muted);margin-top:.1rem">'+P(f.why)+'</span>';
+        h+='</td></tr>';
+      });
+      h+='</table></div>';
+    });
+    h+='</div>';
+    if(s.foot) h+='<div class="foot">'+P(s.foot)+'</div>';
+    h+='</div>';
+    (s.outside||[]).forEach(o=>{
+      h+='<div class="outside"><div class="ocap">'+(lang==='en'?'OUTSIDE THE TRANSACTION':(lang==='hant'?'不在這個交易裡':'不在这个交易里'))+'</div><ul><li><b>'+
+        E(o[0])+'</b> — '+P(o[1])+'</li></ul></div>';
+    });
+    if(s.takeaway) h+='<div class="takeaway">'+P(s.takeaway)+'</div>';
+    return h;
+  }
+
+  function build(s){
+    const el=document.createElement('article'); el.className='step';
+    if (s.kind==='figure'){
+      const f=document.createElement('figure'); f.className='fig';
+      const head=document.createElement('div'); head.className='card';
+      head.style.marginBottom='.9rem';
+      const h=document.createElement('h3'); h.dataset.i='heading';
+      head.appendChild(h);
+      const sub=document.createElement('p'); sub.className='sub'; sub.dataset.i='caption';
+      sub.style.margin='0'; head.appendChild(sub);
+      const body=document.createElement('div'); body.className='figbody';
+      body.innerHTML = s.svg || '';
+      const lg=document.createElement('div'); lg.className='legend';
+      f.append(head,body,lg); el.appendChild(f);
+    } else if (s.kind==='statemap'){
+      el.classList.add('smap');
+      const f=document.createElement('figure'); f.className='fig';
+      const head=document.createElement('div'); head.className='card';
+      head.style.marginBottom='.9rem';
+      const h=document.createElement('h3'); h.dataset.i='heading'; head.appendChild(h);
+      const sub=document.createElement('p'); sub.className='sub'; sub.dataset.i='caption';
+      sub.style.margin='0'; head.appendChild(sub);
+      const body=document.createElement('div'); body.className='figbody';
+      body.innerHTML = s.svg || '';
+      const stages=document.createElement('div'); stages.className='smap-stages';
+      ['expand','backfill','cutover','contract'].forEach(k=>{
+        const d=document.createElement('button'); d.type='button';
+        d.className='smap-stage'; d.dataset.stage=k;
+        d.textContent={expand:'add',backfill:'fill in',cutover:'switch over',contract:'remove'}[k];
+        stages.appendChild(d);
+      });
+      const hint=document.createElement('p'); hint.className='smap-hint'; hint.dataset.i='hint';
+      const detail=document.createElement('div'); detail.className='smap-detail';
+      detail.dataset.sec=String(secs.indexOf(s));
+      const lg=document.createElement('div'); lg.className='legend';
+      f.append(head,body,lg,stages,hint,detail); el.appendChild(f);
+    } else if (s.kind==='points'){
+      const h=document.createElement('h2'); h.dataset.i='heading'; el.appendChild(h);
+      const ul=document.createElement('ul'); ul.className='findings';
+      (s.items||[]).forEach((it,i)=>{
+        const li=document.createElement('li');
+        li.className=it.tone||''; li.style.animationDelay=(i*80)+'ms';
+        const tag=document.createElement('span'); tag.className='tag';
+        // The tone sets the colour; the words default to a migration packet's
+        // vocabulary and a packet may override them, because "cannot be undone"
+        // is a lie on a finding that is a contradiction rather than a deletion.
+        tag.textContent=it.tag||
+          {risk:'cannot be undone',warn:'needs attention',ok:'checked'}[it.tone]||'note';
+        const sp=document.createElement('span'); sp.dataset.item=String(i);
+        sp.dataset.rich='1';
+        li.append(tag,sp); ul.appendChild(li);
+      });
+      el.appendChild(ul);
+    } else if (s.kind==='vuln'){
+      const h=document.createElement('h3'); h.dataset.i='heading';
+      h.style.cssText='font-family:var(--serif);font-size:1.32rem;margin:0 0 .5rem';
+      el.appendChild(h);
+      // severity chip (static) + the attack diagram (inline svg) +
+      // the problem/fix text (rebuilt per language). The diagram is a sibling,
+      // not inside the rebuilt box, so a language switch never wipes it.
+      const sev=(s.severity||'p1').toLowerCase();
+      const chip=document.createElement('span');
+      chip.className='vuln-sev '+sev;
+      chip.textContent={p0:'P0 · remote',p1:'P1 · high',p2:'P2 · medium'}[sev]||sev;
+      el.appendChild(chip);
+      if (s.svg){
+        const fig=document.createElement('div'); fig.className='figbody';
+        fig.style.margin='.6rem 0 .2rem'; fig.innerHTML=s.svg; el.appendChild(fig);
+        const lg=document.createElement('div'); lg.className='legend'; el.appendChild(lg);
+      }
+      const box=document.createElement('div'); box.className='vulnbox';
+      box.dataset.sec=String(secs.indexOf(s)); el.appendChild(box);
+    } else if (s.kind==='txn'){
+      const h=document.createElement('h3'); h.dataset.i='heading';
+      h.style.fontFamily='var(--serif)'; h.style.fontSize='1.32rem';
+      h.style.margin='0 0 .35rem'; el.appendChild(h);
+      const lead=document.createElement('p'); lead.className='lede-body';
+      lead.dataset.i='text'; lead.style.margin='0 0 1rem'; lead.style.fontSize='1rem';
+      el.appendChild(lead);
+      const box=document.createElement('div'); box.className='txnbox';
+      box.dataset.sec=String(secs.indexOf(s)); el.appendChild(box);
+    } else {
+      const c=document.createElement('div'); c.className='card';
+      const h=document.createElement('h3'); h.dataset.i='heading';
+      const p=document.createElement('div'); p.className='prose'; p.dataset.i='prose';
+      c.append(h,p); el.appendChild(c);
+    }
+    return el;
+  }
+
+  const host=document.getElementById('steps');
+  const built=secs.map(build);
+  built.forEach(e=>host.appendChild(e));
+
+  function animate(el){
+    el.querySelectorAll('svg path[data-edge]').forEach((p,i)=>{
+      let len=600; try{len=Math.max(20,p.getTotalLength());}catch(e){}
+      p.style.setProperty('--len',len);
+      p.style.animationDelay=(120+i*70)+'ms';
+    });
+    el.querySelectorAll('svg rect[data-node]').forEach((r,i)=>{
+      r.style.animationDelay=(i*50)+'ms';
+    });
+  }
+
+  // A section body is either one string or a sequence of blocks. Blocks exist
+  // because an argument that turns three times reads as one grey slab
+  // otherwise — and because a number belongs in a tile and a comparison in a
+  // bar, not buried in the third clause of a sentence.
+  //   {h}  sub-head        {p}  paragraph (+lead)   {note} aside
+  //   {stats:[{n,k,tone}]}  {bars:{rows:[{k,v,label,tone}]}}  {kv:[[k,v]]}
+  function proseHTML(v, lang){
+    if(v==null) return '';
+    const blocks = Array.isArray(v) ? v : [{p:v}];
+    let h='';
+    blocks.forEach(b=>{
+      if(b==null) return;
+      if(b.h!=null){ h+='<h4>'+rich(pick(b.h,lang))+'</h4>'; return; }
+      if(b.note!=null){ h+='<div class="aside">'+rich(pick(b.note,lang))+'</div>'; return; }
+      if(b.stats){
+        h+='<div class="stats">'+b.stats.map(t=>
+          '<div class="stat '+E(t.tone||'')+'"><span class="n">'+E(t.n)+'</span>'+
+          '<span class="k">'+rich(pick(t.k,lang))+'</span></div>').join('')+'</div>';
+        return;
+      }
+      if(b.bars){
+        const rows=b.bars.rows||[];
+        // Bars are relative to the largest row, so the shape is honest even
+        // when the caller never states a scale.
+        const max=Math.max.apply(null,rows.map(r=>Math.abs(+r.v)||0).concat([1]));
+        h+='<div class="bars">'+rows.map(r=>
+          '<div class="b '+E(r.tone||'')+'"><span class="bk">'+rich(pick(r.k,lang))+'</span>'+
+          '<span class="bt"><i style="width:'+
+            Math.max(2,Math.round((Math.abs(+r.v)||0)/max*100))+'%"></i></span>'+
+          '<span class="bv">'+E(r.label!=null?r.label:r.v)+'</span></div>').join('')+'</div>';
+        return;
+      }
+      if(b.kv){
+        h+='<dl class="kv">'+b.kv.map(r=>
+          '<dt>'+E(pick(r[0],lang))+'</dt><dd>'+rich(pick(r[1],lang))+'</dd>').join('')+'</dl>';
+        return;
+      }
+      if(b.p!=null) h+='<p'+(b.lead?' class="lead"':'')+'>'+rich(pick(b.p,lang))+'</p>';
+    });
+    return h;
+  }
+
+  // Escape first, then honour exactly three marks: [label](https://url),
+  // `code`, **lead-in**. The link URL must be absolute http(s) — anything
+  // else stays literal text, so a packet cannot smuggle javascript: or markup.
+  function rich(v){
+    return String(v)
+      .replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/`([^`]+)`/g,'<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  }
+
+  function paint(){
+    const t=T[lang];
+    document.documentElement.lang = lang==='en'?'en':(lang==='hant'?'zh-Hant':'zh-Hans');
+    document.getElementById('eyebrow').textContent =
+      [D.repo,D.branch,D.range].filter(Boolean).join('  ·  ');
+    document.getElementById('title').textContent = pick(D.title,lang);
+    document.getElementById('sub').textContent = pick(D.subtitle,lang);
+    const lgHTML = ['subj','att','term','ctx'].map((c,i)=>
+      '<span><i class="swatch '+c+'"></i>'+t.lg[i]+'</span>').join('');
+    document.querySelectorAll('.legend').forEach(el=>{el.innerHTML=lgHTML;});
+    document.getElementById('outline-h').textContent=t.outline;
+    document.getElementById('ho-cap').textContent=t.hocap;
+    document.getElementById('ho-help').textContent=t.hohelp;
+    document.getElementById('cp').textContent=t.cp;
+    document.getElementById('raw').textContent=t.raw;
+    document.getElementById('dl').textContent=t.dl;
+    document.getElementById('pdf').textContent=t.pdf;
+    document.getElementById('rawtitle').textContent=t.rawtitle;
+    document.getElementById('rawhelp').textContent=t.rawhelp;
+    document.getElementById('prev').textContent=t.prev;
+    document.getElementById('next').textContent=t.next;
+    document.getElementById('tick').textContent=t.of(idx+1,secs.length);
+
+    built.forEach((el,i)=>{
+      const s=secs[i];
+      const box=el.querySelector('.txnbox');
+      if(box) box.innerHTML=txnHTML(s,lang);
+      const vbox=el.querySelector('.vulnbox');
+      if(vbox){ vbox.innerHTML=vulnHTML(s,lang);
+        vbox.querySelectorAll('svg text[data-en]').forEach(n=>{
+          n.textContent=n.hasAttribute('data-'+lang)?n.getAttribute('data-'+lang):n.getAttribute('data-en');});}
+      const h=el.querySelector('[data-i=heading]'); if(h) h.textContent=pick(s.heading,lang);
+      const tx=el.querySelector('[data-i=text]');
+      if(tx) tx.innerHTML = rich(pick(s.text,lang));
+      const pr=el.querySelector('[data-i=prose]');
+      if(pr) pr.innerHTML = proseHTML(s.text,lang);
+      const cp=el.querySelector('[data-i=caption]'); if(cp) cp.textContent=pick(s.caption,lang);
+      const hn=el.querySelector('[data-i=hint]');
+      if(hn) hn.textContent = s.hint ? pick(s.hint,lang) : (T[lang].smapHint||'');
+      el.querySelectorAll('[data-item]').forEach(sp=>{
+        // `text` may carry <code> around names worth keeping verbatim; nothing
+        // else is honoured, so a packet cannot smuggle markup into the page.
+        sp.innerHTML = rich(pick((s.items||[])[+sp.dataset.item]?.text,lang));
+      });
+    });
+    // One SVG carries all three languages, so switching cannot shift layout.
+    document.querySelectorAll('svg text[data-en]').forEach(n=>{
+      n.textContent = n.hasAttribute('data-'+lang)
+        ? n.getAttribute('data-'+lang) : n.getAttribute('data-en');
+    });
+
+    const ol=document.getElementById('outline'); ol.innerHTML='';
+    secs.forEach((s,i)=>{
+      const li=document.createElement('li');
+      const b=document.createElement('button'); b.type='button';
+      const t2=document.createElement('span'); t2.className='ttl';
+      t2.textContent=pick(s.heading,lang); b.appendChild(t2);
+      b.setAttribute('aria-current',String(i===idx));
+      b.addEventListener('click',()=>go(i));
+      li.appendChild(b); ol.appendChild(li);
+    });
+    // The ticks are the only navigation on screen when the drawer is closed,
+    // so they carry position and length without needing the titles.
+    const rt=document.getElementById('railticks'); rt.innerHTML='';
+    secs.forEach((s,i)=>{
+      const b=document.createElement('button'); b.type='button';
+      b.textContent=String(i+1).padStart(2,'0');
+      b.title=pick(s.heading,lang);
+      b.setAttribute('aria-current',String(i===idx));
+      b.addEventListener('click',()=>go(i));
+      rt.appendChild(b);
+    });
+    document.querySelectorAll('.langs button').forEach(b=>
+      b.setAttribute('aria-pressed',String(b.dataset.lang===lang)));
+    document.getElementById('prev').disabled=idx===0;
+    document.getElementById('next').disabled=idx===secs.length-1;
+    document.getElementById('foot').innerHTML =
+      'baton · format '+D.format_version+' · <span class="layer">'+D.layer+'</span>'+
+      (D.layer_note?' · '+String(pick(D.layer_note,lang)).replace(/`/g,''):'');
+  }
+
+  function go(n){
+    if(n<0||n>=secs.length) return;
+    built[idx].classList.remove('on');
+    idx=n;
+    built[idx].classList.add('on');
+    animate(built[idx]);
+    paint();
+  }
+
+  // The drawer opens on approach and closes on a short delay, so clipping a
+  // corner on the way to a tick does not snap it shut mid-reach. CSS :hover
+  // does the same thing on its own; this only makes the close forgiving.
+  (function(){
+    const rail=document.querySelector('.rail'); if(!rail) return;
+    let t=null;
+    const set=v=>{clearTimeout(t);
+      if(v) rail.classList.add('open');
+      else t=setTimeout(()=>rail.classList.remove('open'),260);};
+    rail.addEventListener('pointerenter',()=>set(true));
+    rail.addEventListener('pointerleave',()=>set(false));
+    rail.addEventListener('focusin',()=>set(true));
+    rail.addEventListener('focusout',()=>set(false));
+  })();
+
+  document.querySelectorAll('.langs button').forEach(b=>
+    b.addEventListener('click',()=>{lang=b.dataset.lang;
+      localStorage.setItem('baton-lang',lang); paint();}));
+  document.getElementById('prev').addEventListener('click',()=>go(idx-1));
+  document.getElementById('next').addEventListener('click',()=>go(idx+1));
+  addEventListener('keydown',e=>{
+    if(e.target.tagName==='TEXTAREA') return;
+    if(e.key==='ArrowRight'||e.key==='j') go(idx+1);
+    if(e.key==='ArrowLeft'||e.key==='k') go(idx-1);
+  });
+
+  // The one action the page exists to enable, so it has to work everywhere the
+  // page can be opened. A published page runs inside an iframe where the async
+  // clipboard is often denied, and a button that silently does nothing strands
+  // the reader with no way to reach the packet at all. Three rungs: the async
+  // API, the legacy command, then a panel with the text already selected,
+  // which needs no permission anywhere.
+  const rawbox=document.getElementById('rawbox'), rawtext=document.getElementById('rawtext');
+  function showRaw(){
+    rawtext.value=CTX;
+    if(typeof rawbox.showModal==='function') rawbox.showModal();
+    else rawbox.setAttribute('open','');
+    rawtext.focus(); rawtext.select();
+  }
+  const cp=document.getElementById('cp');
+  cp.addEventListener('click',async()=>{
+    let ok=false;
+    try{ await navigator.clipboard.writeText(CTX); ok=true; }
+    catch(e){
+      try{
+        const ta=document.createElement('textarea');
+        ta.value=CTX; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.select();
+        ok=document.execCommand('copy'); ta.remove();
+      }catch(e2){ ok=false; }
+    }
+    if(!ok){ showRaw(); return; }
+    cp.classList.add('done'); cp.textContent=T[lang].copied;
+    setTimeout(()=>{cp.classList.remove('done'); cp.textContent=T[lang].cp;},2000);
+  });
+  document.getElementById('raw').addEventListener('click',showRaw);
+  document.getElementById('dl').addEventListener('click',()=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([CTX],{type:'text/markdown'}));
+    a.download=D.filename+'.md'; a.click(); URL.revokeObjectURL(a.href);
+  });
+  // Same HTML the reader sees — expand steps, keep colours, open the system
+  // print dialog (Save as PDF). Agents that need a file use scripts/export_pdf.py.
+  document.getElementById('pdf').addEventListener('click',()=>{
+    const restore=document.documentElement.getAttribute('data-theme');
+    document.body.classList.add('baton-printing');
+    document.documentElement.setAttribute('data-theme','light');
+    const done=()=>{
+      document.body.classList.remove('baton-printing');
+      if(restore) document.documentElement.setAttribute('data-theme',restore);
+      else document.documentElement.removeAttribute('data-theme');
+      removeEventListener('afterprint', done);
+    };
+    addEventListener('afterprint', done);
+    setTimeout(()=>window.print(), 50);
+  });
+
+  // ---- diagrams are inline SVG from the diagram-design skill: static markup,
+  // no runtime library. Two things stay live — the labels follow the reader's
+  // language, and the colours follow the theme through CSS variables, which
+  // need no work here at all.
+  function relabelDiagrams(){
+    document.querySelectorAll('.figbody svg text[data-en]').forEach(n=>{
+      n.textContent = n.hasAttribute('data-'+lang)
+        ? n.getAttribute('data-'+lang) : n.getAttribute('data-en');
+    });
+    markInert();
+    autoPickStatemaps();   // restore the selected state after a relabel
+  }
+
+  // Interactive state map: clicking a state shows the DB write behind it.
+  // Show that state's DB transaction and light up its rollout stage.
+  function selectState(secIdx, id){
+    const s = secs[secIdx];
+    if(!s || !s.detail) return;
+    const step = built[secIdx];
+    const detail = step.querySelector('.smap-detail');
+    const txn = s.detail[id];
+    if(detail){
+      if(txn){ detail.innerHTML = txnHTML(txn, lang); }
+      else { detail.innerHTML=''; detail.setAttribute('data-empty', T[lang].smapEmpty||'Pick a state to see its database write.'); }
+    }
+    const stage = (s.stages||{})[id];
+    step.querySelectorAll('.smap-stage').forEach(d=>
+      d.classList.toggle('on', !!stage && d.dataset.stage===stage));
+    // Highlight by the contract attribute — the shape carries its own id.
+    step.querySelectorAll('.figbody svg [data-node]').forEach(n=>{
+      n.classList.toggle('picked', n.getAttribute('data-node')===id);
+      n.style.strokeWidth = n.getAttribute('data-node')===id ? '3' : '';
+    });
+    step.dataset.picked=id;
+  }
+
+  // A shape with no transaction behind it should not look clickable, and a
+  // stage no state belongs to is not a control. Mark both once the diagram is
+  // in the DOM, so the page never invites a click it cannot answer.
+  function markInert(){
+    secs.forEach((s,i)=>{
+      if(s.kind!=='statemap') return;
+      const step=built[i], detail=s.detail||{}, stages=s.stages||{};
+      step.querySelectorAll('.figbody svg [data-node]').forEach(n=>
+        n.classList.toggle('inert', !detail[n.getAttribute('data-node')]));
+      const live=new Set(Object.keys(detail).map(k=>stages[k]).filter(Boolean));
+      step.querySelectorAll('.smap-stage').forEach(d=>{
+        const empty=!live.has(d.dataset.stage);
+        d.classList.toggle('empty', empty);
+        d.disabled=empty;
+      });
+    });
+  }
+  // The diagram is static SVG with no script of its own, so the page owns the
+  // interaction: delegate a click, read the id off the shape. This is why the
+  // statemap still works inlined in a sandboxed iframe.
+  document.addEventListener('click', e=>{
+    const step = e.target.closest && e.target.closest('.step.smap');
+    if(!step) return;
+    const panel = step.querySelector('.smap-detail');
+    if(!panel) return;
+    const sec = +panel.dataset.sec, s = secs[sec];
+
+    const hit = e.target.closest('[data-node]');
+    if(hit && (s.detail||{})[hit.getAttribute('data-node')]){
+      selectState(sec, hit.getAttribute('data-node')); return;
+    }
+    // The stage strip is a second way in: pick the state that lives there.
+    const chip = e.target.closest('.smap-stage');
+    if(chip && !chip.disabled){
+      const id = Object.keys(s.detail||{})
+        .find(k => (s.stages||{})[k] === chip.dataset.stage);
+      if(id) selectState(sec, id);
+    }
+  });
+  function autoPickStatemaps(){
+    secs.forEach((s,i)=>{ if(s.kind==='statemap' && s.detail){
+      const cur=built[i].dataset.picked;
+      const first=cur||Object.keys(s.detail)[0];
+      if(first) selectState(i, first);
+    }});
+  }
+
+  // Re-render on language and on theme change (the theme toggle stamps data-theme).
+  const _paint = paint;
+  paint = function(){ _paint(); relabelDiagrams(); };
+
+  built[0].classList.add('on'); animate(built[0]); paint();
+})();
+</script>
+</body>
+</html>
