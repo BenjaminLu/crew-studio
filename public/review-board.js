@@ -400,11 +400,16 @@ function moveCam(card, to, glide = true) {
 /** where the camera's lock says it should be: its region, its focused question, or the whole board (or its asked chapters) */
 function lockTarget(card) { const lock = B.lock.get(card), L = B.L.get(card); if (!lock || !L) return null;
   return lock.region ? regionCam(card, lock.region) : lock.focus != null ? focusCam(card, lock.focus) : lock.all ? (() => { const ks = B.only.has(card) ? Object.keys(L.R).filter((k) => L.q[k]) : []; return frameRect(card, bounds(card, ks.length ? ks : null), 1, 0.94); })() : null; }
-/** a region at a readable scale: its text at 92% or more on a desktop, its column filling a phone's width */
+/** a region at a readable scale: its text at 70% or more on a desktop (above the cards' mid detail, LOD), so the chapter and the
+ *  follow-ups beside it fit the board's width; its column filling a phone's width */
+const COLUMN = 368, LEAST = 0.7; // the follow-up column beside a chapter (its card and the gap); the least scale a region is framed at
+/** the board's width a region needs (the current one by default): its chapter and the follow-up column beside it at the least
+ *  scale, with the camera's margins; review-room.js keeps the questions panel from taking it */
+function needW(card, key = B.cur.get(card)) { const r = B.L.get(card)?.R[key]; return r && r.w > r.W ? Math.ceil((r.W + COLUMN) * LEAST) + 34 : 0; }
 function regionCam(card, key) {
   const L = B.L.get(card), vp = vpOf(card), r = L?.R[key]; if (!r || !vp) return null; const W = vp.clientWidth;
   if (phone()) { const s = clamp((W - 24) / r.W, 0.5, 1.15); return { s, x: (W - r.W * s) / 2 - r.x * s, y: 44 - (r.y - 34) * s }; }
-  const avail = W - 32, want = Math.min(r.w, r.W + (r.w > r.W ? 368 : 0)), s = clamp(avail / want, 0.88, 1), vis = Math.min(want, avail / s);
+  const avail = W - 32, want = Math.min(r.w, r.W + (r.w > r.W ? COLUMN : 0)), s = clamp(avail / want, LEAST, 1), vis = Math.min(want, avail / s);
   return { s, x: 16 + (avail - vis * s) / 2 - r.x * s, y: 56 - (r.y - 34) * s };
 }
 function bounds(card, keys) { const L = B.L.get(card); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -677,8 +682,10 @@ function view(r, scenes, i) {
   if (!order.includes(B.cur.get(card))) B.cur.set(card, order.includes(want) ? want : sc?.key ?? order[0]);
   else if (want && order.includes(want) && want !== B.cur.get(card)) queueMicrotask(() => flyTo(card, want, false));
   const notesOpen = lesson && (innerWidth > 1180 ? !B.notes.has(card) : B.notes.has(card));
-  // a scene region is as wide as the board shows at a readable scale: the board's width, at most 980
-  const avail = isFs() ? innerWidth - 40 : Math.min(innerWidth, 1480) - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - (notesOpen ? 284 : 0) - 32;
+  // a scene region is as wide as the board shows at a readable scale: the board's width (beside the questions panel at the width
+  // the captain left it, public/review-room.js crewRoomPane), at most 980
+  const notesW = !notesOpen ? 0 : innerWidth > 1180 ? (window.crewRoomPane?.width("board") || window.crewRoomPane?.guess("board") || 290) + 12 : 284;
+  const avail = isFs() ? innerWidth - 40 : innerWidth - 48 - (document.body.dataset.focus === "room" ? 64 : 232) - 196 - 12 - notesW - 32;
   const sceneW = (x) => (phone() ? 340 : clamp(Math.round(avail), 600, x.quiz ? 760 : 980));
   const firstOf = (x) => scenes.find((y) => y.turn === x.turn) === x;
   const ctx = { threads, TN, visited, cur: B.cur.get(card), scenes, sceneW, firstOf, lastLesson: secs.at(-1)?.turn };
@@ -730,6 +737,7 @@ function view(r, scenes, i) {
       h("div", { class: "rb-zoom", role: "group", "aria-label": T("Zoom", "縮放") }, h("button", { type: "button", "data-zoom-out": "", "aria-label": T("Zoom out", "縮小"), onclick: () => { const v = vpOf(card); zoomAt(card, 0.8, v.clientWidth / 2, v.clientHeight / 2, true); } }, "−"),
         h("span", { "data-zoom-pct": "", "aria-live": "polite" }, `${Math.round(camOf(card).s * 100)}%`), h("button", { type: "button", "data-zoom-in": "", "aria-label": T("Zoom in", "放大"), onclick: () => { const v = vpOf(card); zoomAt(card, 1.25, v.clientWidth / 2, v.clientHeight / 2, true); } }, "+"),
         h("button", { type: "button", class: "fit", "data-zoom-fit": "", onclick: () => fitAll(card) }, T("Fit all", "全覽")), fsToggle(card))),
+    notesOpen && !phone() ? window.crewRoomPane?.handle("board") ?? null : null,
     notesOpen || (phone() && lesson) ? notes : null,
     phone() ? h("nav", { class: `rb-phonebar${lesson ? "" : " two"}`, "aria-label": T("The board", "白板") }, h("button", { type: "button", "data-sheet": "outline", "aria-pressed": String(sheet === "outline"), onclick: () => { B.sheet.get(card) === "outline" ? B.sheet.delete(card) : B.sheet.set(card, "outline"); rerender(); } }, T("Answers", "回答")),
       h("button", { type: "button", "data-board-next-phone": next || "", onclick: () => step(card, 1) }, next ? T("Next ▸", "下一段 ▸") : T("All", "全覽")),
@@ -742,6 +750,6 @@ function view(r, scenes, i) {
 /** forget everything kept for a room (it was started over) */
 function forget(card) { for (const m of [B.cam, B.lock, B.cur, B.visited, B.pend, B.focus, B.sheet, B.L, B.reveal, B.err, B.lod, B.focusKey, B.lastScene]) m.delete(card); for (const s of [B.only, B.before, B.notes]) s.delete(card);
   for (const s of [B.peek]) for (const k of [...s]) if (k.startsWith(`${card}/`)) s.delete(k); for (const m of [B.ver, B.code, B.figs]) for (const k of [...m.keys()]) if (k.startsWith(`${card}/`)) m.delete(k); if (B.pop?.card === card) B.pop = null; }
-return { selHeld: () => !!SEL.el, view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit };
+return { selHeld: () => !!SEL.el, view, keydown, forget, state: B, fly: flyTo, layoutOf: (card) => B.L.get(card), relayout: (card) => layout(card), camOf, fitMark, refit, needW };
 };
 })();

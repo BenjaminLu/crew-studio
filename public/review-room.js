@@ -1897,5 +1897,64 @@ function arriveIn(id, r) {
 }
 routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).error ? "room" : null);
 window.crewReviewRoomData = (id) => RR.rooms.get(id) || null;
-window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, board: BOARD };
+window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, board: BOARD, redraw };
+})();
+// The splitter between the room's main area and its right-hand pane (the board's questions, the skill's chat): dragged, or
+// focused and moved with the arrow keys (Shift for bigger steps, Home and End for the bounds); a double-click or Enter goes back
+// to the default width. The width is kept per view on this browser (localStorage) as a property on the page's root, so a redraw
+// of the room keeps it; the CSS clamps it again to the room's width (review-room.css .rr-split, review-board.css --rb-pane).
+// The separator's value is the main area's width (the panel before it): ← lowers it and widens the pane.
+(() => {
+const MIN = { board: 260, explain: 320 }, MAX = 720, STEP = 16, root = document.documentElement;
+// beside the rail (196) and the two gaps (24), the board keeps 560 px, or what its chapter and the follow-up column beside it need
+// at the camera's least scale (review-board.js needW), so the widest pane never clips them
+const keepOf = (v) => { if (v !== "board") return 0; const id = boardId(); return 220 + Math.max(560, (id && window.crewReviewRoom?.board?.needW?.(id)) || 0); };
+const key = (v) => `crew.roomPane.${v}`, prop = (v) => `--rr-pane-${v}`;
+const read = (v) => { try { const n = Number(localStorage.getItem(key(v))); return n > 0 ? n : null; } catch { return null; } };
+const keep = (v, n) => { try { if (n == null) localStorage.removeItem(key(v)); else localStorage.setItem(key(v), String(n)); } catch {} };
+const apply = (v, n) => { if (n == null) root.style.removeProperty(prop(v)); else root.style.setProperty(prop(v), `${n}px`); };
+for (const v of Object.keys(MIN)) apply(v, read(v));
+const box = (v) => document.querySelector(v === "board" ? ".rb-view" : ".rx-body");
+const paneOf = (v) => box(v)?.querySelector(v === "board" ? ":scope > .rb-notes" : ":scope > .rx-chat");
+const mainOf = (v) => box(v)?.querySelector(v === "board" ? ":scope > .rb-main" : ":scope > .rx-stage");
+const bounds = (v) => { const w = box(v)?.clientWidth || innerWidth; return [MIN[v], Math.max(MIN[v], Math.min(MAX, Math.floor(w * 0.55), keepOf(v) ? w - keepOf(v) : Infinity))]; };
+const width = (v) => Math.round(paneOf(v)?.getBoundingClientRect().width || 0);
+/** the pane's width when it is not on the page: the captain's, else the CSS default (review-board.css, review-room.css) */
+const guess = (v) => read(v) ?? Math.round(v === "board" ? Math.min(480, Math.max(272, 290 + (innerWidth - 1440) * 0.37)) : Math.min(560, Math.max(360, innerWidth * 0.32)));
+function sync(el) { const v = el.dataset.paneSplit, [lo, hi] = bounds(v), m = Math.round(mainOf(v)?.getBoundingClientRect().width || 0), all = m + width(v);
+  el.setAttribute("aria-valuemin", String(all - hi)); el.setAttribute("aria-valuemax", String(all - lo)); el.setAttribute("aria-valuenow", String(m)); }
+// the board lays its scenes out for its width and its camera frames them: told once a width settles (a drag let go, a key)
+const boardId = () => document.querySelector("[data-board]")?.dataset.board;
+let marked = false, settled = 0;
+function mark(v) { if (v !== "board" || marked) return; const id = boardId(); if (id) { window.crewReviewRoom?.board?.fitMark(id); marked = true; } }
+function relayout() { marked = false; const id = boardId(), R = window.crewReviewRoom; if (!id || !R) return; R.redraw(id); requestAnimationFrame(() => R.board.refit(id)); }
+/** the pane's width, within its bounds (null: back to the default); kept unless a drag is still moving it */
+function set(v, n, save = true) { mark(v); const [lo, hi] = bounds(v), w = n == null ? null : Math.round(Math.min(hi, Math.max(lo, n))); apply(v, w);
+  requestAnimationFrame(() => document.querySelectorAll(`[data-pane-split="${v}"]`).forEach(sync));
+  if (save) { keep(v, w); if (v === "board") { clearTimeout(settled); settled = setTimeout(relayout, 200); } } }
+let drag = null;
+// the grab's offset from the pane's edge, so the pane never jumps when the splitter is taken
+function down(e) { if (e.button !== 0) return; e.preventDefault(); const el = e.currentTarget, v = el.dataset.paneSplit, b = box(v)?.getBoundingClientRect(); mark(v);
+  drag = { v, off: b ? width(v) - (b.right - e.clientX) : 0, n: null }; el.classList.add("drag"); root.classList.add("rr-splitting"); el.focus({ preventScroll: true }); }
+addEventListener("pointermove", (e) => { if (!drag) return; const b = box(drag.v)?.getBoundingClientRect(); if (b) { drag.n = b.right - e.clientX + drag.off; set(drag.v, drag.n, false); } });
+const up = () => { if (!drag) return; const { v, n } = drag; drag = null; root.classList.remove("rr-splitting"); document.querySelectorAll(`[data-pane-split="${v}"]`).forEach((x) => x.classList.remove("drag")); if (n != null) set(v, n); else marked = false; };
+addEventListener("resize", () => requestAnimationFrame(() => document.querySelectorAll("[data-pane-split]").forEach(sync)));
+addEventListener("pointerup", up); addEventListener("pointercancel", up); addEventListener("blur", up);
+function keydown(e) { const v = e.currentTarget.dataset.paneSplit, cur = width(v), d = e.shiftKey ? STEP * 4 : STEP, [lo, hi] = bounds(v);
+  const n = { ArrowLeft: cur + d, ArrowRight: cur - d, Home: hi, End: lo }[e.key];
+  if (n != null) { e.preventDefault(); set(v, n); } else if (e.key === "Enter") { e.preventDefault(); set(v, null); } }
+/** the splitter for a view ("board" or "explain") */
+function handle(v) {
+  const el = h("div", { class: "rr-split", role: "separator", tabindex: "0", "aria-orientation": "vertical", "data-pane-split": v,
+    "aria-label": v === "board" ? T("Resize the board and the questions panel", "調整白板和標註欄的寬度") : T("Resize the output and the chat", "調整產出和追問欄的寬度"),
+    title: T("Drag, or use ← →, to resize · double-click to reset", "拖拉或用 ← → 調整寬度 · 雙擊回到預設"),
+    onpointerdown: down, onkeydown: keydown, ondblclick: () => set(v, null) });
+  // a redraw of the room replaces the splitter: one that had the keyboard (or a drag) keeps it
+  const had = document.activeElement?.dataset?.paneSplit === v;
+  if (drag?.v === v) el.classList.add("drag");
+  if (had) { queueMicrotask(() => { if (el.isConnected) el.focus({ preventScroll: true }); }); requestAnimationFrame(() => { if (el.isConnected && document.activeElement !== el && (document.activeElement === document.body || !document.activeElement || document.activeElement.closest?.(".rb-vp"))) el.focus({ preventScroll: true }); }); }
+  requestAnimationFrame(() => sync(el));
+  return el;
+}
+window.crewRoomPane = { handle, set, width, guess };
 })();
