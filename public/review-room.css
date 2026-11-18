@@ -610,9 +610,24 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-pendstate { display: block; margin-top: 4px; font-size: 11px; color: var(--text-3); }
 .rx-ro { padding: 12px; border-top: 1px solid var(--border); margin: 0; font-size: 13px; }
 .rr-room.rx-room { grid-template-rows: 48px minmax(0, 1fr); }
-.rx-body { --rx-pane: clamp(320px, var(--rr-pane-explain, clamp(360px, 32vw, 560px)), 55%); position: relative; display: grid; grid-template-columns: 210px minmax(0, 1fr) var(--rx-pane); min-height: 0; min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
-.rx-rail { border-right: 1px solid var(--border); padding: 12px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.rx-rail h6 { margin: 0 0 6px; font-size: 11px; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
+.rx-body { --rx-pane: clamp(320px, var(--rr-pane-explain, clamp(360px, 32vw, 560px)), 55%); position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--rx-pane); min-height: 0; min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+/* the output's line (public/review-explain.js bar): the board / output switch (the board's own .rb-seg), the version menu's
+   button and what the shown version was made from, on one line over the output; the versions open in a menu under it */
+.rx-line { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; min-width: 0; background: var(--surface); border-bottom: 1px solid var(--border); }
+.rx-line > .rx-seg { flex: none; }
+.rx-line > .rx-seg button { height: 26px; padding: 0 10px; }
+.rx-verbtn { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.rx-verbtn:hover { border-color: var(--accent); }
+.rx-verbtn[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.rx-verbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rx-vercount { font: 600 10.5px var(--f-mono, ui-monospace, monospace); color: var(--text-3); padding: 1px 5px; border-radius: 999px; background: var(--surface-2); }
+.rx-line > .rx-vhead { flex: 1; border: 0; background: none; }
+.rx-line > .rx-vhead > summary { padding: 5px 4px; }
+.rx-linefill { flex: 1; }
+.rx-vermenu { position: absolute; top: calc(100% + 4px); left: 8px; z-index: 30; width: min(340px, calc(100% - 16px)); box-sizing: border-box; max-height: min(65vh, 560px); overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.16)); }
+.rx-verscrim { position: fixed; inset: 0; z-index: 29; }
+.rx-vermenu h6 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
+.rx-ver:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rx-ver { display: grid; gap: 2px; padding: 8px; border-radius: 8px; border: 1px solid transparent; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .rx-ver:hover { background: var(--surface-2); }
 .rx-ver.on { border-color: var(--accent); background: var(--accent-soft); }
@@ -620,8 +635,8 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-ver .k { font: 600 10.5px var(--f-mono, ui-monospace, monospace); color: var(--text-3); }
 .rx-again { margin-top: 6px; }
 .rx-note { font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
-.rx-stage { position: relative; min-width: 0; min-height: 0; background: var(--surface-2); display: grid; }
-.rx-stagein { position: relative; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.rx-stage { position: relative; min-width: 0; min-height: 0; background: var(--surface-2); display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.rx-stagein { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 .rx-slot { min-height: 0; }
 .rx-tools { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--surface); flex-wrap: wrap; }
 .rx-tools .rr-chip { height: 30px; }
@@ -750,16 +765,14 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 :root.rr-splitting, :root.rr-splitting * { cursor: col-resize !important; user-select: none !important; -webkit-user-select: none !important; }
 :root.rr-splitting .rx-layer, :root.rr-splitting iframe { pointer-events: none !important; }
 @media (prefers-reduced-motion: reduce) { .rr-split::after { transition: none; } }
-@media (max-width: 1180px) { .rx-body { grid-template-columns: 172px minmax(0, 1fr) var(--rx-pane); } }
 @media (max-width: 760px) { .rx-pick { display: none; } }
 @media (max-width: 900px) {
   .rr-room.rx-room { grid-template-rows: auto minmax(0, 1fr); }
   /* the room scrolls as one column: the output, then the chat with room for its messages (never a zero-height list) */
-  .rx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(55vh, auto) auto; overflow: auto; }
+  .rx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(55vh, auto) auto; overflow: auto; }
   .rx-body > .rr-split { display: none; }
-  .rx-rail { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
-  .rx-rail h6, .rx-note { display: none; }
-  .rx-ver { flex: none; max-width: 200px; }
+  .rx-line { flex-wrap: wrap; }
+  .rx-line > .rx-vhead { flex-basis: 100%; }
   .rx-chat { border-left: 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; min-height: auto; }
   .rx-msgs { overflow: visible; min-height: 160px; flex: none; }
   .rx-ask { flex: none; }
