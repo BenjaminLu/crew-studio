@@ -12,7 +12,7 @@ import { kindDefs } from "./registry";
 import "./tools";
 
 const GROUPS: Record<ToolGroup, string> = { observe: "See Studio", work: "Propose work", manual: "Manual and rules", projects: "Projects", staffing: "Staffing", drafts: "The captain's own workflows",
-  questions: "Agents' questions", github: "GitHub", issues: "Issues", crew: "The crew" };
+  questions: "Agents' questions", github: "GitHub", issues: "Issues", crew: "The crew", notes: "Notes for the retro" };
 
 /** The index as data: what studio_manual {} returns next to the manual's own index page. */
 export function studioIndex() {

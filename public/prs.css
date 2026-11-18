@@ -80,6 +80,16 @@ button.badge.pw-depbtn{border-color:transparent;padding:1px 8px;display:inline-f
 .pw-msg{width:100%;font:13px/1.6 var(--f-sans);background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 12px;resize:vertical}
 .pw-lang{font:inherit;font-size:12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text);border-radius:6px;padding:4px 6px}
 .pw-menu{width:280px;position:fixed;z-index:85;box-sizing:border-box}.pw-menu .btn{justify-content:flex-start;gap:8px}
+/* a merged row's actions, and its go-live timeline (the retro's PR signals) */
+.pw-rowmenu{min-height:24px;height:24px;width:24px;padding:0;margin-left:2px}
+.pw-tl{list-style:none;margin:8px 0 4px;padding:0;display:grid;gap:0}
+.pw-tl-i{display:grid;grid-template-columns:16px minmax(0,1fr);gap:10px;position:relative;padding:0 0 14px}
+.pw-tl-i:not(:last-child)::before{content:"";position:absolute;left:7px;top:16px;bottom:0;width:2px;background:var(--border)}
+.pw-tl-dot{width:12px;height:12px;border-radius:50%;margin:3px 2px 0;background:var(--text-2)}
+.pw-tl-i.t-ok .pw-tl-dot{background:var(--ok)}.pw-tl-i.t-warn .pw-tl-dot{background:var(--warn)}.pw-tl-i.t-bad .pw-tl-dot{background:var(--bad)}.pw-tl-i.t-human .pw-tl-dot{background:var(--human)}
+.pw-tl-h{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pw-tl-note{margin:4px 0 2px;font-size:13px;overflow-wrap:anywhere}
+.pw-incident-line{width:100%;box-sizing:border-box;margin:10px 0 4px;font:inherit;font-size:13px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
 .pw-targets{display:grid;gap:10px}.pw-target{display:grid;gap:8px}
 .pw-check{display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap}
 .pw-driftgh{border-color:color-mix(in srgb,var(--warn) 45%,var(--border))}

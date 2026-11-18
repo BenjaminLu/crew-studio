@@ -91,3 +91,7 @@ procedures; this is the index.
 
 - `studio_crew_assignments`: who runs each workflow's agent nodes.
 - `studio_propose_crew_change`: propose a crew change (captain approves).
+
+### Notes for the retro
+
+- `studio_note_issue`: write down an issue the captain raised, for the next retro.

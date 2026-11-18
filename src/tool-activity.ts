@@ -35,6 +35,7 @@ const STUDIO: Record<string, (input: unknown) => Activity> = {
   studio_keep_staffing: () => pair("Proposing to keep the crew", "提出沿用船員"),
   studio_change_staffing: (i) => withArg(pair("Proposing a crew change for a task", "提出更換任務船員"), field(i, "task")),
   studio_propose_work: (i) => withArg(pair("Proposing work", "提出派工"), field(i, "title") || field(i, "workflow")),
+  studio_note_issue: () => pair("Noting the problem for the retro", "記下問題，留給 retro"),
   studio_draft_workflow: (i) => withArg(pair("Drafting a workflow", "草擬工作流程"), field(i, "name") || field(i, "title")),
   studio_workflow_draft_contract: () => pair("Reading the workflow drafting guide", "查閱工作流程草擬規範"),
   studio_read_workflow: (i) => withArg(pair("Reading a workflow", "查看工作流程"), field(i, "workflow") || field(i, "id")),

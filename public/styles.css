@@ -635,7 +635,6 @@ body[data-focus]:not(.chat-closed) .chat { position: fixed; top: 0; right: 0; bo
 .fm-sees:hover,.fm-sees:focus-visible{background:var(--surface-2);color:var(--text-2)}
 .fm-sees .fm-sees-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-sees[data-state="failed"],.fm-sees[data-state="offline"]{opacity:.65}
-.fm-sees[data-state="failed"] .fm-sees-t{text-decoration:line-through dotted}
 /* a ref in Firstmate's answer: its first mention a quiet chip at line height, later ones plain links; a card on hover or focus */
 .ref-chip,.ref-link{position:relative;font-family:var(--f-mono);font-size:.92em;white-space:nowrap}
 .ref-chip{padding:0 5px;border-radius:5px;background:var(--surface-2);color:var(--accent-text);text-decoration:none;line-height:inherit}
