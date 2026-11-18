@@ -32,8 +32,6 @@ export type Sources = {
   engine: Engine;
   /** the board's Tasks list row (/api/tasks), the same function the route calls */
   taskRow?: (r: any) => any;
-  /** the board's Task page (/api/tasks/<id>), the same function the route calls */
-  runView?: (id: string) => any;
   /** the pull request list (src/pr-watch.ts), whose view() the /api/prs route returns */
   prs?: () => { view(): any } | null;
   /** what the captain is looking at (src/observe/focus.ts) */

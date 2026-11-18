@@ -52,7 +52,10 @@ function wrappedPaths(v: unknown, at = ""): string[] {
   if (v && typeof v === "object") { if ((v as any).untrusted === true && typeof (v as any).text === "string") return [at]; return Object.entries(v).flatMap(([k, x]) => wrappedPaths(x, at ? `${at}.${k}` : k)); }
   return [];
 }
-const item = (def: KindDef, e: Entity) => ({ ref: refOf(def.kind, e.id), kind: def.kind, route: routeOf(def, e.id), title: e.title, updatedAt: e.updatedAt });
+/** An entity's title as an agent sees it: the provider's, or, when its text is withheld from Firstmate, one Studio makes from
+ *  the id alone, whatever the provider set (a merge card's or a branch's title on a withheld Task is that Task's text). */
+const titleOf = (def: KindDef, e: Entity) => (e.withheld ? `${e.id} (${def.kind}: its text is withheld from Firstmate)` : e.title);
+const item = (def: KindDef, e: Entity) => ({ ref: refOf(def.kind, e.id), kind: def.kind, route: routeOf(def, e.id), title: titleOf(def, e), updatedAt: e.updatedAt });
 /** What an envelope weighs as sent: itself, its untrusted paths listed twice (in it and in _meta) and the trust note. */
 function finalBytes(env: Envelope): number { const u = wrappedPaths(env.data).map((p) => `data.${p}`); return Buffer.byteLength(JSON.stringify({ ...env, untrusted: u })) + Buffer.byteLength(JSON.stringify(trustMeta(u))) + 10; }
 /** An envelope, cut to its budget, with its untrusted paths and `_meta["studio/trust"]`. */
@@ -99,8 +102,8 @@ export function createObserve(s: Sources) {
     // only Studio's and the captain's words are searched: a hit on someone else's text would let it steer what is found
     const words = (v: unknown): string[] => (typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(words) : v && typeof v === "object" ? ((v as any).untrusted === true ? [] : Object.values(v).flatMap(words)) : typeof v === "number" ? [String(v)] : []);
     for (const k of ks) { const def = kindDef(k)!;
-      for (const e of def.search ? def.search(s, q) : def.list(s, {})) { const hay = [refOf(def.kind, e.id), e.title, ...words(shape(def, e.data, e.withheld).data)].join("\n").toLowerCase(); if (hay.includes(q)) hits.push({ def, e }); } }
-    const linked = ({ def, e }: { def: KindDef; e: Entity }) => ({ ...item(def, e), resource_link: { type: "resource_link" as const, uri: uriOf(def.kind, e.id), name: refOf(def.kind, e.id), title: e.title } });
+      for (const e of def.search ? def.search(s, q) : def.list(s, {})) { const hay = [refOf(def.kind, e.id), titleOf(def, e), ...words(shape(def, e.data, e.withheld).data)].join("\n").toLowerCase(); if (hay.includes(q)) hits.push({ def, e }); } }
+    const linked = ({ def, e }: { def: KindDef; e: Entity }) => ({ ...item(def, e), resource_link: { type: "resource_link" as const, uri: uriOf(def.kind, e.id), name: refOf(def.kind, e.id), title: titleOf(def, e) } });
     const env = (n: number): Envelope => ({ ref: `find:${q.slice(0, 60)}`, kind: "find", route: "#/board", updatedAt: null, data: { query: q, kinds: ks, total: hits.length, offset, shown: n }, untrusted: [], nextCursor: offset + n < hits.length ? cursorOf(key, offset + n) : null, truncated: false, items: hits.slice(offset, offset + n).map(linked) });
     let n = Math.min(PAGE.find, Math.max(0, hits.length - offset)); while (n > 1 && finalBytes(env(n)) > BUDGET.summary) n--;
     return finish(env(n), BUDGET.summary);
