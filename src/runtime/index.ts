@@ -32,6 +32,7 @@ import {IssueCategoriesStore} from '../issue-categories-store';
 import {installIssueCategories} from '../issue-categories-workflow';
 import {installFirstmateStaffing,staffingQuotaReady,type StaffingFacts,type StaffingAdmission} from '../firstmate-staffing';
 import {installFirstmate,heldNotice} from "../firstmate";
+import {installNoteTool} from "../retro-note-tool";
 import {WorkflowDrafts,installWorkflowDraftTools,draftRoute,ownStaffingPlan,ownWorkflow,checkNodeStaffing,ownBrief} from "../workflow-drafts";
 import {installReadiness} from "../readiness";
 // Studio's native runtime, wired: versioned workflow definitions, the engine,
@@ -301,7 +302,9 @@ export function createRuntime(d: RuntimeDeps) {
   const draftTools=installWorkflowDraftTools(drafts,readiness?.tools,def=>{readiness?.versionSaved(def);try{d.send('wf',{id:def.id,version:def.version});}catch{}});
   const issueTriageFlow=installIssueTriage(engine,projects,issueTriage,d.dataDir,{propose:({tainted:_t,...args},owner)=>originalFirstmate.proposeTainted(args,owner) as any,crewOf:(def,project)=>{const t=crewStore.current();return t?resolveCrew(teamBody(t),def,{},t.hash,project).nodes as any:null;},dispatchCrew:(def,project)=>crewTools.dispatchCrew(def,project) as any});
   const categoriesFlow=installIssueCategories(engine,projects,issueCategories,d.dataDir);
-  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs],call:(name:string,args:any,owner:any)=>name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  // the retro's quick note: the captain's own words, written down for the next retro (src/retro-note-tool.ts)
+  const noteTool=installNoteTool(d.dataDir,d.log);
+  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs,...noteTool.specs],call:(name:string,args:any,owner:any)=>name==='studio_note_issue'?noteTool.call(name,args,owner):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def,defs.ownCrew);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};

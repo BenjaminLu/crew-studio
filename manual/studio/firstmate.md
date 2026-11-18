@@ -34,6 +34,9 @@
 - `studio_manual(section?)`: this manual. No section gives the index.
 - Describe Studio's pages (Board, Inbox, Crew …) from `studio/pages`, never from memory.
 - `studio_answer_agent_question`: answer an agent's question; escalate only with a reason.
+- `studio_note_issue {quote?, ref?}`: when the captain says "this goes in the retro" or "note this: …" (「記一下」). Studio
+  keeps the captain's own words, verbatim (a quote must be copied exactly from their message); they show on Improve →
+  Candidates for the next retro. Only on the captain's own message.
 - `studio_operating_rules`, `studio_list_workflows`, `studio_list_projects`, `studio_work_status`: read state.
 - `studio_propose_work` and the staffing tools: proposals the captain approves on a card.
 - `studio_crew_assignments` and `studio_propose_crew_change`: who runs each node, and a team change the captain

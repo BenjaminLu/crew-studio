@@ -40,6 +40,7 @@ import { findBin } from "../skillpkg/recipes";
 import { skillTools, type SkillRunRecord } from "../skillpkg/run";
 import { sweepHolders } from "../runtime/checks";
 import { hostPython, resolveNode, type Runtime } from "../skillpkg/runtimes";
+import { signal } from "../retro-signals";
 
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
 const refuse = (message: string, code: string, extra: Record<string, any> = {}) => Object.assign(new Error(message), { code, ...extra });
@@ -629,6 +630,8 @@ export function installExplainer(d: ExplainerDeps) {
     } catch (e: any) { Object.assign(run, { status: "failed", error: clip(e?.message ?? e, 500), why: "error" }); }
     finally {
       run.ended = now(); running.delete(k.id); adm.held?.release(); save(); d.notify(k);
+      // the retro's signal: a run that failed or stopped on its own (a captain's stop is no failure), by its why code
+      if (run.status === "failed" || (run.status === "stopped" && run.why !== "captain")) signal(engine.deps.log, "room_round_failed", { room: k.id, run: s.run.id, why: run.why ?? "error", code: "explain" }, { task: s.run.id });
       // the package's copy is read-only: made writable again so the workspace can go
       // only the package's copy was made read-only (never chmod what a script could have linked); rmSync removes links, never follows them
       try { if (existsSync(join(ws.root, "pkg"))) chmodTree(join(ws.root, "pkg"), true); sweepHolders([ws.root]); rmSync(ws.root, { recursive: true, force: true }); } catch {}
