@@ -9,6 +9,9 @@ import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-cl
 import {installHelloWeb} from "../domain/hello-web";
 import { refusesRulesPatch } from "../operating-rules";
 import { taskTitle } from "../task-title";
+import { taskRow } from "./task-row";
+import { createObserve } from "../observe/tools";
+import { NativeToolFailure } from "../host/types";
 import { PolicyUnreadable } from "./checks";
 import { failure, fromError, type FailureCode } from "./failures";
 import {installStartupRecursion,startupCursorAdvice} from '../domain/startup-recursion';
@@ -107,6 +110,10 @@ export type RuntimeDeps = {
   staffingPending?: (intent:any) => void;
   /** the captain approved a crew Firstmate proposed: tell Firstmate, so it proposes the work (still captain-approved) */
   staffingApproved?: (a: import('../firstmate-staffing').StaffingApproved) => void;
+  /** the pull request list (src/pr-watch.ts) Studio's read tools read (src/observe/kinds/pr.ts) */
+  prs?: () => { view(): any } | null;
+  /** what the captain is looking at, for studio_now (src/observe/focus.ts) */
+  focus?: import('../observe/focus').FocusStore | null;
 
   selectProvider?: (x: import("./engine").X, pick: AgentPick, context?: { role: string; explicit: boolean; adaptive?: boolean; picked?: boolean }) => Promise<Provider>;
   /** the readiness gate (src/readiness): false inside the gate's own dry run */
@@ -304,7 +311,9 @@ export function createRuntime(d: RuntimeDeps) {
   const categoriesFlow=installIssueCategories(engine,projects,issueCategories,d.dataDir);
   // the retro's quick note: the captain's own words, written down for the next retro (src/retro-note-tool.ts)
   const noteTool=installNoteTool(d.dataDir,d.log);
-  const firstmate={specs:[...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs,...noteTool.specs],call:(name:string,args:any,owner:any)=>name==='studio_note_issue'?noteTool.call(name,args,owner):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
+  // Studio's read tools (src/observe/tools.ts): studio_now, studio_find, studio_list, studio_get, the same for Claude and Codex
+  const observe=createObserve({engine,taskRow:(r:any)=>taskRow(engine,r),prs:d.prs,focus:d.focus??null});
+  const firstmate={specs:[...observe.specs,...originalFirstmate.specs,...staffingTools.specs,...issueTriageFlow.specs,...draftTools.specs,...crewTools.specs,...noteTool.specs],call:(name:string,args:any,owner:any)=>observe.has(name)?(owner?.live?.()===false?Promise.reject(new NativeToolFailure('owner_ended','The primary request ended.','主要對話請求已結束。')):observe.call(name,args)):name==='studio_note_issue'?noteTool.call(name,args,owner):name==='studio_triage_issues'||name==='studio_work_package'?issueTriageFlow.call(name,args,owner):crewTools.specs.some(spec=>spec.name===name)?crewTools.call(name,args,owner):draftTools.specs.some(spec=>spec.name===name)?draftTools.call(name,args,owner):name==='studio_change_staffing'||name==='studio_keep_staffing'||name==='studio_staffing_facts'||name==='studio_staffing_interview'||name==='studio_propose_staffing'?staffingTools.call(name,args,owner):originalFirstmate.call(name,args,owner)};
   // the captain's own workflows start only with the staffing the captain confirmed at Run (never at drafting)
   const previousOwnStart=engine.deps.authorizeStart;
   engine.deps.authorizeStart=(def:any,o:any)=>{previousOwnStart?.(def,o);if(ownWorkflow(def)){const s=ownStaffingPlan(def,defs.ownCrew);if(s.plan.length&&(s.missing.length||o.params?._ownStaffing!==s.hash))throw new Error('Confirm staffing for every agent node when you click Run / 請在按下執行時確認每個代理節點的配置');}};
@@ -568,10 +577,7 @@ export function createRuntime(d: RuntimeDeps) {
         return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/team":null,...providerAdvice?{providerAdvice}:{},projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
       }
       if (p === "/api/wruns" && !writing) { engine.cloudHandoff?.refreshAll(); } // the board opens: active cloud hand-offs are read on GitHub once
-      if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => ({ id: r.id, workflow: r.workflow, version: r.version, title: taskTitle(r), request: r.text, status: r.status, project: engine.projectRow(r), result: r.result, createdAt: r.createdAt, updatedAt: r.updatedAt, endedAt: r.endedAt, error: r.error,
-        childRun: (() => { const child = engine.get(r.ctx?.childRun); return child?.params?._firstmateProposal === r.id ? child.id : null; })(),
-        archived: !!r.archived, origin: engine.externalOrigin?.(r) ?? null, merged: !!r.ctx?.merged, reconciled: r.reconciled && (() => { const t = engine.trusted(r.id); return t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger); })() ? r.reconciled : null, cancelReason: r.cancelReason ?? null,
-        current: Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => ({ node: k, state: n.state, waiting: n.waiting ?? null, label: r.def.nodes.find((x) => x.id === k)?.label ?? k })), door: engine.cards.list({ run: r.id }).find((c) => c.door)?.door ?? null, recovered: r.recovered })),
+      if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => taskRow(engine, r)),
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
         // every start refusal carries its typed failure (runtime/failures.ts), never only a string
@@ -981,6 +987,6 @@ export function createRuntime(d: RuntimeDeps) {
     if (cap.quota !== "available" && id !== "claude") return `${id}'s quota could not be read just now${r}`;
     return null;
   };
-  return { handle, engine, defs, projects, firstmate, startFromBranch, startLan, lanProviderProblem, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
+  return { handle, engine, defs, projects, firstmate, observe, startFromBranch, startLan, lanProviderProblem, lanStaffing, lanNeedsProject: (def: any) => boardStaffed(def), prepareLocalProject:originalFirstmate.prepareLocalProject, onboarding, drafts, readiness, classify: (t: string, project?: string | null) => classifyIntent(defs, t, engine.policies.get("sensitive_paths", { project: project ?? null }).value ?? [], engine.policies.get("intake.one_way_words").value ?? []) };
 }
 export { schemaDefaults };

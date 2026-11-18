@@ -21,7 +21,7 @@ function announceConnected(prev, v) {
   const c = v.log.findLast((x) => x.connected)?.connected || v;
   toast(h("span", { "data-connected-toast": v.host }, icon("check", "ic sm"), " ", T(`Firstmate connected · ${hostLabel(c)}`, `Firstmate 已連接 · ${hostLabel(c)}`)));
 }
-const takeView = (v) => { const prev = MS.view; MS.view = v; announceConnected(prev, v); };
+const takeView = (v) => { const prev = MS.view; MS.view = v; announceConnected(prev, v); paintSees(); };
 async function loadMain() { try { const v = await getJ("/api/main"); if (newerMain(v)) takeView(v); } catch {} if (isMain()) renderChat(false); showChatInfo(); approvalsBar(); if(S.route?.name==="board")soft(); }
 getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false); }).catch(() => {});
 (function stream() { // on the page's one event stream (app.js)
@@ -44,6 +44,78 @@ getJ("/api/remote/me").then((m) => { MS.me = m; if (isMain()) renderChat(false);
   });
 })();
 loadMain();
+
+// ---------- what Firstmate's answers cite (docs/units/observe.md) ----------
+// A ref in an answer (task:R-162, card:SC-248, room:PR-…-1645, pr:owner/repo#1645) links to its page under a short label (R-162,
+// PR #1645); its first mention in an answer is a chip, later ones plain links. On hover or keyboard focus a small card says
+// what it is now (a Task's title and status, a card's kind) and which read tool read it in this conversation, and when.
+const REF_RE = /\b(?:task:R-\d+|card:SC-\d+|room:(?:SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})|pr:[\w.-]+\/[\w.-]+#\d+)/g;
+const refRoute = (ref) => { const k = ref.slice(0, ref.indexOf(":")), id = ref.slice(ref.indexOf(":") + 1); return k === "task" ? `#/run/${id}` : k === "card" ? `#/inbox/${id}` : k === "room" ? `#/room/${encodeURIComponent(id)}` : "#/prs"; };
+/** a ref as the captain reads it: R-162, SC-248, PR #1645 (its room), repo#1645 */
+const refLabel = (ref) => { const k = ref.slice(0, ref.indexOf(":")), id = ref.slice(ref.indexOf(":") + 1);
+  if (k === "room") { const m = /^PR-[0-9a-f]{12}-(\d+)$/.exec(id); return m ? `PR #${m[1]}` : /^DIR-/.test(id) ? T("a directory's room", "目錄審查室") : id; }
+  return k === "pr" ? id.replace(/^[^/]+\//, "") : id; };
+/** the last tool call before this answer, anywhere earlier in this conversation, that read the ref; `turn`: in this turn */
+function refRead(ref, log, at) {
+  const id = ref.slice(ref.indexOf(":") + 1), re = new RegExp(`(^|[^\\w-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`);
+  let turn = true;
+  for (let j = at - 1; j >= 0; j--) { const x = log[j]; if (!x) continue; if (x.kind === "captain") { turn = false; continue; }
+    if (x.kind === "tool" && re.test(String(x.text || ""))) return { item: x, turn }; }
+  return null;
+}
+// what a ref is now, read from Studio when its card first opens (a Task's title and status, a card's kind and state)
+const REF_NOW = new Map();
+async function refNow(ref) {
+  if (REF_NOW.has(ref)) return REF_NOW.get(ref);
+  const k = ref.slice(0, ref.indexOf(":")), id = ref.slice(ref.indexOf(":") + 1); let v = null;
+  try { if (k === "task") { const r = await getJ(`/api/wruns/${encodeURIComponent(id)}`); if (r?.id) v = [r.title, r.status].filter(Boolean).join(" · "); }
+    else if (k === "card") { const c = await getJ(`/api/scards/${encodeURIComponent(id)}`); if (c?.id) v = [c.title?.[lang === "en" ? "en" : "zh-TW"] ?? c.title?.en, c.status].filter(Boolean).join(" · "); } } catch {}
+  REF_NOW.set(ref, v); setTimeout(() => REF_NOW.delete(ref), 30_000); return v;
+}
+function refChip(ref, read, first) {
+  const tool = read ? (read.item.tool || toolShort(String(read.item.text).split(" ")[0])) : null;
+  const when = read ? new Date(read.item.at).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" }) : "";
+  const readLine = read ? (read.turn ? T(`Read with ${tool} at ${when}, this turn.`, `這一輪 ${when} 用 ${tool} 讀過。`) : T(`Read with ${tool} at ${when}, earlier in this conversation.`, `稍早（${when}）用 ${tool} 讀過，這一輪沒有再讀。`))
+    : T("Not read in this conversation.", "這次對話沒有讀過。");
+  const now = h("span", { class: "ref-pop-now", "data-ref-now": "" }), pop = h("span", { class: "ref-pop", role: "tooltip" }, h("b", {}, ref), now, h("span", {}, readLine));
+  const a = h("a", { class: first ? "ref-chip" : "ref-link", href: refRoute(ref), "data-ref": ref, "data-ref-read": tool ?? "", "data-ref-turn": read ? (read.turn ? "this" : "earlier") : "",
+    "aria-label": `${refLabel(ref)}: ${readLine}`, onmouseenter: () => fill(), onfocus: () => fill() }, refLabel(ref), pop);
+  // the card sits under the ref, kept inside the window (the chat panel scrolls and clips what overflows it)
+  const place = () => { const r = a.getBoundingClientRect(), w = Math.min(260, innerWidth - 16); pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`; pop.style.top = `${r.bottom + 4}px`; pop.style.maxWidth = `${w}px`; };
+  const fill = () => { place(); if (now.dataset.filled) return; now.dataset.filled = "1"; refNow(ref).then((v) => { if (v) now.textContent = v; }); };
+  return a;
+}
+function refChips(frag, log, at) {
+  const box = document.createElement("div"); box.append(frag);
+  const walk = document.createTreeWalker(box, NodeFilter.SHOW_TEXT), texts = [], seen = new Set();
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) { REF_RE.lastIndex = 0; if (!n.parentElement?.closest("a") && REF_RE.test(n.nodeValue)) texts.push(n); }
+  for (const n of texts) { REF_RE.lastIndex = 0; const out = document.createDocumentFragment(), v = n.nodeValue; let last = 0, m;
+    while ((m = REF_RE.exec(v))) { if (m.index > last) out.append(v.slice(last, m.index)); const ref = m[0];
+      out.append(refChip(ref, refRead(ref, log, at), !seen.has(ref))); seen.add(ref); last = m.index + ref.length; }
+    if (last < v.length) out.append(v.slice(last)); REF_RE.lastIndex = 0; n.replaceWith(out); }
+  REF_RE.lastIndex = 0;
+  const done = document.createDocumentFragment(); done.append(...box.childNodes); return done;
+}
+// "看得到：…": what Studio last received from this window, which Firstmate reads with studio_now. Greyed when the last report did
+// not reach Studio or Firstmate is not connected, with its age once it is over 10 minutes old; paused: "沒有分享畫面 · 恢復".
+function paintSees() {
+  const b = $("#fmSees"); if (!b) return; const f = window.studioFocus, phone = MS.me?.kind === "phone";
+  const row = b.parentElement, hide = phone || !f; if (row) row.style.display = hide ? "none" : ""; if (hide) return;
+  const on = f.sharing, d = f.delivery?.() ?? { ok: true, label: f.label(), at: Date.now() }, offline = MS.view?.state === "detached";
+  const age = d.at && Date.now() - d.at > 10 * 60_000 ? Math.round((Date.now() - d.at) / 60_000) : 0;
+  b.dataset.sharing = on ? "1" : "0"; b.dataset.state = !on ? "paused" : !d.ok ? "failed" : offline ? "offline" : "ok";
+  const text = !on ? T("Not sharing your page · Resume", "沒有分享畫面 · 恢復")
+    : !d.ok ? T(`Not delivered: ${f.label()}`, `沒送到：${f.label()}`)
+    : T(`Sees: ${d.label ?? f.label()}${age ? ` (${age} min ago)` : ""}${offline ? " · Firstmate not connected" : ""}`, `看得到：${d.label ?? f.label()}${age ? `（${age} 分鐘前）` : ""}${offline ? " · Firstmate 未連接" : ""}`);
+  b.replaceChildren(icon(on ? "eye" : "pause", "ic sm"), h("span", { class: "fm-sees-t" }, text));
+  b.title = !on ? T("Share your page with Firstmate again.", "恢復與 Firstmate 分享頁面。") : !d.ok ? T("Studio did not receive this page; it keeps the last one it did. Click to pause sharing.", "Studio 沒收到這一頁，仍是上一次收到的。點一下暫停分享。")
+    : T("Firstmate sees this page's name and the item you selected, never what you type. Click to pause.", "Firstmate 看得到頁面和選取項目的名稱，看不到你輸入中的文字。點一下暫停分享。");
+  const box = $("#focusShare"); if (box) box.checked = on;
+}
+window.onFocusLabel = paintSees;
+(function mountSees() { const b = h("button", { type: "button", class: "fm-sees", id: "fmSees", "data-fm-sees": "",
+  onclick: async () => { await window.studioFocus?.setSharing(!window.studioFocus.sharing); paintSees(); } });
+  ($("#chatMode") || $(".chat-head")).after(h("div", { class: "fm-sees-row" }, b)); paintSees(); setInterval(paintSees, 60_000); })();
 
 // ---------- chat: mode switch, header, log ----------
 const askStatus = ask, renderStatus = renderChat, chatInfoStatus = showChatInfo;
@@ -203,14 +275,14 @@ function toolGroup(items) {
       h("span", { class: "faint tool-group-last" }, toolActivity(visible.at(-1)).label)),
     h("div", { class: "tool-group-items" }, visible.map(toolLine)));
 }
-function logItem(it, i) {
+function logItem(it, i, all = []) {
   if(it.source === "studio:native-outcome")return h("div",{class:"card x-pad","data-native-outcome":it.id},h("p",{},it.text),...(it.links||[]).filter(l=>/^#\/(run|review)\//.test(l.href)).map(l=>h("a",{class:"btn",href:l.href},l.label)));
   if (it.kind === "captain") return h("div", { class: "msg me", "data-main": "captain" }, it.text ? h("div", { class: "bub" }, it.text) : null, it.attachments?.length ? attView(it.attachments) : null, it.source && it.source !== "desktop" ? h("div", { class: "faint", style: "font-size:11px;text-align:right" }, it.source) : null);
   if (it.external) return externalView(it.external);
   if (it.connected) return h("div", { class: "faint", "data-main": "connected", "data-connected-host": it.connected.host, role: "status", style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--accent-text);display:flex;gap:6px;align-items:center;flex-wrap:wrap" },
     icon("check", "ic sm"), h("b", { style: "color:var(--accent-text)" }, T("Firstmate connected", "Firstmate 已連接")), h("span", { class: "vbadge" }, hostLabel(it.connected)), h("span", {}, new Date(it.at).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" })));
   if (it.attachmentRefusal) return externalView({ source: "studio", class: "attachment", code: it.attachmentRefusal, message: it.text.replace(/^Not sent: /, ""), reason: { en: "An attachment could not be sent.", "zh-TW": "附件無法送出。" } });
-  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, md(I18N.chatText(lang, it.text))));
+  if (it.kind === "firstmate") return h("div", { class: "msg fm", "data-main": "firstmate" }, h("div", { class: "meta" }, "Firstmate", (it.session?.host || MS.view?.host) ? h("span", { class: "vbadge" }, it.session?.host || MS.view.host) : null), h("div", { class: "bub" }, refChips(md(I18N.chatText(lang, it.text)), all, i)));
   if (it.kind === "tool") return toolLine(it);
   // a wake Studio wrote (an escalation, an agent question): its human summary; the raw prompt stays in the log on disk (S23)
   if (it.kind === "wake" && it.shown?.length) return h("div", { class: "faint", "data-main": "wake", "data-wake-shown": it.shown.length, style: "font-size:12.5px;padding:4px 8px;border-left:2px solid var(--line);white-space:pre-wrap" }, h("b", {}, T("Sent to Firstmate", "交給 Firstmate") + " · "), it.shown.map((x) => L(x)).join("\n"));
@@ -236,7 +308,7 @@ renderChat = function (stick = true) {
       const sep = sessionSep(x, all[i - 1], all, v); if (sep) { flushTools(); kids.push(sep); }
       // Error and refusal cards are always outside a collapsed activity group.
       if (x.kind === "tool" && !x.external && !x.attachmentRefusal) tools.push(x);
-      else { flushTools(); const el = logItem(x, i); if (el) kids.push(el); }
+      else { flushTools(); const el = logItem(x, i, all); if (el) kids.push(el); }
     }); flushTools();
     const thinking = MS.thinking !== null && !MS.live;
     if (v.busy) kids.push(h("div", { class: "msg fm", "data-main": "live", "data-thinking": thinking ? "1" : null }, h("div", { class: "meta" }, "Firstmate", h("span", { class: "faint" }, thinking ? T("thinking…", "思考中…") : T("working…", "處理中…"))),

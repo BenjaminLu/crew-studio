@@ -83,7 +83,8 @@ function route() {
   const { v, rest, query } = hashRoute();
   $$(".nav-item").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   S.route = { name: v, arg: rest.map(decodeURIComponent).join("/") || null, query };
-  render.nav = true; render();
+  FOCUS.sel = null; FOCUS.dialog = null;
+  render.nav = true; render(); tellFocus();
 }
 // A focus page takes the whole screen: the terminal page (docs/units/web-terminal.md) and an open review room
 // (docs/units/review-room.md). A route's view says so with .focus: a name, or a function of the route's argument that
@@ -473,13 +474,14 @@ function confirmSend(c, st) {
 }
 function modal(title, body, onOk) {
   const root = $("#modalRoot");
-  const close = () => root.replaceChildren();
+  const close = () => { root.replaceChildren(); window.studioFocus?.dialog(null); };
   const ok = h("button", { class: "btn primary" }, T("Send", "送出"));
   ok.onclick = () => onOk(close, ok);
   const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); } },
     h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": title }, h("h2", {}, title), body,
       h("div", { class: "actions", style: "justify-content:flex-end" }, h("button", { class: "btn", onclick: close }, T("Cancel", "取消")), ok)));
   root.replaceChildren(back);
+  window.studioFocus?.dialog("dialog"); // that a dialog is open, never its title (a title may carry a name someone else wrote)
   ok.focus();
   back.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
 }
@@ -739,6 +741,51 @@ function tellLang() { fetch("/api/main/locale", { method: "POST", headers: { "co
 // this page's own id in those reports (Studio logs them, so a live check can tell which tab said what); new on every load
 const TAB_ID = Math.random().toString(36).slice(2, 10);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") tellLang(); });
+// ---------- what the captain is looking at (docs/units/observe.md "Focus") ----------
+// This window's page, item and dialog, sent to Studio half a second after they settle, for Firstmate's studio_now. Only ids
+// and the labels Studio itself draws, capped; never what is being typed, never a picture. A window in the background sends
+// nothing; with sharing off (Settings, or the Firstmate panel's label) nothing is sent.
+const FOCUS = { sharing: true, sel: null, dialog: null, timer: 0, last: "", sent: { ok: true, label: null, at: 0 } };
+const FOCUS_PAGES = { board: ["Board", "看板"], inbox: ["Inbox", "收件匣"], run: ["Task", "任務"], runs: ["Tasks", "任務列表"], room: ["Review room", "審查室"], prs: ["Pull requests", "Pull requests"],
+  crew: ["Crew", "船員"], team: ["Crew", "船員"], activity: ["Activity", "事件"], workflow: ["Workflow", "流程"], workflows: ["Workflows", "流程"], library: ["Library", "成品庫"], settings: ["Settings", "設定"],
+  terminals: ["Terminals", "終端機"], doctor: ["Doctor", "健康檢查"], projects: ["Projects", "專案"], project: ["Project", "專案"], skills: ["Skills", "技能"], firstmate: ["Firstmate", "Firstmate"] };
+/** a room's id as the captain reads it: PR #1645, a directory, or the card or Task it belongs to */
+const roomShort = (id) => { const m = /^PR-[0-9a-f]{12}-(\d+)$/.exec(id); return m ? `PR #${m[1]}` : /^DIR-/.test(id) ? T("Directory", "目錄") : id; };
+function focusNow() {
+  const { v, rest } = hashRoute(); let id = ""; try { id = rest.map(decodeURIComponent).join("/"); } catch {}
+  const ref = v === "run" && /^R-\d+$/.test(id) ? `task:${id}` : v === "inbox" && /^SC-\d+$/.test(id) ? `card:${id}` : v === "room" && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/.test(id) ? `room:${id}` : null;
+  const label = [FOCUS_PAGES[v] ? T(...FOCUS_PAGES[v]) : v, v === "room" ? roomShort(id) : ref ? id : "", FOCUS.sel?.label].filter(Boolean).join(" · ").slice(0, 80);
+  // the page and its Studio id only: a list writes its search box into the address (?q=…), which is never sent
+  return { route: `#/${v}${ref ? `/${id}` : ""}`, ref, selection: FOCUS.sel, dialog: FOCUS.dialog, label, tab: TAB_ID, visible: document.visibilityState !== "hidden" };
+}
+function tellFocus() { clearTimeout(FOCUS.timer); FOCUS.timer = setTimeout(sendFocus, 500); window.onFocusLabel?.(); }
+function sendFocus() {
+  if (!FOCUS.sharing || document.visibilityState === "hidden") return;
+  const body = JSON.stringify(focusNow()); if (body === FOCUS.last) return; FOCUS.last = body;
+  // what Studio last received is what the panel's label shows (a report that did not arrive greys it)
+  const label = JSON.parse(body).label;
+  fetch("/api/focus", { method: "POST", headers: { "content-type": "application/json" }, body }).then(async (r) => { const j = await r.json().catch(() => null);
+    if (j && j.sharing === false && FOCUS.sharing) FOCUS.sharing = false;
+    FOCUS.sent = r.ok && j?.kept !== false ? { ok: true, label, at: Date.now() } : { ok: false, label: FOCUS.sent.label, at: FOCUS.sent.at }; if (!r.ok) FOCUS.last = ""; window.onFocusLabel?.(); })
+    .catch(() => { FOCUS.sent = { ok: false, label: FOCUS.sent.label, at: FOCUS.sent.at }; FOCUS.last = ""; window.onFocusLabel?.(); });
+}
+window.studioFocus = {
+  /** the item selected on this page (a room's scene): {kind, id, label} with a label Studio draws, or null */
+  select(sel) { const next = sel && sel.kind && sel.id ? { kind: String(sel.kind).slice(0, 20), id: String(sel.id).slice(0, 160), label: String(sel.label ?? "").slice(0, 80) } : null; if (JSON.stringify(next) === JSON.stringify(FOCUS.sel)) return; FOCUS.sel = next; tellFocus(); },
+  /** a dialog this page opened (its Studio title), or null when it closed */
+  dialog(name) { FOCUS.dialog = name ? String(name).slice(0, 60) : null; tellFocus(); },
+  label: () => focusNow().label,
+  /** what Studio last received from this window: {ok, label, at} */
+  delivery: () => ({ ...FOCUS.sent, label: FOCUS.sent.label ?? focusNow().label, at: FOCUS.sent.at || Date.now() }),
+  get sharing() { return FOCUS.sharing; },
+  async setSharing(on) { try { const r = await fetch("/api/focus/sharing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ on: !!on }) }); const j = await r.json(); if (typeof j?.sharing === "boolean") FOCUS.sharing = j.sharing; } catch {}
+    FOCUS.last = ""; if (FOCUS.sharing) tellFocus(); else window.onFocusLabel?.(); return FOCUS.sharing; },
+};
+fetch("/api/focus").then((r) => r.json()).then((j) => { if (typeof j?.sharing === "boolean") { FOCUS.sharing = j.sharing; window.onFocusLabel?.(); if (j.sharing) tellFocus(); } }).catch(() => {});
+// a window coming back on screen says again what it shows: it may be the one the captain uses now
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { FOCUS.last = ""; tellFocus(); } });
+// two windows both on screen: the one the captain clicks into is the one used last
+addEventListener("focus", () => { FOCUS.last = ""; tellFocus(); });
 // persist = false keeps a first-run (browser) language unstored until the captain picks one in Settings
 function setLang(l, persist = true) { l = I18N.LANGS.includes(l) ? l : "en"; lang = l; if (l !== "en") lastZh = l; if (persist) store.set("crew.lang", l); document.documentElement.lang = l;
   tellLang();
