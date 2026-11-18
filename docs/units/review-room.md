@@ -781,9 +781,10 @@ The room can be presented by one of the captain's own skills instead of the tuto
 - **Opening a room starts it** (the captain's decision): when `autoRun` is on (default) and the room is explained with the
   default skill, opening it (`POST …/explain/auto`, sent once per room and head by the page; never from a paired phone)
   starts that skill's generation for the room's head without a paid confirmation, on the room tutor's model and the skill's
-  default instructions. The pinned baton's scripts are approved in advance: one signed decision bound to both pinned hashes,
-  `via: builtin-pin`; a changed file or the captain's own baton decides as any skill does, and an undecided one waits for
-  Generate. Once per head: a run Studio started or tried to start for this head (`autoTried`, `run.head`, `run.opened`), whatever
+  default instructions. Only the built-in baton exactly as pinned starts by itself: another default skill, or a changed baton
+  (the captain's own copy), shows Generate and its confirmation (`why: unpinned`). The pinned baton's scripts are approved in
+  advance: one signed decision bound to both pinned hashes, `via: builtin-pin`, recorded when Studio starts, when the captain
+  picks baton or when a room starts it (never by a read). Once per head: a run Studio started or tried to start for this head (`autoTried`, `run.head`, `run.opened`), whatever
   its end, means a reload, a second tab or a revisit starts nothing more, and a failure is never retried by itself; the stage
   shows why and "Try again" (`{retry: true}`) starts it once more. A new head starts a new version on the next opening; the
   older versions stay in the version menu. A room explained by a skill never starts the tutor's lesson by itself.

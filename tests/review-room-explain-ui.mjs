@@ -118,6 +118,24 @@ try {
     await w.click("[data-explain-retry]"); await w.waitForTimeout(600);
     ok(autos.length === 2 && autos[1].retry === true && !confirms.length, "Try again asks Studio to start it once more, still without a paid confirmation", JSON.stringify(autos));
     await ca.close(); }
+  // ---------- the page could not reach Studio to start it: never a "Starting…" that nothing ends ----------
+  { const cb = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await cb.addInitScript(() => { try { localStorage.setItem("crew.lang", "en"); localStorage.setItem("crew.onboarding.journey.dismissed.v1", "1"); } catch {} addEventListener("DOMContentLoaded", () => document.body.classList.add("chat-closed"));
+      Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
+    await cb.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const A = { skills: [], log: [], settings: { limitMin: 120, defaultSkill: "baton", autoRun: true }, busy: false, selected: { id: "baton", v: 1 }, tutor: false, auto: { on: true, skill: "baton", head: H, due: true, tried: null }, versions: [], running: null, consent: null, runs: [] };
+    const autos = [];
+    await cb.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
+    await cb.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
+    await cb.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: A }));
+    await cb.route(new RegExp(`/api/review-room/${ID}/explain/auto$`), (r) => { autos.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 500, json: { error: "Studio is restarting" } }); });
+    const w = await cb.newPage(); w.on("pageerror", (e) => errors.push(e.message));
+    await w.goto(`${base}/#/room/${ID}`); await w.waitForSelector("[data-explain-retry]", { timeout: 15000 }); await w.waitForTimeout(300);
+    const st = await w.evaluate(() => ({ starting: !!document.querySelector("[data-explain-starting]"), text: document.querySelector("[data-explain-empty]")?.textContent || "" }));
+    ok(autos.length === 1 && !st.starting && /restarting/.test(st.text), "a start that did not reach Studio shows why with Try again, not a Starting… that never ends", JSON.stringify({ autos, st }));
+    await w.click("[data-explain-retry]"); await w.waitForTimeout(600);
+    ok(autos.length === 2 && autos[1].retry === undefined, "Try again sends the opening's start again (Studio never saw the first)", JSON.stringify(autos));
+    await cb.close(); }
 
   // ---------- the output's line: no column left of the output; the board / output switch and the version menu, by mouse and keys ----------
   { const c9 = await browser.newContext({ viewport: { width: 1440, height: 900 } });

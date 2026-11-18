@@ -359,7 +359,6 @@ export function installExplainer(d: ExplainerDeps) {
   /** prompt (a generation): the captain's instructions this offer is for; null = the last ones this skill ran with (the prefill) */
   const offer = (k: any, skill: unknown, kind: "generate" | "ask", prompt: unknown = null) => {
     const t = d.offerOf(k); if (t?.error) return { error: t.error, code: t.code ?? "no_tutor" };
-    preapprove(String(skill ?? ""));
     let p: Pin; try { p = pinOf(skill).pin; } catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? "bad_skill" }; }
     const st = read(k), limitMin = settings().limitMin, scripts = planText(planOf(p)), dec = decisionOf(p);
     // the prefill (no text given): the skill's default instructions, else the last ones it ran with, else none
@@ -403,6 +402,8 @@ export function installExplainer(d: ExplainerDeps) {
     const base = { on: cfg.autoRun, skill: cfg.defaultSkill, head: null as string | null, due: false, tried: null as NonNullable<XState["autoTried"]>[number] | null };
     if (!cfg.autoRun) return { ...base, why: "off" };
     if (!sel || sel.id !== cfg.defaultSkill) return { ...base, why: "picked" };
+    // only the built-in baton exactly as pinned runs without a confirmation: another skill, or a changed baton, asks (Generate)
+    const lib = library().find((x) => x.id === sel.id); if (!isPinnedBaton(lib)) return { ...base, why: "unpinned" };
     let head: string | null = null; try { head = d.subjectOf(k).head || null; } catch {}
     if (!head) return { ...base, why: "no_head" };
     const tried = (st.autoTried ?? []).filter((t) => t.head === head && t.skill === sel.id).at(-1) ?? null;
@@ -418,20 +419,21 @@ export function installExplainer(d: ExplainerDeps) {
   async function auto(id: string, by: string, retry = false) {
     const k = d.keyOf(id); if (autoing.has(k.id)) return viewOf(k);
     const st = read(k), cfg = settings(), sel = selectedOf(st), a = autoOf(k);
-    if (retry) { if (!cfg.autoRun || !sel || sel.id !== cfg.defaultSkill || !a.head || a.why === "busy" || a.why === "closed") return viewOf(k);
-      const last = [...st.runs].reverse().find((r) => r.kind === "generate" && r.skill.id === sel.id && r.head === a.head);
-      if (last && last.status === "done") return viewOf(k); if (!last && !a.tried?.error) return viewOf(k); }
+    if (retry) { if (!a.head || ["off", "picked", "unpinned", "no_head", "busy", "closed", "archived"].includes(a.why ?? "")) return viewOf(k);
+      // only after one Studio started (or tried to start) by itself: a run the captain confirmed is generated again by Generate
+      const last = [...st.runs].reverse().find((r) => r.kind === "generate" && r.skill.id === sel!.id && r.head === a.head);
+      if (last ? last.status === "done" || !last.opened : !a.tried) return viewOf(k); }
     else if (!a.due) return viewOf(k);
     autoing.add(k.id);
     const mark: NonNullable<XState["autoTried"]>[number] = { head: a.head!, skill: sel!.id, at: now() };
-    const fail = (e: any) => { Object.assign(mark, { error: clip(e?.message ?? e, 300), code: e?.code ?? null }); try { write(k, read(k)); } catch {} d.notify(k); return viewOf(k); };
+    const fail = (e: any) => { Object.assign(mark, { error: clip(e?.message ?? e, 300), code: e?.code ?? null }); try { write(k, st); } catch {} d.notify(k); return viewOf(k); };
     try {
       st.autoTried = [...(st.autoTried ?? []), mark].slice(-50); write(k, st);
       preapprove(sel!.id);
-      const prompt = defaultPrompt(sel!.id) ?? "", o: any = offer(k, sel!.id, "generate", prompt);
+      const prompt = defaultPrompt(sel!.id) ?? ""; let o: any; try { o = offer(k, sel!.id, "generate", prompt); } catch (e: any) { return fail(e); }
       if (o.error) return fail(refuse(o.error, o.code ?? "no_tutor"));
       if (o.decide?.state === "pending") return fail(refuse("This version of the skill has scripts and no decision yet: press Generate to decide / 這個版本的 skill 有 script，還沒決定：請按「產生」決定", "confirm_required"));
-      try { const v = await start(id, "generate", { skill: sel!.id, confirm: o.hash, prompt, opened: true }, by); mark.run = read(k).runs.at(-1)?.n; write(k, read(k)); return v; }
+      try { const v = await start(id, "generate", { skill: sel!.id, confirm: o.hash, prompt, opened: true }, by); mark.run = st.runs.at(-1)?.n; write(k, st); return v; }
       catch (e: any) { return fail(e); }
     } finally { autoing.delete(k.id); }
   }
@@ -822,6 +824,8 @@ export function installExplainer(d: ExplainerDeps) {
     const p = insideDir(join(dirOf(k), `v${x.n}`), rel, false), b = readFileSync(p); if (sha(b) !== f.sha256) throw refuse("This version's file changed on disk", "changed"); return b; };
   const head = (type: string, extra: Record<string, string> = {}) => ({ "content-type": type, "content-security-policy": OUTPUT_CSP, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cache-control": "no-store", "cross-origin-resource-policy": "same-origin", ...extra });
 
+  // the captain's standing decision on the built-in baton, applied once when Studio starts (never by a read)
+  setTimeout(() => { try { preapprove(BATON_PIN.id); } catch {} }, 0);
   return {
     view(id: string) { return viewOf(d.keyOf(id)); },
     /** kind ask: the offer of a follow-up on version v (its own skill; the newest version when v is not given) */
@@ -830,7 +834,7 @@ export function installExplainer(d: ExplainerDeps) {
       return x ? offer(k, x.skill.id, "ask") : { error: "There is no output to ask about yet / 還沒有可以追問的產出", code: "not_found" }; },
     /** the room's way of explaining: the built-in tutor (null) or a library skill; free, nothing runs */
     select(id: string, skill: unknown) { const k = d.keyOf(id), st = read(k);
-      if (skill === null || skill === "tutor") { st.selected = null; st.tutor = true; } else { const p = pinOf(skill).pin; st.selected = { id: p.id, v: p.v }; delete st.tutor; }
+      if (skill === null || skill === "tutor") { st.selected = null; st.tutor = true; } else { preapprove(String(skill)); const p = pinOf(skill).pin; st.selected = { id: p.id, v: p.v }; delete st.tutor; }
       write(k, st); d.notify(k); return viewOf(k); },
     generate(id: string, a: any, by: string) { return start(id, "generate", { skill: a?.skill, confirm: a?.confirm, prompt: a?.prompt, skillDecision: a?.skillDecision }, by); },
     /** the captain opened the room: the default skill's generation for this head starts by itself when it is due; retry: once more

@@ -14,7 +14,7 @@
 // and opens in a tab of its own (a fresh capability, framed exactly as here).
 (() => {
 const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), sel: new Map(), draft: new Map(), caps: new Map(),
-  posting: new Set(), autoPosted: new Set(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null };
+  posting: new Set(), autoPosted: new Set(), autoErr: new Map(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null };
 const enc = encodeURIComponent;
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
@@ -62,16 +62,19 @@ function autoStart(id, retry = false) {
   const st = state(id), a = st?.auto; if (!onRoom(id) || readOnly() || !a || (!retry && !a.due)) return;
   const r = window.crewReviewRoomData?.(id); if (!r || r.snapshot || !r.open) return;
   const key = `${id}@${a.head}${retry ? `#retry-${Date.now()}` : ""}`; if (X.autoPosted.has(key) || X.posting.has(`${id}/auto`)) return; X.autoPosted.add(key);
-  X.posting.add(`${id}/auto`); refresh(id);
-  postJ(`${base(id)}/auto`, retry ? { retry: true } : {}).then((v) => { X.st.set(id, v); X.err.delete(id); }).catch((e) => X.err.set(id, bi(e.message)))
+  X.posting.add(`${id}/auto`); X.autoErr.delete(id); refresh(id);
+  // a POST that did not reach Studio (or that Studio refused) may be sent again: the stage then says why, with Try again
+  postJ(`${base(id)}/auto`, retry ? { retry: true } : {}).then((v) => { X.st.set(id, v); X.err.delete(id); }).catch((e) => { X.autoPosted.delete(key); X.autoErr.set(id, bi(e.message)); })
     .finally(() => { X.posting.delete(`${id}/auto`); refresh(id); schedule(id); });
 }
 /** the default skill's generation for the room's head, when Studio started it (or tried to) and it did not finish: why, and "Try again" */
-function autoFailed(st) {
+function autoFailed(st, id) {
   const a = st?.auto; if (!a?.head || !a.skill) return null;
   const run = [...st.runs].reverse().find((x) => x.kind === "generate" && x.skill.id === a.skill && x.head === a.head);
   if (run) return run.opened && (run.status === "failed" || run.status === "stopped") ? { run, ...whyOf(run) } : null;
-  return a.tried?.error ? { run: null, text: T("Studio could not start it.", "Studio 沒辦法開始。"), detail: bi(a.tried.error), code: a.tried.code } : null;
+  if (a.tried?.error) return { run: null, text: T("Studio could not start it.", "Studio 沒辦法開始。"), detail: bi(a.tried.error), code: a.tried.code };
+  // the page could not reach Studio to start it: say so, with Try again
+  const pe = X.autoErr.get(id); return pe && a.due ? { run: null, text: T("Studio could not start it.", "Studio 沒辦法開始。"), detail: pe, code: null, page: true } : null;
 }
 function schedule(id) { clearTimeout(X.poll.get(id)); X.poll.delete(id); if (state(id)?.running != null && onRoom(id)) X.poll.set(id, setTimeout(() => load(id), 2500)); }
 /** a run ended: say so when the captain is not watching it; a question asked while the first output was being made goes now */
@@ -441,10 +444,10 @@ function bar(r, st) {
 }
 /** on the line, with an older version shown: the generation Studio started for the new head did not finish (why, Try again) */
 function autoNote(r, st) {
-  const id = r.card.id, fa = autoFailed(st); if (!fa) return null;
+  const id = r.card.id, fa = autoFailed(st, id); if (!fa) return null;
   return h("span", { class: "rx-autonote", role: "alert", "data-explain-autofail": fa.run ? fa.run.why || fa.run.status : "start", title: fa.detail || "" },
     "⚠ ", T("The new head's explanation did not finish: ", "新 head 的說明沒有完成："), fa.text,
-    fa.code !== "confirm_required" && r.open && !readOnly() ? [" ", h("button", { type: "button", class: "btn sm", "data-explain-retry": "", disabled: X.posting.has(`${id}/auto`) ? true : null, onclick: () => autoStart(id, true) }, T("Try again", "再試一次"))] : null);
+    fa.code !== "confirm_required" && r.open && !readOnly() ? [" ", h("button", { type: "button", class: "btn sm", "data-explain-retry": "", disabled: X.posting.has(`${id}/auto`) ? true : null, onclick: () => autoStart(id, !fa.page) }, T("Try again", "再試一次"))] : null);
 }
 function verMenu(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), sid = st.selected?.id;
@@ -489,11 +492,12 @@ function versionHead(r, st, v) {
 function stage(r, st) {
   const id = r.card.id, run = liveRun(st), v = shownVersion(id), sid = st.selected?.id, lastGen = [...st.runs].reverse().find((x) => x.kind === "generate" && x.skill.id === sid);
   if (run && run.kind === "generate") return progressCard(r, st, run);
-  const starting = !run && (X.posting.has(`${id}/auto`) || (st.auto?.due && r.open && !readOnly()));
+  // "Starting" only while the page is starting it, or is about to (due, not sent yet): never a state nothing will end
+  const starting = !run && (X.posting.has(`${id}/auto`) || (st.auto?.due && r.open && !readOnly() && !X.autoErr.has(id) && !X.autoPosted.has(`${id}@${st.auto.head}`)));
   if (!v && starting) return h("div", { class: "rx-gen", "data-x-stage": "", "data-explain-starting": "" }, h("div", { class: "rx-gencard", role: "status" },
     h("h3", {}, T(`Starting ${skillName(st, sid)}…`, `正在開始 ${skillName(st, sid)}…`)),
     h("p", { class: "faint" }, T("Opening the room starts its explanation for this head by itself, on the room's tutor model. It runs in the background; Stop is on the next screen.", "打開審查室就會自動替這個 head 產生說明，用審查室導師的模型。在背景跑；下一個畫面有停止。"))));
-  const fa = autoFailed(st), retryBtn = () => fa && fa.code !== "confirm_required" && r.open && !readOnly() ? h("button", { type: "button", class: "btn primary", "data-explain-retry": "", disabled: X.posting.has(`${id}/auto`) ? true : null, onclick: () => autoStart(id, true) }, T("Try again", "再試一次")) : null;
+  const fa = autoFailed(st, id), retryBtn = () => fa && fa.code !== "confirm_required" && r.open && !readOnly() ? h("button", { type: "button", class: "btn primary", "data-explain-retry": "", disabled: X.posting.has(`${id}/auto`) ? true : null, onclick: () => autoStart(id, !fa.page) }, T("Try again", "再試一次")) : null;
   if (!v && fa && !fa.run) return h("div", { class: "rx-empty", "data-x-stage": "", "data-explain-empty": "" },
     h("div", { class: "rx-state err", role: "alert", "data-explain-ended": "start" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"),
       h("div", {}, h("b", {}, T(`${skillName(st, sid)} did not start`, `${skillName(st, sid)} 沒有開始`)), h("p", {}, fa.text), fa.detail ? h("small", { class: "faint" }, fa.detail) : null)),
