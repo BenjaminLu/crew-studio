@@ -161,6 +161,27 @@ type OutKind = "html" | "markdown" | "image" | "video" | "text";
 
 const MEDIA: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".mp4": "video/mp4", ".webm": "video/webm" };
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".svg": "image/svg+xml", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json", ".md": "text/html; charset=utf-8", ".txt": "text/plain; charset=utf-8", ...MEDIA };
+const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+/** An HTML page with what the reader never sees taken out: <template>, <noscript>, and any element that is hidden (the hidden
+ *  attribute, aria-hidden="true", or an inline style of display:none or visibility:hidden), with everything inside it. A
+ *  stylesheet's own hiding (a class) is not read. The text a question is grounded on is then the page as shown. */
+export function shownHtml(raw: string): string {
+  const tag = /<!--[\s\S]*?-->|<(\/?)([A-Za-z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  let out = "", at = 0, skip: { name: string; depth: number } | null = null, m: RegExpExecArray | null;
+  while ((m = tag.exec(raw))) {
+    if (!m[2]) { if (!skip) out += raw.slice(at, m.index); at = tag.lastIndex; continue; }
+    const close = m[1] === "/", name = m[2].toLowerCase(), attrs = m[3] ?? "", selfClosing = /\/\s*$/.test(attrs) || VOID.has(name);
+    // a script or a style is copied whole (its text may hold a "<" that is no tag): later steps drop it
+    if (!close && (name === "script" || name === "style")) { const end = raw.toLowerCase().indexOf(`</${name}`, tag.lastIndex), stop = end < 0 ? raw.length : raw.indexOf(">", end) + 1 || raw.length;
+      if (!skip) out += raw.slice(at, stop); at = stop; tag.lastIndex = stop; continue; }
+    if (skip) { if (name === skip.name && !selfClosing) { skip.depth += close ? -1 : 1; if (skip.depth === 0) skip = null; } at = tag.lastIndex; continue; }
+    const hidden = !close && !selfClosing && (name === "template" || name === "noscript" || /(?:^|\s)hidden(?:\s|=|\/|$)/i.test(attrs) || /aria-hidden\s*=\s*["']?true/i.test(attrs)
+      || /style\s*=\s*(["'])[^"']*(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(attrs));
+    if (hidden) { out += raw.slice(at, m.index); skip = { name, depth: 1 }; at = tag.lastIndex; continue; }
+  }
+  if (!skip) out += raw.slice(at);
+  return out;
+}
 export const kindOf = (entry: string): OutKind => { const e = extname(entry).toLowerCase(); return e === ".html" || e === ".htm" ? "html" : e === ".md" ? "markdown" : [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(e) ? "image" : [".mp4", ".webm"].includes(e) ? "video" : "text"; };
 
 /** What an output page runs under: scripts and styles inline, pictures and media from data: and blob: only, nothing else
@@ -527,15 +548,15 @@ export function installExplainer(d: ExplainerDeps) {
   }
 
   /** A question's grounding: the version the captain is looking at, read-only in the materials. version/files/ is its files as
-   *  kept (hash-checked); version/page.txt is its visible text and the context it embeds for a reader's agent (a script of type
-   *  text/markdown or application/json, as baton's packet carries), never its code. */
+   *  kept (hash-checked); version/page.txt is its visible text (shownHtml: nothing hidden) and the context it embeds for a
+   *  reader's agent (a script of type text/markdown or application/json, as baton's packet carries), never its code. */
   function versionMaterials(k: any, v: XVersion, mat: string) {
     const root = join(mat, "version"), files = join(root, "files"); mkdirSync(files, { recursive: true });
     for (const f of v.files) { try { const p = insideDir(files, f.path, false); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, fileOf(k, v, f.path)); } catch {} }
     let text = "";
     try { const raw = fileOf(k, v, v.entry).toString("utf8");
       if (v.kind === "html") { const ctx = [...raw.matchAll(/<script[^>]*type=["'](?:text\/markdown|application\/json)["'][^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1].trim()).filter(Boolean);
-        const vis = raw.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<svg[\s\S]*?<\/svg>/gi, " [figure] ")
+        const vis = shownHtml(raw).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<svg[\s\S]*?<\/svg>/gi, " [figure] ")
           .replace(/<(h[1-6])[^>]*>/gi, "\n\n## ").replace(/<\/(p|div|li|tr|section|h[1-6])>/gi, "\n").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " ")
           .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*\n+/g, "\n\n").trim();
         text = [vis, ...ctx.map((c) => `\n\n---\n# Context the page embeds\n\n${c}`)].join(""); }
@@ -919,6 +940,15 @@ export function installExplainer(d: ExplainerDeps) {
     stop(id: string) { const k = d.keyOf(id), live = running.get(k.id); if (!live) return viewOf(k);
       live.stop = "stopped by the captain"; if (live.job) engine.deps.agents.cancel(live.job); live.wake?.(); return viewOf(k); },
     running(id: string) { return running.has(id); },
+    /** what the room list, the merge card and the zones read of a room's explainer: its versions, what it cost, the heads made */
+    brief(id: string) { let k: any; try { k = d.keyOf(id); } catch { return null; } const st = read(k);
+      const usd = st.runs.reduce((n, r) => n + (typeof r.cost?.usd === "number" ? r.cost.usd : 0), 0), last = st.runs.filter((r) => r.ended).at(-1)?.ended ?? null;
+      const heads = [...new Set(st.runs.filter((r) => r.kind === "generate" && r.status === "done" && r.head).map((r) => r.head!))];
+      const latest = st.versions.at(-1) ?? null;
+      return { versions: st.versions.length, questions: st.runs.filter((r) => r.kind === "ask").length, runs: st.runs.length, usd: Math.round(usd * 10000) / 10000, running: running.has(k.id),
+        updatedAt: last, latest: latest ? { n: latest.n, at: latest.at, skill: latest.skill.name } : null, heads }; },
+    /** a room's versions as kept, for the Library: each version's folder and record (never changed once written) */
+    pages(id: string) { const k = d.keyOf(id), st = read(k); return st.versions.map((v) => ({ ...v, dir: join(dirOf(k), `v${v.n}`), run: st.runs.find((r) => r.n === v.run) ?? null })); },
     setSettings(a: { limitMin?: unknown; defaultSkill?: unknown; autoRun?: unknown }) { const next: any = {};
       if (a?.limitMin === undefined && a?.defaultSkill === undefined && a?.autoRun === undefined) throw refuse("limitMin, defaultSkill or autoRun", "bad_request");
       if (a.limitMin !== undefined) { const v = Number(a.limitMin);

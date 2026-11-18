@@ -409,9 +409,10 @@ function view(r) {
   return h("div", { class: "rx-body", "data-explain-room": id }, h("main", { class: "rx-stage" }, bar(r, st), stage(r, st)), window.crewRoomPane?.handle("explain") ?? null, chat(r, st), dialogs(r));
 }
 /** show a version; one made by another skill switches the room to that skill (so the header, the chat and Generate agree) */
-async function showVersion(r, v) {
-  const id = r.card.id, st = state(id); X.shown.set(id, v.n); X.sel.delete(id); X.boxing = null; X.err.delete(id);
-  if (st.selected?.id !== v.skill.id) { try { X.st.set(id, await postJ(`${base(id)}/select`, { skill: v.skill.id })); } catch (e) { X.err.set(id, bi(e.message)); } }
+/** show a version: only what the stage shows changes. The room's selected skill stays (a version another skill made is read,
+ *  never a switch of the skill the room generates with: that is the picker's) */
+function showVersion(r, v) {
+  const id = r.card.id; X.shown.set(id, v.n); X.sel.delete(id); X.boxing = null; X.err.delete(id);
   render();
 }
 /** the focused control inside a part about to be redrawn, as a selector that finds its replacement */
