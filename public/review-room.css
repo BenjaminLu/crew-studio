@@ -315,8 +315,6 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 /* steps and illustrations: a step's number picks it; the illustration zooms to what the step is about, the rest dimmed; a
    connector is a wide click target that opens what that step does and why */
 
-.rr-chip, [data-node] { opacity: .28; transition: opacity .2s; }
-
  
 
 /* ---------- "Explain with": the room presented by one of the captain's skills (public/review-explain.js) ---------- */
@@ -555,7 +553,6 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 /* a big drawing's preview opens the viewer on a click; a long transition list folds */
 
 .rp-translist > summary { cursor: pointer; color: var(--rr-marker); font-size: 13px; margin: 6px 0; }
-
 /* a room from before: its whiteboard is kept on disk and offered as a file; one compact line over the room */
 .rr-oldboard { display: flex; gap: 10px; align-items: center; margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--surface); font-size: 13px; }
 .rr-oldboard > div { flex: 1; min-width: 0; }
