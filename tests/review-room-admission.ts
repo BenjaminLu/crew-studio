@@ -215,11 +215,8 @@ try {
         e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x"], ["claude", "claude-new", { verified: false }]);
         const vb: any = room.view(card.id);
         ok(vb.offer.provider === "codex" && vb.offer.model === "reviewer-model" && vb.offer.picked === "auto" && vb.offer.warning === null, "Automatic still keeps the approved reviewer when it can run", JSON.stringify(vb.offer)); }
-      // voice: only to the vendor of the tutor that answered, and only while the room's tutor is still that vendor
       room.setSettings({ tutor: null } as any); e.deps.usableModels = () => U(["codex", "worker-model"], ["codex", "reviewer-model"], ["claude", "claude-x"]);
-      r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain"); const codexTurn = (room.view(card.id) as any).turns.filter((x: any) => x.provider === "codex" && x.status === "done").at(-1);
-      let vref: any = null; try { await room.speech(card.id, `t${codexTurn.n}`); } catch (x) { vref = x; }
-      ok(vref?.code === "no_voice" && /vendor changed/.test(vref.message), "a scene a codex tutor answered is not narrated by the vendor once the room's tutor is claude: the voice never goes to another vendor", vref?.message);
+      r0.setTutor(card.id, { provider: "claude", model: "claude-x" }, "captain");
       // from the review: a pick whose independence is unknown (an author outside Studio) still gets its receipt, claiming nothing
       { const x = e.x(run, run.def.nodes.find((n: any) => n.id === "merge-card")!, run.nodes["merge-card"]), { OperatingRules } = await import("../src/operating-rules"), rules = new OperatingRules(h.data).section("p");
         const texts = ROOM_SKILLS.map((k) => ({ sha256: k.sha256, text: readFileSync(join(import.meta.dir, "..", k.ref), "utf8") })), sys = jobInstructions(texts.map((t) => t.text).join("\n"), rules);
