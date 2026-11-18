@@ -82,7 +82,14 @@ function roomWithheld(s: Sources, id: string, data?: any): string | null {
   const r = runId ? e.get(runId) : null; return r ? withheldOf(e, r) : null;
 }
 /** A listed room: the room list's own row (cheap), the full view only on studio_get. */
-const entityOf = (s: Sources, row: any): Entity => ({ id: row.id, title: roomTitle(row), updatedAt: row.updatedAt ?? null, withheld: roomWithheld(s, row.id),
+/** The project a room belongs to (a grant's scope): its Task's, or the watched pull request's; none: Studio-wide. */
+function roomProject(s: Sources, id: string, data?: any, repository?: string | null): string | null {
+  const e = s.engine, runId = /^R-\d+$/.test(id) ? id : /^SC-\d+$/.test(id) ? e.cards.get(id)?.run : data?.task?.id ?? data?.subject?.task ?? null;
+  const r = runId ? e.get(runId) : null; if (r) return e.projectRow(r) ?? null;
+  const m = /^PR-[0-9a-f]{12}-(\d+)$/.exec(id), repo = repository ?? data?.subject?.repository ?? null; if (!m || !repo) return null;
+  try { const v: any = s.prs?.()?.view(); const row = [...(v?.rows ?? []), ...(v?.merged ?? [])].find((x: any) => String(x.repo).toLowerCase() === String(repo).toLowerCase() && Number(x.number) === Number(m[1])); return row?.project?.id ?? null; } catch { return null; }
+}
+const entityOf = (s: Sources, row: any): Entity => ({ id: row.id, title: roomTitle(row), updatedAt: row.updatedAt ?? null, withheld: roomWithheld(s, row.id), project: roomProject(s, row.id, null, row.repository ?? null),
   data: { id: row.id, kind: row.kind, open: !!row.open, running: !!row.running, answered: row.turns ?? 0, repository: row.repository ?? null, zone: row.zone ?? null },
   full: () => roomData(s, row.id, true) ?? {} });
 
@@ -124,5 +131,5 @@ registerKind({
     return rows.filter((r) => (filter.open !== true || r.open) && (!filter.zone || r.zone === filter.zone)).map((r) => entityOf(s, r)); },
   get: (s, id) => { const rr = rrOf(s); if (!rr || !ROOM_ID.test(id)) return null; let row: any = null; try { row = rr.list().find((r: any) => r.id === id); } catch {}
     const data = roomData(s, id, false); if (!data) return null;
-    return { id, title: roomTitle(row ?? { id, kind: (data.kind as string) ?? "", repository: (data.subject as any)?.repository }, (data.subject as any)?.number), updatedAt: row?.updatedAt ?? null, withheld: roomWithheld(s, id, data), data, full: () => roomData(s, id, true) ?? data }; },
+    return { id, title: roomTitle(row ?? { id, kind: (data.kind as string) ?? "", repository: (data.subject as any)?.repository }, (data.subject as any)?.number), updatedAt: row?.updatedAt ?? null, withheld: roomWithheld(s, id, data), project: roomProject(s, id, data), data, full: () => roomData(s, id, true) ?? data }; },
 });

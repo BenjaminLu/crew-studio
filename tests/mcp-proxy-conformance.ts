@@ -80,7 +80,7 @@ try {
         const r = await c.rpc("initialize", { protocolVersion: "2026-07-28", capabilities: {}, clientInfo: { name: "stub-client", version: "1" } });
         assert.equal(r.result.protocolVersion, "2025-11-25", JSON.stringify(r));
         assert.equal(r.result.serverInfo.name, "studio");
-        assert.deepEqual(r.result.capabilities, { tools: {} });
+        assert.deepEqual(r.result.capabilities, { tools: {}, resources: {} }); // resources: studio://{kind}/{id} mirrors studio_get
       });
       await step(`${f.name}: supported versions are kept, an unknown or missing one is never echoed`, async () => {
         assert.equal((await c.rpc("initialize", { protocolVersion: "2025-06-18" })).result.protocolVersion, "2025-06-18");

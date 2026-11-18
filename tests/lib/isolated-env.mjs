@@ -137,6 +137,10 @@ if (ownRuntime) {
   env.CREW_RUNTIME_DIR = ownRuntime;
   process.on("exit", () => rmSync(ownRuntime, { recursive: true, force: true }));
 }
+// Nor CLI grant files in the operator's ~/.crew-studio (Studio writes ~/.crew-studio/grants/<name>.json when the board
+// issues a grant; the crew-studio CLI reads them): a suite gets its own Studio home, nested entries share it.
+const ownHome = !trusted ? mkdtempSync(join(tmpdir(), "crew-test-studio-home-")) : null;
+if (ownHome) { env.CREW_STUDIO_HOME = ownHome; process.on("exit", () => rmSync(ownHome, { recursive: true, force: true })); }
 
 // 6. the real-CLI sentinel: installed once, by the outermost entry; nested entries share it (and its record)
 const SENTINEL = "CREW_TEST_CLI_SENTINEL";

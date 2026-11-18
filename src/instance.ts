@@ -8,6 +8,10 @@ export const runtimeDir=()=>resolve(process.env.CREW_RUNTIME_DIR||join(homedir()
 /** A runtime folder or launch file Studio refuses; its message holds only the path and the fix, so the opener may print it. */
 export class RuntimePathError extends Error {}
 /** The refusal names the path and the fix: a mode the owner can repair with chmod, anything else is removed so Studio makes it again. */
+/** Why a path is not private to this user: a link or the wrong type, someone else's, or readable by others (null: private). Shared with the crew-studio CLI's grant files (src/studio-client.ts). */
+export function privateProblem(path:string,dir=false):{kind:'link'|'owner'|'mode';mode:string}|null{const s=lstatSync(path),mode=(s.mode&0o777).toString(8);
+ if(s.isSymbolicLink()||(dir?!s.isDirectory():!s.isFile()))return{kind:'link',mode};if(s.uid!==process.getuid?.())return{kind:'owner',mode};
+ return (s.mode&0o077)!==0?{kind:'mode',mode}:null;}
 function privatePath(path:string,dir=false){const s=lstatSync(path),mode=dir?'700':'600',what=dir?'runtime folder':'launch file';
  if(s.isSymbolicLink()||(dir?!s.isDirectory():!s.isFile())||s.uid!==process.getuid?.())throw new RuntimePathError(`Studio's ${what} ${path} must be a ${dir?'folder':'file'} you own, not a link. Remove it and start Studio again; Studio makes a new private one. (CREW_RUNTIME_DIR picks another place.)`);
  if((s.mode&0o077)!==0)throw new RuntimePathError(`Studio's ${what} ${path} can be read by other users (mode ${(s.mode&0o777).toString(8)}). Fix: chmod ${mode} '${path}'`);if(!dir&&s.size>8192)throw new Error('Studio launch record too large');}
