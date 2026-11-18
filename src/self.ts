@@ -3,7 +3,7 @@
 // starts its own helper processes (`crew-studio mcp`, `crew-studio permission-mcp`),
 // so it needs no Bun on PATH.
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export const COMPILED = import.meta.path.includes("$bunfs") || import.meta.path.includes("~BUN");
 /** The source checkout root (meaningless inside the binary). */
@@ -17,6 +17,13 @@ export function helperReads(): string[] { return COMPILED ? [process.execPath] :
  *  runs the CLI in): that folder's bunfig.toml (a preload runs in the same process that reads a token) and .env (it could
  *  set CREW_STUDIO_GRANT) are never read. The binary is built without either (scripts/build.ts). */
 export const BUN_ISOLATED = ["--no-env-file", "--config=/dev/null"] as const;
+/** A provider CLI given as a script (a .js, .mjs or .ts file: tests and stand-ins) runs under this runtime. */
+export const isScriptBin = (bin: string) => /\.(?:mjs|js|ts)$/.test(bin);
+/** This process is bun itself (a source checkout), not the compiled binary, which takes no bun flags. */
+const RUNS_ON_BUN = /^bun(?:\.exe)?$/.test(basename(process.execPath));
+/** argv that runs a provider CLI in an agent's folder: a script under this bun, which then reads no bunfig.toml or .env of
+ *  that folder (BUN_ISOLATED); any other CLI as it is. */
+export function scriptArgv(bin: string, args: string[]): string[] { return isScriptBin(bin) ? [process.execPath, ...(RUNS_ON_BUN ? BUN_ISOLATED : []), bin, ...args] : [bin, ...args]; }
 export function helperCommand(name: "mcp" | "permission-mcp" | "check-script", args: string[] = []): string[] {
   return COMPILED ? [process.execPath, name, ...args] : [process.execPath, ...BUN_ISOLATED, join(SRC_ROOT, "src", `${name}.ts`), ...args];
 }

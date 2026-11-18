@@ -35,11 +35,12 @@ registerKind({
   ],
   list: (s, filter) => rows(s).map(entity).filter((e) => (filter.waiting !== true || (e.data as any).waitsForInput) && (filter.running !== true || (e.data as any).running)),
   get: (s, id) => { const t = rows(s).find((x) => x.id === id); return t ? entity(t) : null; },
-  logs: (s, id, o) => {
+  // the screen is read by the page's emulator (src/terminal-screen.ts), which is asynchronous
+  logs: async (s, id, o) => {
     const t = rows(s).find((x) => x.id === id); if (!t) return null;
     const state = terminalRow(t);
     if (!o.ctx.captainAskedTail || o.tail <= 0) return { cursor: null, updatedAt: state.endedAt ?? state.startedAt, data: { state, screen: { shown: false, why: "A terminal's screen is given only when the captain asks for it in this turn (\"show me the terminal's output\"); its state is above." } } };
-    let lines: string[] = []; try { lines = termsOf(s)?.tail?.(id, Math.min(TAIL_MAX, o.tail)) ?? []; } catch { lines = []; }
+    let lines: string[] = []; try { lines = (await termsOf(s)?.tail?.(id, Math.min(TAIL_MAX, o.tail))) ?? []; } catch { lines = []; }
     return { cursor: null, updatedAt: state.endedAt ?? state.startedAt, data: { state, screen: { shown: true, lines: lines.length, text: lines.join("\n"), ask: t.ask ?? null } } };
   },
   logFields: [

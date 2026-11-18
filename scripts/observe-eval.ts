@@ -36,9 +36,9 @@ const pick = (arg("--questions") ?? "1,2,3,4").split(",").map(Number);
 const MAX_CALLS = 3, MAX_OUTPUT = 40_000, root = join(import.meta.dir, "..");
 
 const F = await observeFixture();
-F.focus.put("tab-a", { route: `#/room/${ROOM}`, ref: `room:${ROOM}`, selection: { kind: "scene", id: "3", label: "場景 3" }, dialog: null, label: "Review room · PR #1645 · 場景 3" });
+F.focus.put("tab-a", { route: `#/room/${ROOM}`, ref: `room:${ROOM}`, selection: null, dialog: null, label: "Review room · PR #1645" });
 const QUESTIONS: { n: number; text: string; facts: RegExp[]; path: [string, any][] }[] = [
-  { n: 1, text: "我在 review room 審哪個 PR、剛問了什麼、導師講到第幾章？", facts: [/1645/, /five attempts|五次|5 次|五/i, /decision|決定|第\s*3|第三/i], path: [["studio_now", {}], ["studio_get", { ref: `room:${ROOM}` }]] },
+  { n: 1, text: "我在 review room 審哪個 PR、剛問了什麼、頁面是哪個 skill 的第幾版？", facts: [/1645/, /five attempts|五次|5 次|五/i, /baton/i, /v\s*1|第\s*1|第一/i], path: [["studio_now", {}], ["studio_get", { ref: `room:${ROOM}` }]] },
   { n: 2, text: `${F.ids.failed} 卡在哪、為什麼失敗？`, facts: [new RegExp(F.ids.failed), /staging|Deploy to staging|部署/i, /connection refused|連線|network|網路/i], path: [["studio_get", { ref: `task:${F.ids.failed}` }]] },
   { n: 3, text: "哪些 PR 已合併未上線、卡在哪個 pod？", facts: [/1601/, /tide-api/, /staging/i], path: [["studio_list", { kind: "pr", filter: { tab: "merged" } }]] },
   { n: 4, text: "哪些卡在等我、最急的要我決定什麼？（不要替我回答卡）", facts: [new RegExp(F.ids.doorCard), /pricing|價格|Ship|上線/i], path: [["studio_now", {}], ["studio_list", { kind: "card" }]] },

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cliDoctorItem, cliInstallState, installCli } from "../src/cli-install";
 import { skillTargets, writeSkill, SKILL_MARK } from "../src/cli-skill";
-import { helperCommand } from "../src/self";
+import { helperCommand, scriptArgv } from "../src/self";
 import { CliGrants } from "../src/cli-grants";
 
 const REPO = join(import.meta.dir, "..");
@@ -73,6 +73,22 @@ step("an untrusted folder's bunfig.toml and .env are never read: by the shim, by
   assert.equal(w.code, 7); assert.ok(!/from-dotenv/.test(w.out), w.out); assert.ok(!existsSync(mark), "bunfig preload ran in the real CLI");
   const m = Bun.spawnSync(helperCommand("mcp"), { cwd: d, stdin: "ignore", env: { ...process.env, HOME: h, CREW_STUDIO_HOME: join(h, "no-home") } as any });
   assert.ok(!existsSync(mark), "bunfig preload ran in the MCP helper"); assert.ok(!/from-dotenv/.test(m.stderr.toString()), m.stderr.toString()); });
+step("the shim prefers the bun Studio was installed with while it still runs; PATH's only when it is gone", () => {
+  const h = fresh(), root = fakeStudio(join(h, "studio"), "which-bun"), rec = join(h, "recorded-bun");
+  writeFileSync(rec, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} -e 'console.log(JSON.stringify({ bun: "recorded" }))'\n`); chmodSync(rec, 0o755);
+  const st = installCli({ ...src(h, "/usr/bin", root), execPath: rec }), dir = join(process.execPath, "..");
+  assert.equal(run(st.bin, [], { env: { HOME: h, PATH: `${dir}:/usr/bin:/bin` } }).json.bun, "recorded");
+  rmSync(rec); assert.equal(run(st.bin, [], { env: { HOME: h, PATH: `${dir}:/usr/bin:/bin` } }).json.label, "which-bun", "the recorded one gone: bun from PATH"); });
+step("a plain checkout never follows a live.json in the folder above it (only a release named by its commit does)", () => {
+  const h = fresh(), sha = "c".repeat(40), mine = fakeStudio(join(h, "checkout"), "checkout"); fakeStudio(join(h, sha), "someone-else");
+  writeFileSync(join(h, "live.json"), JSON.stringify({ schema: 1, live: { sha }, history: [] }, null, 2));
+  const st = installCli(src(h, "/usr/bin", mine)); assert.equal(run(st.bin, [], { env: { HOME: h } }).json.label, "checkout"); assert.ok(!readFileSync(st.bin, "utf8").includes("live.json")); });
+step("a provider CLI given as a script (scriptArgv) reads no bunfig.toml or .env of the agent's folder either", () => {
+  const { d, mark } = hostile(), h = fresh(), cli = join(h, "fake-agent.mjs"); writeFileSync(cli, `console.log(JSON.stringify({ grant: process.env.CREW_STUDIO_GRANT ?? null }));\n`);
+  const argv = scriptArgv(cli, ["--version"]); assert.deepEqual(argv.slice(1, 3), ["--no-env-file", "--config=/dev/null"]);
+  const r = Bun.spawnSync(argv, { cwd: d, env: { ...process.env, HOME: h } as any }); assert.equal(r.exitCode, 0, r.stderr.toString());
+  assert.equal(JSON.parse(r.stdout.toString()).grant, null); assert.ok(!existsSync(mark), "bunfig preload ran");
+  assert.deepEqual(scriptArgv("/usr/local/bin/claude", ["-p"]), ["/usr/local/bin/claude", "-p"], "a real CLI runs as it is"); });
 step("bash and fish get their own profile line", () => { const h = fresh();
   assert.equal(cliInstallState({ ...src(h, "/usr/bin"), shell: "/bin/bash" }).profile, "~/.bash_profile"); assert.equal(cliInstallState({ ...src(h, "/usr/bin"), shell: "/usr/local/bin/fish" }).pathLine, "fish_add_path ~/.local/bin"); });
 step("skill install: user scope for both agents by default; one agent or one project when asked", () => { const h = fresh();

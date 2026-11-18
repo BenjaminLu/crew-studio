@@ -18,9 +18,11 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const sv = (tag, attrs = {}, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) e.setAttribute(k, v); for (const c of kids.flat()) if (c) e.append(c); return e; };
 const ICO = { back: "M15 6l-6 6 6 6", msg: "M4 5h16v11H9l-5 4z", down: ["M12 4v11", "M7 10l5 5 5-5", "M5 20h14"] };
 const ic = (n) => sv("svg", { viewBox: "0 0 24 24", class: "rr-ic", "aria-hidden": "true" }, ...[].concat(ICO[n]).map((d) => sv("path", { d })));
-/** a saved room in the Library (#/room/lib:<artifact>[@n]): an old whiteboard snapshot, offered as its JSON file */
-const snapRoom = (id, snap, url) => ({ ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null,
-  snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, url } });
+/** a saved room in the Library (#/room/lib:<artifact>[@n]): its pages as saved (each version, the skill, head and cost), or an
+ *  old whiteboard snapshot, offered as its JSON file */
+const snapRoom = (id, snap, url) => { const old = snap.kind !== "review-room-pages", turns = old ? (snap.view?.turns || []).filter((t) => t.status === "done" || t.status === "interrupted" || t.status === "failed").length : 0;
+  return { ...snap.view, card: { ...snap.view.card, id }, open: false, offer: null, running: null, oldBoard: old ? { turns, items: (snap.view?.board || []).length } : null,
+    snapshot: { artifact: snap.artifact, n: snap.n, versions: snap.versions, savedAt: snap.savedAt, reason: snap.reason, url, room: snap.room || snap.subject?.room || null, pages: old ? null : snap.pages || [], cost: snap.cost || null, old: old ? null : snap.oldBoard || null, integrity: snap.integrity ?? null } }; };
 const readLater = new Set();
 async function load(id, open = false) {
   if (RR.loading.has(id)) return; RR.loading.add(id); const was = RR.rooms.get(id)?.running;
@@ -152,8 +154,8 @@ function header(r) {
         h("span", { class: "faint" }, T(` · read on GitHub ${String(ps.checkedAt || "").slice(0, 16).replace("T", " ")}`, ` · ${String(ps.checkedAt || "").slice(0, 16).replace("T", " ")} 讀取自 GitHub`))) : null,
       r.stale ? pill({ class: "bad", role: "status", "data-pr-stale": "" }, T(`GitHub shows newer commits (${String(r.stale.head).slice(0, 8)}) Studio could not fetch yet: ${r.stale.error}. The room shows the last head it has; check again before asking.`, `GitHub 上有較新的 commit（${String(r.stale.head).slice(0, 8)}），Studio 還沒抓到：${r.stale.error}。審查室顯示它手上最後的 head；提問前請再檢查一次。`)) : null,
       kind === "branch" ? pill({ class: r.reviewed ? "ok" : "", "data-branch-state": r.reviewed ? "reviewed" : "not-reviewed" }, r.reviewed ? T(`Reviewed by Studio at ${String(r.head || "").slice(0, 8)}${r.local ? " · ready on its local branch, not published" : ""}`, `Studio 已在 ${String(r.head || "").slice(0, 8)} 審查通過${r.local ? " · 在本機分支上就緒，不會發布" : ""}`) : T("Studio's review has not passed at this head yet.", "Studio 的審查還沒在這個 head 通過。")) : null,
-      mv ? pill({ class: "warn", role: "status", "data-room-moved": mv.commits ?? "rewritten" }, mv.commits != null ? T(`${mv.commits} new commit${mv.commits === 1 ? "" : "s"} since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}). Your next question opens with what changed.`, `你上次看過之後有 ${mv.commits} 個新 commit（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。下一個問題會先看改了什麼。`)
-        : T(`The branch was rewritten since you last looked (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `你上次看過之後分支被改寫了（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)) : null,
+      mv ? pill({ class: "warn", role: "status", "data-room-moved": mv.commits ?? "rewritten" }, mv.commits != null ? T(`${mv.commits} new commit${mv.commits === 1 ? "" : "s"} since the last page (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `上一頁之後有 ${mv.commits} 個新 commit（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)
+        : T(`The branch was rewritten since the last page (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `上一頁之後分支被改寫了（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)) : null,
       // a directory: where it is pinned (its citations open that commit, it never moves), and whether it is private
       kind === "dir" && r.dir ? pill({ "data-dir-pin": r.dir.sha, title: T(`Read at ${r.dir.ref}, pinned at commit ${r.dir.sha}`, `讀的是 ${r.dir.ref}，固定在 commit ${r.dir.sha}`) }, T(`Pinned at ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} files`, `固定在 ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} 個檔案`), r.dir.private ? T(" · private", " · 私人") : "") : null,
       ds ? pill({ "data-room-diffstat": "" }, h("b", { class: "add" }, `+${ds.added}`), " ", h("b", { class: "del" }, `−${ds.removed}`), T(` · ${ds.files} file${ds.files === 1 ? "" : "s"}`, ` · ${ds.files} 個檔案`)) : null,
@@ -193,10 +195,13 @@ async function setArchived(id, on) { RR.posting.add(`${id}/archive`); rerender()
     if (RR.list) { const x = RR.list.rooms.find((y) => y.id === id); if (x && out?.zone) x.zone = out.zone; RR.list.err = null; if (onList()) readList(); else RR.list.fresh = false; } }
   catch (e) { if (onRoom(id)) RR.err.set(id, e.message); else if (RR.list) RR.list.err = e.message; }
   finally { RR.posting.delete(`${id}/archive`); rerender(); } }
+/** a row's counts as the list reads them: the room's page versions, its questions, an old whiteboard kept */
+const roomCounts = (x) => { const v = Number(x.versions) || 0, q = Number(x.questions) || 0, ob = x.oldBoard?.turns || 0;
+  return [T(`${v} version${v === 1 ? "" : "s"}`, `${v} 個版本`), q ? T(`${q} question${q === 1 ? "" : "s"}`, `${q} 個問題`) : null, ob ? T(`old whiteboard (${ob} turn${ob === 1 ? "" : "s"})`, `舊白板（${ob} 個回合）`) : null].filter(Boolean).join(" · "); };
 const roomRow = (x, mark = (t) => t) => h("li", { "data-room-row": x.id },
   h("a", { href: `#/room/${enc(x.id)}`, "data-room-link": x.id }, h("b", {}, mark(T(x.title, x.titleZh || x.title)))), " ",
   h("span", { class: `rr-pill${x.open ? " ok" : ""}` }, x.running ? T("generating", "產生中") : x.open ? T("open", "開啟中") : T("read-only", "唯讀")),
-  h("span", { class: "faint" }, ` · ${T(`${x.turns} answer${x.turns === 1 ? "" : "s"}`, `${x.turns} 個回答`)} · ${String(x.updatedAt).slice(0, 16).replace("T", " ")}`), archiveBtn(x));
+  h("span", { class: "faint", "data-room-counts": "" }, ` · ${roomCounts(x)} · ${String(x.updatedAt || "").slice(0, 16).replace("T", " ")}`), archiveBtn(x));
 /** a zone's rooms under their repositories, by name; rooms with none last. A repository's letter case does not split it */
 function repoGroups(rooms, mark) { const by = new Map(); for (const x of rooms) { const k = String(x.repository || "").toLowerCase(); if (!by.has(k)) by.set(k, { name: x.repository, rooms: [] }); by.get(k).rooms.push(x); }
   return [...by.entries()].sort(([a], [b]) => !a - !b || a.localeCompare(b)).map(([k, g]) => h("div", { class: "rr-repo", "data-room-repo": k },
@@ -229,17 +234,32 @@ function roomsList(rooms) {
       return h("div", { "data-room-zones": "" }, zones);
     } });
 }
-/** a room from before: its whiteboard turns stay on disk; Studio no longer draws them, and offers the whole record as a file */
+/** a room from before: its whiteboard turns stay on disk; Studio no longer draws them, and offers the whole record as a file
+ *  (on this Mac only: a paired phone reads the notice, never the file) */
 function oldBoard(r) {
-  const turns = (r.turns || []).filter((t) => t.status === "done" || t.status === "interrupted" || t.status === "failed").length, items = (r.board || []).length;
-  if (!turns && !items) return null;
-  const href = r.snapshot ? `${r.snapshot.url}${r.snapshot.url.includes("?") ? "&" : "?"}download=1` : `/api/review-room/${enc(r.card.id)}/export`;
+  const ob = r.oldBoard; if (!ob || (!ob.turns && !ob.items)) return null; const turns = ob.turns || 0;
+  const href = r.snapshot ? r.snapshot.url : `/api/review-room/${enc(r.card.id)}/export`;
   return h("div", { class: "rr-oldboard", role: "note", "data-old-board": turns },
     h("span", { class: "rr-oldboard-ic", "aria-hidden": "true" }, "▤"),
     h("div", {}, h("b", {}, r.snapshot ? T("A saved whiteboard", "存下來的舊白板") : T(`This room has ${turns} whiteboard turn${turns === 1 ? "" : "s"} from before`, `這間審查室有 ${turns} 個舊白板回合`)),
       h("p", {}, r.snapshot ? T("Studio no longer shows the board. The saved snapshot is kept as it was: download it as a file.", "Studio 已經不再顯示白板。存下來的快照原封不動保留，可以下載成檔案。")
-        : T("Studio no longer shows the board: baton explains the room instead. Nothing was deleted; the old turns and drawings are in the room's record.", "Studio 已經不再顯示白板，改由 baton 說明這間審查室。什麼都沒刪：舊的回合和圖都還在房間的紀錄裡。"))),
-    h("a", { class: "btn sm", href, download: `${r.card.id.replace(/^lib:/, "")}.json`, "data-old-board-download": "" }, ic("down"), " ", T("Download the old board (JSON)", "下載舊白板（JSON）")));
+        : T("Studio no longer shows the board: baton explains the room instead. Nothing was deleted; the old turns and drawings are in the room's record.", "Studio 已經不再顯示白板，改由 baton 說明這間審查室。什麼都沒刪：舊的回合和圖都還在房間的紀錄裡。"),
+        readOnly() ? h("span", { class: "faint", "data-old-board-desktop": "" }, " ", T("The file downloads on the Mac running Studio.", "檔案要在執行 Studio 的 Mac 上下載。")) : null)),
+    readOnly() ? null : h("a", { class: "btn sm", href, download: `${r.card.id.replace(/^lib:/, "")}.json`, "data-old-board-download": "" }, ic("down"), " ", T("Download the old board (JSON)", "下載舊白板（JSON）")));
+}
+/** a Library save of a room's pages: each version as saved (its skill, head, model and cost); the pages are read in the room */
+function savedPages(r) {
+  const sp = r.snapshot?.pages; if (!sp) return null; const room = r.snapshot.room;
+  const usd = (c) => typeof c?.usd === "number" && c.usd > 0 ? ` · US$${c.usd.toFixed(2)}` : "";
+  return h("section", { class: "card x-pad rr-saved", "data-saved-pages": sp.length },
+    h("h2", {}, T(`${sp.length} page version${sp.length === 1 ? "" : "s"} saved${usd(r.snapshot.cost)}`, `存了 ${sp.length} 個頁面版本${usd(r.snapshot.cost)}`)),
+    Array.isArray(r.snapshot.integrity) && r.snapshot.integrity.length ? h("p", { class: "rr-err", role: "alert", "data-saved-integrity": "bad" }, T("These files changed since they were saved.", "這些檔案存下來之後被改過。")) : null,
+    r.snapshot.old?.turns ? h("p", { class: "faint", "data-saved-oldboard": r.snapshot.old.turns }, T(`The total includes the room's old whiteboard: ${r.snapshot.old.turns} turn${r.snapshot.old.turns === 1 ? "" : "s"}${usd(r.snapshot.old)}.`, `總計含這間審查室的舊白板：${r.snapshot.old.turns} 個回合${usd(r.snapshot.old)}。`)) : null,
+    h("ol", { class: "rr-saved-list" }, sp.map((v) => h("li", { "data-saved-page": v.n },
+      h("b", {}, `v${v.n}`), " ", v.skill?.id === "studio-baton" ? T("baton (built in)", "baton（內建）") : (v.skill?.name || ""),
+      h("span", { class: "faint" }, ` · ${String(v.at || "").slice(0, 16).replace("T", " ")}${v.head ? ` · ${String(v.head).slice(0, 8)}` : ""}${v.model ? ` · ${v.model}` : ""}${usd(v.cost)}`),
+      v.summary ? h("div", { class: "faint" }, v.summary) : null))),
+    room ? h("a", { class: "btn sm", href: `#/room/${enc(room)}`, "data-saved-open-room": room }, T("Read the pages in the review room", "到審查室看這些頁面")) : null);
 }
 routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], providers: j.providers || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (onList()) render(); }); }
@@ -254,8 +274,8 @@ routes.room = (arg) => {
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
   const err = RR.err.get(arg), XP = window.crewRoomExplain;
-  // a saved snapshot: read only, the old board offered as its file
-  if (r.snapshot) return h("div", { class: "rr-room rx-room", "data-review-room": r.card.id }, header(r), oldBoard(r));
+  // a saved snapshot: read only, its pages listed (or an old board offered as its file)
+  if (r.snapshot) return h("div", { class: "rr-room rx-room", "data-review-room": r.card.id }, header(r), savedPages(r), oldBoard(r));
   XP?.ensure(arg);
   return h("div", { class: "rr-room rx-room", "data-review-room": r.card.id }, header(r), oldBoard(r),
     err ? h("p", { class: "rr-err", role: "alert", "data-room-err": "" }, err) : null,

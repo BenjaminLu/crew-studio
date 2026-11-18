@@ -6,6 +6,7 @@ import {probeProcess} from './probe-process';import{claudeLogin,claudeBilling,cl
 import{claudeProvider}from'./claude';import{claudeOnPath,claudeSettings,KEYCHAIN,linkClaudeKeychain}from'./needs';
 import type{ProviderCapability}from'./policy';
 import { claudeBilling as claudeAuthBilling, noteBilling } from '../lan/billing';
+import { scriptArgv } from "../self";
 export type ClaudePair={model:string;effort:string|null};
 /** The models Studio can choose for Claude: read from the installed CLI, or (only when that is impossible) a fixed list marked unverified with the reason. */
 export type ClaudeModelInventory={source:'cli'|'unverified-fallback';models:{id:string;efforts:string[];label:string|null}[];at:number;version:string|null;reason?:string};
@@ -52,7 +53,7 @@ const resolveBin=(bin:string)=>{const p=claudeOnPath(bin,process.env.PATH||'/usr
 const loginUser=()=>{const e:Record<string,string>={};for(const k of['USER','LOGNAME'])if(process.env[k])e[k]=process.env[k]!;return e;};
 /** The ordinary account/config context the official `claude auth` commands run in: no copied secrets, only where the login lives. */
 export const claudeAccountEnv=():Record<string,string>=>({PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}});
-const argv=(bin:string,args:string[])=>/\.(?:mjs|js|ts)$/.test(bin)?[process.execPath,bin,...args]:[bin,...args];
+const argv=(bin:string,args:string[])=>scriptArgv(bin,args);
 export class ClaudeNative{
  private admitted=new Map<string,ClaudeCapability>();private authDenied=false;private cleanupBlocked=false;private denial:{code:string;resetAt:number|null;at:number}|null=null;
  /** One paid verification runs at a time. A request for the exact pair already running or queued shares that

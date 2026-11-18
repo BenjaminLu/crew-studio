@@ -24,7 +24,22 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { detectState, screenLines, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
 import { git } from "./git";
-import { redactText } from "./secure";
+import { REDACTED, SECRET_VALUE, redactText } from "./secure";
+/** A secret that starts on one line and ends on the next, read as one text. When the first line was cut where it is (it
+ *  fills the terminal's width, or a box's), a match running over is a secret in two pieces; when not, a secret that ends
+ *  the first line whole only runs into the next line's first word, and the first line's own redaction already took it. */
+function spansSecret(a: string, b: string, cut: boolean): boolean {
+  const joined = a + b;
+  for (const re of SECRET_VALUE) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    for (const m of joined.matchAll(g)) { const at = m.index ?? 0; if (!(at < a.length && at + m[0].length > a.length)) continue;
+      if (cut) return true; const own = new RegExp(`^(?:${re.source})$`, re.flags.replace("g", "")); if (!own.test(a.slice(at))) return true; }
+  }
+  return false;
+}
+import { readScreen, SCREEN_INPUT_MAX } from "./terminal-screen";
+/** A line as text only: no C0 or C1 control (a tab stays) and no bidi control, which could show it in another order. */
+const plainText = (l: string) => l.replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 
 export type Preset = { id: string; label: string; bin: string; kind: AgentKind; remoteControl?: boolean };
 export const PRESETS: Preset[] = [
@@ -122,10 +137,12 @@ export function linkSecrets(url: string): string[] {
  * removed. If the link never comes, the end flushes with the generic rule only.
  */
 export class SecretWindow {
-  private buf = ""; private pats: RegExp[] = []; private W = 0; private link = new LinkRedactor();
+  private buf = ""; private pats: RegExp[] = []; private W = 0; private link = new LinkRedactor(); private secrets = new Set<string>();
   constructor(private holdUntilKnown = false, private cap = 8 * MIB) {}
   get known() { return this.pats.length > 0; }
-  know(url: string) { const sec = linkSecrets(url); this.pats = sec.map(fuzzy); this.W = Math.min(32768, Math.max(...sec.map((x) => x.length)) * 24); }
+  // every link known so far stays known: a shorter one read later (a link a box cut) never drops the whole one
+  know(url: string) { for (const x of linkSecrets(url)) this.secrets.add(x); const sec = [...this.secrets].sort((a, b) => b.length - a.length);
+    this.pats = sec.map(fuzzy); this.W = Math.min(32768, Math.max(...sec.map((x) => x.length)) * 24); }
   scrub(s: string) { let t = s; for (const p of this.pats) t = t.replace(p, REMOTE_REMOVED); return this.link.whole(t); }
   push(s: string): string {
     this.buf += s;
@@ -147,13 +164,15 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
     // a wrapped line is one the terminal filled to its width: within [cols - 4, cols] (a box border or padding may take
     // the last columns); a longer line was not wrapped by the terminal, and a shorter one ended where the link ends
     const full = (l: string) => { const n = [...edge(l)].length; return n >= cols - 4 && n <= cols; };
+    // a box narrower than the terminal (Ink) wraps at its own border: the link reaches it, a single space before the border
+    const boxFull = (l: string) => /\S ?[│|]\s*$/.test(l) && !/\s{2,}[│|]\s*$/.test(l);
     let url = m[0]; const atEnd = (m.index ?? 0) + url.length >= edge(lines[i]).length;
-    let j = i, wrapped = atEnd && full(lines[i]);
+    let j = i, wrapped = atEnd && (full(lines[i]) || boxFull(lines[i]));
     while (wrapped && j + 1 < lines.length) {
       const next = lines[j + 1].replace(/^[\s│|]+/, ""), c = /^[^\s"'<>`\\│|]+/.exec(next); if (!c) break;
       // the rest of a wrapped link stands alone on its line (or fills that line too); a word followed by more text is prose
-      if (c[0].length < edge(next).length && !full(lines[j + 1])) break;
-      url += c[0]; j++; wrapped = c[0].length >= edge(next).length && full(lines[j]);
+      if (c[0].length < edge(next).length && !full(lines[j + 1]) && !boxFull(lines[j + 1])) break;
+      url += c[0]; j++; wrapped = c[0].length >= edge(next).length && (full(lines[j]) || boxFull(lines[j]));
     }
     if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4)) && !/[\s│|]$/.test(raw)) return null;
     return url.replace(/[?.,);:!'"\]]+$/, "");
@@ -259,12 +278,33 @@ export class Terminals {
   }
   list(desktop = true): TermView[] { return [...this.terms.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt)).map((t) => this.view(t, desktop)); }
   get(id: string) { return this.terms.get(id) ?? null; }
+  /** The last screen drawn for each terminal, by its size and output (Terminals.tail). */
+  private screens = new Map<string, { key: string; rows: string[] }>();
   /** The last `n` non-empty lines of a terminal's screen as plain text, the remote-control link and secrets removed: what
-   *  studio_logs gives Firstmate when the captain asks for a terminal's output (src/observe/kinds/terminal.ts). */
-  tail(id: string, n: number): string[] | null {
+   *  studio_logs gives Firstmate when the captain asks for a terminal's output (src/observe/kinds/terminal.ts).
+   *  1. The known link and secrets go from the raw output first, matched through escapes, wraps and box borders (SecretWindow).
+   *  2. What is left is drawn by the page's own emulator at the terminal's size (src/terminal-screen.ts).
+   *  3. Each line is redacted again, and so is every pair of neighbouring lines read as one (a secret a program drew over two
+   *     rows, or inside a box narrower than the terminal): when the pair gives away more than its lines do, both go.
+   *  4. No control or bidi character is left in what comes back. */
+  async tail(id: string, n: number): Promise<string[] | null> {
     const t = this.terms.get(id); if (!t) return null;
-    const text = t.redactor.scrub(new TextDecoder().decode(t.ring.bytes()).slice(-64_000));
-    return screenLines(text).filter((l) => l.trim()).slice(-Math.max(1, Math.min(200, n))).map((l) => redactText(l).slice(0, 400));
+    // the size and output as they are now: the terminal may be resized while the screen is drawn
+    const cols = t.cols, rows0 = t.rows, bytes = t.ring.bytes();
+    // one drawing per output: studio_logs asks again with fewer lines when an answer is over its size budget
+    const key = `${cols}x${rows0}:${bytes.length}:${t.lastOutAt}`, hit = this.screens.get(id);
+    let rows: string[];
+    if (hit && hit.key === key) rows = hit.rows;
+    else { if (this.screens.size > 64) this.screens.clear(); const raw = t.redactor.scrub(new TextDecoder().decode(bytes).slice(-SCREEN_INPUT_MAX)); rows = (await readScreen(raw, cols, rows0)).lines; this.screens.set(id, { key, rows }); }
+    const lines = rows.map((l) => redactText(l));
+    const edgeR = (l: string) => l.replace(/[\s│|║┃]+$/, ""), edgeL = (l: string) => l.replace(/^[\s│|║┃]+/, "");
+    for (let k = 0; k + 1 < rows.length; k++) {
+      if (!rows[k].trim() || !rows[k + 1].trim()) continue;
+      const atWidth = [...rows[k].trimEnd()].length >= cols - 1 - (rows[k].match(/[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/g)?.length ?? 0);
+      const atBorder = /\S ?[│|║┃]\s*$/.test(rows[k]) && !/\s{2,}[│|║┃]\s*$/.test(rows[k]);
+      if (spansSecret(rows[k], rows[k + 1], atWidth) || spansSecret(edgeR(rows[k]), edgeL(rows[k + 1]), atBorder)) lines[k] = lines[k + 1] = REDACTED;
+    }
+    return lines.map(plainText).filter((l) => l.trim()).slice(-Math.max(1, Math.min(200, n))).map((l) => l.slice(0, 400));
   }
   projects(): TermProject[] { return this.o.projects().map((p) => ({ id: p.id, name: p.name, path: p.path, base: p.base })); }
   private changed() { try { this.o.changed?.(this.list(false)); } catch {} }

@@ -4,10 +4,13 @@
   "workspaces": {
     "": {
       "name": "crew-studio",
+      "dependencies": {
+        "@xterm/addon-unicode11": "0.9.0",
+        "@xterm/headless": "6.0.0",
+      },
       "devDependencies": {
         "@modelcontextprotocol/sdk": "1.32.2",
         "@xterm/addon-fit": "0.11.0",
-        "@xterm/addon-unicode11": "0.9.0",
         "@xterm/xterm": "6.0.0",
         "gsap": "3.14.2",
         "hyperframes": "0.8.159",
@@ -137,6 +140,8 @@
     "@xterm/addon-fit": ["@xterm/addon-fit@0.11.0", "", {}, "sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g=="],
 
     "@xterm/addon-unicode11": ["@xterm/addon-unicode11@0.9.0", "", {}, "sha512-FxDnYcyuXhNl+XSqGZL/t0U9eiNb/q3EWT5rYkQT/zuig8Gz/VagnQANKHdDWFM2lTMk9ly0EFQxxxtZUoRetw=="],
+
+    "@xterm/headless": ["@xterm/headless@6.0.0", "", {}, "sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw=="],
 
     "@xterm/xterm": ["@xterm/xterm@6.0.0", "", {}, "sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg=="],
 

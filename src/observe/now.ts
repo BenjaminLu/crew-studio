@@ -29,14 +29,14 @@ export function nowSummary(s: Sources, o: { focus?: boolean; recent?: boolean } 
     const nodes = Object.entries(r.nodes).filter(([, n]) => ["running", "waiting"].includes(n.state)).map(([k, n]) => { const j = n.job ? jobs?.get(n.job) : null;
       return { node: k, label: r.def.nodes.find((x) => x.id === k)?.label ?? k, state: n.state, round: n.visits ?? null, cost: j?.cost ?? null, since: j?.started ?? null }; });
     return { ref: refOf("task", r.id), run: r.id, workflow: r.workflow, status: r.status, updatedAt: r.updatedAt, nodes, ...(withheld ? { withheld } : engine.externalOrigin?.(r) ? { external: true } : { title: taskTitle(r) }) }; });
-  // the last hour: Tasks that changed or ended, cards raised or answered, rooms answered, pull requests merged
+  // the last hour: Tasks that changed or ended, cards raised or answered, rooms with a new page or a run, pull requests merged
   const recent: { ref: string; what: string; at: string }[] = [];
   if (o.recent !== false) {
   const within = (at: unknown) => { const n = Date.parse(String(at ?? "")); return Number.isFinite(n) && t - n <= HOUR && n <= t + 60_000; };
   for (const r of engine.list()) if (!r.archived && within(r.endedAt ?? r.updatedAt)) recent.push({ ref: refOf("task", r.id), what: r.endedAt && within(r.endedAt) ? `Task ${r.status}` : `Task ${r.status} (updated)`, at: String(r.endedAt ?? r.updatedAt) });
   for (const c of engine.cards.list({})) { if (c.answer && within(c.answer.at)) recent.push({ ref: refOf("card", c.id), what: `${c.kind} card answered: ${c.answer.choice} (by ${c.answer.by})`, at: c.answer.at });
     else if (c.status === "open" && within(c.createdAt)) recent.push({ ref: refOf("card", c.id), what: `new ${c.kind} card`, at: c.createdAt }); }
-  try { for (const room of ((engine as any).reviewRoom?.list?.() ?? []) as any[]) if (within(room.updatedAt)) recent.push({ ref: refOf("room", room.id), what: room.running ? "tutor answering" : "room answered", at: room.updatedAt }); } catch {}
+  try { for (const room of ((engine as any).reviewRoom?.list?.() ?? []) as any[]) if ((room.versions || room.running) && within(room.updatedAt)) recent.push({ ref: refOf("room", room.id), what: room.running ? "room running (a page or a question)" : `room page v${room.versions ?? 0}`, at: room.updatedAt }); } catch {}
   try { for (const m of (s.prs?.()?.view()?.merged ?? []) as any[]) if (within(m.mergedAt)) recent.push({ ref: refOf("pr", m.id), what: "pull request merged", at: m.mergedAt }); } catch {}
   recent.sort((a, b) => b.at.localeCompare(a.at)); }
   return { waiting, running, recent, focus: o.focus === false ? null : focusPart(s, t) };

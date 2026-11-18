@@ -801,32 +801,30 @@ export function createRuntime(d: RuntimeDeps) {
           const fix = issueTriageFlow.fixView(id), worker = issueTriageFlow.fixWorker(id), fixLimit = issueTriageFlow.fixLimit();
           return json(rec ? { ...rec, progress: issueTriageFlow.progress(rec), investigators, fix, worker, fixLimit } : { state: "none", investigators, fix, worker, fixLimit }); } catch { return json({ error: "invalid project id" }, 400); }
       }
-      // ---------- a merge card's review room (src/domain/review-room.ts): read on any authenticated page; a turn is a paid
-      // round only the desktop captain starts, confirming its provider and model; nothing here answers the card ----------
+      // ---------- a review room (src/domain/review-room.ts): read on any authenticated page; its paid runs are the explainer's
+      // (below), started only by the desktop captain; nothing here answers the card ----------
       // a room's subject is a merge card (SC-n), a Task's reviewed branch (R-n) or a pull request read by its URL (PR-…):
       // POST /api/review-room/open-pr {url} reads the pull request (GET only) and returns its room; …/check reads it again
       // the Review Room's home: every room on this machine, open ones first (read on any authenticated page)
       if (p === "/api/review-room" && !writing) { const rr = engine.reviewRoom; return json({ rooms: rr ? rr.list() : [], settings: rr ? rr.settings() : null, tutors: rr ? rr.tutorChoices() : [], providers: rr ? rr.tutorProviders() : [] }); }
-      // the review room's Studio-wide settings (auto-teach on paste): read anywhere, changed by the captain on this Mac
+      // the review room's Studio-wide settings (the default tutor): read anywhere, changed by the captain on this Mac
       if (p === "/api/review-room/settings") { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing) return json(rr.settings());
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac changes the review room's settings", code: "desktopOnly" }, 403);
         try { return json(rr.setSettings(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
-      // what pasting a pull request's address would start: auto-teach on or off, the tutor and the paid round (read only)
-      if (p === "/api/review-room/paste-offer" && !writing) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); return json(rr.pasteOffer(url.searchParams.get("url"))); }
       // POST /api/review-room/open-dir {url}: a GitHub directory (any repository; a private one through the captain's gh login),
-      // read at one pinned commit, and its room; the same desktop gate and auto-teach binding as a pasted pull request
+      // read at one pinned commit, and its room; the same desktop gate as a pasted pull request
       if (p === "/api/review-room/open-dir") {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-dir {url}" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a directory's room / 只有這台 Mac 上的船長能開啟目錄的審查室", code: "desktopOnly" }, 403);
-        try { return json(await rr.openDir(b?.url, by, b?.lang, b?.auto, b?.plan)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
+        try { return json(await rr.openDir(b?.url)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
       }
       if (p === "/api/review-room/open-pr") {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a pull request's room / 只有這台 Mac 上的船長能開啟 pull request 的審查室", code: "desktopOnly" }, 403);
-        try { return json(await rr.openPr(b?.url, by, b?.lang, b?.auto, b?.plan)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
+        try { return json(await rr.openPr(b?.url)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
       }
       // a room saved in the Library: read it (any authenticated page), its pictures from the snapshot itself
       const libRoom = /^\/api\/review-room\/library\/(room-[a-z0-9-]{1,60})(?:\/(\d{1,6})\/asset\/([A-Za-z0-9._-]+\.png))?$/.exec(p);
@@ -866,43 +864,27 @@ export function createRuntime(d: RuntimeDeps) {
           if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm, prompt: b?.prompt, skillDecision: b?.skillDecision }, by));
           return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent, skillDecision: b?.skillDecision }, by));
         } catch (e: any) { return fail(e); } }
-      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(turn|cite|image|check|check-answer|translate|save|images|reset|archive|auto|arrive|tutor|lesson|findings|export)(?:\/([A-Za-z0-9-]+\.png))?)?$/.exec(p);
+      // a room: its view (GET), Check for new commits, Save to Library, its tutor, archive (POST, the desktop captain), its record
+      // as a file (GET export). A room's old whiteboard routes (turn, cite, image, check-answer, translate, images, reset, auto,
+      // arrive, lesson, findings) are gone: an old room's record downloads whole instead.
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(check|save|archive|tutor|export))?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
-        if (!writing && room[2] === "image") { try { return new Response(rr.image(room[1], room[3] ?? ""), { headers: { "content-type": "image/png", "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
-        if (!writing && (room[2] === "reset" || room[2] === "archive" || room[2] === "lesson" || room[2] === "arrive" || room[2] === "tutor")) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405);
         // a room's whole record as kept (an old room's whiteboard turns and drawings included), as a file to keep: read only
         if (!writing && room[2] === "export") { if (who.kind !== "desktop") return json({ error: "The room's whole record downloads on this Mac only / 房間的完整紀錄只能在這台 Mac 上下載", code: "desktopOnly" }, 403); try { return new Response(JSON.stringify(rr.exportRoom(room[1]), null, 1), { headers: { "content-type": "application/json; charset=utf-8", "content-disposition": `attachment; filename="${room[1]}.json"`, "cache-control": "no-store", "x-content-type-options": "nosniff" } }); } catch (e: any) { return fail(e); } }
-        // the room's open questions on its lesson board, as findings of the shared locator schema (?all=1: every one)
-        if (!writing && room[2] === "findings") { try { return json(rr.findings(room[1], url.searchParams.get("all") === "1")); } catch (e: any) { return fail(e); } }
-        if (!writing) { try { return room[2] === "cite" ? json(await rr.cite(room[1], url.searchParams.get("ref"))) : json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
-        if ((room[2] !== "turn" && room[2] !== "check" && room[2] !== "check-answer" && room[2] !== "translate" && room[2] !== "save" && room[2] !== "images" && room[2] !== "reset" && room[2] !== "archive" && room[2] !== "auto" && room[2] !== "arrive" && room[2] !== "tutor" && room[2] !== "lesson") || room[3] || req.method !== "POST") return json({ error: "POST /api/review-room/<card>/turn" }, 405);
-        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac starts a paid tutor round / 只有這台 Mac 上的船長能開始付費的導師回合", code: "desktopOnly" }, 403);
+        if (!writing) { if (room[2]) return json({ error: `POST /api/review-room/<room>/${room[2]}` }, 405); try { return json(rr.view(room[1], url.searchParams.get("open") === "1" && who.kind === "desktop")); } catch (e: any) { return fail(e); } }
+        if (!room[2] || room[2] === "export" || req.method !== "POST") return json({ error: "POST /api/review-room/<room>/(check|save|archive|tutor)" }, 405);
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac changes a review room / 只有這台 Mac 上的船長能改審查室", code: "desktopOnly" }, 403);
         // Check for new commits reads GitHub: at most once every few seconds per room, whatever the page sends
         if (room[2] === "check") { const last = roomChecks.get(room[1]) ?? 0; if (Date.now() - last < 5000) return json({ error: "Checked a moment ago; try again in a few seconds / 剛剛才檢查過，請稍候再試", code: "rate_limited" }, 429);
           roomChecks.set(room[1], Date.now()); try { return json(await rr.check(room[1])); } catch (e: any) { return fail(e); } }
-        // the captain picks an option of a multiple-choice question: Studio grades it, no model (the same desktop gate as a turn)
-        // the explanation in another language: a small paid translation turn, confirmed once per room (the same gates as a turn)
-        if (room[2] === "translate") { try { return json(await rr.translate(room[1], { lang: b?.lang, confirm: b?.confirm }, by)); } catch (e: any) { return fail(e); } }
-        // Save to the Library: a new version of the room's read-only snapshot (nothing goes to GitHub)
+        // Save to the Library: a new version holding the room's pages (nothing goes to GitHub)
         if (room[2] === "save") { try { return json(await rr.saveToLibrary(room[1], by)); } catch (e: any) { return fail(e); } }
-        // generated pictures (paid image jobs) on or off for this room: off unless the captain turns them on
-        // this room's own auto-teach switch
-        if (room[2] === "auto") { try { return json(rr.autoTeachFor(room[1], b?.on)); } catch (e: any) { return fail(e); } }
-        // the captain arrived in the room: its full analysis starts by itself (auto-teach on, once per head), on the plan the page was shown
-        if (room[2] === "arrive") { try { return json(await rr.arrive(room[1], by, b?.lang, b?.plan)); } catch (e: any) { return fail(e); } }
         // the room's tutor, picked by the captain ({pick: {provider, model}}; null: Studio's default)
         if (room[2] === "tutor") { try { return json(rr.setTutor(room[1], b?.pick ?? null, by)); } catch (e: any) { return fail(e); } }
         // archive a room or restore it ({archived: false}): the room list's 封存, kept in the room; nothing about the room is lost
-        if (room[2] === "archive") { try { return json(rr.archive(room[1], b?.archived ?? true, by)); } catch (e: any) { return fail(e); } }
-        // start the room over: archived, never deleted; refused while a turn or a translation runs
-        if (room[2] === "reset") { try { return json(rr.reset(room[1], by)); } catch (e: any) { return fail(e); } }
-        if (room[2] === "images") { try { return json(rr.images(room[1], b?.on, by)); } catch (e: any) { return fail(e); } }
-        if (room[2] === "check-answer") { try { return json(rr.answer(room[1], b?.n, b?.choice)); } catch (e: any) { return fail(e); } }
-        // the lesson board's free actions: a region read, a question understood, a code card, tidy the board (no model, nothing paid)
-        if (room[2] === "lesson") { try { return json(await rr.lesson(room[1], { op: b?.op, scene: b?.scene, n: b?.n, on: b?.on, anchor: b?.anchor, node: b?.node, ref: b?.ref })); } catch (e: any) { return fail(e); } }
-        try { return json(await rr.start(room[1], { action: b?.action, text: b?.text, lang: b?.lang, confirm: b?.confirm, pick: b?.pick, regenerate: b?.regenerate, images: b?.images, thread: b?.thread, consent: b?.consent }, by)); } catch (e: any) { return fail(e); }
+        try { return json(rr.archive(room[1], b?.archived ?? true, by)); } catch (e: any) { return fail(e); }
       }
       // ---------- Studio cards ----------
       if (p === "/api/scards" && !writing) return json({ cards: engine.cards.list({ open: url.searchParams.get("open") === "1" }).map(c=>engine.cards.view(c)) });

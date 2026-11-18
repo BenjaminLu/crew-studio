@@ -50,7 +50,7 @@ export type Sources = {
   /** the crew's approved team (src/domain/crew.ts CrewStore current()) */
   crew?: () => any;
   /** the web terminals (src/terminals.ts): list() is the /api/terminals route's; tail(id, n) the last lines of one's screen */
-  terminals?: () => { list(desktop?: boolean): any[]; tail?(id: string, lines: number): string[] | null } | null;
+  terminals?: () => { list(desktop?: boolean): any[]; tail?(id: string, lines: number): Promise<string[] | null> | string[] | null } | null;
   /** the artifact library (src/artifacts.ts ArtifactStore): view() is the /api/artifacts route's own shaping */
   artifacts?: () => any;
   /** Doctor's rows (src/doctor.ts diagnose: the /api/doctor route's items) */
@@ -69,6 +69,8 @@ export type CallCtx = { captainAskedTail?: boolean };
 export type GrantView = { id: string; kinds: string[]; project: string | null; untrusted: boolean };
 /** Kinds that belong to no project (Studio's catalog, library, crew and Doctor): a project grant that names them sees them all. */
 export const STUDIO_WIDE = new Set(["workflow", "skill", "crew", "doctor"]);
+/** One page of an entity's log. */
+export type LogPage = { data: Record<string, unknown>; cursor: string | null; updatedAt?: string | null };
 export type KindDef = {
   kind: string;
   /** the board route of one entity (`:id` stands for its id) and of the kind's list */
@@ -95,7 +97,7 @@ export type KindDef = {
   routeId?: (id: string) => string;
   /** studio_logs for this kind: what it did and how far it is, oldest first, after `since` (a cursor it gave, or a time).
    *  `cursor` is where the next call goes on. Absent: studio_logs refuses this kind, naming the ones it reads. */
-  logs?: (s: Sources, id: string, o: { tail: number; since: string | null; ctx: CallCtx }) => { data: Record<string, unknown>; cursor: string | null; updatedAt?: string | null } | null;
+  logs?: (s: Sources, id: string, o: { tail: number; since: string | null; ctx: CallCtx }) => LogPage | null | Promise<LogPage | null>;
   /** what a log's cursor is: a time (ISO 8601) or a sequence (seq:N); `since` must be the same kind */
   logCursor?: "time" | "seq";
   /** every field studio_logs emits for this kind, declared as `fields` are */

@@ -9,14 +9,6 @@
   `dist/sandbox/resolved-address-guard.js` and `dist/sandbox/address.js` (the denied address classes, the cloud metadata
   list, the IPv4-in-IPv6 decoding and the loopback-name rule). The Apache License 2.0 text is at
   https://www.apache.org/licenses/LICENSE-2.0.
-- **pstack** (MIT License, copyright (c) 2026 Lauren Tan; https://github.com/backnotprop/pstack, commit
-  37d989cabf310ea2d7631f1d006117ca4cc8a799): its `how`, `why` and `teach` skills (with their references) are adapted, not
-  vendored as is, in `workflows/skills/pstack/` (how.md, why.md, teach.md) for the merge card's review room. The changes
-  and the full MIT License text are in `workflows/skills/pstack/NOTICE.md`.
-- **baton** (MIT License, copyright (c) Benjamin Lu; https://github.com/BenjaminLu/baton, commit
-  0ccff28a2fba09eeed5ef33b129cdb6ce402dc11): its SKILL.md, references/diagrams.md and references/spec.md are adapted, not
-  vendored as is, in `workflows/skills/baton/` (SKILL.md, diagrams.md, spec.md) for the review room's lesson, whose report
-  layout follows its templates/packet.html. The changes and the full MIT License text are in `workflows/skills/baton/NOTICE.md`.
 - **baton, vendored** (MIT License, copyright (c) Benjamin Lu; https://github.com/BenjaminLu/baton, commit
   c382464ab02a14ad3dda364143c74bff58ddbcfc): SKILL.md, requirements.txt, references/, scripts/ and templates/packet.html,
   copied byte for byte into `packs/core/skills/studio-baton/`, the review room's built-in default skill, with a subset of
@@ -25,11 +17,9 @@
   `packs/core/skills/studio-baton/diagram-design/`. The list of files and both licenses are in `packs/core/skills/studio-baton/NOTICE.md`.
   Its scripts install **OpenCC** (Apache License 2.0, https://github.com/BYVoid/OpenCC) from PyPI, pinned by version and
   sha256 in its requirements.txt; nothing of OpenCC is shipped with Studio.
-- **diagram-design** (MIT License, copyright (c) 2025 Cathryn Lavery; https://github.com/cathrynlavery/diagram-design, commit
-  5d59b9b6bd4d7abc08bef2bb0fce8cfa525a203c): its SKILL.md and the references style-guide, semantic-patterns, output-spec,
-  type-state, type-sequence, type-architecture, type-data-flow and type-flowchart are adapted, not vendored as is, in
-  `workflows/skills/diagram-design/` for the review room's figures. The changes and the full MIT License text are in
-  `workflows/skills/diagram-design/NOTICE.md`.
+- **@xterm/headless 6.0.0**, the headless build of xterm.js, with **@xterm/addon-unicode11 0.9.0**: how Studio reads a
+  terminal's screen for `studio_logs` (src/terminal-screen.ts), bundled into the binary. MIT License, copyright the xterm.js
+  authors, SourceLair Private Company and Christopher Jeffrey; the text is in `public/vendor/xterm-LICENSE.txt`.
 - **xterm.js 6.0.0** (`@xterm/xterm`, `public/vendor/xterm-6.0.0.min.js` and `xterm-6.0.0.css`), **@xterm/addon-fit 0.11.0**
   (`public/vendor/xterm-addon-fit-0.11.0.min.js`) and **@xterm/addon-unicode11 0.9.0**
   (`public/vendor/xterm-addon-unicode11-0.9.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the
