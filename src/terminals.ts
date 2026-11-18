@@ -64,7 +64,13 @@ export type TermView = { id: string; project: TermProject; preset: string | null
   restored: boolean; stopped: string | null };
 
 // Claude Code's Remote Control link: whoever holds it can drive the session from the Claude app, so it is a secret here
-export const REMOTE_URL = /https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code[^\s\x00-\x1f\x7f"'<>`\\│|]*/gi;
+export const REMOTE_URL = /https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code[^\s\x00-\x1f\x7f"'<>`\\│|║┃｜]*/gi;
+/** The link the Mac's page may show for a Remote Control session: claude.ai or claude.com, /code/<one id>, at most an env
+ *  parameter. The first such link a Claude terminal prints after Remote Control is on is the one shown; any later link
+ *  (another program printing one, a link with other parameters or paths) is only hidden, never shown or replaced. */
+export const SHOWN_LINK = /^https:\/\/claude\.(?:ai|com)\/code\/[A-Za-z0-9_-]{6,80}(?:\?env=[A-Za-z0-9_-]{1,40})?$/;
+/** The characters a box's side is drawn with: light, ASCII, double, heavy and full-width (CJK) bars. */
+const BORDER = "│|║┃｜";
 export const REMOTE_REMOVED = "[remote-control link removed]";
 const ENV_INTERNAL = /^(?:CREW_|FM_)/;
 const MIB = 1024 * 1024;
@@ -119,7 +125,7 @@ export class LinkRedactor {
 // Between any two characters of a known link a terminal may put an escape (colour, cursor move), a line break and the
 // indentation Ink wraps with, or a box border; a character may also come percent-encoded. A known link and its session id
 // are matched through all of that, in any letter case.
-const GAP = "(?:\\x1b\\[[0-?]*[ -\\/]*[@-~]|\\x1b\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)|\\x1b[@-Z\\\\-_]|[\\s│|╭╮╰╯─])*";
+const GAP = "(?:\\x1b\\[[0-?]*[ -\\/]*[@-~]|\\x1b\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)|\\x1b[@-Z\\\\-_]|[\\s│|║┃｜╭╮╰╯─═━╔╗╚╝┏┓┗┛])*";
 export function fuzzy(secret: string): RegExp {
   const one = (c: string) => { const e = c.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&"), n = c.charCodeAt(0); return n < 128 ? `(?:${e}|%${n.toString(16).padStart(2, "0")})` : `(?:${e})`; };
   return new RegExp([...secret].map(one).join(GAP), "gi");
@@ -149,7 +155,9 @@ export class SecretWindow {
    *  Boxes side by side put other text between a link's two rows, so the link's rest is a word of its own there. */
   pieces(s: string) {
     const secrets = [...this.secrets].filter((x) => x.length >= 12);
-    return s.replace(/[A-Za-z0-9_-]{8,}/g, (w) => (secrets.some((x) => x.startsWith(w) || x.endsWith(w)) ? REMOTE_REMOVED : w));
+    // the mark takes the word's own width where it can, so the box's borders stay where the program drew them
+    const fit = (n: number) => (n >= REMOTE_REMOVED.length ? REMOTE_REMOVED.padEnd(n) : n >= 14 ? "[link removed]".padEnd(n) : "[…]".padEnd(n));
+    return s.replace(/[A-Za-z0-9_-]{8,}/g, (w) => (secrets.some((x) => x.startsWith(w) || x.endsWith(w)) ? fit(w.length) : w));
   }
   push(s: string): string {
     this.buf += s;
@@ -169,7 +177,7 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = [...lines[i].matchAll(REMOTE_URL)].at(-1); if (!m) continue;
     const { url, j } = linkFrom(lines, i, m, cols);
-    if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4)) && !/[\s│|]$/.test(raw)) return null;
+    if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4)) && !new RegExp(`[\\s${BORDER}]$`).test(raw)) return null;
     return url;
   }
   return null;
@@ -187,22 +195,22 @@ const linkLines = (raw: string) => screenLines(rowBreaks(raw));
 const wholeSession = (u: string) => /\/session_[0-9A-Za-z]{26}$/.test(u);
 /** The link that starts with match `m` on line `i`, rejoined over the lines the terminal or a box wrapped it on. */
 function linkFrom(lines: string[], i: number, m: RegExpMatchArray, cols: number): { url: string; j: number } {
-  const edge = (l: string) => l.replace(/[\s│|]+$/, "");
+  const edge = (l: string) => l.replace(new RegExp(`[\\s${BORDER}]+$`), "");
   // a wrapped line is one the terminal filled to its width: within [cols - 4, cols] (a box border or padding may take
   // the last columns); a longer line was not wrapped by the terminal, and a shorter one ended where the link ends
   const full = (l: string) => { const n = [...edge(l)].length; return n >= cols - 4 && n <= cols; };
   // a box narrower than the terminal (Ink) wraps at its own border: the link reaches it, a single space before the border
-  const boxFull = (l: string) => /\S ?[│|]\s*$/.test(l) && !/\s{2,}[│|]\s*$/.test(l);
+  const boxFull = (l: string) => new RegExp(`\\S ?[${BORDER}]\\s*$`).test(l) && !new RegExp(`\\s{2,}[${BORDER}]\\s*$`).test(l);
   let url = m[0]; const at = m.index ?? 0, end = at + url.length;
   // the box the link sits in, from the border before it to the one right after it: boxes side by side share their rows,
   // so the next row is read in the same columns only
-  const before = lines[i].lastIndexOf("│", at), after = /^ ?[│|]/.exec(lines[i].slice(end));
+  const before = Math.max(...[...BORDER].map((b) => lines[i].lastIndexOf(b, at))), after = new RegExp(`^ ?[${BORDER}]`).exec(lines[i].slice(end));
   const seg: [number, number] | null = before >= 0 && after ? [before, end + after[0].length] : null;
   const cell = (l: string) => (seg ? l.slice(seg[0], seg[1]) : l);
   const wraps = (l: string) => (seg ? boxFull(cell(l)) : full(l) || boxFull(l));
   let j = i, wrapped = !wholeSession(url) && (seg ? true : end >= edge(lines[i]).length && wraps(lines[i]));
   while (wrapped && j + 1 < lines.length) {
-    const row = cell(lines[j + 1]), next = row.replace(/^[\s│|]+/, ""), c = /^[^\s"'<>`\\│|]+/.exec(next); if (!c) break;
+    const row = cell(lines[j + 1]), next = row.replace(new RegExp(`^[\\s${BORDER}]+`), ""), c = new RegExp(`^[^\\s"'<>\`\\\\${BORDER}]+`).exec(next); if (!c) break;
     // the rest of a wrapped link stands alone on its line (or fills that line too); a word followed by more text is prose
     if (c[0].length < edge(next).length && !wraps(lines[j + 1])) break;
     url += c[0]; j++; wrapped = !wholeSession(url) && c[0].length >= edge(next).length && wraps(lines[j]);
@@ -331,11 +339,11 @@ export class Terminals {
     for (const u of findLinks(rows.join("\n") + "\n", cols)) this.learnLink(t, u, false);
     if (t.redactor.known) rows = t.redactor.scrub(rows.join("\n")).split("\n").map((l) => t.redactor.pieces(l));
     const lines = rows.map((l) => redactText(l));
-    const edgeR = (l: string) => l.replace(/[\s│|║┃]+$/, ""), edgeL = (l: string) => l.replace(/^[\s│|║┃]+/, "");
+    const edgeR = (l: string) => l.replace(/[\s│|║┃｜]+$/, ""), edgeL = (l: string) => l.replace(/^[\s│|║┃｜]+/, "");
     for (let k = 0; k + 1 < rows.length; k++) {
       if (!rows[k].trim() || !rows[k + 1].trim()) continue;
       const atWidth = [...rows[k].trimEnd()].length >= cols - 1 - (rows[k].match(/[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/g)?.length ?? 0);
-      const atBorder = /\S ?[│|║┃]\s*$/.test(rows[k]) && !/\s{2,}[│|║┃]\s*$/.test(rows[k]);
+      const atBorder = /\S ?[│|║┃｜]\s*$/.test(rows[k]) && !/\s{2,}[│|║┃｜]\s*$/.test(rows[k]);
       // the plain text (the worker out of budget) places rows less surely than a drawn screen: any secret running from one
       // line into the next takes both
       if (spansSecret(rows[k], rows[k + 1], atWidth || plain) || spansSecret(edgeR(rows[k]), edgeL(rows[k + 1]), atBorder || plain)) lines[k] = lines[k + 1] = REDACTED;
@@ -414,7 +422,7 @@ export class Terminals {
     // redacted from then on and a phone gets no more of its output; only the Claude preset shows the link on the Mac's page
     t.seen.add(u); t.linkSeen = true; t.redactor.know(u); if (t.ask) t.ask = this.scrubAsk(t, t.ask);
     // the link the Mac's page shows: only one of the shape a Remote Control link has (a misread one is still redacted)
-    if (forPage && t.remote && /^https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code\/[A-Za-z0-9_-]{6,80}(?:[/?#][^\s]*)?$/.test(u)) t.remoteUrl = u;
+    if (forPage && t.remote && !t.remoteUrl && SHOWN_LINK.test(u)) t.remoteUrl = u;
     this.writeTranscript(t, t.redactor.push("")); this.pushMeta(t); this.changed();
   }
   private phoneHidden(t: Term) { return !!t.remote?.enabled || t.linkSeen; }
