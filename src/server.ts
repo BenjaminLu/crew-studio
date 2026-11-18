@@ -308,7 +308,7 @@ let serveOn = false;
 // a phone may read and interrupt; driving firstmate (and answering cards, changing settings) needs "allow phone to drive"
 const PHONE_DRIVE = new Set(["/api/main/attachments", "/api/main/model", "/api/main/takeover", "/api/main/start", "/api/main/switch", "/api/main/question", "/api/main/dispatch", "/api/answer/check-door", "/api/main/attach", "/api/main/send", "/api/main/approve", "/api/main/resume", "/api/main/detach", "/api/main/queue/remove", "/api/main/locale", "/api/answer", "/api/settings"]);
 const DESKTOP_ONLY = new Set(["/api/transcripts/settings", "/api/remote/pair/start", "/api/remote/revoke", "/api/remote/settings", "/api/remote/tailscale", "/api/remote/lan",
-  "/api/claude/native/verify","/api/claude/native/cancel","/api/claude/account/login","/api/claude/account/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
+  "/api/claude/native/verify","/api/claude/native/cancel","/api/claude/account/login","/api/claude/account/cancel","/api/codex/account/login", "/api/codex/account/cancel", "/api/codex/account/verify", "/api/github/token", "/api/github/forget", "/api/keys", "/api/cloud-handoff/setup", "/api/doctor/install", "/api/doctor/login", "/api/doctor/cancel"]);
 
 // --- LAN mode: a second listener on this Mac's LAN address, only while turned on (never at start) ---
 let lanServer: ReturnType<typeof Bun.serve> | null = null;
@@ -344,7 +344,7 @@ setInterval(() => { try { cursorAccount(true); } catch {} }, 60_000).unref();
 const installs = new Installs(process.env.CREW_INSTALL_RUNNER === "mock" ? new MockRunner() : new RealRunner());
 let doctorCache: Item[] = [];
 const doctor = () => (doctorCache = diagnose({ lanKeystore: (() => { try { return lan ? lan.keystore() : null; } catch { return null; } })(), state: STATE, legacy: startup.legacy, board: board.status(), gh: gh.state, keys: keyStatus() as any, chatProvider: chatInfo().provider, lanIp: lanIp(),
-  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), voice: voiceDoctorNow ?? undefined, roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }));
+  tailscale: ts, compiled: COMPILED, render: renderEnv(), film: coffeeTools.ready ? { ready: true } : { ready: false, reason: coffeeTools.reason }, egress: egress.status(), codexAccount:codexAccount.view(), operatingRules: (() => { const r = new OperatingRules(DATA); return { studio: r.studio(), projects: runtime.projects.list().map((x) => ({ id: x.id, ...r.project(x.id) })) }; })(), gitConfig: gitConfigNow(), voice: voiceDoctorNow ?? undefined, roundLogin: startup.legacy || existsSync(join(PROJECT,".git")) ? roundLogin() : undefined, cursorLogin: cursorAccount().key === "present" ? { ok: true, source: cursorAccount().source ?? undefined } : { ok: false, error: cursorAccount().how }, cursorInUse: cursorInUse() }).concat((() => { try { return runtime.engine.cloudHandoff?.doctor(runtime.projects.list() as any) ?? []; } catch { return []; } })()));
 installs.onChange = (j, line) => send("install", { id: j.id, item: j.item, state: j.state, code: j.code, line: line ?? null });
 // the local voice's rows: checked asynchronously (hashing a model never stalls Studio), the last answer shown
 let voiceDoctorNow: Awaited<ReturnType<typeof voiceDoctorInput>> | null = null;
@@ -853,6 +853,14 @@ async function handle(req: Request, via: "loopback" | "lan"): Promise<Response> 
     // --- GitHub token (no gh CLI needed) ---
     if (p === "/api/github/token" && writing) { let b: any = {}; try { b = await req.json(); } catch {} const r = await gh.saveToken(String(b?.token ?? "")); send("github", gh.state); return json(r.ok ? { ok: true, github: gh.state } : r, r.ok ? 200 : 400); }
     if (p === "/api/github/forget" && writing) { gh.forgetToken(); send("github", gh.state); return json({ ok: true, github: gh.state }); }
+    // --- cloud hand-off setup: the routine id, its bearer token and its repositories, one Studio secret (0600); the token never leaves this server ---
+    if (p === "/api/cloud-handoff/setup") {
+      const store = runtime.engine.cloudHandoff?.store; if (!store) return json({ error: "no code workflow is installed" }, 409);
+      if (writing) { let b: any = {}; try { b = await req.json(); } catch {}
+        try { if (b?.clear === true) store.clear(); else store.save({ routineId: b?.routineId, token: b?.token, repos: Array.isArray(b?.repos) ? b.repos.map(String) : String(b?.repos ?? "").split(/[\s,]+/) }); }
+        catch (e: any) { return json({ error: String(e?.message ?? e) }, 400); } send("doctor", doctor()); }
+      return json(store.status());
+    }
     // --- API keys for the direct-HTTP chat providers (values never leave this server) ---
     if (p === "/api/keys") {
       if (writing) {

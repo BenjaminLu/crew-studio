@@ -19,6 +19,7 @@ function actionButton(it) {
   if (a.kind === "login") return h("button", { class: "btn", "data-login": a.item, onclick: () => startLogin(a.item) }, icon("link", "ic sm"), T("Log in…", "登入…"));
   if (a.kind === "github") return h("button", { class: "btn", "data-gh": "connect", onclick: openGithub }, icon("pr", "ic sm"), S.github?.connected ? T("Change token…", "更換 token…") : T("Connect GitHub…", "連接 GitHub…"));
   if (a.kind === "keys") return h("button", { class: "btn", "data-keys": "open", onclick: openKeys }, icon("tool", "ic sm"), T("API keys…", "API 金鑰…"));
+  if (a.kind === "cloud-handoff") return h("button", { class: "btn", "data-cloud-handoff-setup": "open", onclick: openCloudHandoff }, icon("tool", "ic sm"), T("Cloud hand-off…", "雲端交接…"));
   if (a.kind === "phone") return h("a", { class: "btn", href: "#/remote" }, icon("monitor", "ic sm"), T("Phone page", "手機頁"));
   if (a.kind === "listen") return h("button", { class: "btn", "data-voice-test": it.id, onclick: (e) => listenVoice(e.currentTarget) }, icon("play", "ic sm"), T("Play a test phrase", "試聽一句"));
   return null;
@@ -177,6 +178,24 @@ async function openKeys() {
       btn.disabled = true;
       const r = await postJ("/api/keys", { anthropic: v("keyAnthropic"), openai: v("keyOpenai"), compatBaseUrl: v("keyCompatBase"), compatKey: v("keyCompatKey") });
       close(); if (r.error) toast(r.error); else { toast(T("Saved. Pick the provider in the chat settings.", "已儲存。請在對話設定選擇提供者。")); loadDoctor(); }
+    });
+  $(".modal .btn.primary").textContent = T("Save", "儲存");
+}
+
+// cloud hand-off setup (src/domain/cloud-handoff.ts): the routine id, its bearer token (0600 on this Mac, never sent back) and its repositories
+async function openCloudHandoff() {
+  const s = await getJ("/api/cloud-handoff/setup").catch(() => ({}));
+  const field = (id, label, value, ph, type = "text", hint = null) => h("label", { style: "display:grid;gap:4px;font-size:13px" }, h("span", {}, label, hint), h("input", { class: "input", id, type, autocomplete: "off", value: value || "", placeholder: ph }));
+  modal(T("Cloud hand-off (Claude routine)", "雲端交接（Claude routine）"), h("div", { style: "display:grid;gap:10px" },
+    h("p", { class: "muted", style: "margin:0" }, T("Use a dedicated routine: bound to the repositories below, no connectors, no environment variables, no network secrets, network Limited. The token is shown once on claude.ai; it stays on this Mac (0600) and never reaches the browser again.",
+      "請用專用的 routine：綁定下面的 repo，不掛 connector、沒有環境變數、沒有網路 secret、網路設 Limited。token 只會在 claude.ai 顯示一次；它只存在這台 Mac（0600），不會再送回瀏覽器。")),
+    field("cloudRoutine", T("Routine id (from the API trigger's URL)", "Routine id（API trigger 網址裡的那段）"), s.routineId, "trig_…"),
+    field("cloudToken", T("Bearer token", "Bearer token"), "", s.token ? T("leave empty to keep", "留空保留") : "sk-ant-oat01-…", "password", s.token ? h("span", { class: "badge ok", style: "margin-left:6px" }, T("saved", "已儲存")) : null),
+    field("cloudRepos", T("Repositories the routine is bound to (owner/name, comma separated)", "routine 綁定的 repo（owner/name，用逗號分隔）"), (s.repos || []).join(", "), "owner/name")),
+    async (close, btn) => {
+      btn.disabled = true;
+      const r = await postJ("/api/cloud-handoff/setup", { routineId: $("#cloudRoutine").value.trim(), token: $("#cloudToken").value.trim() || undefined, repos: $("#cloudRepos").value });
+      btn.disabled = false; if (r.error) { toast(r.error); return; } close(); toast(T("Saved.", "已儲存。")); loadDoctor();
     });
   $(".modal .btn.primary").textContent = T("Save", "儲存");
 }

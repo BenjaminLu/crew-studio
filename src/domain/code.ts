@@ -46,6 +46,7 @@ import type { CardDetail } from "../runtime/cards";
 import { commitConvention, commitIdentity, commitSubject, commitTree, taskCommitMessage } from "./commit-message";
 import { unverifiedClaim } from "./report-verification";
 import { installReviewRoom } from "./review-room";
+import { installCloudHandoff } from "./cloud-handoff";
 import type { WebBackend } from "../review-web";
 
 export { git, must };
@@ -188,7 +189,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** the review room's local voice (tests stub it; production runs Kokoro in Studio's sidecar on this Mac) */
   reviewLocalSpeak?: (lang: "zh" | "en", mix: "switch" | "same") => import("./review-room").Speaker;
   /** the Library (Studio's artifact store): where an ended or saved review room is kept read-only */
-  artifacts?: import("../artifacts").ArtifactStore }) {
+  artifacts?: import("../artifacts").ArtifactStore;
+  /** the cloud hand-off's provider (tests: a loopback stub) and its GitHub polling interval */
+  cloudProvider?: import("./cloud-handoff").CloudProvider; cloudIntervalMs?: number }) {
   installCodeQueue(engine);
   // the merge card's review room: a view on the card (its summary), never its answer or its readiness
   engine.reviewRoom = installReviewRoom(engine, { dataDir: o.dataDir, web: o.reviewWeb, speak: o.reviewSpeak, localSpeak: o.reviewLocalSpeak, projects: o.projects, artifacts: o.artifacts,
@@ -368,6 +371,19 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   const held = new Map<string, () => void>();
   const cfgOf = (x: X) => x.ctx.repo && x.ctx.baseCommit ? repoCfgAt(x.ctx.repo, x.ctx.baseCommit) : repoCfg(x.ctx.worktree ?? x.ctx.repo);
   const shellOk = (x: X) => { if (!x.ctx.worktree || !existsSync(x.ctx.worktree)) throw new Error("the run's worktree is gone"); return x.ctx.worktree as string; };
+  // a running build round handed to a cloud agent and taken back (src/domain/cloud-handoff.ts)
+  installCloudHandoff(engine, { dataDir: o.dataDir, adapterOf: selectedAdapter, poller: o.poller, provider: o.cloudProvider, intervalMs: o.cloudIntervalMs,
+    testCommands: (x) => { try { const c = cfgOf(x); return c.test?.length ? [c.test.join(" ")] : []; } catch { return []; } },
+    acceptCloudHead: async (x, a, from, to) => {
+      if (!x.ctx.wt) throw new Error("the Task has no worktree");
+      const key = wkey(x), round = await W.startRound(key.project, key.task, `${x.run.id}/cloud-take-back#${x.visit}`, { write: true, skipInstall: true, remote: () => a.remoteGit() });
+      try {
+        if (round.head === to) { x.ctx.head = to; x.save(); return; } // taken already (Studio stopped right after)
+        if (round.head !== from || x.ctx.head !== from) throw new Error("the Task head moved since the hand-off; Studio did not take the cloud head");
+        if (!git(x.ctx.repo, ["merge-base", "--is-ancestor", x.ctx.baseCommit, to]).ok) throw new Error("the cloud head does not contain the Task's base");
+        W.acceptHead(key.project, key.task, from, to, x.ctx.baseCommit); x.ctx.head = to; x.save();
+      } finally { round.release(); W.endRound(key.project, key.task, "cloud take-back"); }
+    } });
   const sensitive = (x: X) => (x.policy("sensitive_paths") ?? []) as { glob: string; why: string }[];
 
   // ---------- what checks see ----------

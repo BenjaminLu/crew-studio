@@ -5,7 +5,9 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { git, must } from "../../src/git";
 const fixture = JSON.parse(readFileSync(new URL("../fixtures/github-foundation/provenance.json", import.meta.url), "utf8"));
-export function githubSimulator(bare: string, repository = "fixture/project") {
+export function githubSimulator(bare: string, repository = "fixture/project", o: { ownerType?: "User" | "Organization" | null } = {}) {
+  // the repository owner's account type (a cloud hand-off refuses an organisation repository without its policy); null: GitHub says nothing
+  const owner = { type: o.ownerType === undefined ? "User" : o.ownerType };
   // the repository's community files (pull request templates, CONTRIBUTING) served by the contents API at the default branch head
   const community = new Map<string, string>();
   const pulls = new Map<number, any>(), calls: { method: string; path: string; body: any }[] = [];
@@ -77,7 +79,9 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       if (!value) return json({ message: "Not Found" }, 404);
       return json({ ref: `refs/heads/${branch}`, object: { type: "commit", sha: value } });
     }
-    if(path==='/pulls'&&req.method==='GET'&&['?state=open&per_page=30','?state=closed&sort=updated&direction=desc&per_page=100'].includes(u.search)){response=json([...pulls.values()].filter(p=>p.state===u.searchParams.get('state')).map(shaped));}
+    // a cloud hand-off's take-back: the pull requests most recently updated, any state
+    if(path==='/pulls'&&req.method==='GET'&&u.search==='?state=all&sort=updated&direction=desc&per_page=100&page=1'){response=json([...pulls.values()].map(shaped));}
+    else if(path==='/pulls'&&req.method==='GET'&&['?state=open&per_page=30','?state=closed&sort=updated&direction=desc&per_page=100'].includes(u.search)){response=json([...pulls.values()].filter(p=>p.state===u.searchParams.get('state')).map(shaped));}
     // triage's read of the open pull requests, page by page (src/domain/issue-triage.ts enrichSnapshot)
     else if(path==='/pulls'&&req.method==='GET'&&/^\?state=open&per_page=100&page=[1-9][0-9]*$/.test(u.search)){response=json(u.searchParams.get('page')==='1'?[...pulls.values()].filter(p=>p.state==='open').map(shaped):[]);}
     else if (path === "/pulls" && req.method === "GET") {
@@ -96,7 +100,7 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
       else if (req.method === "PATCH" && keys(body, ["title", "body", "base"], ["base"]) && ("title" in body) === ("body" in body) && (!("title" in body) || (typeof body.title === "string" && typeof body.body === "string")) && head(body.base)) { Object.assign(p, { ...("title" in body ? { title: body.title, body: body.body } : {}), base: { ref: body.base } }); response = json(shaped(p)); }
       else return bad();
     } else if (req.method === "GET" && path === "" && !u.search && !expected.has("GET ")) {
-      response = json({ full_name: repository, default_branch: "main", private: true, visibility: "private", ...(auto ? { allow_merge_commit: true, allow_squash_merge: true, allow_rebase_merge: true } : {}) });
+      response = json({ full_name: repository, default_branch: "main", private: true, visibility: "private", ...(owner.type ? { owner: { login: repository.split("/")[0], type: owner.type } } : {}), ...(auto ? { allow_merge_commit: true, allow_squash_merge: true, allow_rebase_merge: true } : {}) });
     } else if (req.method === "GET" && path === "/commits/main" && !u.search) {
       const value = head("main"); if (!value) return json({ message: "Not Found" }, 404); response = json({ sha: value });
     } else if (req.method === "GET" && path.startsWith("/contents/")) {
@@ -143,7 +147,7 @@ export function githubSimulator(bare: string, repository = "fixture/project") {
     if (transform?.method === req.method && (!transform.path || transform.path === path + u.search)) { const map = transform.map; transform = null; response = json(map(await response.json()), response.status); }
     return response;
   } });
-  return { origin: `http://127.0.0.1:${server.port}`, calls, pulls, head, community,
+  return { origin: `http://127.0.0.1:${server.port}`, calls, pulls, head, community, owner,
     holdNext(method: "GET" | "POST" | "PATCH" | "PUT", path: string) {
       if (held || path !== "" && !path.startsWith("/")) throw new Error("invalid held fixture");
       let ready!: () => void, release!: () => void; const started = new Promise<void>(r => ready = r), gate = new Promise<void>(r => release = r);

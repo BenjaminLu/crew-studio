@@ -18,7 +18,7 @@ import { downloadCommand, downloadNeeds, installCommand, SHERPA_VERSION, type Ru
 import type { MacVoice } from "./voice/mac";
 
 export type Status = "ok" | "degraded" | "missing" | "info";
-export type Action = { kind: "install"; item: string } | { kind: "login"; item: string } | { kind: "github" } | { kind: "keys" } | { kind: "phone" } | { kind: "listen" } | { kind: "none" };
+export type Action = { kind: "install"; item: string } | { kind: "login"; item: string } | { kind: "github" } | { kind: "keys" } | { kind: "cloud-handoff" } | { kind: "phone" } | { kind: "listen" } | { kind: "none" };
 export type Item = { id: string; title: string; titleZh?: string; status: Status; availability?: "missing" | "available" | "unusable"; authenticated?: boolean | null; detail: string; detailZh?: string; adds: string; addsZh?: string; fix: string; fixZh?: string; group?: "basic" | "coding" | "optional" | "voice"; action: Action; version?: string | null };
 export type Method = { id: string; label: string; argv: string[]; source: string; location: string; needs: string[]; admin: boolean; kind?: "run" | "open"; url?: string };
 
