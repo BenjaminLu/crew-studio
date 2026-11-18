@@ -951,12 +951,16 @@ The room can be presented by one of the captain's own skills instead of the tuto
   (stopped) or an error (failed) with its icon; Studio's refusals show only the captain's half of their "English / 中文". The explainer's live event is its own (`review-explain`): a progress line redraws the explainer's parts, never the
   whole room.
 - **Versions.** Every generation, and every follow-up that changed the output, is a new version (`v1`, `v2`, …: the output's
-  files, its working notes and dotfiles left out, never changed once written), listed in the left rail with its summary and
-  where it came from; an older one is shown again with a click. A follow-up that changed nothing makes no version. Each version
-  says what it was made from, in the rail (a line: ✎ its instructions, ✎ the skill's default, or ? the follow-up's question)
-  and above the output (`[data-explain-made]`, folded: "Made with your instructions: …"; opened, the whole text and "Generate
-  again with these instructions…", which opens the confirmation with them, editable). "Generate a new version" in the rail
-  starts from the shown version's instructions too.
+  files, its working notes and dotfiles left out, never changed once written), listed with its summary and where it came
+  from in the version menu (`[data-explain-versions]`, the shown version's name on the output's one-line bar, no column of its
+  own: the output gets the room's width); an older one is shown again with a click, or the arrow keys and Enter (Esc closes
+  the menu and gives the focus back). A follow-up that changed nothing makes no version. Each version says what it was made
+  from, in the menu (a line: ✎ its instructions, ✎ the skill's default, or ? the follow-up's question) and on the bar
+  (`[data-explain-made]`, folded: "Made with your instructions: …"; opened, the whole text and "Generate again with these
+  instructions…", which opens the confirmation with them, editable). "Generate a new version" in the menu starts from the
+  shown version's instructions too. The bar starts with a two-way switch, Board | Output (`[data-explain-switch]`, the board's
+  own segmented look); the board shows the same switch first among its tools once the room has an output, so either way is one
+  click (or Tab and Enter) from the other, on a phone too.
 - **Rendering.** HTML (and Markdown, rendered by Studio) is shown in an iframe with `sandbox="allow-scripts"` only (never
   `allow-same-origin`: an opaque origin), loaded from `/rrx/<capability>/<room>/<v>/<file>`: a 30-minute capability signed
   with a key the explainer holds in memory (the frame sends no cookie). Every file there is served with `OUTPUT_CSP`:
@@ -1030,8 +1034,8 @@ instructions in every round's message in their own fence and the materials still
 ledger; the new tab's page and its frame) and
 `tests/review-room-explain-ui.mjs` (a real isolated Studio and Chromium: the picker and confirmation, progress and Stop,
 the frame's sandbox and CSP — the page in it cannot fetch, cannot read Studio's page or cookies, has working storage —
-boxing a region and the follow-up that carries it, the answer and v2 in the rail, an older version, a paused video, the
-scripts row of the confirmation; the instructions in the rail and the version view, Generate again from them, an edit reading
+boxing a region and the follow-up that carries it, the answer and v2 in the version menu, an older version, a paused video, the
+scripts row of the confirmation; the instructions in the version menu and the version view, Generate again from them, an edit reading
 the offer again and Confirm sending exactly that text, the prefill and the counter; Save as default, Reset to default,
 Insert a review checklist, the default before the last text; the Skills page's editor on the real Studio (insert, save, per
 skill, kept after a reload, clear); full screen with the Fullscreen API and

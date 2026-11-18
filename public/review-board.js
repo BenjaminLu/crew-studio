@@ -769,6 +769,8 @@ function view(r, scenes, i) {
     h("h6", {}, lesson ? T("Answers · chapters · asked / open", "回答 · 章節 · 問題／未解") : T("Answers", "回答")), outline);
   const notes = conv ? convPane(card, r, ctx, sheet) : null;
   const tools = h("div", { class: "rb-tools", role: "toolbar", "aria-label": T("The board", "白板") },
+    // a room with a skill's output: the way back to it, first among the board's tools (public/review-explain.js)
+    r.snapshot ? null : window.crewRoomExplain?.switcher?.(r) ?? null,
     live && lesson ? h("button", { type: "button", class: "rb-btn", "data-board-tidy": "", disabled: B.busy.has(`${card}/tidy`), title: T("Fold the questions you understood back into their chapters", "把懂了的問答併回章節"), onclick: () => tidy(card) }, B.busy.has(`${card}/tidy`) ? T("Tidying…", "整理中…") : T("Tidy the board", "整理白板")) : null,
     merged ? h("span", { class: "rb-seg", role: "group", "aria-label": T("Before or after tidying", "整理前或整理後") }, ["before", "after"].map((v) => h("button", { type: "button", "data-tidy-view": v, "aria-pressed": String((v === "before") === B.before.has(card)), onclick: () => { if (v === "before") B.before.add(card); else B.before.delete(card); rerender(); } }, v === "before" ? T("Before", "整理前") : T("After", "整理後")))) : null,
     live && r.followUps?.on ? h("label", { class: "rb-toolnote rb-agree" }, h("input", { type: "checkbox", "data-followups": "", checked: true, onchange: (e) => { if (!e.target.checked) lessonOp(card, { op: "consent", on: false }); } }), T(" Questions start right away", " 追問直接開始")) : null,
