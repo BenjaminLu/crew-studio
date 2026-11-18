@@ -134,29 +134,41 @@ function cliGrants() {
   const when = (iso) => iso ? new Date(iso).toLocaleString(document.documentElement.lang || undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
   const kb = (n) => n < 1024 ? `${n} B` : `${Math.round(n / 1024)} KB`;
   // what the form holds between draws
-  const pick = { scopes: new Set(["project"]), preset: "project", kinds: new Set(), untrusted: false };
+  // custom: project "" is every project (the captain picks one, or none); the other presets never send a hidden choice
+  const pick = { scopes: new Set(["project"]), preset: "project", kinds: new Set(), untrusted: false, project: null, customProject: "" };
   let data = null, fresh = null;
   const needsProject = () => pick.scopes.has("project") || (pick.scopes.has("observe") && pick.preset === "project");
-  const summary = (g) => { const sc = g.scopes || [g.scope || "project"]; return sc.map((x) => x === "observe" ? `${SCOPE.observe}: ${PRESET[g.observe?.preset] ?? ""}${g.observe?.untrusted ? T(" + external text", "＋外部文字") : ""}` : x === "project" ? `${SCOPE.project} · ${g.project}` : T("Pull request list", "PR 列表")).join(" · "); };
+  const mayPickProject = () => !needsProject() && pick.scopes.has("observe") && pick.preset === "custom";
+  const kindName = (k) => { const l = data?.observe?.labels?.[k]; return l ? T(l.en, l.zh) : k; };
+  const projName = (id) => (data?.projects ?? []).find((p) => p.id === id)?.name || id;
+  const summary = (g) => { const sc = g.scopes || [g.scope || "project"]; return sc.map((x) => x === "observe"
+    ? `${SCOPE.observe}: ${PRESET[g.observe?.preset] ?? ""}${g.observe?.preset === "custom" ? ` (${(g.observe.kinds ?? []).map(kindName).join(T(", ", "、"))})` : ""} · ${g.project ? projName(g.project) : T("every project", "所有專案")}${g.observe?.untrusted ? T(" + external text", "＋外部文字") : ""}`
+    : x === "project" ? `${SCOPE.project} · ${projName(g.project)}` : T("Pull request list", "PR 列表")).join(" · "); };
+  const budgetLine = (b) => b.usedUp ? T(`hourly budget used up; frees up at ${when(b.freesAt)}`, `本小時額度已用完，${when(b.freesAt)} 起恢復`)
+    : T(`this hour: ${b.calls} of ${b.maxCalls} calls, ${kb(b.bytes)} of ${kb(b.maxBytes)}`, `這一小時：${b.calls}/${b.maxCalls} 次、${kb(b.bytes)}/${kb(b.maxBytes)}`);
   const draw = () => {
     const projects = data?.projects ?? [], grants = data?.grants ?? [], groups = data?.observe?.groups ?? [];
     const check = (scope) => h("label", { class: "bb-set bb-grant-pick" }, h("input", { type: "checkbox", name: "grantScope", value: scope, id: `grantScope-${scope}`, checked: pick.scopes.has(scope) || null,
       onchange: (e) => { e.target.checked ? pick.scopes.add(scope) : pick.scopes.delete(scope); draw(); } }), h("span", {}, SCOPE[scope]));
-    const project = h("select", { id: "grantProject", "aria-label": T("Project", "專案") }, projects.map((p) => h("option", { value: p.id }, p.name || p.id)));
-    const projLabel = h("label", { hidden: !needsProject() || null }, h("span", { class: "faint" }, T("Project", "專案")), project);
+    const project = h("select", { id: "grantProject", "aria-label": T("Project", "專案"), onchange: () => { if (mayPickProject()) pick.customProject = project.value; else pick.project = project.value; } },
+      mayPickProject() ? h("option", { value: "", selected: !pick.customProject || null }, T("Every project", "所有專案（不限）")) : null,
+      projects.map((p) => h("option", { value: p.id, selected: (mayPickProject() ? pick.customProject : pick.project) === p.id || null }, p.name || p.id)));
+    if (!mayPickProject() && !projects.some((p) => p.id === project.value) && projects.length) project.value = projects[0].id;
+    const projLabel = h("label", { hidden: !(needsProject() || mayPickProject()) || null }, h("span", { class: "faint" }, T("Project", "專案")), project);
     const ttl = h("select", { id: "grantTtl", "aria-label": T("Expires", "有效期") }, (data?.ttls ?? ["8h", "1h", "eod"]).map((k) => h("option", { value: k, selected: k === "8h" || null }, TTL[k] ?? k)));
     const observe = !pick.scopes.has("observe") ? null : h("fieldset", { class: "bb-grant-observe", "data-grant-observe": "" },
       h("legend", { class: "faint" }, T("What it reads", "讀得到什麼")),
       h("div", { class: "bb-grant-presets", role: "radiogroup" }, ["project", "review", "custom"].map((p) => h("label", { class: "bb-set" },
         h("input", { type: "radio", name: "grantPreset", value: p, checked: pick.preset === p || null, onchange: () => { pick.preset = p; draw(); } }), h("span", {}, PRESET[p])))),
+      pick.preset === "project" ? h("span", { class: "faint", "data-grant-wide": "" }, T("Tasks, cards, rooms, pull requests, artifacts and documents of this project; workflows, skills, the crew and Doctor are Studio-wide.", "這個專案的任務、卡片、審查室、PR、成品和文件；流程、技能、船員和健康檢查是整個 Studio 共用的。")) : null,
       pick.preset === "custom" ? h("div", { class: "bb-grant-groups" }, groups.map((g) => h("div", { class: "bb-grant-group", "data-grant-group": g.id },
-        h("b", {}, T(g.en, g.zh)), h("div", {}, g.kinds.map((k) => h("label", { class: "bb-set" }, h("input", { type: "checkbox", name: "grantKind", value: k, checked: pick.kinds.has(k) || null, onchange: (e) => { e.target.checked ? pick.kinds.add(k) : pick.kinds.delete(k); } }), h("span", { class: "mono" }, k))))))) : null,
+        h("b", {}, T(g.en, g.zh)), h("div", {}, g.kinds.map((k) => h("label", { class: "bb-set" }, h("input", { type: "checkbox", name: "grantKind", value: k, checked: pick.kinds.has(k) || null, onchange: (e) => { e.target.checked ? pick.kinds.add(k) : pick.kinds.delete(k); draw(); } }), h("span", {}, kindName(k)))))))) : null,
       h("label", { class: "bb-set" }, h("input", { type: "checkbox", id: "grantUntrusted", checked: pick.untrusted || null, onchange: (e) => { pick.untrusted = e.target.checked; } }),
         h("span", {}, h("b", {}, T("Include external text", "包含外部文字")), h("span", { class: "faint" }, T(" (pull request text, reviewers' comments, models' answers; off: the CLI never sees them, nor finds them by searching)", "（PR 內文、reviewer 留言、模型的回答；不勾就讀不到，也搜不到）")))),
       h("span", { class: "faint" }, T("Settings, grants, peers, terminals and what you are looking at are never shared.", "設定、授權、peer、terminal 和你正在看的畫面永遠不會給。")));
     const ok = pick.scopes.size > 0 && (!needsProject() || projects.length) && (!(pick.scopes.has("observe") && pick.preset === "custom") || pick.kinds.size > 0);
     const issue = h("button", { class: "btn primary", id: "grantIssue", disabled: !ok || null, onclick: async () => { issue.disabled = true;
-      const body = { scopes: [...pick.scopes], ttl: ttl.value, ...(needsProject() || (pick.scopes.has("observe") && project.value && pick.preset !== "review") ? { project: project.value } : {}),
+      const body = { scopes: [...pick.scopes], ttl: ttl.value, ...(needsProject() || (mayPickProject() && project.value) ? { project: project.value } : {}),
         ...(pick.scopes.has("observe") ? { observe: { preset: pick.preset, untrusted: pick.untrusted, ...(pick.preset === "custom" ? { kinds: [...pick.kinds] } : {}) } } : {}) };
       try { fresh = (await req("/api/cli-grants", body)).grant.id; await load(); } catch (e) { toast(String(e.message || e)); issue.disabled = false; } } }, T("Issue grant", "發出授權"));
     const copy = (text) => { try { void navigator.clipboard.writeText(text); toast(T("Copied", "已複製")); } catch { toast(text); } };
@@ -171,7 +183,7 @@ function cliGrants() {
       grants.length ? h("div", { class: "bb-grant-list" }, grants.map((g) => h("div", { class: `bb-grant st-${g.state}`, "data-grant": g.id, "data-grant-state": g.state },
         h("div", { class: "bb-grant-h" }, h("b", { class: "mono" }, g.id), h("span", { class: `badge ${g.state === "active" ? "ok" : "neutral"}` }, STATE[g.state] ?? g.state),
           h("span", { class: "faint", "data-grant-scope": (g.scopes || [g.scope || "project"]).join(" ") }, `${summary(g)} · ${T("until", "到")} ${when(g.expiresAt)} · ${T("last used", "最後使用")} ${when(g.lastUsedAt)}`),
-          g.budget && g.state === "active" ? h("span", { class: "faint", "data-grant-budget": "" }, T(`this hour: ${g.budget.calls}/${g.budget.maxCalls} calls, ${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`, `這一小時：${g.budget.calls}/${g.budget.maxCalls} 次、${kb(g.budget.bytes)}/${kb(g.budget.maxBytes)}`)) : null),
+          g.budget && g.state === "active" ? h("span", { class: `faint${g.budget.usedUp ? " bb-grant-full" : ""}`, "data-grant-budget": g.budget.usedUp ? "used-up" : "" }, budgetLine(g.budget)) : null),
         g.state === "active" && g.claudeMcpAdd ? [h("span", { class: "faint" }, T("Add Studio's MCP in your terminal:", "在 terminal 加上 Studio 的 MCP：")),
           h("pre", { class: "bb-grant-cmd mono", "data-grant-command": g.id, ...(g.id === fresh ? { "data-fresh": "1" } : {}) }, g.claudeMcpAdd),
           h("div", { class: "actions" }, h("button", { class: "btn", "data-grant-copy": g.id, onclick: () => copy(g.claudeMcpAdd) }, T("Copy command", "複製指令")),

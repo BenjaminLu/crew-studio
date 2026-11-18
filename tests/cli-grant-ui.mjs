@@ -65,12 +65,24 @@ try {
     await p.uncheck("#grantScope-prs"); await p.check("#grantScope-observe");
     const obs = p.locator("[data-grant-observe]"); await obs.waitFor();
     ok(await p.locator("input[name=grantPreset][value=project]").isChecked() && !(await p.locator("#grantUntrusted").isChecked()) && await p.locator("#grantProject").isVisible(), `${key}: reading Studio starts at "this project", external text off, a project to pick`);
+    ok(await p.locator("[data-grant-wide]").isVisible() && /Studio-wide|整個 Studio 共用/.test(await p.locator("[data-grant-wide]").textContent()), `${key}: "this project" says workflows, skills, the crew and Doctor are Studio-wide`);
     const labels = await p.locator("input[name=grantPreset] + span").allTextContents();
     ok(J(labels) === J(language === "en" ? ["This project", "Review only", "Custom…"] : ["這個專案", "只看 review", "自訂…"]), `${key}: the presets in the page language`, J(labels));
     await p.check("input[name=grantPreset][value=custom]");
     const kinds = await p.locator("input[name=grantKind]").evaluateAll((xs) => xs.map((x) => x.value));
-    ok(kinds.includes("doctor") && kinds.includes("room") && !kinds.some((k) => ["settings", "terminal", "peer", "grant", "focus"].includes(k)) && await p.locator("[data-grant-group=system]").textContent().then((t) => /doctor/.test(t)), `${key}: custom groups offer every grantable kind, Doctor under System, never settings, terminals or peers`, J(kinds));
+    ok(kinds.includes("doctor") && kinds.includes("room") && !kinds.some((k) => ["settings", "terminal", "peer", "grant", "focus"].includes(k)) && await p.locator("[data-grant-group=system] input[name=grantKind][value=doctor]").count() === 1 && /Doctor|健康檢查/.test(await p.locator("[data-grant-group=system]").textContent()) && !/\bmono\b/.test(await p.locator("[data-grant-group=system] label span").first().getAttribute("class") ?? ""), `${key}: custom groups offer every grantable kind, Doctor under System, never settings, terminals or peers`, J(kinds));
     ok(await p.locator("#grantIssue").isDisabled(), `${key}: a custom grant with no kind cannot be issued`);
+    ok(await p.locator("#grantProject").isVisible() && await p.locator("#grantProject").inputValue() === "", `${key}: a custom grant may pick a project, and starts at every project`);
+    await p.check("input[name=grantKind][value=doc]"); await p.check("input[name=grantKind][value=room]");
+    ok(await p.locator("#grantIssue").isEnabled(), `${key}: ticking a kind makes a custom grant issuable`);
+    await p.click("#grantIssue");
+    await p.waitForFunction(() => document.querySelectorAll("[data-cli-grants] [data-grant][data-grant-state=active]").length > 0, null, { timeout: 10000 });
+    { const cg = JSON.parse(readFileSync(join(data, "cli-grants.json"), "utf8")).filter((g) => g.observe?.preset === "custom").at(-1);
+      ok(cg && cg.project === "" && J(cg.observe.kinds) === J(["room", "doc"]), `${key}: the custom grant binds no project it did not show, and the kinds ticked`, J(cg));
+      const crow = await p.locator(`[data-grant="${cg.id}"] [data-grant-scope]`).textContent();
+      ok((language === "en" ? /Review rooms, Documents/ : /審查室、文件/).test(crow) && (language === "en" ? /every project/ : /所有專案/).test(crow), `${key}: the row names the custom kinds and the project (every project)`, crow);
+      await p.click(`[data-grant-revoke="${cg.id}"]`); await p.waitForSelector(`[data-grant="${cg.id}"][data-grant-state=revoked]`, { timeout: 10000 }); }
+    await p.check("input[name=grantPreset][value=custom]");
     const overC = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     ok(overC <= 0, `${key}: no overflow with the custom groups open`, String(overC));
     if (shots) { await obs.scrollIntoViewIfNeeded(); await p.locator("[data-cli-grants]").screenshot({ path: join(shots, `cli-grant-observe-custom-${key}.png`) }); }
@@ -81,7 +93,7 @@ try {
     const oid = await p.locator("[data-cli-grants] [data-grant-command][data-fresh]").getAttribute("data-grant-command");
     const row = await p.locator(`[data-grant="${oid}"] [data-grant-scope]`).textContent();
     ok(row.includes(language === "en" ? "Read Studio: Review only" : "讀取 Studio: 只看 review") && !/external text|外部文字/.test(row), `${key}: the row says it reads review rooms only, without external text`, row);
-    ok(/\d+\/\d+/.test(await p.locator(`[data-grant="${oid}"] [data-grant-budget]`).textContent()), `${key}: the row shows this hour's budget`);
+    ok(/\d+ of \d+ calls|\d+\/\d+ 次/.test(await p.locator(`[data-grant="${oid}"] [data-grant-budget]`).textContent()), `${key}: the row shows this hour's budget`);
     const stored = JSON.parse(readFileSync(join(data, "cli-grants.json"), "utf8")).find((g) => g.id === oid);
     ok(J(stored.scopes) === J(["observe"]) && J(stored.observe) === J({ preset: "review", kinds: ["room"], untrusted: false }), `${key}: the grant stored is observe, review rooms, no external text`, J(stored));
     if (shots) { await p.locator(`[data-grant="${oid}"]`).scrollIntoViewIfNeeded(); await p.locator("[data-cli-grants]").screenshot({ path: join(shots, `cli-grant-observe-${key}.png`) }); }

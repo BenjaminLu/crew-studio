@@ -135,6 +135,25 @@ project?, observe: {preset, kinds?, untrusted?}, ttl}`) picks what it reads (`sr
   `CREW_CLI_GRANT_HOURLY_BYTES` bytes of answers (4 MB) in any hour; past either it gets HTTP 429 saying when it frees up.
   The board shows this hour's use on each grant. The total call bound (`CREW_CLI_GRANT_MAX_CALLS`) stays.
 
+## Rolling back
+
+`data/cli-grants.json` is written so the release before scopes were a set reads it safely (`storedGrant`):
+
+- A plain project grant is stored as that release wrote it. A plain `prs` grant keeps `scope: "prs"`. Both keep working after a rollback.
+- Any other grant (`observe`, or more than one scope) is stored with `tokenHash` set to a value no token hashes to. Its real hash is in `tokenHash2`. The older release therefore refuses its token (403) and never reads it as a project grant. It still lists such a grant, and can revoke it.
+- Records that are no grant are moved to `cli-grants.quarantine.json` with a warning.
+
+`tests/cli-grant.ts` runs the older release's code (`tests/fixture/cli-grants-before-scopes.ts`, frozen) against the file.
+
+Steps, should a rollback be needed:
+
+1. `bun scripts/live-release.ts rollback`.
+2. On the board (Settings → External CLI grants), revoke every grant that read Studio. They show as project grants there, but answer 403.
+3. Re-issue what the captain still needs, as project or pull request list grants.
+4. After rolling forward again, revoke those re-issued grants and issue observe grants.
+
+The older release shows `tokenHash2` (a SHA-256 of a random token, not the token) to the captain's own board page: it strips only `tokenHash`.
+
 ## What the boundary is not
 
 - **It bounds the tool surface, not the process.** The CLI runs as the captain, unsandboxed, on the same Mac. A grant

@@ -38,6 +38,8 @@ try {
   ok(out1.items.length === 0 && /does not read pr/.test(out2?.en ?? "") && /does not read pr/.test(out3?.en ?? ""), "Q8: studio_find cannot find its way to it, nor studio_get", J([out1.items, out2, out3]));
   const ev: any = await R.call("studio_events", {}), now: any = await R.call("studio_now", {});
   ok(ev.data.events.every((e: any) => e.refs.every((r: string) => r.startsWith("room:"))) && ev.data.events.length === 0 && !J(now).includes("pr:") && now.data.waiting.length === 0 && /never sees what the captain/.test(now.data.focus.note), "Q8: nor its events or studio_now (no cards, no focus)", J([ev.data.events.map((e: any) => e.refs), now.data.focus]));
+  { const e1: any = await R.call("studio_events", {}), e2: any = await R.call("studio_events", { since: "seq:3" });
+    ok(e1.nextCursor === null && e2.nextCursor === "seq:3", "a grant that sees no event keeps its own cursor, never the log's end (how much it cannot see)", J([e1.nextCursor, e2.nextCursor])); }
   for (const words of ["retry the webhook", "Adds a retry", "Five attempts cover", "Please add a jitter"]) { const f: any = await R.call("studio_find", { query: words }); ok(f.items.length === 0, `Q8: searching the pull request's or the tutor's own words finds nothing ("${words}")`); }
   const withText = as({ kinds: ["room"], untrusted: true }), roomT: any = await withText.call("studio_get", { ref: rooms.items[0].ref });
   ok(roomT.data.pr.title?.untrusted === true && roomT.untrusted.includes("data.pr.title") && !roomT.data.externalText, "with \"include external text\" ticked: the pull request's title, wrapped as untrusted");

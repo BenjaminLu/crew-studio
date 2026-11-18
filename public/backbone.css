@@ -63,3 +63,4 @@
 .bb-grant.st-revoked,.bb-grant.st-expired{opacity:.7}
 .bb-grant-h{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .bb-grant-cmd{margin:0;padding:8px;border-radius:6px;background:var(--surface-3);overflow-x:auto;white-space:pre;font-size:12px;user-select:all}
+.bb-grant-full{color:var(--warn,#b45309)}

@@ -188,8 +188,9 @@ export function createObserve(s: Sources, grant: GrantView | null = null) {
     const page = since ? hits.slice(0, PAGE.events) : hits.slice(-PAGE.events), views = page.map((e) => eventView(s, e, store));
     const env = (n: number): Envelope => ({ ref: `events:${ref ?? ks?.join(",") ?? "*"}`.slice(0, 120), kind: "events", route: "#/activity", updatedAt: page[n - 1]?.ts ?? null,
       data: { since, shown: n, more: since ? hits.length > n : false, total: hits.length, events: views.slice(0, n) }, untrusted: [], truncated: false,
-      // where the next call goes on: after the last event shown, or (none matched) after the log's end, so nothing is read twice
-      nextCursor: n ? seqCursor(page[n - 1].seq) : all.length ? seqCursor(Math.max(all.at(-1)!.seq, Number(/^seq:(\d+)$/.exec(since ?? "")?.[1] ?? -1))) : since });
+      // where the next call goes on: after the last event shown, or (none matched) after the log's end, so nothing is read twice;
+      // a grant with nothing new keeps its own cursor, never the log's end (that would say how much it cannot see)
+      nextCursor: n ? seqCursor(page[n - 1].seq) : grant ? since ?? null : all.length ? seqCursor(Math.max(all.at(-1)!.seq, Number(/^seq:(\d+)$/.exec(since ?? "")?.[1] ?? -1))) : since });
     let n = views.length; while (n > 1 && finalBytes(env(n)) > BUDGET.summary) n--;
     if (!since && n < views.length) { const drop = views.length - n; page.splice(0, drop); views.splice(0, drop); }
     return fin(env(n), BUDGET.summary);
