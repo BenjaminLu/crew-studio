@@ -732,7 +732,8 @@ svg.rr-zoomed .rr-focus, svg.rr-zoomed .rr-focus * { opacity: 1; }
 .rx-cost > span:nth-child(odd) { color: var(--text-3); }
 .rx-limit input { width: 70px; font: inherit; }
 .rx-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
-.rx-foot > .rx-footmsg { flex: 1 1 100%; max-width: none; margin: 0; padding: 8px 12px; font-size: 13px; box-sizing: border-box; border-color: var(--border); background: var(--surface-2); }
+.rx-foot > .rx-footmsg { flex: 1 1 100%; max-width: none; margin: 0; padding: 8px 12px; font-size: 13px; box-sizing: border-box; }
+.rx-foot > .rx-footmsg:not(.err) { border-color: var(--border); background: var(--surface-2); }
 .rx-foot > .rx-footmsg[hidden] { display: none; }
 .rx-modal > .rx-foot { position: sticky; bottom: -18px; margin: 8px -18px -18px; padding: 10px 18px; background: var(--surface); border-top: 1px solid var(--border); z-index: 1; }
 @media (max-width: 760px) { .rx-pick { display: none; } }
