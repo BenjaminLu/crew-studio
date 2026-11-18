@@ -396,7 +396,7 @@ export function createRuntime(d: RuntimeDeps) {
     const continuable = who?.kind === "desktop" && engine.continuable(id);
     // Merged (reconciled) only while the ledger verifies and holds the entry it names
     const reconciled = r.reconciled && t.ok && t.entries.some((e) => e.record === "reconciled-merge" && e.seq === r.reconciled!.ledger) ? r.reconciled : null;
-    return { ...r, reconciled, origin: engine.externalOrigin?.(r) ?? null, logFault: engine.logFault(id), reconcilable: who?.kind === "desktop" && !!engine.reconcilable?.(r), reviewRoom: engine.reviewRoom?.taskEntry(r) ?? null, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
+    return { ...r, reconciled, origin: engine.externalOrigin?.(r) ?? null, logFault: engine.logFault(id), reconcilable: who?.kind === "desktop" && !!engine.reconcilable?.(r), reviewRoom: engine.reviewRoom?.taskEntry(r) ?? null, handoff: engine.cloudHandoff?.view(r) ?? null, title: taskTitle(r), request: r.text, claudeVerificationAvailable:ownClaude.available(id), nodes: readinessNodes(r, id=>engine.cards.get(id)), outputs:[...outputMap.values()], continuable, walked: [...new Set(engine.events(id).filter((e) => e.type === "edge_taken").map((e) => e.edge))], events: engine.timeline(id).slice(-400), ledger, ledgerOk: t.ok, crew: crewOf(r, t), roundCap: engine.policy(r, "round_cap", 3), ledgerBad: [...t.bad], ledgerTruncated: t.truncated, done: engine.doneLines(r), cards: engine.cards.list({ run: id }).map(c=>engine.cards.view(c)) };
   };
   const checkView = (m: any) => { const p = engine.params(m, null, {}); return { ref: m.ref, id: m.id, pack: m.pack, version: m.version, title: m.title, description: m.description, applies_to: m.applies_to, kind: m.kind, blocking: m.blocking, needs: m.needs,
     params: m.params, policy_bind: m.policy_bind, effective: p.params, from: p.from, timeout_s: m.timeout_s, network: m.network, impl: m.native ? "native" : m.adapter ? "adapter" : m.kind === "judged" ? "judge" : "executable", quorum: m.judge?.quorum ?? null, hasSample: !!m.sample, at: m.at }; };
@@ -581,6 +581,7 @@ export function createRuntime(d: RuntimeDeps) {
         const providerAdvice=def.kind==="startup-recursion"&&d.providerLogins?startupCursorAdvice(await d.providerLogins().catch(()=>({}))):null;
         return json({workflow:wf,version:def.version,projectScoped,staffing:staffed,crewHref:staffed?"#/team":null,...providerAdvice?{providerAdvice}:{},projects:projectScoped?projects.list().filter(x=>!!x.path).map(x=>({id:x.id,name:x.name,base:x.base,staffing:staffed?crewOf(x.id):null})):[]});
       }
+      if (p === "/api/wruns" && !writing) { engine.cloudHandoff?.refreshAll(); } // the board opens: active cloud hand-offs are read on GitHub once
       if (p === "/api/wruns" && !writing) return json({ runs: engine.list().filter((r) => url.searchParams.get("archived") === "1" || !r.archived).map((r) => taskRow(engine, r)),
         cards: engine.cards.list({ open: true }).map(c=>engine.cards.view(c)) });
       if (p === "/api/wruns" && writing) {
@@ -651,6 +652,18 @@ export function createRuntime(d: RuntimeDeps) {
       }
       m = CAPTURE_PATH.exec(p);
       if (m && !writing) return engine.get(m[1]) ? captureResponse(engine.rdir(m[1]), m[2], m[3], m[4]) : json({ error: "no such run" }, 404);
+      // a Task's cloud hand-off (src/domain/cloud-handoff.ts): GET the confirm view (or why it is refused); POST fire, reconcile, take-back, discard
+      const ho = /^\/api\/wruns\/(R-\d+)\/handoff(?:\/(fire|reconcile|take-back|discard))?$/.exec(p);
+      if (ho) {
+        const ch = engine.cloudHandoff; if (!ch) return json({ error: "no code workflow is installed" }, 409);
+        if (!engine.get(ho[1])) return json({ error: "no such run" }, 404);
+        if (!ho[2]) { if (writing) return json({ error: "use GET" }, 405); try { return json(await ch.preview(ho[1])); } catch (e: any) { return json({ error: String(e?.message ?? e).slice(0, 300) }, 502); } }
+        if (!writing) return json({ error: "use POST" }, 405);
+        if (ho[2] === "reconcile") { try { return json({ ...(await ch.reconcile(ho[1])), run: runView(ho[1], who) }); } catch (e: any) { return json({ error: `GitHub could not be read: ${String(e?.message ?? e).slice(0, 200)}`, run: runView(ho[1], who) }, 502); } }
+        if (who.kind !== "desktop") return json({ error: "only the desktop captain hands a Task to the cloud or takes it back" }, 403);
+        const out = ho[2] === "fire" ? await ch.fire(ho[1], { branch: typeof b?.branch === "string" ? b.branch : undefined, by }) : ho[2] === "take-back" ? await ch.takeBack(ho[1], by, { confirm: b?.confirm === true }) : await ch.discard(ho[1], by);
+        return json({ ...out.body, run: runView(ho[1], who) }, out.status);
+      }
       m = /^\/api\/wruns\/(R-\d+)(?:\/(pause|resume|cancel|file|events|evidence|archive|delete|reconcile-merge)|\/nodes\/([a-z0-9-]+)\/agent)?$/.exec(p);
       if (m) {
         const id = m[1]; if (!engine.get(id)) return json({ error: "no such run" }, 404);
