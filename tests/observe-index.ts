@@ -1,0 +1,48 @@
+import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
+// One source, three presentations (docs/units/observe.md "Index"): the server instructions (src/observe/instructions.ts), the
+// firstmate skill (skills/firstmate/SKILL.md) and studio_manual's index all carry the same rules, kinds and tools, made from
+// src/observe/; the skill file is what scripts/observe-index.ts writes; the manual has pages for the review room and the
+// pull request list; the seed's behavioural rules are untouched.
+//      bun tests/observe-index.ts
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { suite } from "./rt-harness";
+import { SERVER_INSTRUCTIONS, IRON_RULES, READING_RULES, OBSERVE_RULES, OBSERVE_KINDS, KINDS_LINE } from "../src/observe/instructions";
+import { nativeFreshText } from "../src/host/main";
+import { firstmateSkill, studioIndex } from "../src/observe/guide";
+import { kinds } from "../src/observe/registry";
+import { STUDIO_TOOLS } from "../src/observe/catalog";
+import { studioManual, manualPage } from "../src/manual";
+import { installFirstmate } from "../src/firstmate";
+import { harness } from "./rt-harness";
+import { Projects } from "../src/doors";
+const { ok, end } = suite("observe-index");
+const root = join(import.meta.dir, "..");
+
+const skill = readFileSync(join(root, "skills", "firstmate", "SKILL.md"), "utf8");
+ok(skill === firstmateSkill(), "skills/firstmate/SKILL.md is what scripts/observe-index.ts writes (run it with --write)");
+ok(/^---\nname: firstmate\ndescription: .+\n---\n/.test(skill), "it is a skill: name and description front matter");
+const rules = [...IRON_RULES, ...READING_RULES, ...OBSERVE_RULES];
+ok(rules.every((r) => SERVER_INSTRUCTIONS.includes(r) && skill.includes(r)), "every rule is in the server instructions and in the skill, word for word");
+ok(J(OBSERVE_KINDS) === J(kinds()) && kinds().every((k) => SERVER_INSTRUCTIONS.includes(k) && skill.includes("`" + k + "`")), "the kinds the instructions name are the registry's, and the skill lists each", J([OBSERVE_KINDS, kinds()]));
+ok(Buffer.byteLength(SERVER_INSTRUCTIONS) <= 4096, "the instructions stay within 4 KB", String(Buffer.byteLength(SERVER_INSTRUCTIONS)));
+const seed = nativeFreshText("/ws");
+ok([...READING_RULES, ...OBSERVE_RULES, KINDS_LINE].every((r) => seed.includes(r)) && /do not guess/.test(seed), "the fresh primary's seed (all Codex sees) carries every reading and read-tool rule from the same source", "");
+ok(/Report status only from the turn's live status line or studio_work_status, never from memory/.test(seed) && /Proposing is not approval/.test(seed), "and keeps its behavioural rules");
+ok(STUDIO_TOOLS.every((t) => skill.includes("`" + t.name + "`")), "the skill names every tool in the index");
+
+// studio_manual {}: the manual's index page, its page list, and the same index as data
+const H = await harness([readFileSync(join(root, "workflows/v2/firstmate-proposal.wf.yaml"), "utf8")]);
+try {
+  const tools = installFirstmate(H.engine, new Projects(H.data));
+  const ix: any = await tools.call("studio_manual", {}, { key: "k", captain: true, text: "x", live: () => true });
+  ok(ix.section === "index" && typeof ix.text === "string" && J(ix.studio) === J(studioIndex()), "studio_manual {} returns the manual's index and the same rules, kinds and tools", J(Object.keys(ix)));
+  ok(rules.every((r) => J(ix.studio.rules).includes(J(r).slice(1, -1))), "with every rule");
+  ok(ix.sections.includes("studio/pages/review-room") && ix.sections.includes("studio/pages/prs"), "the manual lists the review room's and the pull request list's pages", J(ix.sections));
+  const room = studioManual("studio/pages/review-room") as any, prs = studioManual("studio/pages/prs") as any;
+  ok(/## Briefing/.test(room.text) && /studio_get \{ref: "room:<id>"\}/.test(room.text) && /never starts, prepares or pre-fills/.test(room.text), "the review room page says what a room holds, how to read it, and that Firstmate starts nothing paid");
+  ok(/## Briefing/.test(prs.text) && /waitsAt/.test(prs.text) && /Nothing here writes to GitHub/.test(prs.text), "the pull request page says where a merged one waits and that nothing writes to GitHub");
+  ok(/studio\/pages\/review-room/.test(manualPage("index") ?? "") && /studio\/pages\/prs/.test(manualPage("index") ?? ""), "the manual's index names both pages");
+} finally { H.stop(); }
+function J(v: unknown) { return JSON.stringify(v); }
+end();
