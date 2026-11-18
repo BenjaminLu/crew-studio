@@ -22,7 +22,7 @@
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { detectState, screenLines, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
+import { detectState, renderScreen, screenLines, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
 import { git } from "./git";
 import { redactText } from "./secure";
 
@@ -263,8 +263,17 @@ export class Terminals {
    *  studio_logs gives Firstmate when the captain asks for a terminal's output (src/observe/kinds/terminal.ts). */
   tail(id: string, n: number): string[] | null {
     const t = this.terms.get(id); if (!t) return null;
-    const text = t.redactor.scrub(new TextDecoder().decode(t.ring.bytes()).slice(-64_000));
-    return screenLines(text).filter((l) => l.trim()).slice(-Math.max(1, Math.min(200, n))).map((l) => redactText(l).slice(0, 400));
+    const raw = new TextDecoder().decode(t.ring.bytes()).slice(-64_000), scrub = (l: string) => redactText(t.redactor.scrub(l));
+    // a program that addresses the cursor (a full-screen TUI) is read as the screen it leaves, drawn from the raw output
+    // and redacted row by row (redacting first would shift what it drew); any other program as its lines, redacted whole
+    const tui = /\x1b\[(?:\d+(?:;\d+)?)?[Hf]|\x1b\[\?(?:1049|47|1047)h/.test(raw.slice(-16_000));
+    let lines: string[];
+    if (tui) {
+      const rows = renderScreen(raw, t.cols, t.rows); lines = rows.map(scrub);
+      // a secret the program wrapped over two rows: both rows go
+      for (let k = 0; k + 1 < rows.length; k++) if (rows[k].length >= t.cols - 1 && rows[k + 1] && scrub(rows[k] + rows[k + 1]) !== scrub(rows[k]) + scrub(rows[k + 1])) lines[k] = lines[k + 1] = "[credential removed]";
+    } else lines = screenLines(t.redactor.scrub(raw)).map((l) => redactText(l));
+    return lines.filter((l) => l.trim()).slice(-Math.max(1, Math.min(200, n))).map((l) => l.slice(0, 400));
   }
   projects(): TermProject[] { return this.o.projects().map((p) => ({ id: p.id, name: p.name, path: p.path, base: p.base })); }
   private changed() { try { this.o.changed?.(this.list(false)); } catch {} }
