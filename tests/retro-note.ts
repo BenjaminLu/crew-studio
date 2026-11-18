@@ -33,8 +33,14 @@ try {
   const ev = new StudioLog(logFile).poll().at(-1)!;
   ok(ev.type === "captain_note" && ev.actor === "firstmate" && ev.data.note === r.noted && ev.data.by === "firstmate" && ev.data.turn === "thread-1:turn-7" && !Y(ev).includes("merge 卡"), "audited: a captain_note event names the note and the turn, without the words", Y(ev));
   // a quote copied exactly is kept; one the model reworded is refused
-  const q: any = await rt.firstmate.call("studio_note_issue", { quote: "CI 其實是紅的" }, captain(said));
-  ok(store.note(q.noted)?.text === "CI 其實是紅的", "a quote copied exactly from the message is kept");
+  const q: any = await rt.firstmate.call("studio_note_issue", { quote: "但 CI 其實是紅的" }, captain(said));
+  ok(store.note(q.noted)?.text === "但 CI 其實是紅的", "a quote of a whole clause, copied exactly from the message, is kept");
+  // a fragment that turns the captain's meaning around, or one too short, is not a quote
+  const en = "note this: the rollout is not a problem, the alerts are noisy";
+  ok(await refused({ quote: "a problem" }, captain(en)) === "invalid_params" && await refused({ quote: "其實是紅的" }, captain(said)) === "invalid_params", "a piece cut from inside a clause (\"not a problem\" → \"a problem\") is refused");
+  ok(await refused({ quote: "紅的" }, captain(said)) === "invalid_params", "under 4 characters is refused");
+  const w: any = await rt.firstmate.call("studio_note_issue", { quote: "the alerts are noisy" }, captain(en));
+  ok(store.note(w.noted)?.text === "the alerts are noisy", "a whole clause in English is kept");
   ok(await refused({ quote: "CI was red even though the card said ready" }, captain(said)) === "invalid_params", "a quote the captain did not write (the model's wording) is refused");
   ok(await refused({ text: "the model's summary of the problem" }, captain(said)) === "invalid_params", "no field takes the model's own text");
   // injected text: a turn that is not the captain's own message cannot write a note, whatever it says

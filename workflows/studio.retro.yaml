@@ -61,6 +61,7 @@ classes:
     until: [pr_live]
     until_where: { data.production: "true" }
     match: [data.pr]
+    start_field: data.mergedAt   # GitHub's merge time, not when Studio first wrote the merge down
     hours: 48
     field: data.pr
     group: pr
@@ -75,7 +76,10 @@ classes:
     candidate: never
   - id: run
     title: "Tasks failing the same way"
-    explain: "The same failure code ended Tasks on 3 or more Tasks within 7 days. Older logs name it on run_failure."
+    explain: "The same failure code ended Tasks on 3 or more Tasks within 7 days."
+    # Older logs (before run_failed) name the code on run_failure, which Studio wrote for every failure card: also for a
+    # Task that then went on waiting (an escalation, a transient retry). Counted from such a log, a class can show more
+    # hits than Tasks that ended failed; run_failed, written since, counts only Tasks that ended failed (once each).
     kind: regex
     types: [run_failed, run_failure]
     field: data.failure|data.code

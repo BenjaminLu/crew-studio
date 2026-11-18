@@ -70,18 +70,28 @@ try {
     await p.locator("[data-cand]").first().waitFor({ timeout: 10000 });
     const keys = await p.locator("[data-cand]").evaluateAll((xs) => xs.map((x) => x.dataset.cand));
     if (width === 1440 && scheme === "light") {
-      ok(keys.includes("pr.rollback|northwind/checkout-api#41") && keys.includes("pr.partial-24h|northwind/checkout-api#42") && keys.filter((k) => k.startsWith("room.timeout|")).length === 3 && keys.includes("note.captain|N-2"), "Candidates: the rollback, the partial rollout, one room why in 3 rooms, the note", keys.join(" "));
+      ok(keys.includes("pr.rollback|northwind/checkout-api#41") && keys.includes("pr.partial-24h|northwind/checkout-api#42") && keys.includes("room.timeout") && keys.includes("note.captain|N-2"), "Candidates: the rollback, the partial rollout, the room why, the note", keys.join(" "));
+      ok(await p.locator('[data-cand="room.timeout"]').getAttribute("data-cand-groups") === "3" && await p.locator('[data-cand="room.timeout"] [data-cand-dismiss]').count() === 1 &&/C-20[123][\s\S]*C-20[123][\s\S]*C-20[123]/.test(await p.locator('[data-cand="room.timeout"]').innerText()), "a recurring class is one row: its rooms inline, one ×");
+      ok(await p.locator('[data-cand="run.deterministic.gate"]').count() === 1 && await p.locator('[data-cand^="run.deterministic.gate|"]').count() === 0, "the gate failing on 3 Tasks: one row, not three");
+      await p.locator('[data-cand-where="prod"]').waitFor({ timeout: 5000 });
+      await p.waitForFunction(() => /Retry the payment webhook/.test(document.querySelector('[data-cand="pr.partial-24h|northwind/checkout-api#42"]')?.textContent || ""), null, { timeout: 5000 }).catch(() => {});
+      const partial = await p.locator('[data-cand="pr.partial-24h|northwind/checkout-api#42"]').innerText();
+      ok(partial.includes("Retry the payment webhook") && /worker v2\.0\.3/.test(partial) && partial.includes("prod"), "the partial rollout names its pull request, the environment and the service still on the older tag", partial);
       ok(!keys.some((k) => k.startsWith("run.transient")) && await p.locator("[data-cand-other]").count() === 1 && !(await p.locator("[data-cand-other]").evaluate((d) => d.open)), "an isolated timeout is not a row; the other signals are folded");
+      const other = await p.locator('[data-cand-other-class="run.transient.timeout"]').textContent();
+      ok(/1 time in 1 Task/.test(other) && !other.includes("run.transient"), "other signals read in words, with where they happened", other);
       ok(await p.locator('[data-cand="pr.rollback|northwind/checkout-api#41"]').innerText().then((t) => t.includes("limits check failed")), "the rollback row shows the captain's line");
       ok(await p.locator('[data-improve-tab="candidates"][aria-current="page"]').count() === 1, "the Candidates tab is current");
+      ok(await p.locator(".x-kind").first().evaluate((e) => !/mono/i.test(getComputedStyle(e).fontFamily)), "the kind label uses the UI font");
     }
     if (lang === "zh-TW") ok(await p.locator('[data-improve-tab="candidates"]').innerText().then((t) => t.includes("候選")), `the tab reads 候選 (${width}/${scheme})`);
     ok(await noHScroll(p), `Candidates: no sideways scroll at ${width}/${scheme}/${lang}`);
+    await p.waitForTimeout(300);
     await shot(p, `after-candidates-${width}-${scheme}-${lang}`);
     if (width === 1440 && scheme === "light") {
-      await p.locator('[data-cand-dismiss="room.timeout|C-202"]').click();
-      await p.locator('[data-cand="room.timeout|C-202"]').waitFor({ state: "detached", timeout: 5000 });
-      ok(await p.locator('[data-cand-dismissed-key="room.timeout|C-202"]').count() === 1 && await p.locator('[data-cand="room.timeout|C-201"]').count() === 1, "× dismisses that class|group only, and it is listed as not needed");
+      await p.locator('[data-cand="room.timeout"] [data-cand-dismiss]').click();
+      await p.locator('[data-cand="room.timeout"]').waitFor({ state: "detached", timeout: 5000 });
+      ok(await p.locator('[data-cand-dismissed-key^="room.timeout|"]').count() === 3 && await p.locator('[data-cand="run.deterministic.gate"]').count() === 1, "its one × marks every room of the class not needed, and only that class");
     }
     await p.context().close();
   }
@@ -96,8 +106,26 @@ try {
     const tl = await p.locator("[data-prs-tl]").evaluateAll((xs) => xs.map((x) => `${x.dataset.prsTl}${x.dataset.env ? `:${x.dataset.env}` : ""}`));
     if (width === 1440 && scheme === "light") ok(tl.join(",") === "pr_merged,pr_live:prod,pr_incident" && (await p.locator('[data-prs-tl="pr_live"]').innerText()).includes("after the merge"), "the timeline: merge → prod live (time since the merge) → the rollback", tl.join(","));
     ok(await noHScroll(p), `timeline: no sideways scroll at ${width}/${scheme}/${lang}`);
+    ok((await p.locator("[data-prs-tl-at]").allInnerTexts()).every((t) => /^\d{4}-\d\d-\d\d \d\d:\d\d(?!:)/.test(t)), `timeline times are a date and HH:MM, no seconds (${width}/${scheme})`);
     await shot(p, `after-timeline-${width}-${scheme}-${lang}`);
     await p.keyboard.press("Escape");
+    // 42 merged before Studio wrote down a merge: the merge is still the first step, at GitHub's time
+    await p.locator('[data-prs-ship-menu="northwind/checkout-api#42"]').click();
+    await p.locator('[data-prs-menu] [data-prs-action="timeline"]').click();
+    await p.locator('[data-prs-timeline] [data-prs-tl="pr_live_partial"]').first().waitFor({ timeout: 8000 });
+    const tl42 = await p.locator("[data-prs-tl]").evaluateAll((xs) => xs.map((x) => x.dataset.prsTl));
+    if (width === 1440 && scheme === "light") ok(tl42[0] === "pr_merged" && tl42.includes("pr_live_partial"), "no merge recorded: the timeline still starts at the merge (from GitHub)", tl42.join(","));
+    await shot(p, `after-timeline42-${width}-${scheme}-${lang}`);
+    await p.keyboard.press("Escape");
+    // the Rollback / Incident toggle reads at every width (the phone hides .seg labels unless kept)
+    await p.locator('[data-prs-ship-menu="northwind/checkout-api#41"]').click();
+    await p.locator('[data-prs-menu] [data-prs-action="incident"]').click();
+    await p.locator('[data-prs-dialog="incident"]').waitFor();
+    const labels = await p.locator("[data-prs-incident-kind]").evaluateAll((xs) => xs.map((x) => x.getBoundingClientRect().width > 30 && x.innerText.trim()));
+    ok(labels.length === 2 && labels.every(Boolean), `the Rollback / Incident toggle shows its words (${width}/${scheme}/${lang})`, JSON.stringify(labels));
+    await shot(p, `after-incident-empty-${width}-${scheme}-${lang}`);
+    await p.keyboard.press("Escape");
+    await p.locator('[data-prs-dialog="incident"]').waitFor({ state: "detached", timeout: 3000 });
     if (width === 1440 && scheme === "light") {
       await p.locator('[data-prs-ship-menu="northwind/checkout-api#41"]').click();
       await p.locator('[data-prs-menu] [data-prs-action="incident"]').click();
@@ -116,7 +144,10 @@ try {
     const p = await page(width, scheme, lang);
     await p.goto(`${base}/#/prs`);
     await p.locator("[data-qnote-open]").waitFor({ timeout: 10000 });
-    if (width === 1440 && scheme === "light") ok((await p.locator("[data-qnote-open]").innerText()).includes("記問題"), "the PR page's header has 記問題（!）");
+    await p.locator("[data-prs-refresh]").waitFor({ timeout: 10000 });
+    const spot = await p.locator("[data-qnote-open]").evaluate((b) => ({ next: b.nextElementSibling?.hasAttribute("data-prs-refresh") ?? false, ghost: b.classList.contains("ghost"), fixed: getComputedStyle(b).position === "fixed" }));
+    ok(spot.next && spot.ghost && !spot.fixed, `記問題 sits in the PR page's Refresh row, a quiet button (${width}/${scheme})`, JSON.stringify(spot));
+    if (width === 1440 && scheme === "light") ok((await p.locator("[data-qnote-open]").innerText()).includes("記問題"), "the PR page's button reads 記問題");
     await p.locator("body").click({ position: { x: 5, y: 5 } }).catch(() => {});
     // the full-width ！ an input method types, with no field focused
     await p.evaluate(() => { document.activeElement?.blur?.(); dispatchEvent(new KeyboardEvent("keydown", { key: "！", bubbles: true, cancelable: true })); });
@@ -125,6 +156,16 @@ try {
     await p.locator("[data-qnote-input]").fill(lang === "en" ? "the release brief named the wrong tag" : "上線 brief 寫錯 tag");
     ok(await noHScroll(p), `note: no sideways scroll at ${width}/${scheme}/${lang}`);
     await shot(p, `after-note-${width}-${scheme}-${lang}`);
+    if (width === 390 && scheme === "light") {
+      // saved: the toast with its Undo stays clear of the floating Firstmate button
+      await p.locator("[data-qnote-input]").press("Enter");
+      await p.locator("[data-qnote-saved]").waitFor({ timeout: 5000 });
+      const clear = await p.evaluate(() => { const t = document.querySelector("[data-qnote-saved]")?.closest(".toast")?.getBoundingClientRect(), f = [...document.querySelectorAll("button, a")].find((x) => x.getClientRects().length && /Firstmate/.test(x.textContent || "") && getComputedStyle(x).position === "fixed")?.getBoundingClientRect();
+        return !t ? "no toast" : !f ? "no floating button" : t.bottom <= f.top || t.top >= f.bottom || t.right <= f.left || t.left >= f.right ? "clear" : `overlap ${JSON.stringify([t, f])}`; });
+      ok(clear === "clear" || clear === "no floating button", "at 390 the saved toast does not cover the floating Firstmate button", clear);
+      await shot(p, `after-note-toast-${width}-${scheme}-${lang}`);
+      await p.locator("[data-qnote-undo]").click();
+    }
     if (width === 1440 && scheme === "light") {
       await p.locator("[data-qnote-input]").press("Escape");
       ok(await p.locator("[data-qnote]").count() === 0, "Esc cancels");
@@ -161,6 +202,28 @@ try {
     await p.evaluate(() => { document.activeElement?.blur?.(); dispatchEvent(new KeyboardEvent("keydown", { key: "!", bubbles: true, cancelable: true })); });
     ok(await p.locator("[data-qnote]").count() === 1, "! outside a field on the review room page opens the note");
     await shot(p, "after-note-room-1440-light-en");
+    // the popover's Esc is its own: a page's capture-phase Escape (the explainer's full view) never sees it
+    await p.evaluate(() => { window.__pageEsc = 0; addEventListener("keydown", (e) => { if (e.key === "Escape") window.__pageEsc++; }, true); });
+    await p.locator("[data-qnote-input]").press("Escape");
+    ok(await p.locator("[data-qnote]").count() === 0 && await p.evaluate(() => window.__pageEsc) === 0, "Esc closes the note before any page's Escape handler runs");
+    await p.context().close();
+  }
+  // a real Task page: the button in its header (never fixed over the Firstmate panel); none while it has no header
+  for (const [width, scheme, lang] of [[1440, "light", "en"], [390, "dark", "zh-TW"]]) {
+    const p = await page(width, scheme, lang);
+    await p.goto(`${base}/#/runs`); await p.locator("#view .page").waitFor({ timeout: 10000 });
+    const run = await p.evaluate(async () => { for (const workflow of ["hello-crew-studio", "trivial-lane", "documents"]) { const r = await fetch("/api/wruns", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workflow, text: "A fixture task for the quick note" }) }); const j = await r.json().catch(() => ({})); if (j.id) return j.id; } return null; });
+    ok(!!run, "a real Task to open", String(run));
+    await p.goto(`${base}/#/run/${run}`);
+    await p.locator("#view .phead [data-qnote-open]").waitFor({ timeout: 10000 }).catch(() => {});
+    const where = await p.evaluate(() => { const b = document.querySelector("[data-qnote-open]"); return b ? { inHead: !!b.closest("#view .phead"), fixed: getComputedStyle(b).position === "fixed" } : null; });
+    ok(!!where?.inHead && !where.fixed, `on a real Task page the button is in the page's header (${width}/${scheme})`, JSON.stringify(where));
+    ok(await noHScroll(p), `Task page: no sideways scroll at ${width}/${scheme}/${lang}`);
+    await shot(p, `after-task-note-${width}-${scheme}-${lang}`);
+    if (width === 1440) {
+      await p.goto(`${base}/#/run/R-999999`); await p.waitForTimeout(1200);
+      ok(!(await p.evaluate(() => [...document.querySelectorAll("[data-qnote-open]")].some((b) => getComputedStyle(b).position === "fixed"))), "a Task page with no header gets no floating button");
+    }
     await p.context().close();
   }
   // other pages: no button, no shortcut

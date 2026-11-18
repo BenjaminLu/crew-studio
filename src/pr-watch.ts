@@ -352,7 +352,9 @@ export function createPrWatch(d: PrWatchDeps) {
     for (const [k, v] of Object.entries(state.shipped)) {
       const sp = R.splitId(v.id), followed = (sn.merged ?? []).some((r) => r.id.toLowerCase() === k) || (!!sp && (has(state.watch.repos, sp.repo) || has(state.watch.prs, v.id)));
       if (v.liveAt && now() - Date.parse(v.liveAt) > R.LIVE_KEEP_MS) { delete state.shipped[k]; retire(k); changed = true; }
-      else if (!followed) { delete state.shipped[k]; changed = true; } }
+      else if (!followed) { delete state.shipped[k]; delete emitted[k]; changed = true; } }
+    // a record whose pull request is no longer followed at all (shipped dropped it) goes too
+    for (const k of Object.keys(emitted)) if (!state.shipped[k] && !(sn.merged ?? []).some((r) => r.id.toLowerCase() === k)) { delete emitted[k]; changed = true; }
     for (const k of Object.keys(manual)) if (!state.shipped[k]) { delete manual[k]; changed = true; } // dropped or no longer followed
     const keys = Object.keys(emitted); if (keys.length > 2000) { for (const k of keys.slice(0, keys.length - 2000)) delete emitted[k]; changed = true; }
     // the record first, then the events: a crash between the two loses an event, never writes one twice

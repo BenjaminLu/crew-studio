@@ -9,7 +9,8 @@ import { detect, type Detector, type RetroConfig } from "./retro";
 import type { RetroStore } from "./retro-signals";
 
 export type Candidate = { key: string; class: string; title: string; kind: string; group: string; groupKind: Detector["group"]; count: number; firstTs: string; lastTs: string; seqs: number[];
-  note?: { text: string; by: string; sel: string | null } | null; recurring?: { groups: number; days: number } | null };
+  note?: { text: string; by: string; sel: string | null; selTrust: "page" | null } | null; recurring?: { groups: number; days: number } | null;
+  where?: { env: string; pods: { on: number; off: number } | null } | null };
 export type OtherSignal = { class: string; title: string; count: number; groups: number };
 export type CandidateView = { rows: Candidate[]; other: OtherSignal[]; dismissed: (Candidate & { dismissedAt: string; since: number })[]; window: { from: string; to: string; days: number } };
 
@@ -32,8 +33,11 @@ export function candidates(cfg: RetroConfig, events: RawEv[], store: RetroStore,
       b.count++; b.lastTs = h.ts; if (b.seqs.length < 5) b.seqs.push(h.seq);
     }
     // a note is its words: one undone (or never kept) is nothing to show
-    if (d.group === "note") for (const [k, b] of buckets) { const n = s.notes[b.group]; if (!n) buckets.delete(k); else b.note = { text: n.text, by: n.by, sel: n.sel ?? null }; }
-    if (d.id === "pr") for (const b of buckets.values()) { const e = win.find((x) => x.seq === b.seqs.at(-1)), n = e?.data?.note ? s.notes[e.data.note] : null; b.note = n ? { text: n.text, by: n.by, sel: null } : null; }
+    // (a selection kept with a note is page text: it travels as sel, at page trust, never inside the captain's text)
+    if (d.group === "note") for (const [k, b] of buckets) { const n = s.notes[b.group]; if (!n) buckets.delete(k); else b.note = { text: n.text, by: n.by, sel: n.context?.sel ?? null, selTrust: n.context ? "page" : null }; }
+    if (d.id === "pr") for (const b of buckets.values()) { const e = win.find((x) => x.seq === b.seqs.at(-1)), n = e?.data?.note ? s.notes[e.data.note] : null; b.note = n ? { text: n.text, by: n.by, sel: null, selTrust: null } : null; }
+    // where a pull request's latest hit happened: its environment and service counts (refs from the event, no text)
+    if (d.group === "pr") for (const b of buckets.values()) { const x = win.find((e) => e.seq === b.seqs.at(-1))?.data ?? {}; if (typeof x.env === "string") b.where = { env: x.env, pods: x.pods && Number.isInteger(x.pods.on) && Number.isInteger(x.pods.off) ? { on: x.pods.on, off: x.pods.off } : null }; }
     const counted = (cls: string) => d.candidate === "never" || (d.count_only ?? []).some((p) => new RegExp(p).test(cls.slice(d.id.length + 1)));
     // repeat: within its window, on at least min_groups groups (a class, never one isolated failure)
     const recentFrom = new Date(now - (d.window_days ?? 7) * 86400e3).toISOString(), recent = new Map<string, Set<string>>();

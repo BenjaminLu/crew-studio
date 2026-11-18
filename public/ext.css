@@ -113,7 +113,13 @@ body.skin-on .fab{display:none}
 /* the quick note: 記問題（!） on the pull request, review room and Task pages */
 .qn-btn{white-space:nowrap}
 .qn-btn kbd{font:inherit;font-size:11px;padding:0 4px;border:1px solid var(--border-strong);border-radius:4px;color:var(--text-2);margin-left:2px}
-.qn-fixed{position:fixed;top:12px;right:16px;z-index:60}
+.qn-head>div:first-child{flex:1 1 280px;min-width:0}
+.qn-head>.qn-btn{align-self:flex-start;flex:none}
+.rr-head>.qn-btn{flex:none}
+.x-kind{font-size:12px;color:var(--text-2);padding:1px 8px;border:1px solid var(--border);border-radius:999px}
+.x-cand-title{font-size:13px;overflow-wrap:anywhere}
+.x-cand-refs{flex-wrap:wrap}
+@media (max-width:640px){.qn-btn .qn-lbl{display:none}.toast.x-toast{bottom:88px}}
 .qn-pop{position:fixed;z-index:95;width:min(440px,calc(100vw - 32px));box-sizing:border-box;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-2);padding:10px;display:grid;gap:8px}
 .qn-pop input{width:100%;box-sizing:border-box;font:inherit;font-size:14px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
 .qn-pop input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}

@@ -345,21 +345,25 @@ function timelineItem(e, mergedAt) {
     h("span", { class: "pw-tl-dot", "aria-hidden": "true" }),
     h("div", { class: "pw-tl-b" }, h("div", { class: "pw-tl-h" }, h("b", {}, what), e.env ? h("span", { class: "badge" }, e.env) : null, detail ? h("span", { class: "faint mono" }, detail) : null),
       e.note ? h("div", { class: "pw-tl-note" }, `“${e.note}”`) : null,
-      h("div", { class: "faint pw-small" }, new Date(e.ts).toLocaleString(), since != null ? T(` · ${span(since)} after the merge`, ` · 合併後 ${span(since)}`) : "")));
+      h("div", { class: "faint pw-small", "data-prs-tl-at": "" }, tlTime(e.ts), e.since ? T(" (from GitHub; before Studio recorded go-lives)", "（來自 GitHub；Studio 開始記錄上線之前）") : "", since != null ? T(` · ${span(since)} after the merge`, ` · 合併後 ${span(since)}`) : "")));
 }
+// a step's time: the date and HH:MM, no seconds
+const tlTime = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 async function timelineModal(r) {
   const list = h("ol", { class: "pw-tl", "data-prs-timeline": r.id }, h("li", { class: "faint" }, T("Reading…", "讀取中…")));
   pwModal(T(`Going live: ${r.id}`, `上線過程：${r.id}`), [h("p", { class: "muted pw-dtitle" }, r.title || "", " · ", extLink(ghPr(r.id), T("on GitHub", "在 GitHub 上看"))), list,
     h("p", { class: "faint pw-small" }, T("What Studio saw on each refresh, written down at the time: an environment is partly live while one of its services still runs an older tag.", "Studio 每次刷新看到的變化，當下記錄：某個環境還有服務跑舊 tag 時算「部分上線」。"))], { id: "timeline" });
   let j; try { j = await (await fetch(`/api/prs/timeline?pr=${encodeURIComponent(r.id)}`)).json(); } catch { j = null; }
   if (!list.isConnected) return;
-  const evs = j?.events || [], merged = evs.find((e) => e.type === "pr_merged")?.ts || r.mergedAt;
+  const got = j?.events || [], merged = got.find((e) => e.type === "pr_merged")?.ts || r.mergedAt;
+  // merged before Studio recorded go-lives: the merge is still the first step, at GitHub's time
+  const evs = !got.some((e) => e.type === "pr_merged") && r.mergedAt ? [{ type: "pr_merged", ts: r.mergedAt, since: true }, ...got] : got;
   list.replaceChildren(...(evs.length ? evs.map((e) => timelineItem(e, merged)) : [h("li", { class: "faint", "data-prs-tl-empty": "" }, T("Nothing written down yet: Studio starts recording at the next refresh.", "還沒有紀錄：Studio 會從下一次刷新開始記錄。"))]));
 }
 function incidentModal(r) {
   let kind = "rollback";
   const seg = h("div", { class: "seg", role: "group", "aria-label": T("What happened", "發生什麼事") }, [["rollback", "Rollback", "回滾"], ["incident", "Incident", "事故"]].map(([k, en, tw]) =>
-    h("button", { type: "button", "aria-pressed": String(k === kind), "data-prs-incident-kind": k, onclick: (e) => { kind = k; seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget))); } }, h("span", {}, T(en, tw)))));
+    h("button", { type: "button", "aria-pressed": String(k === kind), "data-prs-incident-kind": k, onclick: (e) => { kind = k; seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget))); } }, h("span", { class: "keep" }, T(en, tw)))));
   const line = h("input", { type: "text", class: "pw-incident-line", maxlength: 500, autofocus: true, "data-prs-incident-note": "", "aria-label": T("One line: what happened", "一句話：發生什麼事"), placeholder: T("e.g. rolled back: checkout errors after deploy", "例如：上線後結帳出錯，已回滾"),
     onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); save(); } } });
   const save = async () => { const note = line.value.trim(); if (!note) return line.focus();

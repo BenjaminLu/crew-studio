@@ -223,17 +223,19 @@ export function createImprove(o: { dataDir: string; flows: Workflows; agents: Ag
       // the retro's candidates (workflows/studio.retro.yaml over Studio's log) and the captain's quick notes
       if (p === "/api/improve/candidates" && !writing) return json(candidates(studioRetro(), o.events("studio"), notes));
       if ((p === "/api/improve/candidates/dismiss" || p === "/api/improve/candidates/undismiss") && writing) {
-        const key = String(b?.key ?? ""), v = candidates(studioRetro(), o.events("studio"), notes);
-        if (p.endsWith("/undismiss")) { if (!v.dismissed.some((c) => c.key === key)) return json({ error: "no such dismissed candidate" }, 404); notes.undismiss(key); }
-        else { const c = v.rows.find((x) => x.key === key); if (!c) return json({ error: "no such candidate" }, 404); notes.dismiss(key, c.count); }
+        // one key, or every group of a recurring class at once (keys): the verdict is kept per class|group
+        const keys = (Array.isArray(b?.keys) ? b.keys : [b?.key]).map((k: unknown) => String(k ?? "")).filter(Boolean).slice(0, 200), v = candidates(studioRetro(), o.events("studio"), notes);
+        if (!keys.length) return json({ error: "no candidate named" }, 400);
+        if (p.endsWith("/undismiss")) { if (!keys.every((key: string) => v.dismissed.some((c) => c.key === key))) return json({ error: "no such dismissed candidate" }, 404); for (const key of keys) notes.undismiss(key); }
+        else { const cs = keys.map((key: string) => v.rows.find((x) => x.key === key)); if (cs.some((c: any) => !c)) return json({ error: "no such candidate" }, 404); for (const c of cs) notes.dismiss(c!.key, c!.count); }
         o.send("improve", { candidates: true }); return json(candidates(studioRetro(), o.events("studio"), notes));
       }
       if (p === "/api/improve/notes" && writing) {
         const route = typeof b?.route === "string" && /^#\/(prs|room|run)(\/|$)/.test(b.route) ? b.route.slice(0, 200) : null;
         const ref = typeof b?.ref === "string" && /^[\w.\/#:@-]{1,160}$/.test(b.ref) ? b.ref : null;
         const n = notes.addNote({ text: oneLine(b?.text), by: "captain", kind: "note", route, ref, sel: b?.sel ? oneLine(b.sel, 200) : null });
-        // the event names the note; its words (and any selection, which may be page text) stay in the store
-        signal(o.log, "captain_note", { route, ref, ...(n.sel ? { sel: true } : {}), note: n.id, by: "captain" }, { actor: "captain" });
+        // the event names the note; its words stay in the store, and any selection (page text) beside them at page trust
+        signal(o.log, "captain_note", { route, ref, ...(n.context ? { sel: true } : {}), note: n.id, by: "captain" }, { actor: "captain" });
         o.send("improve", { candidates: true }); return json({ ok: true, note: n.id });
       }
       let mn = /^\/api\/improve\/notes\/(N-\d+)\/undo$/.exec(p);

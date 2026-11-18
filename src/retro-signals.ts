@@ -38,7 +38,8 @@ export function envState(e: ShipEnv): EnvState | null {
   return e.pods?.some((p) => p.on === false) ? "partial" : "live";
 }
 const podsOf = (e: ShipEnv) => ({ on: (e.pods ?? []).filter((p) => p.on === true).length, off: (e.pods ?? []).filter((p) => p.on === false).length });
-const tagOf = (e: ShipEnv) => { const tags = [...new Set((e.pods ?? []).filter((p) => p.on === true && p.tag).map((p) => p.tag))]; return tags.length === 1 ? tags[0] : null; };
+/** the one tag the services running the merge run, kept only when it looks like a tag (it is read from a manifest) */
+const tagOf = (e: ShipEnv) => { const tags = [...new Set((e.pods ?? []).filter((p) => p.on === true && p.tag).map((p) => p.tag))]; return tags.length === 1 && /^[\w.+-]{1,80}$/.test(tags[0]!) ? tags[0] : null; };
 
 /** The events one refresh owes for one merged pull request, against what was written before: the merge once, then one per
  *  environment that changed state. A service moving to another tag inside the same state says nothing. */
@@ -58,7 +59,10 @@ export function shipEvents(prev: ShipMark | undefined, r: { id: string; mergedAt
 }
 
 // ---------- what the retro keeps: the captain's words and verdicts ----------
-export type Note = { id: string; at: string; text: string; trust: "captain"; by: "captain" | "firstmate"; kind: "note" | "incident"; route?: string | null; ref?: string | null; sel?: string | null; pr?: string | null };
+export type Note = { id: string; at: string; text: string; trust: "captain"; by: "captain" | "firstmate"; kind: "note" | "incident"; route?: string | null; ref?: string | null; pr?: string | null;
+  /** text selected on the page when the note was written: page text (a pull request's, a model's), kept apart from the
+   *  captain's words and never at captain trust */
+  context?: { sel: string; trust: "page" } | null };
 export type Dismissal = { at: string; count: number };
 type StoreFile = { schema: 1; notes: Record<string, Note>; dismissed: Record<string, Dismissal>; seq: number };
 export const NOTE_MAX = 500;
@@ -76,10 +80,10 @@ export class RetroStore {
   }
   private write(s: StoreFile) { mkdirSync(join(this.dataDir, "retro"), { recursive: true }); const tmp = `${this.file}.${process.pid}.tmp`; writeFileSync(tmp, JSON.stringify(s, null, 1)); renameSync(tmp, this.file); }
   /** Keep the captain's words; returns the note (its id goes in the event). */
-  addNote(n: Omit<Note, "id" | "at" | "trust">): Note {
+  addNote(n: Omit<Note, "id" | "at" | "trust" | "context"> & { sel?: string | null }): Note {
     const text = oneLine(n.text); if (!text) throw new Error("say what went wrong / 寫一句發生了什麼");
-    const s = this.read(), id = `N-${++s.seq}`;
-    const note: Note = { id, at: new Date().toISOString(), text, trust: "captain", by: n.by, kind: n.kind, route: n.route ?? null, ref: n.ref ?? null, sel: n.sel ? oneLine(n.sel, 200) : null, pr: n.pr ?? null };
+    const s = this.read(), id = `N-${++s.seq}`, sel = n.sel ? oneLine(n.sel, 200) : "";
+    const note: Note = { id, at: new Date().toISOString(), text, trust: "captain", by: n.by, kind: n.kind, route: n.route ?? null, ref: n.ref ?? null, pr: n.pr ?? null, context: sel ? { sel, trust: "page" } : null };
     s.notes[id] = note; this.write(s); return note;
   }
   note(id: string): Note | null { return this.read().notes[id] ?? null; }

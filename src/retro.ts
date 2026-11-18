@@ -13,6 +13,7 @@ export type Detector = {
   /** a field whose value names the hit's class: <id>.<value> (one detector, a class per failure code or why) */ split?: string;
   /** pair: a start event (types, where) not followed by its end (until, until_where, the same match fields) within hours */
   until?: string[]; until_where?: Record<string, string>; match?: string[]; hours?: number;
+  /** pair: the start's time from this field (e.g. GitHub's merge time) instead of when the event was written */ start_field?: string;
   /** the retro's candidate list (studio source): always a candidate, a candidate once it repeats on min_groups groups within
    *  window_days, or only counted; count_only: classes (patterns on the split value) that are only counted */
   candidate?: "always" | "repeat" | "never"; window_days?: number; count_only?: string[];
@@ -44,7 +45,8 @@ export function detect(d: Detector, events: RawEv[], now = Date.now()): Hit[] {
     events.forEach((e, i) => {
       if ((d.types && !d.types.includes(e.type)) || !match(e, d.where)) return;
       const k = keyOf(e, on), endE = events.slice(i + 1).find((x) => (d.until ?? []).includes(x.type) && match(x, d.until_where) && keyOf(x, on) === k);
-      const took = (endE ? Date.parse(endE.ts) : now) - Date.parse(e.ts);
+      const at = d.start_field ? values(e, d.start_field).map((x) => Date.parse(String(x))).find((x) => !Number.isNaN(x)) ?? Date.parse(e.ts) : Date.parse(e.ts);
+      const took = (endE ? Date.parse(endE.ts) : now) - at;
       if (took > ms) hits.push({ seq: e.seq, ts: e.ts, task: e.task, actor: e.actor, text: `${Math.round(took / 3600e3)} h${endE ? "" : " so far"}`, group: groupOf(e, d.group), class: classOf(d, e) });
     });
     return hits;
