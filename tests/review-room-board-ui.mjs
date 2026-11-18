@@ -4,8 +4,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // and drawings; three levels of detail (far: only each chapter's number, title, one line and its question counts); "Next"
 // frames each chapter at a readable scale (0.85 or more at 1440); a chapter not reached yet is a placeholder; every place
 // asks through a popover inside the screen; a question waits in its card for the paid round's confirmation and is sent with
-// the room's offer; its answer streams into its card ("Thinking"); a follow-up goes below or beside, a rephrasing is a
-// version tab; show the code is free; understood folds a thread; focus frames it and Escape returns; tidying folds the
+// the room's offer; its answer streams into its card ("Thinking") in the conversation pane; a follow-up goes under its card,
+// a rephrasing is a version tab; show the code is free; understood folds a thread; focus flies to its place and Escape returns; tidying folds the
 // understood questions into their chapter and before / after shows the original; nothing overlaps; pins sit on their place;
 // the keyboard drives it; a phone opens on the outline and asks in a bottom sheet; a Library snapshot replays it read-only.
 // The room's routes are answered by the test from an invented lesson: nothing paid runs.     node tests/review-room-board-ui.mjs
@@ -139,17 +139,17 @@ try {
       const texts = []; const walk = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3 && c.textContent.trim() && c.parentElement && vis(c.parentElement)) texts.push({ t: c.textContent.trim(), map: !!c.parentElement.closest(".rb-map") }); else if (c.nodeType === 1) walk(c); } }; walk(plane);
       const maps = [...plane.querySelectorAll("[data-region]")].map((r) => { const m = r.querySelector(".rb-map"), g = m.querySelector("[data-map-gist]"), lh = parseFloat(getComputedStyle(g).lineHeight);
         return { id: r.dataset.region, kids: [...m.children].map((c) => c.className), oneLine: g.getBoundingClientRect().height <= lh * 1.25 * (r.getBoundingClientRect().width / r.offsetWidth) + 1, open: m.querySelector(".rb-badge.q")?.textContent, done: m.querySelector(".rb-badge.ok")?.textContent }; });
-      return { lod: plane.dataset.lod, out: texts.filter((x) => !x.map).map((x) => x.t).slice(0, 8), maps, cards: [...plane.querySelectorAll(".rb-card,.rb-tchip,.rb-pin,.rb-rtitle")].filter(vis).length, links: vis(plane.querySelector("[data-board-links]")) }; });
-    ok(far.lod === "far" && far.out.length === 0 && far.cards === 0 && !far.links && far.maps.every((m) => JSON.stringify(m.kids) === JSON.stringify(["rb-mn", "rb-mt", "rb-mg", "rb-mq"]) && m.oneLine),
+      return { lod: plane.dataset.lod, out: texts.filter((x) => !x.map).map((x) => x.t).slice(0, 8), maps, cards: [...plane.querySelectorAll(".rb-card,.rb-tchip,.rb-pin,.rb-rtitle")].filter(vis).length }; });
+    ok(far.lod === "far" && far.out.length === 0 && far.cards === 0 && far.maps.every((m) => JSON.stringify(m.kids) === JSON.stringify(["rb-mn", "rb-mt", "rb-mg", "rb-mq"]) && m.oneLine),
       "far away (fit all) each chapter shows only its number, its title, one line and its question badges: no text, card, pin or line besides", JSON.stringify(far).slice(0, 900));
     const t1 = far.maps.find((m) => m.id === "t1"), t5 = far.maps.find((m) => m.id === "t1-5"), end = far.maps.find((m) => m.id === "end");
     ok(/未解 0/.test(t1.open) && /懂了 0/.test(t1.done) && /未解 0/.test(t5.open) && /懂了 1/.test(t5.done) && /未解 1/.test(end.open), "the map's badges count each chapter's questions not understood (as the reader said) and understood", JSON.stringify([t1, t5, end]));
     await p.screenshot({ path: join(shots, "desktop-light-map.png") });
-    // mid: the cards say what was asked and the answer's first lines, without their actions
+    // mid: the chapters and their pins; the answers are read in the conversation pane
     await p.click('[data-outline="t1"]'); await settle(p); const vc = (await geo(p)).vp; await p.mouse.move(vc.x + vc.w / 2, vc.y + vc.h / 2);
     for (let i = 0; i < 6 && (await cam(p)).s > 0.6; i++) { await p.click("[data-zoom-out]"); await settle(p, 60); }
-    const mid = await p.evaluate(() => ({ lod: document.querySelector("[data-board-plane]").dataset.lod, acts: [...document.querySelectorAll(".rb-card .rb-acts")].filter((e) => getComputedStyle(e).display !== "none").length, cards: [...document.querySelectorAll(".rb-card")].filter((e) => e.getClientRects().length).length }));
-    ok(mid.lod === "mid" && mid.acts === 0 && mid.cards > 0, "in between (mid) the cards stay, short, without their actions", JSON.stringify(mid));
+    const mid = await p.evaluate(() => ({ lod: document.querySelector("[data-board-plane]").dataset.lod, cards: document.querySelectorAll("[data-board-vp] .rb-card, [data-board-vp] .rb-tchip").length, pins: [...document.querySelectorAll("[data-board-vp] .rb-pin")].filter((e) => e.getClientRects().length).length, pane: document.querySelectorAll("[data-board-notes] .rb-card").length }));
+    ok(mid.lod === "mid" && mid.cards === 0 && mid.pins > 0 && mid.pane > 0, "in between (mid) the chapters keep their pins; no answer card on the canvas (they are in the conversation pane)", JSON.stringify(mid));
     await ctx.close(); }
 
   // ---------- 1440: nothing overlaps, pins on their place, the popover, asking, follow-ups, the code, understood, focus, tidy ----------
@@ -158,16 +158,17 @@ try {
     // every region read: nothing overlaps anywhere on the board
     const all = await p.evaluate(() => { const B = window.crewReviewRoom.board; return true; });
     const g = await geo(p), bad = [];
-    for (let i = 0; i < g.cards.length; i++) { for (let j = i + 1; j < g.cards.length; j++) if (hit(g.cards[i], g.cards[j])) bad.push(`${g.cards[i].id}×${g.cards[j].id}`); for (const b of g.bodies) if (hit(g.cards[i], b)) bad.push(`${g.cards[i].id}×${b.id}`); }
+    for (let i = 0; i < g.cards.length; i++) for (let j = i + 1; j < g.cards.length; j++) if (hit(g.cards[i], g.cards[j])) bad.push(`${g.cards[i].id}×${g.cards[j].id}`);
     for (let i = 0; i < g.regions.length; i++) for (let j = i + 1; j < g.regions.length; j++) if (hit(g.regions[i], g.regions[j])) bad.push(`${g.regions[i].id}×${g.regions[j].id}`);
-    ok(all && g.cards.length >= 5 && !bad.length, "no question's card overlaps another card or any region, and no region overlaps another", JSON.stringify({ n: g.cards.length, bad }));
+    const onCanvas = await p.evaluate(() => document.querySelectorAll("[data-board-vp] .rb-card, [data-board-vp] .rb-tchip").length);
+    ok(all && g.cards.length >= 5 && onCanvas === 0 && !bad.length, "no region overlaps another; the questions' cards are in the conversation pane, none on the canvas", JSON.stringify({ n: g.cards.length, onCanvas, bad }));
     const pins = await p.evaluate(() => [...document.querySelectorAll(".rb-pin[data-pin-for]")].map((pin) => { const a = document.querySelector(`[data-akey="${CSS.escape(pin.dataset.pinFor)}"]`), pr = pin.getBoundingClientRect(), cx = pr.left + pr.width / 2, cy = pr.top + pr.height / 2;
       const rs = a ? [...a.getClientRects()] : [], on = rs.some((r) => cx >= r.left - 14 && cx <= r.right + 14 && cy >= r.top - 18 && cy <= r.bottom + 14); return { key: pin.dataset.pinFor, n: pin.dataset.pin, on, inside: !!a?.contains(pin) }; }));
     ok(pins.length === 5 && pins.every((x) => x.on) && pins.some((x) => x.inside) && pins.some((x) => !x.inside), "each question's numbered pin sits on its place: inside a sentence, at a drawing's part", JSON.stringify(pins));
-    // the anchor's card branches beside it, joined to it
-    const near = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p0.s1"]').getBoundingClientRect(), c = document.querySelector('[data-tcard="1:n1"]').getBoundingClientRect(), ex = document.querySelector('[data-tcard="1:n2"]').getBoundingClientRect();
-      return { right: c.left > a.right, level: Math.abs(c.top - a.top) < 60, side: ex.left > c.right && Math.abs(ex.top - c.top) < 4, line: document.querySelectorAll('[data-board-links] path[data-link="1"]').length }; });
-    ok(near.right && near.level && near.side && near.line >= 2, "a question's card branches right beside its place, joined by a line; its example sits beside it", JSON.stringify(near));
+    // the place's question in the conversation pane: its head (the words asked about), its card, its example under it, one step in
+    const near = await p.evaluate(() => { const th = document.querySelector('[data-board-notes] [data-conv-thread="1"]'), c = th?.querySelector('[data-tcard="1:n1"]')?.getBoundingClientRect(), ex = th?.querySelector('[data-tcard="1:n2"]')?.getBoundingClientRect();
+      return { pane: !!th, head: th?.querySelector("[data-note-thread] q")?.textContent, under: !!c && !!ex && ex.top > c.bottom, indent: !!c && !!ex && ex.left - c.left >= 10, scene: th?.dataset.convScene }; });
+    ok(near.pane && /五分鐘後由工作主動去問閘道/.test(near.head || "") && near.under && near.indent && near.scene === "t1", "a question is read in the conversation pane: the words asked about, its card, its example under it one step in", JSON.stringify(near));
     // 還沒懂 is only what the reader said: the confused question is red, an answered one is not; the outline counts cards
     const st = await p.evaluate(() => ({ q: [...document.querySelectorAll(".rb-card.q")].map((e) => e.dataset.thread), pin1: document.querySelector('[data-pin-for="what/t1/sentence#p0.s1"]')?.className, pin3: document.querySelector('[data-pin-for="lifecycle/t1-6/transition/B1-5#transition:3"]')?.className,
       counts: ["t1", "t1-6"].map((k) => document.querySelector(`[data-outline="${k}"] [data-outline-count]`)?.dataset.outlineCount) }));
@@ -192,8 +193,8 @@ try {
     ok(!(await p.$(".rb-pop")) && await p.evaluate(() => document.activeElement?.dataset?.akey === "what/t1/sentence#p0.s0"), "Escape closes the popover and gives the focus back to the place");
     // asking: the question waits in its card for the confirmation, inline; nothing is sent before it
     await p.mouse.click(b0.x + 8, b0.y + 6); await p.waitForSelector(".rb-pop"); await p.click('.rb-pop [data-chip="deeper"]'); await p.waitForSelector("[data-pending]", { timeout: 5000 }).catch(() => {});
-    const pend = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), c = document.querySelector("[data-pending]")?.getBoundingClientRect() ?? { left: -1 }; return { text: document.querySelector("[data-board-confirm]")?.textContent, consent: document.querySelector("[data-board-consent]")?.checked, label: document.querySelector(".rb-consent")?.textContent, right: c.left > a.right, modal: !!document.querySelector("[data-room-confirm], [role=dialog][aria-modal=true]"), pop: !!document.querySelector(".rb-pop") }; });
-    ok(S.turns.length === 0 && /付費一回合：codex · gpt-6（high），不產生圖片/.test(pend.text) && pend.consent === true && /之後追問直接開始（這個房間）/.test(pend.label || "") && pend.right && !pend.modal && !pend.pop, "the room's first paid question shows its plan once in the new card beside its place (model, effort, paid, no picture), “之後追問直接開始（這個房間）” pre-checked; nothing is sent yet", JSON.stringify(pend));
+    const pend = await p.evaluate(() => { const a = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), c = document.querySelector("[data-pending]")?.getBoundingClientRect() ?? { left: -1 }; return { text: document.querySelector("[data-board-confirm]")?.textContent, consent: document.querySelector("[data-board-consent]")?.checked, label: document.querySelector(".rb-consent")?.textContent, right: c.left > a.right, pane: !!document.querySelector("[data-board-notes] [data-pending]"), modal: !!document.querySelector("[data-room-confirm], [role=dialog][aria-modal=true]"), pop: !!document.querySelector(".rb-pop") }; });
+    ok(S.turns.length === 0 && /付費一回合：codex · gpt-6（high），不產生圖片/.test(pend.text) && pend.consent === true && /之後追問直接開始（這個房間）/.test(pend.label || "") && pend.right && pend.pane && !pend.modal && !pend.pop, "the room's first paid question shows its plan once in the new card in the conversation pane (model, effort, paid, no picture), “之後追問直接開始（這個房間）” pre-checked; nothing is sent yet", JSON.stringify(pend));
     await p.click("[data-board-start]"); await p.waitForSelector("[data-thinking]", { timeout: 15000 }).catch(() => {});
     const sent = S.turns.at(-1), think = await p.evaluate(() => ({ thinking: document.querySelector("[data-thinking]")?.textContent, said: document.querySelector("[data-streaming]")?.textContent, card: document.querySelector("[data-thinking]")?.closest("[data-tcard]")?.dataset.tcard }));
     ok(sent?.confirm === "feedc0ffee654321" && sent.consent === true && !("images" in sent) && sent.thread?.chip === "deeper" && sent.thread.anchor?.scene === "t1" && sent.thread.anchor.kind === "sentence" && sent.thread.anchor.part === "p1.s0" && /同一筆付款只結算一次/.test(sent.thread.anchor.text) && !sent.action,
@@ -205,13 +206,13 @@ try {
     const done = await p.evaluate(() => ({ text: document.querySelector('[data-tcard="6:n1"] .rb-cbody')?.textContent, img: !!document.querySelector(".rb-card img"), pwned: !!window.__pwned, cite: !!document.querySelector('[data-tcard="6:n1"] [data-cite="diff:src/settle.ts:L8-30"]') }));
     await p.screenshot({ path: join(shots, "desktop-light-thread.png") });
     ok(/CAS lets one win <img src=x/.test(done.text || "") && !done.img && !done.pwned && done.cite, "the answer shows in its card as text (markup stays text), its citation a chip", JSON.stringify(done));
-    // agreed: a follow-up on a card is one click; it starts at once, its card beside, marked paid; the place stays in view
+    // agreed: a follow-up on a card is one click; it starts at once, its card under its parent in the pane, marked paid; the place stays in view
     await p.click('[data-tcard="6:n1"] [data-follow="example"]'); await until(() => S.turns.length === 2); await p.waitForSelector('[data-tcard="6:n2"]', { timeout: 15000 }).catch(() => {}); await settle(p, 600);
-    const side = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), a = document.querySelector('[data-tcard="6:n1"]').getBoundingClientRect(), c = document.querySelector('[data-tcard="6:n2"]')?.getBoundingClientRect(), s = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), inside = (r) => r && r.left >= vp.left - 1 && r.right <= vp.right + 1 && r.top >= vp.top - 1 && r.bottom <= vp.bottom + 1;
-      return { beside: !!c && c.left > a.right && Math.abs(c.top - a.top) < 4, pending: !!document.querySelector("[data-pending]"), anchor: s.right <= vp.right + 1 && s.right - 100 >= vp.left && s.top >= vp.top && s.bottom <= vp.bottom, card: inside(c ? { left: c.left, right: c.right, top: c.top, bottom: c.top + 40 } : null), paid: document.querySelector('[data-tcard="6:n1"] [data-paid-note]')?.textContent }; });
+    const side = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), lp = document.querySelector("[data-board-notes] [data-conv-list]").getBoundingClientRect(), a = document.querySelector('[data-tcard="6:n1"]').getBoundingClientRect(), c = document.querySelector('[data-tcard="6:n2"]')?.getBoundingClientRect(), s = document.querySelector('[data-akey="what/t1/sentence#p1.s0"]').getBoundingClientRect(), inside = (r) => r && r.left >= lp.left - 1 && r.right <= lp.right + 1 && r.top >= lp.top - 1 && r.bottom <= lp.bottom + 1;
+      return { beside: !!c && c.top > a.bottom && c.left - a.left >= 10, pending: !!document.querySelector("[data-pending]"), anchor: s.right <= vp.right + 1 && s.right - 100 >= vp.left && s.top >= vp.top && s.bottom <= vp.bottom, card: inside(c ? { left: c.left, right: c.right, top: c.top, bottom: c.top + 40 } : null), paid: document.querySelector('[data-tcard="6:n1"] [data-paid-note]')?.textContent }; });
     const fu = S.turns.at(-1);
-    ok(side.beside && !side.pending && fu.thread?.n === 6 && fu.thread.node === "n1" && fu.thread.chip === "example" && !("confirm" in fu) && /付費 · gpt-6/.test(side.paid || ""), "agreed for this plan, 例子 → on a card starts at once (one click, no confirmation sent), its card beside its parent, the card marked “付費 · gpt-6”", JSON.stringify([side, fu]));
-    ok(side.anchor && side.card, "the camera shows the new card and keeps the place asked about in view (its end and pin)", JSON.stringify(side));
+    ok(side.beside && !side.pending && fu.thread?.n === 6 && fu.thread.node === "n1" && fu.thread.chip === "example" && !("confirm" in fu) && /付費 · gpt-6/.test(side.paid || ""), "agreed for this plan, 例子 → on a card starts at once (one click, no confirmation sent), its card under its parent one step in, the card marked “付費 · gpt-6”", JSON.stringify([side, fu]));
+    ok(side.anchor && side.card, "the pane shows the new card; the place asked about stays in view on the board (its end and pin)", JSON.stringify(side));
     Object.assign(S.room.turns.at(-1), { status: "done", claims: [{ text: "Order 7731 at 14:07.", kind: "claim", basis: null, cites: [] }] }); S.room.running = null; S.room = clone(S.room);
     await p.waitForFunction(() => !document.querySelector("[data-thinking]"), null, { timeout: 15000 }).catch(() => {});
     // the room's switch turns the agreement off: the next question asks again, in a card below its parent
@@ -242,26 +243,26 @@ try {
     // focus: frame the thread, dim the rest, Escape returns
     await p.click('[data-outline="t1-6"]'); await settle(p); const back = await cam(p); await p.$eval('[data-focus-thread="3"]', (b) => b.click()); await settle(p, 300);
     const foc = await p.evaluate(() => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), op = (e) => parseFloat(getComputedStyle(e).opacity);
-      const mine = [...document.querySelectorAll('.rb-card[data-thread="3"]')], others = [...document.querySelectorAll('.rb-card:not([data-thread="3"])')];
-      const ar = document.querySelector('[data-akey="lifecycle/t1-6/transition/B1-5#transition:3"]').getBoundingClientRect();
-      return { anchor: ar.left >= vp.left && ar.right <= vp.right && ar.top >= vp.top && ar.bottom <= vp.bottom, bar: document.querySelector("[data-focus-bar]")?.textContent, inView: mine.every((e) => { const r = e.getBoundingClientRect(); return r.left >= vp.left && r.right <= vp.right && r.top >= vp.top && r.bottom <= vp.bottom; }), lit: mine.every((e) => op(e) === 1), dim: others.length > 0 && others.every((e) => op(e) < 0.5) }; });
+      const a = document.querySelector('[data-akey="lifecycle/t1-6/transition/B1-5#transition:3"]'), ar = a.getBoundingClientRect(), others = [...document.querySelectorAll('[data-region]:not([data-region="t1-6"]) > .rb-rbody')];
+      return { anchor: ar.left >= vp.left && ar.right <= vp.right && ar.top >= vp.top && ar.bottom <= vp.bottom, bar: document.querySelector("[data-focus-bar]")?.textContent, inView: document.querySelector('[data-board-notes] [data-conv-thread="3"]')?.classList.contains("lit"),
+        lit: a.classList.contains("lit") && op(document.querySelector('[data-region="t1-6"] > .rb-rbody')) === 1, dim: others.length > 0 && others.every((e) => op(e) < 0.5) }; });
     await p.screenshot({ path: join(shots, "desktop-light-focus.png") });
     await p.keyboard.press("Escape"); await settle(p, 300); const after = await cam(p);
     ok(/聚焦 #3/.test(foc.bar || "") && foc.inView && foc.anchor && foc.lit && foc.dim && Math.abs(after.x - back.x) < 1 && Math.abs(after.y - back.y) < 1 && Math.abs(after.s - back.s) < 0.001 && !(await p.$("[data-focus-bar]")),
-      "⤢ frames the place asked about and the question's cards together, dims the rest; Escape returns the camera to where it was", JSON.stringify({ foc, back, after }));
+      "⤢ frames the question's chapter with its place in view and lit, its entry in the pane lit, the other chapters dimmed; Escape returns the camera to where it was", JSON.stringify({ foc, back, after }));
     // a click on a card's empty area focuses its whole thread
-    await p.click('[data-outline="t1"]'); await settle(p); await p.click('[data-tcard="6:n1"] .rb-anchor'); await settle(p, 300);
+    await p.click('[data-outline="t1"]'); await settle(p); await p.click('[data-tcard="6:n1"] .rb-cq'); await settle(p, 300);
     ok(await p.$eval("[data-board-plane]", (e) => e.dataset.focus).catch(() => null) === "6", "a click on a card's empty area focuses its whole thread");
     await p.keyboard.press("Escape"); await settle(p, 200);
     // tidy: understood questions fold into their chapter; before / after
     await p.click('[data-outline="t1-5"]'); await settle(p); const runs0 = S.turns.length;
     await p.click("[data-board-tidy]"); await p.waitForSelector('[data-region="t1-5"] [data-absorbed]', { timeout: 15000 }).catch(() => {}); await settle(p, 200);
     const tidy = await p.evaluate(() => { const c = document.querySelector('[data-tchip="2"]'), cr = c?.getBoundingClientRect(), ar = document.querySelector('[data-akey="change/t1-5/sentence#p0.s0"]').getBoundingClientRect(), br = document.querySelector('[data-region="t1-5"] .rb-rbody').getBoundingClientRect();
-      return { abs: [...document.querySelectorAll("[data-absorbed]")].map((e) => [e.closest("[data-region]").dataset.region, e.querySelector(".rb-abs-tag").textContent]), chip: c?.textContent, near: !!cr && Math.abs(cr.top - ar.top) < 40 && cr.left - br.right < 50, open: !!document.querySelector('[data-tcard="3:n1"]'), toast: document.querySelector("[data-board-toast]")?.textContent }; });
+      return { abs: [...document.querySelectorAll("[data-absorbed]")].map((e) => [e.closest("[data-region]").dataset.region, e.querySelector(".rb-abs-tag").textContent]), chip: c?.textContent, near: !!c?.closest('[data-board-notes] [data-conv-thread="2"]'), open: !!document.querySelector('[data-tcard="3:n1"]'), toast: document.querySelector("[data-board-toast]")?.textContent }; });
     await p.screenshot({ path: join(shots, "desktop-light-tidy-after.png") });
     ok(S.lessons.some((x) => x.op === "tidy") && S.turns.length === runs0 && tidy.abs.some(([k, t]) => k === "t1-5" && /↳ 併入你問的 #2/.test(t)) && tidy.abs.some(([k, t]) => k === "t1" && /#1、#5、#6/.test(t)) && /已併入 #2/.test(tidy.chip || "") && tidy.open && /已把 5 串問答併回章節/.test(tidy.toast || ""),
       "整理白板 folds every answered question that is not 還沒懂 into its chapter (5 of them, ↳ 併入你問的 #…) with no paid turn; the confused one stays on the board", JSON.stringify(tidy));
-    ok(tidy.near, "a folded question's chip stays beside its place, not pushed away by the cards", JSON.stringify(tidy));
+    ok(tidy.near, "a folded question's chip stays in its thread in the conversation pane", JSON.stringify(tidy));
     await p.click('[data-tidy-view="before"]'); await settle(p, 100);
     const pre = await p.evaluate(() => ({ abs: document.querySelectorAll("[data-absorbed]").length, chip: document.querySelector('[data-tchip="2"]')?.textContent, pressed: document.querySelector('[data-tidy-view="before"]').getAttribute("aria-pressed") }));
     await p.screenshot({ path: join(shots, "desktop-light-tidy-before.png") });
@@ -275,9 +276,9 @@ try {
     ok(only.dim && only.framed && only.n >= 4, "“只看有問題的” frames only the chapters with questions and dims the rest", JSON.stringify(only));
     // the notes and the last region list every question
     const notes = await p.evaluate(() => ({ side: [...document.querySelectorAll('[data-notes-list="side"] [data-note-thread]')].map((b) => [b.dataset.noteThread, b.dataset.noteState]), end: document.querySelectorAll('[data-notes-list="end"] [data-note-thread]').length, count: document.querySelector("[data-end-count]")?.textContent }));
-    ok(JSON.stringify(notes.side) === JSON.stringify([["1", "merged"], ["2", "merged"], ["3", "confused"], ["4", "merged"], ["5", "merged"], ["6", "merged"], ["7", "merged"]]) && notes.end === 7 && /問了 7 處/.test(notes.count || ""), "the notes panel lists every question with its state; the last region lists them too", JSON.stringify(notes));
+    ok(JSON.stringify(notes.side) === JSON.stringify([["1", "merged"], ["2", "merged"], ["3", "confused"], ["4", "merged"], ["5", "merged"], ["6", "merged"], ["7", "merged"]]) && notes.end === 7 && /問了 7 處/.test(notes.count || ""), "the conversation pane lists every question with its state; the last region lists them too", JSON.stringify(notes));
     await p.click('[data-notes-list="side"] [data-note-thread="3"]'); await settle(p, 300);
-    ok(await p.$eval("[data-board-plane]", (e) => e.dataset.focus) === "3", "a click on a question in the notes focuses it");
+    ok(await p.$eval("[data-board-plane]", (e) => e.dataset.focus) === "3", "a click on a question in the conversation pane focuses it");
     await p.keyboard.press("Escape");
     // the keyboard: Tab reaches a place (a focus ring), Enter asks there
     await p.click('[data-outline="t1-9"]'); await settle(p); await p.focus('[data-akey="watch/t1-9/risk#p0.s0"]'); await p.keyboard.press("Shift+Tab"); await p.keyboard.press("Tab");
@@ -320,7 +321,7 @@ try {
     ok(st.pending && st.consent === true && S.turns.length === 0, "the plan changed since the room agreed (another model or effort): the next question shows the plan and asks once again", JSON.stringify(st));
     await ctx.close(); }
 
-  // ---------- a long thread: a follow-up two cards below still keeps the place asked about on screen ----------
+  // ---------- a long thread: a follow-up two cards below shows in the pane; the place asked about stays on screen ----------
   { const room = boardRoom("zh-TW"), key = "what/t1/sentence#p1.s0", long = "工作每五分鐘撈到期的付款，逐筆問閘道；付了就結算，沒付才作廢。".repeat(6), nodes = [];
     room.followUps = { on: true, at: "t", current: true };
     for (let i = 0; i < 2; i++) { room.turns.push({ n: 200 + i, action: "how", text: "q", lang: "zh-TW", status: "done", provider: "codex", model: "gpt-6", answer: long, head: "a".repeat(40), claims: [{ text: long, kind: "claim", basis: null, cites: [] }], thread: { n: 30, node: `n${i + 1}` } });
@@ -328,12 +329,12 @@ try {
     room.lesson.threads.push({ n: 30, key, anchor: { turn: 1, scene: "t1", chapter: "what", kind: "sentence", item: null, part: "p1.s0", text: "x", start: null, end: null }, locator: { type: "text", section: key }, nodes, state: "open", at: "t", resolvedAt: null, merged: null });
     const { ctx, p, S } = await open(1440, "zh-TW", { room }); await p.click('[data-outline="t1"]'); await settle(p);
     await p.evaluate(() => document.querySelector('[data-tcard="30:n2"] [data-follow="deeper"]')?.click()); await until(() => S.turns.length === 1).catch(() => {}); await p.waitForSelector('[data-tcard="30:n3"]', { timeout: 15000 }).catch(() => {}); await settle(p, 700);
-    const kept = await p.evaluate((k) => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), s = document.querySelector(`[data-akey="${k}"]`).getBoundingClientRect(), c = document.querySelector('[data-tcard="30:n3"]')?.getBoundingClientRect();
-      return { card: !!c && c.top < vp.bottom && c.bottom > vp.top, anchor: s.top >= vp.top - 1 && s.bottom <= vp.bottom + 1 && s.right <= vp.right + 1 && s.right - 100 >= vp.left }; }, key);
-    ok(kept.card && kept.anchor, "a follow-up three cards down: the camera shows its card and keeps the place asked about in view", JSON.stringify(kept));
+    const kept = await p.evaluate((k) => { const vp = document.querySelector("[data-board-vp]").getBoundingClientRect(), lp = document.querySelector("[data-board-notes] [data-conv-list]").getBoundingClientRect(), s = document.querySelector(`[data-akey="${k}"]`).getBoundingClientRect(), c = document.querySelector('[data-tcard="30:n3"]')?.getBoundingClientRect();
+      return { card: !!c && c.top < lp.bottom && c.bottom > lp.top, anchor: s.top >= vp.top - 1 && s.bottom <= vp.bottom + 1 && s.right <= vp.right + 1 && s.right - 100 >= vp.left }; }, key);
+    ok(kept.card && kept.anchor, "a follow-up three cards down: the pane scrolls to its card; the place asked about stays in view on the board", JSON.stringify(kept));
     await ctx.close(); }
 
-  // ---------- taught again: both lessons are on the board; a question from the earlier one, picked in the notes, focuses it there ----------
+  // ---------- taught again: both lessons are on the board; a question from the earlier one, picked in the pane, focuses it there ----------
   { const room = boardRoom("zh-TW"), first = room.turns.find((t) => t.action === "teach"), n = Math.max(...room.turns.map((t) => t.n)) + 1;
     room.turns.push({ ...clone(first), n });
     const { ctx, p } = await open(1440, "zh-TW", { room }); await settle(p, 300);
@@ -341,7 +342,7 @@ try {
     await p.click('[data-notes-list="side"] [data-note-thread="1"]', { timeout: 5000 }).catch(() => {}); await settle(p, 600);
     const after = await p.evaluate(() => ({ card: !!document.querySelector('[data-tcard="1:n1"]'), focus: document.querySelector("[data-board-plane]")?.dataset.focus, bar: !!document.querySelector("[data-focus-bar]") }));
     const both = await p.evaluate((n) => [!!document.querySelector('[data-region="t1"]'), !!document.querySelector(`[data-region="t${n}"]`)], n);
-    ok(before && both.every(Boolean) && after.card && after.focus === "1" && after.bar, "taught again, both lessons are on the board; a question from the earlier one picked in the notes focuses it", JSON.stringify({ before, both, after }));
+    ok(before && both.every(Boolean) && after.card && after.focus === "1" && after.bar, "taught again, both lessons are on the board; a question from the earlier one picked in the pane focuses it", JSON.stringify({ before, both, after }));
     await ctx.close(); }
 
   // ---------- the agreement's count: each card it started says so; after ten the room asks once more ----------
@@ -364,14 +365,15 @@ try {
       L.threads.push({ n: 10 + i, key, anchor: { turn: 1, scene: sc, chapter: chapters[sc], kind, item: null, part: `${part}x${i}`, text: `問題 ${i}`, start: null, end: null }, locator: { type: "text", section: key }, nodes: [{ id: "n1", parent: null, rel: "root", chip: "deeper", q: null, versions: [n], code: null, at: "t" }], state: "open", at: "t", resolvedAt: null, merged: null }); }
     const { ctx, p } = await open(1440, "zh-TW", { room });
     const times = []; for (const k of ["t1-2", "t1-6", "t1"]) { await p.click(`[data-outline="${k}"]`); await settle(p, 200); times.push(await p.evaluate(() => window.crewReviewRoom.board.state.lastLayout)); }
-    const g = await geo(p), bad = [];
-    for (let i = 0; i < g.cards.length; i++) { for (let j = i + 1; j < g.cards.length; j++) if (hit(g.cards[i], g.cards[j])) bad.push(`${g.cards[i].id}×${g.cards[j].id}`); for (const b of g.bodies) if (hit(g.cards[i], b)) bad.push(`${g.cards[i].id}×${b.id}`); }
-    ok(g.cards.length >= 64 && !bad.length, "sixty more questions on the board: no card overlaps another card or a region", JSON.stringify({ n: g.cards.length, bad: bad.slice(0, 6) }));
+    const g = await geo(p), bad = [], onCanvas = await p.evaluate(() => document.querySelectorAll("[data-board-vp] .rb-card, [data-board-vp] .rb-tchip").length);
+    for (let i = 0; i < g.cards.length; i++) for (let j = i + 1; j < g.cards.length; j++) if (hit(g.cards[i], g.cards[j])) bad.push(`${g.cards[i].id}×${g.cards[j].id}`);
+    for (let i = 0; i < g.regions.length; i++) for (let j = i + 1; j < g.regions.length; j++) if (hit(g.regions[i], g.regions[j])) bad.push(`${g.regions[i].id}×${g.regions[j].id}`);
+    ok(g.cards.length >= 64 && onCanvas === 0 && !bad.length, "sixty more questions: their cards stack in the conversation pane, none on the canvas; no card overlaps another, no region another", JSON.stringify({ n: g.cards.length, onCanvas, bad: bad.slice(0, 6) }));
     ok(times.every((ms) => ms < 250), "a redraw with sixty more questions lays the board out without a stall (wall clock, loose: the layout count below is the guard)", JSON.stringify(times));
-    // the layout reads every box before it writes any (the cards moved first, so a write left before a read would show): one forced layout, not one per card (Chromium's own count)
+    // the layout reads every box before it writes any (the regions moved first, so a write left before a read would show): one forced layout, not one per region or pin (Chromium's own count)
     const cdp = await ctx.newCDPSession(p); await cdp.send("Performance.enable");
     const layouts = async () => (await cdp.send("Performance.getMetrics")).metrics.find((m) => m.name === "LayoutCount")?.value ?? NaN;
-    const l0 = await layouts(); await p.evaluate(() => { for (const c of document.querySelectorAll(".rb-card, .rb-tchip")) c.style.top = "0px"; window.crewReviewRoom.board.relayout("SC-60"); }); const forced = (await layouts()) - l0;
+    const l0 = await layouts(); await p.evaluate(() => { for (const c of document.querySelectorAll("[data-region]")) c.style.top = "0px"; window.crewReviewRoom.board.relayout("SC-60"); }); const forced = (await layouts()) - l0;
     ok(forced <= 2, "the layout reads every box before it writes any: sixty more questions force at most two layouts", String(forced));
     await ctx.close(); }
 

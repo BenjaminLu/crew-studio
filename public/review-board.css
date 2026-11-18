@@ -3,11 +3,12 @@
    floating on it. The room's own tokens (--rr-*, review-room.css) and the app's (--text, --surface, --border) in light and
    dark; nothing scrolls natively in the viewport. */
 .rb-view { --rp-serif: "Songti TC", "Songti SC", "Noto Serif CJK TC", "Source Han Serif TC", Georgia, serif;
-  display: grid; min-height: 0; min-width: 0; grid-template-rows: minmax(0, 1fr); /* the questions panel: as before up to a 1440 screen (the board keeps the width its camera needs to show a chapter and the
-     follow-ups beside it), then it grows; never so wide that the board drops under 560 px (public/review-room.js crewRoomPane) */
-  --rb-pane: clamp(260px, var(--rr-pane-board, clamp(272px, calc(290px + (100vw - 1440px) * .37), 480px)), min(55%, calc(100% - 780px)));
+  display: grid; min-height: 0; min-width: 0; grid-template-rows: minmax(0, 1fr); /* the conversation pane (the questions and the
+     tutor's answers): 320 px at 1440, growing on a wider screen, at least 300 px; the board beside it frames a chapter at 0.9 or
+     more (review-board.js regionMax); never so wide that the board drops under 560 px (public/review-room.js crewRoomPane) */
+  --rb-pane: clamp(260px, var(--rr-pane-board, clamp(300px, calc(320px + (100vw - 1440px) * .45), 560px)), min(55%, calc(100% - 780px)));
   grid-template-columns: 196px minmax(0, 1fr) var(--rb-pane); column-gap: 12px; position: relative; }
-/* the splitter (review-room.css .rr-split) sits in the gap before the questions */
+/* the splitter (review-room.css .rr-split) sits in the gap before the conversation */
 .rb-view > .rr-split { right: var(--rb-pane); }
 .rb-view.nonotes { grid-template-columns: 196px minmax(0, 1fr); }
 .rb-view > * { grid-row: 1; }
@@ -47,16 +48,15 @@
   background-color: var(--rr-paper); background-image: radial-gradient(var(--rr-dot) 1px, transparent 1.2px); color: var(--rr-ink); cursor: grab; outline: none; }
 .rb-vp.dragging, .rb-vp.grab { cursor: grabbing; }
 .rb-plane { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; font-family: var(--f-sans); }
-.rb-links { position: absolute; left: 0; top: 0; width: 10px; height: 10px; overflow: visible; pointer-events: none; }
-.rb-links path { fill: none; stroke: var(--border-strong); stroke-width: 1.6; }
-.rb-links path.anchor { stroke: var(--rr-marker); stroke-opacity: .55; }
 
 /* a region: its title above, the chapter's card and its drawing, the questions' cards beside */
 .rb-region { position: absolute; margin: 0; }
 .rb-rtitle { position: absolute; left: 2px; top: -30px; display: flex; gap: 10px; align-items: baseline; font-size: 13px; color: var(--rr-ink-2); white-space: nowrap; }
 .rb-rtitle b { font: 600 12px var(--f-mono); color: var(--rr-new); }
 .rb-rtitle span:first-of-type { color: var(--rr-ink); font-weight: 600; }
-.rb-cnt { font: 600 11.5px var(--f-mono); } .rb-cnt i { font-style: normal; color: var(--rr-inf-ink); }
+/* a chapter's question badge: a click opens the conversation on its questions */
+.rb-cnt { font: 600 11.5px var(--f-mono); color: var(--rr-ink-2); background: none; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; cursor: pointer; } .rb-cnt i { font-style: normal; color: var(--rr-inf-ink); }
+.rb-cnt:hover { border-color: var(--rr-marker); color: var(--rr-marker); } .rb-cnt:focus-visible { outline: 2px solid var(--rr-marker); outline-offset: 2px; }
 .rb-rbody { position: relative; display: grid; gap: 12px; }
 .rb-region.cur > .rb-rbody > .rp-card { box-shadow: 0 0 0 2px var(--rr-new-soft), var(--rr-shadow); }
 .rb-rbody .rp-fig { margin: 0; }
@@ -84,7 +84,7 @@
 .rb-badge.q { background: var(--rr-inf-bg); color: var(--rr-inf-ink); } .rb-badge.ok { background: var(--rr-ok-soft); color: var(--rr-ok); }
 .rb-plane[data-lod="far"] .rb-map { display: flex; }
 .rb-plane[data-lod="far"] .rb-rbody > :not(.rb-map) { visibility: hidden; }
-.rb-plane[data-lod="far"] .rb-rtitle, .rb-plane[data-lod="far"] .rb-tlayer, .rb-plane[data-lod="far"] .rb-links { display: none; }
+.rb-plane[data-lod="far"] .rb-rtitle, .rb-plane[data-lod="far"] .rb-tlayer { display: none; }
 .rb-plane[data-lod="far"] .rb-region.unvisited .rb-map { border-style: dashed; opacity: .7; }
 .rb-plane[data-lod="far"] .rb-region.cur .rb-map { border-color: var(--rr-marker); }
 /* mid: the cards say what was asked and the answer's first lines */
@@ -147,10 +147,10 @@ html:lang(zh-TW) .rb-anchor, html:lang(zh-CN) .rb-anchor { quotes: "「" "」"; 
 .rb-tchip.merged { background: var(--surface-2); color: var(--text-2); border-color: var(--border-strong); }
 .rb-tchip:hover { border-color: currentColor; }
 
-/* focus on one question: the rest dims */
-.rb-plane.focusing .rb-region > .rb-rbody, .rb-plane.focusing .rb-card:not(.lit), .rb-plane.focusing .rb-tchip, .rb-plane.focusing .rb-links path:not(.lit), .rb-plane.focusing .rb-rtitle { opacity: .14; }
-.rb-plane.focusing .rb-links path.lit { stroke: var(--rr-marker); stroke-opacity: 1; stroke-width: 2.2; }
-.rb-plane.focusing .rb-region:has(.rb-card.lit) > .rb-rbody { opacity: 1; }
+/* focus on one question: its place is lit in its chapter, the other chapters dim */
+.rb-plane.focusing .rb-region:not(:has(.rb-ann.lit)) > .rb-rbody, .rb-plane.focusing .rb-region:not(:has(.rb-ann.lit)) > .rb-rtitle { opacity: .14; }
+.rb-ann.lit, .rb-s.rb-ann.lit { background: var(--rr-new-soft); box-shadow: 0 0 0 2px var(--rr-marker); }
+svg .rb-ann.lit > :is(rect, path, .rr-chip-bg, .rr-box) { stroke: var(--rr-marker) !important; stroke-width: 2.6; }
 .rb-vp.only .rb-region:not(.hasq) { opacity: .12; }
 
 /* over the viewport: the tools, the focus bar, the next chapter, the zoom, a toast */
@@ -173,8 +173,37 @@ html:lang(zh-TW) .rb-anchor, html:lang(zh-CN) .rb-anchor { quotes: "「" "」"; 
 .rb-toast { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 25; padding: 7px 14px; border-radius: 9px; background: var(--rr-ok); color: #fff; font-size: 13px; box-shadow: var(--rr-shadow); max-width: 80%; }
 .rb-toast.bad { background: var(--rr-bad); }
 
-/* the notes: every question */
+/* the conversation pane: every question and the tutor's answers at full size, scrolling inside the pane, the ask box at its foot
+   (the explain chat's look: review-room.css .rx-msgs, .rx-m, .rx-ask) */
 .rb-notes { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 8px 6px 16px 14px; border-left: 1px solid var(--border); }
+.rb-notes.rb-conv { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; padding: 0; }
+.rb-convhead { padding: 8px 10px 2px 14px; min-width: 0; }
+.rb-convlist { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 10px 14px 14px; }
+.rb-conv .rb-thread { padding: 6px 0 14px; border-bottom: 1px solid var(--border); scroll-margin-top: 8px; }
+.rb-conv .rb-thread:last-child { border-bottom: 0; }
+.rb-conv .rb-thread > .rb-nitem { border-bottom: 0; border-radius: 8px; }
+.rb-conv .rb-thread.here > .rb-nitem { background: var(--surface-2); }
+.rb-conv .rb-thread.lit > .rb-nitem { box-shadow: inset 3px 0 0 var(--rr-marker); background: var(--rr-new-soft); }
+.rb-tcards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 4px; }
+.rb-tcards > .rb-tchip { justify-self: start; margin-left: 6px; }
+.rb-conv .rb-card { width: auto; min-width: 0; margin-left: calc(var(--d, 0) * 14px); background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--rr-marker); padding: 10px 13px; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.rb-conv .rb-card.q { border-left-color: var(--rr-inf-ink); }
+.rb-conv .rb-card.lit { border-color: var(--rr-marker); }
+.rb-conv .rb-card.pending { background: var(--surface); border-style: dashed; border-left-style: solid; }
+.rb-conv .rb-cq { white-space: normal; overflow: visible; font-size: 13px; }
+/* the thread's head shows the words asked about; a new question's card (no head yet) shows them itself */
+.rb-conv .rb-thread:not(.new) .rb-card > .rb-anchor { display: none; }
+.rb-conv .rb-anchor { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12.5px; }
+.rb-conv .rb-cbody p { max-width: 72ch; margin: 0 0 8px; } .rb-conv .rb-cbody p:last-child { margin-bottom: 0; }
+.rb-conv .rb-cbody .rr-pre { font-size: 12px; max-height: 320px; overflow: auto; }
+/* a drawing an answer made: a thumbnail; a click shows its chapter on the board */
+.rb-conv .rb-cfigs { cursor: zoom-in; }
+.rb-conv .rb-cfigs .rp-fig { max-height: 220px; overflow: hidden; }
+.rb-conv .rb-cfigs .rp-fig * { pointer-events: none; }
+.rb-convask { padding: 10px 10px 12px 14px; }
+.rb-convto { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-convask .rx-row .grow { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-convask .rb-btn.primary { height: 30px; padding: 0 14px; font-size: 13px; }
 .rb-notes h3 { margin: 2px 0 4px; font-size: 14px; }
 .rb-hint { margin: 0 0 10px; font-size: 13px; line-height: 1.6; color: var(--text-3); max-width: 62ch; }
 .rb-empty { font-size: 13px; color: var(--text-3); border: 1px dashed var(--border-strong); border-radius: 10px; padding: 12px; }
@@ -206,7 +235,7 @@ html:lang(zh-TW) .rb-nitem q, html:lang(zh-CN) .rb-nitem q { quotes: "「" "」"
 @media (max-width: 1180px) {
   .rb-view, .rb-view.nonotes { grid-template-columns: 180px minmax(0, 1fr); }
   .rb-view > .rr-split { display: none; }
-  .rb-view .rb-notes { position: absolute; right: 0; top: 0; bottom: 0; width: min(380px, 70%); box-sizing: border-box; z-index: 30; background: var(--bg, var(--surface)); box-shadow: var(--rr-shadow); }
+  .rb-view .rb-notes { position: absolute; right: 0; top: 0; bottom: 0; width: min(420px, 78%); box-sizing: border-box; z-index: 30; background: var(--bg, var(--surface)); box-shadow: var(--rr-shadow); }
 }
 /* a phone: the board fills the screen above the read-only dock; the answers and the questions are sheets from the bottom; the
    popover too */

@@ -1784,7 +1784,7 @@ routes.room.focus = (arg) => (arg && RR.rooms.has(arg) && !RR.rooms.get(arg).err
 window.crewReviewRoomData = (id) => RR.rooms.get(id) || null;
 window.crewReviewRoom = { parseFlow, scenesOf, curveSvg, statePlace, archPlace, board: BOARD, redraw };
 })();
-// The splitter between the room's main area and its right-hand pane (the board's questions, the skill's chat): dragged, or
+// The splitter between the room's main area and its right-hand pane (the board's conversation, the skill's chat): dragged, or
 // focused and moved with the arrow keys (Shift for bigger steps, Home and End for the bounds); a double-click or Enter goes back
 // to the default width. The width is kept per view on this browser (localStorage) as a property on the page's root, so a redraw
 // of the room keeps it; the CSS clamps it again to the room's width (review-room.css .rr-split, review-board.css --rb-pane).
@@ -1804,7 +1804,7 @@ const mainOf = (v) => box(v)?.querySelector(v === "board" ? ":scope > .rb-main" 
 const bounds = (v) => { const w = box(v)?.clientWidth || innerWidth; return [MIN[v], Math.max(MIN[v], Math.min(MAX, Math.floor(w * 0.55), KEEP[v] ? w - KEEP[v] : Infinity))]; };
 const width = (v) => Math.round(paneOf(v)?.getBoundingClientRect().width || 0);
 /** the pane's width when it is not on the page: the captain's, else the CSS default (review-board.css, review-room.css) */
-const guess = (v) => read(v) ?? Math.round(v === "board" ? Math.min(480, Math.max(272, 290 + (innerWidth - 1440) * 0.37)) : Math.min(560, Math.max(360, innerWidth * 0.32)));
+const guess = (v) => read(v) ?? Math.round(v === "board" ? Math.min(560, Math.max(300, 320 + (innerWidth - 1440) * 0.45)) : Math.min(560, Math.max(360, innerWidth * 0.32)));
 function sync(el) { const v = el.dataset.paneSplit, [lo, hi] = bounds(v), m = Math.round(mainOf(v)?.getBoundingClientRect().width || 0), all = m + width(v);
   el.setAttribute("aria-valuemin", String(all - hi)); el.setAttribute("aria-valuemax", String(all - lo)); el.setAttribute("aria-valuenow", String(m)); }
 // the board lays its scenes out for its width and its camera frames them: told once a width settles (a drag let go, a key)
@@ -1830,7 +1830,7 @@ function keydown(e) { const v = e.currentTarget.dataset.paneSplit, cur = width(v
 /** the splitter for a view ("board" or "explain") */
 function handle(v) {
   const el = h("div", { class: "rr-split", role: "separator", tabindex: "0", "aria-orientation": "vertical", "data-pane-split": v,
-    "aria-label": v === "board" ? T("Resize the board and the questions panel", "調整白板和標註欄的寬度") : T("Resize the output and the chat", "調整產出和追問欄的寬度"),
+    "aria-label": v === "board" ? T("Resize the board and the conversation", "調整白板和問答欄的寬度") : T("Resize the output and the chat", "調整產出和追問欄的寬度"),
     title: T("Drag, or use ← →, to resize · double-click to reset", "拖拉或用 ← → 調整寬度 · 雙擊回到預設"),
     onpointerdown: down, onkeydown: keydown, ondblclick: () => set(v, null) });
   // a redraw of the room replaces the splitter: one that had the keyboard (or a drag) keeps it
