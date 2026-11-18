@@ -54,7 +54,7 @@ const refRoute = (ref) => { const k = ref.slice(0, ref.indexOf(":")), id = ref.s
 function refRead(ref, log, at) {
   const id = ref.slice(ref.indexOf(":") + 1);
   for (let j = at - 1; j >= 0 && j >= at - 80; j--) { const x = log[j]; if (!x) continue; if (x.kind === "captain") break;
-    if (x.kind === "tool" && (String(x.text || "").includes(ref) || String(x.text || "").includes(id))) return x; }
+    if (x.kind === "tool" && new RegExp(`(^|[^\\w-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(String(x.text || ""))) return x; }
   return null;
 }
 function refChips(frag, log, at) {
