@@ -17,6 +17,9 @@
   `packs/core/skills/studio-baton/diagram-design/`. The list of files and both licenses are in `packs/core/skills/studio-baton/NOTICE.md`.
   Its scripts install **OpenCC** (Apache License 2.0, https://github.com/BYVoid/OpenCC) from PyPI, pinned by version and
   sha256 in its requirements.txt; nothing of OpenCC is shipped with Studio.
+- **@xterm/headless 6.0.0**, the headless build of xterm.js, with **@xterm/addon-unicode11 0.9.0**: how Studio reads a
+  terminal's screen for `studio_logs` (src/terminal-screen.ts), bundled into the binary. MIT License, copyright the xterm.js
+  authors, SourceLair Private Company and Christopher Jeffrey; the text is in `public/vendor/xterm-LICENSE.txt`.
 - **xterm.js 6.0.0** (`@xterm/xterm`, `public/vendor/xterm-6.0.0.min.js` and `xterm-6.0.0.css`), **@xterm/addon-fit 0.11.0**
   (`public/vendor/xterm-addon-fit-0.11.0.min.js`) and **@xterm/addon-unicode11 0.9.0**
   (`public/vendor/xterm-addon-unicode11-0.9.0.min.js`), copied from the pinned npm packages by `scripts/vendor-xterm.ts`: the

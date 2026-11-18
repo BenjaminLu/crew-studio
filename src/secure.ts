@@ -90,13 +90,15 @@ export function isCredentialName(name: string): boolean {
   return /^[A-Z][A-Z0-9_]*$/.test(raw) && (/_KEY$/.test(raw) || /PRIVATE/.test(raw));
 }
 /** Values that are credentials by their format alone (rule 4). */
+// a token with its own prefix is found glued to the text before it too (xxxghp_…: a terminal or a log joins words); the
+// two generic forms (sk-…, key_…) keep the word boundary, or a long word ending in "sk" would go
 export const SECRET_VALUE: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /\bsk-ant-[A-Za-z0-9_-]{8,}/g, /\bsk-(proj-)?[A-Za-z0-9_-]{16,}/g,
+  /sk-ant-[A-Za-z0-9_-]{8,}/g, /\bsk-(proj-)?[A-Za-z0-9_-]{16,}/g,
   /\b(crsr|key)_[A-Za-z0-9]{32,}/g,
-  /\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
-  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, /\bAKIA[0-9A-Z]{16}\b/g,
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+  /(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, /github_pat_[A-Za-z0-9_]{20,}/g,
+  /xox[abposr]-[A-Za-z0-9-]{10,}/g, /AKIA[0-9A-Z]{16}\b/g,
+  /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
 ];
 /** The one marker a removed credential leaves (the pinned spec's words). */
 export const REDACTED = "[credential removed]";

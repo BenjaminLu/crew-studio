@@ -156,7 +156,7 @@ export function createObserve(s: Sources, grant: GrantView | null = null) {
   const sinceArg = (a: Record<string, unknown>, tool: string): string | null => { if (a.since === undefined) return null;
     if (typeof a.since === "string" && (/^seq:\d{1,12}$/.test(a.since) || (/^\d{4}-\d\d-\d\d/.test(a.since) && Number.isFinite(Date.parse(a.since))))) return a.since;
     throw bad(`${tool}: since is the cursor a previous call returned (seq:N) or an ISO time (2026-11-18T09:00:00Z).`, `${tool}：since 是上一次回傳的 cursor（seq:N）或 ISO 時間。`); };
-  const logs = (a: Record<string, unknown>, ctx: CallCtx) => {
+  const logs = async (a: Record<string, unknown>, ctx: CallCtx) => {
     onlyKeys(a, "studio_logs", ["ref", "tail", "since"]);
     const r = parseRef(a.ref); if (!r) throw bad(`studio_logs: ref is kind:id, for example task:R-162 or room:PR-0123456789ab-1645.`, `studio_logs：ref 的格式是 kind:id，例如 task:R-162。`);
     const def = kindOrFail(r.kind, "studio_logs"), lk = logKinds();
@@ -170,7 +170,7 @@ export function createObserve(s: Sources, grant: GrantView | null = null) {
     const ent = (() => { try { return def.get(s, r.id); } catch { return null; } })(), seen = !!ent && visible(def, ent);
     let n = tail, env: Envelope | null = null;
     for (;;) {
-      const out = seen ? def.logs(s, r.id, { tail: n, since, ctx: grant ? {} : ctx }) : null;
+      const out = seen ? await def.logs(s, r.id, { tail: n, since, ctx: grant ? {} : ctx }) : null;
       if (!out) throw new NativeToolFailure("not_found", `${refOf(def.kind, r.id)} is not in Studio. List them with studio_list {kind: "${def.kind}"}.`, `Studio 裡沒有 ${refOf(def.kind, r.id)}。請用 studio_list {kind: "${def.kind}"} 列出。`, "read_current_state");
       env = { ref: refOf(def.kind, r.id), kind: def.kind, route: routeOf(def, r.id), updatedAt: out.updatedAt ?? null, data: shape({ fields: def.logFields } as KindDef, out.data).data, untrusted: [], nextCursor: out.cursor, truncated: false };
       if (n <= 1 || finalBytes(env) <= BUDGET.summary) break;
