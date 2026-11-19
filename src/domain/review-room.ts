@@ -313,14 +313,6 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       : { en: ` Held now (${u.held}): the turn may fail with ${p.provider}'s error.`, zh: `目前暫停（${u.held}）：這一回合可能失敗並顯示 ${p.provider} 的錯誤。` };
     return { effort: u.effort ?? null, level: (u.level ?? null) as Level | null, warning, unlisted: !u.listed };
   };
-  /** the tutor the captain picked for a regeneration: any model (a listed one or one entered by hand); a held or unlisted one is said */
-  const pickedTutor = (run: any, want: any): Tutor => {
-    const { provider, model } = tutorArg(want), { effort, level, warning, unlisted } = tutorFacts(run, { provider, model }), w = warning ?? { en: "", zh: "" };
-    // no author Studio knows (a pull request no Task made): how independent the pick is cannot be said, and is not claimed
-    if (!level) return { pick: { provider, model, effort } as AgentPick, level: null as unknown as Level, adaptive: true, outside: true, warning, picked: true, unlisted, label: { en: `Independence from the author unknown: the change's author is outside Studio. Picked by the captain to explain this again.${w.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。船長選來重講這一題。${w.zh}` } };
-    // the author's own model too: how independent it is, is said (the label), never a refusal: the captain picked it
-    return { pick: { provider, model, effort } as AgentPick, level, adaptive: true, outside: true, warning, picked: true, unlisted, label: { en: `${LEVEL_TEXT[level].en}. Picked by the captain to explain this again.${w.en}`, zh: `${LEVEL_TEXT[level].zh}。船長選來重講這一題。${w.zh}` } };
-  };
   /** the tutor the captain picked: this room's, else Studio's default (settings().tutor), else none (Automatic: seatPick) */
   const choiceOf = (room: Room | null): { provider: string; model: string; source: "room" | "studio" } | null => {
     if (room?.tutor) return { provider: room.tutor.provider, model: room.tutor.model, source: "room" }; const d = settings().tutor; return d ? { ...d, source: "studio" } : null; };
@@ -372,14 +364,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     if (team) return { provider: team.provider, model: team.model, effort: team.effort ?? null };
     throw none(why); };
   const noHost = () => refuse("No Studio Task made this pull request, so no reviewer seat can host a tutor here: the room shows the pull request, its reviewers' comments and what changed, without paid turns / 這個 pull request 不是 Studio 的任務開的，沒有審查座位可以當導師：審查室只顯示 PR、審查者的意見和改了什麼，不能付費提問", "no_host");
-  const offerOf = (k: Key, want?: any) => {
+  const offerOf = (k: Key) => {
     try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr" && k.kind !== "dir") throw noHost();
-      if (want && (!s.run || !s.node)) throw noHost();
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
-      const t = want ? pickedTutor(s.run, want) : tutorFor(k, s), p = t.pick, effort = p.effort ?? null, c = want ? null : choiceOf(load(k));
-      return { provider: p.provider, model: p.model ?? null, effort, paid: true, picked: want ? "regenerate" : c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label }, warning: t.warning ?? null,
-        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside, ...(want ? { picked: true } : {}),
+      const t = tutorFor(k, s), p = t.pick, effort = p.effort ?? null, c = choiceOf(load(k));
+      return { provider: p.provider, model: p.model ?? null, effort, paid: true, picked: c?.source ?? "auto", independence: { level: t.level, adaptive: t.adaptive, outside: t.outside, ...t.label }, warning: t.warning ?? null,
+        hash: sha(JSON.stringify({ card: k.id, head: s.head, provider: p.provider, model: p.model ?? null, effort, level: t.level, outside: t.outside,
           // a picked model that turned held, unverified or unreported since the offer is confirmed again, its warning said
           ...(t.warning ? { warning: t.warning.en } : {}) })).slice(0, 16) }; }
     catch (e: any) { return { error: String(e?.message ?? e), code: e?.code ?? null }; }
@@ -676,7 +667,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   let self: any = null;
   // "Explain with": the room presented by a skill (src/domain/review-explain.ts), on the room tutor's seat; questions are the tutor's
   const explainer = installExplainer({ engine, dataDir: o.dataDir, role: TUTOR_ROLE, keyOf, load, subjectOf, offerOf, tutorFor, admit, ensureHost: (k, _offer, by) => ensureHost(k, by),
-    tutorBusy: () => false, subjectRecord,
+    subjectRecord,
     beforePaid: async (k) => { if (k.kind !== "pr") return; const r0 = load(k);
       if (r0?.subject?.url && Date.now() - Date.parse(r0.pr?.checkedAt ?? "0") >= PR_FRESH_MS()) { try { await readPr(r0.subject.url); } catch (e: any) { throw refuse(`Studio could not read the pull request again on GitHub before this paid run: ${String(e?.message ?? e).slice(0, 200)} / Studio 在這次付費執行前沒辦法再讀一次 GitHub 上的 pull request`, "stale"); } }
       const r1 = load(k); if (r1?.pr?.stale && r1.pr.state === "open") throw refuse("GitHub shows newer commits Studio could not fetch yet: check for new commits before a paid run / GitHub 上有 Studio 還沒抓到的新 commit：付費執行前請先檢查新的 commit", "stale"); },

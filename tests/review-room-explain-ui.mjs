@@ -84,7 +84,10 @@ const SL = (x) => ({ args: "", limit: null, limits: { cpuS: 300, fileMB: 60, wal
 const run = (n, kind, status, extra = {}) => ({ n, kind, skill: { id: "walkthrough", v: 1, name: "walkthrough", sha256: "x" }, status, by: "captain", at: new Date(Date.now() - 4 * 60_000).toISOString(), ended: status === "running" ? null : new Date().toISOString(), provider: "claude", model: "claude-opus-5", effort: null, confirm: "c", limitMin: 120, rounds: [{ n: 1, job: "J1" }], cost: { usd: 0.42 }, error: null, progress: [], from: null, version: null, ...extra });
 
 /** the version menu on the output's line: opened when it is not, then a version picked from it */
-const openVersions = async (pg) => { if (!(await pg.$("[data-explain-vermenu]"))) { await pg.click("[data-explain-versions]"); await pg.waitForSelector("[data-explain-vermenu]"); } };
+// the menu moves the focus to the version shown on the next frame, which scrolls the menu to it: a click aimed before that lands
+// where the item was (in real Chrome, often on the output's frame under the menu). Wait for the focus to be in the menu first.
+const openVersions = async (pg) => { if (!(await pg.$("[data-explain-vermenu]"))) { await pg.click("[data-explain-versions]"); await pg.waitForSelector("[data-explain-vermenu]");
+  await pg.waitForFunction(() => !!document.activeElement?.closest("[data-explain-vermenu]"), null, { timeout: 3000 }).catch(() => {}); } };
 const pickVersion = async (pg, n) => { await openVersions(pg); await pg.click(`[data-explain-version="${n}"]`); };
 /** Generate again: the stage's own button while nothing is made yet, else the one in the version menu */
 const again = async (pg) => { if (!(await pg.$("[data-explain-empty] [data-explain-again]"))) await openVersions(pg); await pg.click("[data-explain-again]"); };

@@ -150,10 +150,11 @@ ok(e?.code === "confirm_required" && askOffer?.kind === "ask" && /page you are l
 script.push([["mat_read", { path: "version/page.txt" }], ["mat_read", { path: "head/src/percent.ts" }], ["out_write", { path: "index.html", content: "<p>changed</p>" }],
   ["explain_answer", { answer: "Rounding happens once, at the end, so the cents never drift.", cites: ["src/percent.ts:L3", "page:Step 1 · rounding"], updated: true, summary: "tried to change the page" }]]);
 const nq = results.length;
+// an older page still sending a region with its question: the region is not taken (a question is about the whole page)
 const sel = { rect: { x: 10, y: 40, w: 300, h: 90 }, text: "Math.round", headings: ["Step 1 · rounding"], nodes: ["round"], title: "percent" };
-v = await X.ask(id, { question: "Why round here?", selection: sel, version: 1, confirm: askOffer.hash, consent: true }, "captain");
+v = await X.ask(id, { question: "Why round here?", selection: sel, version: 1, confirm: askOffer.hash, consent: true } as any, "captain");
 const run2 = await waitRun(2);
-ok(run2.status === "done" && run2.answer === "Rounding happens once, at the end, so the cents never drift." && run2.cites.join("|") === "src/percent.ts:L3|page:Step 1 · rounding" && run2.version === null && run2.from === 1 && run2.selection === null,
+ok(run2.status === "done" && run2.answer === "Rounding happens once, at the end, so the cents never drift." && run2.cites.join("|") === "src/percent.ts:L3|page:Step 1 · rounding" && run2.version === null && run2.from === 1 && !("selection" in run2),
   "the answer and its citations are kept on the run, with the version it was about (from v1); no version, no region", JSON.stringify({ s: run2.status, e: run2.error, a: run2.answer, v: run2.version, from: run2.from }));
 const ask = prompts.at(-1)!, qres = results.slice(nq), page0 = String(qres[0]?.[1]?.text ?? "");
 ok(/^ROOM EXPLAIN ASK/.test(ask.text) && ask.text.includes("Why round here?") && /version\/page\.txt/.test(ask.text) && !/Headings:|boxed/.test(ask.text) && ask.system.includes(QA_FRAME.slice(0, 200)) && !ask.system.includes("Write index.html: one section per step"),
