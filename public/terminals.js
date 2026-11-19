@@ -8,7 +8,7 @@
 (() => {
 const XV = "6.0.0", FITV = "0.11.0", U11V = "0.9.0";
 const TM = { refused: new Map(), list: null, presets: [], projects: [], canWrite: false, err: null, panes: new Map(), prev: new Map(), busy: false, cmd: "", args: "", showNew: null,
-  project: store.get("crew.term.project", ""), rc: store.get("crew.term.rc", "1") !== "0", tab: store.get("crew.chat.tab", "chat") };
+  project: store.get("crew.term.project", ""), tab: store.get("crew.chat.tab", "chat") };
 window.crewTerminals = TM;
 const getJ = async (u) => { const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; };
@@ -78,9 +78,7 @@ function redraw() {
   // (the command field, the terminal), and a state change, an exit or a review row must not wait for a blur (live bug)
   if (onPage()) { clearTimeout(redrawT); redrawT = setTimeout(() => (document.querySelector("[data-term-detail]") ? patchPage() : soft()), 0); }
 }
-window.liveListen?.("terminals", (m) => { try { const d = JSON.parse(m.data); const known = new Map((TM.list || []).map((t) => [t.id, t]));
-  // the stream carries the phone-safe summary (no Remote Control link): keep the link the page already has
-  apply((d.terminals || []).map((t) => (t.remote && known.get(t.id)?.remote?.url ? { ...t, remote: { ...t.remote, url: known.get(t.id).remote.url } } : t))); redraw(); } catch {} });
+window.liveListen?.("terminals", (m) => { try { const d = JSON.parse(m.data); apply(d.terminals || []); redraw(); } catch {} });
 window.liveListen?.("hello", () => load());
 addEventListener("focus", () => { if (TM.list) load(); });
 
@@ -196,7 +194,7 @@ function onOut(id, type, d) {
   const fresh = () => { const had = f.end !== null || f.log.length > 0; f.log = []; f.size = 0; f.trimmed = false; f.exited = false; f.end = null; if (term && had) { term.reset(); TM.resets++; } };
   if (type === "replay") {
     if (TM.gone.delete(id)) redraw();
-    if (d.hidden === "remote-control") { fresh(); put(`\x1b[2m${T("Output is not shown on a phone while Claude Code's Remote Control is on: its session link is printed in it. The state above stays live; take the session over in the Claude app.", "Claude Code 開著 Remote Control 時，手機上不顯示輸出（裡面有 session 連結）。上面的狀態照常更新；要操作請用 Claude app 接手。")}\x1b[0m\r\n`); return; }
+    if (d.hidden === "remote-control") { fresh(); put(`\x1b[2m${T("Output is not shown on a phone once this terminal has shown a Claude Code session link. The state above stays live.", "這個終端機印過 Claude Code 的 session 連結，手機上就不再顯示輸出。上面的狀態照常更新。")}\x1b[0m\r\n`); return; }
     if (d.b64 !== undefined && Number.isFinite(d.end)) {
       const bytes = b64bytes(d.b64), start = d.end - bytes.length;
       if (f.end !== null && f.end >= start && f.end <= d.end) { if (f.end < d.end) put(bytes.subarray(f.end - start)); f.end = d.end; return; }
@@ -232,7 +230,7 @@ function muxSync() {
   for (const type of ["replay", "out", "exit"]) es.addEventListener(type, (m) => { const d = JSON.parse(m.data); onOut(d.id, type, d); });
   es.addEventListener("gone", (m) => onGone(JSON.parse(m.data)));
   es.addEventListener("replay", () => { if (!TM.gone.size) MUX.retryMs = 3000; });
-  es.addEventListener("meta", (m) => { const v = JSON.parse(m.data); const i = (TM.list || []).findIndex((x) => x.id === v.id); if (i >= 0) { const before = TM.list[i]; TM.list[i] = v; if (before.state !== v.state || before.remote?.url !== v.remote?.url) redraw(); } });
+  es.addEventListener("meta", (m) => { const v = JSON.parse(m.data); const i = (TM.list || []).findIndex((x) => x.id === v.id); if (i >= 0) { const before = TM.list[i]; TM.list[i] = v; if (before.state !== v.state) redraw(); } });
 }
 TM.retryMux = retryMux;
 TM.mux = MUX;
@@ -274,7 +272,7 @@ const studioWindow = () => { try { if (sessionStorage.getItem("crew.studioWindow
 const inTab = () => !studioWindow();
 const LAYOUT = "crew.term.layout";
 TM.lay = (() => { try { const v = JSON.parse(localStorage.getItem(LAYOUT) || "null"); if (v && Array.isArray(v.tabs) && Number.isInteger(v.uid)) return v; } catch {} return { tabs: [], cur: 0, uid: 0 }; })();
-TM.ui = { picker: null, help: false, naming: null, menu: false, remote: null };
+TM.ui = { picker: null, help: false, naming: null, menu: false };
 const saveLay = () => { try { localStorage.setItem(LAYOUT, JSON.stringify(TM.lay)); } catch {} };
 const nid = (p) => `${p}${++TM.lay.uid}`;
 const leaf = (term) => ({ t: "pane", id: nid("p"), term });
@@ -301,7 +299,7 @@ function reconcile() { const known = new Set((TM.list || []).map((t) => t.id)); 
 function syncHash() { const t = termOf(focusPane()), q = location.hash.split("?")[1], want = (t ? `#/terminals/${encodeURIComponent(t.id)}` : "#/terminals") + (q ? `?${q}` : "");
   if (location.hash !== want) { history.replaceState(null, "", want); if (S.route?.name === "terminals") S.route.arg = t?.id ?? null; } TM.lastArg = t?.id ?? null; }
 // asked again on the next frame: a sheet opened in between (a double-click's rename) keeps its field's focus
-const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help || TM.ui.remote || TM.ui.menu;
+const sheetOpen = () => TM.ui.picker || TM.ui.naming || TM.ui.help || TM.ui.menu;
 // the terminal never takes the focus from the list toolbar's search the captain is typing in (public/list-tools.js)
 // and the second ask (the next frame) never takes it from a field that got it in between (the launcher's command field
 // that ⌥⌘N just focused, the list's search): only from nowhere, a button or another terminal
@@ -352,7 +350,6 @@ function run(act, arg) {
     case "dismiss": if (!TM.canWrite || !t || t.running) return false; termOp(t.id, "dismiss"); return true;
     case "review": { const rv = TM.canWrite && t && !t.review && reviewState(t); if (!rv) return false; if (rv.why) toast(rv.why); else termOp(t.id, "review"); return true; }
     case "retry": if (!TM.gone.size) return false; retryMux(); return true;
-    case "remote": if (!t?.remote?.url) return false; TM.ui.remote = t.id; break;
     case "appWindow": if (!TM.canWrite) return false; openStudioWindow(); return true;
     case "closeTab": if (!tab) return false; closeTab(TM.lay.cur); break;
     case "newTab": if (!TM.canWrite) return false; startShell(null); return true;
@@ -392,7 +389,6 @@ addEventListener("keydown", (e) => {
     return; }
   const hit = K.lookup(e, plat(), inTab());
   if (ui.help) { if (e.key === "Escape" || hit?.act === "help") { stop(); ui.help = false; redo(); } return; }
-  if (ui.remote) { if (e.key === "Escape") { stop(); ui.remote = null; redo(); } return; }
   // the open menu has the focus: arrows move through its items, Enter is the focused item's own, ? is the key table, Esc
   // gives the keys back to the terminal; a chord closes it and does what it says
   if (ui.menu && !document.activeElement?.closest?.(".wt-more")) menuClose(); // the focus left it (Tab): it closes
@@ -460,14 +456,13 @@ async function openStudioWindow() {
 // What the focused terminal is (its command, folder, question, branch) is the menu's head, not a header over the terminal.
 function menuInfo(t) {
   if (!t) return null;
-  const rv = reviewState(t), url = t.remote?.url;
+  const rv = reviewState(t);
   return h("div", { class: "wt-minfo" },
     h("div", { class: "wt-mtitle" }, h("b", {}, t.label), h("span", { class: "faint" }, ` · ${t.project.name}`), badge(t)),
     h("div", { class: "faint wt-cmd", title: `${t.command}\n${t.project.path}` }, h("code", {}, t.command), T(` in ${t.project.path}`, ` 於 ${t.project.path}`)),
     restoredNote(t),
     t.ask && t.state === "waiting" ? h("div", { class: "wt-ask", "data-term-ask": "1" }, T("Asks: ", "問你："), t.ask) : null,
     rv ? h("div", { class: "faint wt-review", "data-term-review": t.id }, rv.where, rv.why ? h("span", {}, rv.why) : null) : null,
-    !url && TM.canWrite && t.remote?.enabled && t.running ? h("div", { class: "faint wt-remote-wait" }, T("Remote Control: waiting for Claude Code to print its link…", "Remote Control：等 Claude Code 印出連結…")) : null,
     TM.canWrite ? null : h("div", { class: "faint", "data-term-readonly": "1" }, T("View only: typing, starting and stopping happen on the Mac.", "只能檢視：輸入、啟動和停止要在 Mac 上做。")));
 }
 function menuItems(t, tab) {
@@ -482,7 +477,6 @@ function menuItems(t, tab) {
     [w && it("launch", "Launch…", "啟動…", { attrs: { "data-term-new": "1", role: "menuitemcheckbox", "aria-checked": String(!!showNew) } }),
       w && rv && !t.review && it("review", "Send for review", "送審", { attrs: { "data-term-send": t.id }, disabled: !!rv.why }),
       t?.review && it("inReview", `In review: ${t.review.run}`, `審查中：${t.review.run}`, { href: `#/run/${encodeURIComponent(t.review.run)}`, attrs: { "data-term-review-run": t.review.run } }),
-      t?.remote?.url && it("remote", "Remote Control link…", "Remote Control 連結…", { attrs: { "data-term-remote-open": t.id } }),
       TM.gone.size && it("retry", "Retry the output that waits", "重試暫停的輸出", { attrs: { "data-term-gone-retry": [...TM.gone.keys()].join(" ") } }),
       w && t && !t.restored && it("restart", "Restart", "重新啟動", { attrs: { "data-term-restart": t.id } })],
     [w && inT && it("appWindow", "Open in a Studio window", "用 Studio 視窗開"), it("sidebar", "Show / hide the sidebar", "顯示 / 隱藏側欄"),
@@ -493,9 +487,9 @@ function menuItems(t, tab) {
 }
 function menuEl(t, tab) {
   const open = !!TM.ui.menu;
-  // something waits in the menu for the focused terminal (Send for review is ready, a Remote Control link came): a dot on ⋯
-  const rv = t && TM.canWrite && !t.review && reviewState(t), ready = rv && !rv.why ? "review" : t?.remote?.url ? "remote" : null;
-  const says = ready === "review" ? T("Send for review is ready", "可以送審了") : ready === "remote" ? T("Remote Control link is ready", "Remote Control 連結已就緒") : "";
+  // something waits in the menu for the focused terminal (Send for review is ready): a dot on ⋯
+  const rv = t && TM.canWrite && !t.review && reviewState(t), ready = rv && !rv.why ? "review" : null;
+  const says = ready === "review" ? T("Send for review is ready", "可以送審了") : "";
   const btn = h("button", { type: "button", class: "btn ghost sm wt-mbtn", "data-term-menu": "1", "aria-haspopup": "menu", "aria-expanded": String(open),
     "aria-label": T("Terminal menu", "終端機選單") + (says ? ` · ${says}` : ""), title: `${T("Menu", "選單")} (${K.useNow("menu", plat(), inTab())})${says ? ` · ${says}` : ""}`, onclick: (e) => { e.stopPropagation(); run("menu"); } },
     "⋯", ready ? h("i", { class: "wt-mready", "data-term-menu-ready": ready }) : null);
@@ -518,14 +512,6 @@ function menuClose(back = false) { if (!TM.ui.menu) return; TM.ui.menu = false; 
 addEventListener("pointerdown", (e) => { if (TM.ui.menu && !e.target.closest?.(".wt-more")) menuClose(); }, true);
 // Tab out of the open menu (or any focus that lands outside it) closes it, so its keys never act from elsewhere
 addEventListener("focusin", (e) => { if (TM.ui.menu && !e.target.closest?.(".wt-more")) menuClose(); });
-function remoteSheet() {
-  const t = (TM.list || []).find((x) => x.id === TM.ui.remote), url = t?.remote?.url; if (!url) { TM.ui.remote = null; return null; }
-  return h("div", { class: "wt-veil", "data-term-remote-sheet": t.id, onclick: (e) => { if (e.target === e.currentTarget) { TM.ui.remote = null; redo(); } } },
-    h("div", { class: "card wt-sheet", role: "dialog", "aria-label": "Remote Control" },
-      h("div", { class: "wt-remote", "data-term-remote": "1" }, qrBox(url),
-        h("div", {}, h("b", {}, T("Remote Control is on", "Remote Control 已開啟")), h("p", { class: "faint" }, T("Open this link in the Claude app or claude.ai to take the session over. Anyone with the link and your account can drive it.", "在 Claude app 或 claude.ai 開這個連結就能接手這個 session。有這個連結又登入你帳號的人都能操作它。")),
-          h("a", { href: url, target: "_blank", rel: "noopener noreferrer", "data-term-remote-url": "1" }, url)))));
-}
 function helpSheet() {
   const p = TM.ui.helpPlat || plat(), tab = inTab(); let group = null; const kids = [];
   for (const [g, act, label, mac, win] of K.KEYMAP) {
@@ -579,22 +565,15 @@ function focusView(arg) {
     TM.err ? h("p", { class: "faint" }, TM.err) : null,
     TM.canWrite && showNew ? h("div", { class: "wt-launch" }, launcher(), terminalsList(t)) : null,
     h("section", { class: "wt-detail", "data-term-detail": t.id }, ...detailHead(t), h("div", { class: "wt-stage" }, drawNode(tab.zoom ? panesOf(tab.root).find((p) => p.id === tab.zoom) || tab.root : tab.root, tab))),
-    TM.ui.help ? helpSheet() : null, TM.ui.picker ? pickerSheet() : null, TM.ui.naming ? namingSheet() : null, TM.ui.remote ? remoteSheet() : null);
+    TM.ui.help ? helpSheet() : null, TM.ui.picker ? pickerSheet() : null, TM.ui.naming ? namingSheet() : null);
 }
 
 // ---------- the page ----------
-function qrBox(text) {
-  if (typeof qrcode !== "function") return null;
-  const q = qrcode(0, "M"); q.addData(text); q.make();
-  const box = h("div", { class: "wt-qr", "aria-label": T("QR code for this session's Remote Control link", "這個 session 的 Remote Control 連結 QR code") });
-  box.innerHTML = q.createSvgTag({ cellSize: 3, margin: 0, scalable: false }); return box;
-}
 const warnText = (proj) => T(`Not sandboxed: runs with your user's full permissions in ${proj.path}`, `不在沙箱內：以你的使用者完整權限在 ${proj.path} 執行`);
 function launcher() {
   if (!TM.canWrite) return h("div", { class: "card x-pad wt-ro", "data-term-readonly": "1" }, h("b", {}, T("View only", "只能檢視")),
     h("p", { class: "faint" }, T("On a phone you can watch terminals and their state. Typing, starting and stopping happen on the Mac.", "手機上可以看終端機與狀態；輸入、啟動和停止要在 Mac 上做。")));
   const proj = TM.projects.find((p) => p.id === TM.project);
-  const hasClaude = TM.presets.some((p) => p.remoteControl);
   const sel = h("select", { id: "termProject", "aria-label": T("Project", "專案"), onchange: (e) => { TM.project = e.target.value; store.set("crew.term.project", TM.project);
       // the warning follows the project in place: a re-render now would replace a command field the captain is typing in
       const w = document.querySelector("[data-term-warning]"), pj = TM.projects.find((x) => x.id === TM.project); if (w && pj) w.textContent = warnText(pj); } },
@@ -604,9 +583,7 @@ function launcher() {
   return h("div", { class: "card x-pad wt-new" },
     h("div", { class: "wt-row" }, h("label", { for: "termProject" }, T("Project", "專案")), TM.projects.length ? sel : h("span", { class: "faint" }, T("Register a project first (Projects).", "請先註冊專案（專案頁）。"))),
     proj ? h("p", { class: "wt-warn", "data-term-warning": "1" }, warnText(proj)) : null,
-    h("div", { class: "wt-presets" }, TM.presets.map((p) => h("button", { type: "button", class: "btn", "data-preset": p.id, disabled: TM.busy || !proj, title: p.path, onclick: () => start({ preset: p.id, ...(p.remoteControl ? { remoteControl: TM.rc } : {}) }) }, p.label))),
-    hasClaude ? h("label", { class: "wt-rc" }, h("input", { type: "checkbox", id: "termRc", checked: TM.rc, onchange: (e) => { TM.rc = e.target.checked; store.set("crew.term.rc", TM.rc ? "1" : "0"); } }),
-      T(" Claude Code: turn on Remote Control (take the session over from the Claude app)", " Claude Code：開啟 Remote Control（可從 Claude app 接手這個 session）")) : null,
+    h("div", { class: "wt-presets" }, TM.presets.map((p) => h("button", { type: "button", class: "btn", "data-preset": p.id, disabled: TM.busy || !proj, title: p.path, onclick: () => start({ preset: p.id }) }, p.label))),
     h("div", { class: "wt-row" }, cmd, h("button", { type: "button", class: "btn primary", "data-term-run": "1", disabled: TM.busy || !proj, onclick: () => TM.cmd.trim() && start({ command: TM.cmd }) }, T("Run", "執行"))));
 }
 // while the captain types in a terminal the page is not rebuilt (that would take the focus away): the list and the
@@ -664,7 +641,7 @@ const restoredNote = (t) => !t.restored ? null : h("p", { class: "faint wt-resto
   t.stopped === "studio-stopped" ? T("From before Studio restarted: Studio stopped it while it ran. Its output is the transcript.", "Studio 重新啟動前的終端機：它還在跑時被 Studio 停掉了。輸出是它的紀錄。")
     : T("From before Studio restarted: it had ended. Its output is the transcript.", "Studio 重新啟動前的終端機：它已經結束了。輸出是它的紀錄。"));
 // over the terminal only what needs the captain now: a refused Send for review. Its name, command, state, question,
-// branch and Remote Control link are the ⋯ menu's; Stop, Restart and Remove are its items and keys
+// and branch are the ⋯ menu's; Stop, Restart and Remove are its items and keys
 const detailHead = (t) => [refusedLine(t)];
 const selected = (arg) => TM.list.find((t) => t.id === arg) || (arg ? null : TM.list.filter((t) => t.running).at(-1) || TM.list.at(-1) || null);
 const listRows = (sel, list = TM.list, mark = (x) => x) => list.map((t) => h("a", { class: "wt-item", href: `#/terminals/${encodeURIComponent(t.id)}`, "data-term-row": t.id, "aria-current": sel?.id === t.id ? "page" : null },

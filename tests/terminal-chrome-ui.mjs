@@ -6,7 +6,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //   Retry, Open in a Studio window, new and close tab, split, zoom, clear, close pane, go to, keys, the menu itself), and
 //   each is an item of the ⋯ menu that does the same; the menu's ? lists the keys; plain keys and Ctrl chords reach the shell;
 //   at 390 px the menu fits with no sideways scroll; in Traditional Chinese the menu speaks it.
-// Stub server, temporary data, login shells and plain commands only (a stand-in claude prints a Remote Control link).
+// Stub server, temporary data, login shells and plain commands only (a stand-in claude prints a Remote Control link, as
+// one the captain turned on would).
 //   TERMINAL_CHROME_SHOTS=<dir>  also write screenshots there
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -38,7 +39,7 @@ writeFileSync(openStub, `#!/bin/sh\nprintf '%s\\0' "$@" >> "${openLog}"\nprintf 
 // a stand-in claude that prints a Remote Control link and echoes what it reads
 writeFileSync(join(bin, "claude"), `#!/bin/sh
 if [ "$1" = "--help" ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; exit 0; fi
-for a in "$@"; do [ "$a" = "--remote-control" ] && printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-CHROMEFAKE42\\r\\n'; done
+printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-CHROMEFAKE42\\r\\n'
 while :; do printf '\\r\\n> '; IFS= read -r line || exit 0; printf 'you said %s\\r\\n' "$line"; done
 `); chmodSync(join(bin, "claude"), 0o755);
 const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bun"], { encoding: "utf8" }).trim();
@@ -237,7 +238,7 @@ try {
   ok(idleId !== askId, "two different terminals");
   await ctx.close();
 
-  // ---------- a Mac in a browser tab: Open in a Studio window; Remote Control's link ----------
+  // ---------- a Mac in a browser tab: Open in a Studio window; no Remote Control item ----------
   const ctxT = await context(), q = await ctxT.newPage(); q.on("pageerror", (e) => errors.push(`tab: ${e}`));
   await q.goto(`${base}/#/terminals`); await seen(q.locator(".wt-stage .wt-pane"), 10000); await q.waitForTimeout(300);
   ok((await items(q)).includes("appWindow"), "in a browser tab the menu offers Open in a Studio window");
@@ -249,12 +250,8 @@ try {
     async () => { calls = existsSync(openLog) ? readFileSync(openLog, "utf8").split("\x1e").filter(Boolean).length : 0; if (calls) await q.waitForTimeout(5200); }); // Studio opens one window per 5 s
   await q.keyboard.press("Alt+Meta+KeyN"); await seen(q.locator('[data-preset="claude"]'));
   await q.locator('[data-preset="claude"]').click();
-  ok(await until(async () => (await items(q)).includes("remote"), 10000), "Claude Code with Remote Control: the menu has its link");
-  await viaMenu(q, "remote");
-  ok(await seen(q.locator("[data-term-remote-sheet] [data-term-remote-url]"), 3000) && (await q.locator("[data-term-remote-url]").innerText()) === "https://claude.ai/code/rc-CHROMEFAKE42" && await q.locator("[data-term-remote-sheet] .wt-qr svg").count() === 1, "⋯ › Remote Control link shows the link and its QR code");
-  await shot(q, "chrome-remote.png");
-  await q.keyboard.press("Escape");
-  ok(await until(async () => !(await q.locator("[data-term-remote-sheet]").count())), "Esc closes it");
+  ok(await until(async () => (await q.locator(".wt-xterm .xterm-rows").last().innerText().catch(() => "")).includes("Continue here"), 10000) && !(await items(q)).includes("remote") && await q.locator("[data-term-remote-sheet], .wt-qr").count() === 0,
+    "Claude Code printing a session link: the menu has no Remote Control item, the page no link sheet or QR code");
   await ctxT.close();
 
   // ---------- 390 px, and Traditional Chinese ----------
