@@ -312,17 +312,30 @@ account drive the session, so it is treated as a secret:
 - Never in the record, the activity log or the list a phone receives.
 
 **Which link the page shows** (`pageLink`, `bannerLink` in src/terminals.ts):
-- Only the link on Claude Code's own Remote Control banner, in the wording Claude Code 2.1.327 writes (its
-  `bridge_status` message): `/remote-control is active · Continue here, on your phone, or at <url>`.
+- Only the link on Claude Code's own Remote Control banner. A signed-in Claude Code 2.1.327 drew it like this in a real
+  Studio terminal, and its `bridge_status` message has the same words: `  /remote-control is active · Continue here, on
+  your phone, or at`, with the link on the row below.
+  - Ink places those words with cursor moves rather than spaces, so Studio turns the moves back into spaces before
+    reading.
+  - The banner counts only right below Claude Code's header, which ends `· /rc` while Remote Control is on, or right below
+    the prompt row the command was typed on (`❯ /remote-control`, at the left edge).
 - Only once Remote Control is on: the flag at start, or `/remote-control` sent. In slash mode, a link already on the
   screen when it is sent is never taken.
 - Only a link of a Remote Control link's shape (`SHOWN_LINK`): claude.ai or claude.com, `/code/<one id>`, at most an `env`
   parameter.
-- A newer banner replaces it. "Remote Control disconnected …", "… stopped: …", "… session expired." and the process
-  ending clear it.
-- A banner or a disconnect line under Claude's tool-output mark (`⎿`) is a program's output shown by Claude, so it
-  counts for nothing. A line that only says Remote Control is on (a README, a log) is no banner either. Every link other
-  than the banner's is hidden, never shown.
+- **A newer banner replaces it.**
+- **What clears it:**
+  - Disconnect (`/remote-control` → Disconnect this session), which Claude Code shows as `⎿  Remote Control disconnected.`
+    right below that prompt row
+  - one of Claude Code's own status lines at the left edge (`Remote Control disconnected …`, `… stopped: …`,
+    `… session expired.`)
+  - the process ending
+- **What never counts:**
+  - a model answer (it starts with `⏺` and goes on indented) or a tool's output (under `⎿`), even when it repeats the
+    banner or "disconnected" word for word, which the live check saw a model do
+  - a line that only says Remote Control is on (a README, a log)
+
+  Every link other than the banner's is hidden, never shown.
 
 **What this cannot tell apart.** A program running in the terminal that prints the exact banner text itself, outside
 Claude's tool output, cannot be told apart from Claude Code's own banner in the output alone: nothing in-band
@@ -331,8 +344,10 @@ right shape, never at a page of another site.
 
 Other agents have no such feature and show nothing; their phone view shows the output with the generic link rule.
 
-Not verified against a live Claude Code here (that would register a real session); the tests use a stub CLI that prints a
-fake link, with and without the flag in its help.
+Checked once against a live, signed-in Claude Code 2.1.327 (flag mode, Disconnect, /remote-control again, a model asked
+to print a fake banner, /exit). Its output, with the session ids, user and paths replaced, is
+`tests/fixtures/terminal/claude-2.1.327-remote-control.raw`, which `tests/terminal-remote-link.ts` replays. The other
+tests use a stub CLI that prints a fake link, with and without the flag in its help.
 
 ## Phone
 

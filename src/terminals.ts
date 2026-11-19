@@ -182,21 +182,33 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
   }
   return null;
 }
-// The Claude CLI's own Remote Control banner, as Claude Code 2.1.327 writes it (its bridge_status message:
-// "/remote-control is active · Continue here, on your phone, or at <url>"); only that wording counts, not a line that
-// merely says Remote Control is on (a README, a log). What ends it: "Remote Control disconnected …", "Remote Control
-// stopped: …", "Remote Control session expired.". A line under Claude's tool-output mark (⎿) is a program's output shown
-// by Claude, never Claude's own banner. A program that prints the exact banner text itself cannot be told apart in the
-// output (docs/units/terminals.md "Remote Control"): the worst it can do is point the page at another Claude session.
-const BANNER = /\/remote-control is active\s*\u00b7?\s*Continue here, on your phone, or at\b|\/remote-control is active\s*$/;
-const BANNER_OFF = /^[\s│|║┃｜]*Remote Control (?:disconnected|stopped|session expired)\b/;
-const TOOL_OUTPUT = /^[\s│|║┃｜]*⎿/;
+// The Claude CLI's own Remote Control banner, as a signed-in Claude Code 2.1.327 drew it in a real terminal (and as its
+// bridge_status message words it): "  /remote-control is active · Continue here, on your phone, or at" on its own row,
+// the link on the next one. Ink places its words with cursor moves, not spaces (linkLines puts the spaces back).
+// It counts only where Claude Code draws it: right below the header (which ends "· /rc" while Remote Control is on) or
+// below the prompt row the command was typed on ("❯ /remote-control", at the left edge). Claude's answers start with "⏺"
+// and go on indented below other rows, and a tool's output sits under "⎿", so a model or a program repeating the banner
+// in an answer or a tool output is not it.
+// Remote Control ends with "⎿  Remote Control disconnected." right below that same prompt row (also seen live), or one
+// of Claude Code's own status lines at the left edge ("Remote Control disconnected …", "… stopped: …", "… session
+// expired."). A program printing the exact banner on its own rows cannot be told apart in the output
+// (docs/units/web-terminal.md "Claude Code Remote Control"): at worst it points the page at another Claude session.
+const BANNER = /^\s{0,3}\/remote-control\s+is\s+active\s*\u00b7?\s*Continue here, on your phone, or at\b/;
+const BANNER_AFTER = /^❯\s*\/remote-control\b|\u00b7\s*\/rc\s*$/;
+const OFF_TEXT = /Remote Control (?:disconnected|stopped|session expired)\b/;
+const OFF_UNDER_COMMAND = /^\s*⎿\s*Remote Control (?:disconnected|stopped|session expired)\b/, OFF_STATUS = /^Remote Control (?:disconnected|stopped|session expired)\b/;
+const COMMAND = /^❯\s*\/remote-control\b/;
+/** The non-empty line before line `i`. */
+const before = (lines: string[], i: number) => { for (let k = i - 1; k >= 0; k--) if (lines[k].trim()) return lines[k]; return ""; };
 /** The link on the newest Remote Control banner the output shows (the banner's own line, or the next one or two when the
  *  link wraps), or `off` when the newest banner news is that Remote Control ended; null when the output shows neither. */
 export function bannerLink(raw: string, cols: number, trailing = true): { url: string | null; off: boolean } | null {
   const lines = linkLines(raw);
   let b = -1, off = -1;
-  for (let i = 0; i < lines.length; i++) { if (TOOL_OUTPUT.test(lines[i])) continue; if (BANNER.test(lines[i])) b = i; if (BANNER_OFF.test(lines[i])) off = i; }
+  for (let i = 0; i < lines.length; i++) {
+    if (BANNER.test(lines[i]) && BANNER_AFTER.test(before(lines, i))) b = i;
+    if (OFF_TEXT.test(lines[i]) && (OFF_STATUS.test(lines[i]) || (OFF_UNDER_COMMAND.test(lines[i]) && COMMAND.test(before(lines, i))))) off = i;
+  }
   if (off > b) return { url: null, off: true };
   if (b < 0) return null;
   const from = lines[b].search(BANNER);
@@ -216,7 +228,11 @@ export function findLinks(raw: string, cols: number): string[] {
 }
 // A cursor move to another row (CUP, HVP, VPA) starts a new line: a box whose rows a program placed that way (ratatui,
 // Codex) is read row by row like one drawn with line breaks.
-const linkLines = (raw: string) => screenLines(rowBreaks(raw));
+// Ink draws a gap with a cursor move (forward n, or to a column) instead of spaces: those moves become spaces here, so
+// words stay apart and a row keeps its indentation.
+// Ink ends a row with "\r, right n, down 1": the carriage return and the indent belong to the row below, so they move past
+// the row move before it becomes a line break.
+const linkLines = (raw: string) => screenLines(rowBreaks(raw.replace(/\r((?:\x1b\[\d*C)*)(\x1b\[\d*[AB])/g, "$2\r$1").replace(/\x1b\[(\d*)C/g, (_m, n: string) => " ".repeat(Math.min(Number(n || 1), 300))).replace(/\x1b\[\d*G/g, " ")));
 /** A link of the session shape Studio knows is whole already: it is never joined with the next row. */
 const wholeSession = (u: string) => /\/session_[0-9A-Za-z]{26}$/.test(u);
 /** The link that starts with match `m` on line `i`, rejoined over the lines the terminal or a box wrapped it on. */
