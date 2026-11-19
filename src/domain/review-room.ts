@@ -698,7 +698,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     /** the summary a merge card shows: the room's pages and what they cost; never readiness, never an answer */
     summary(c: SCard) {
       if (c.kind !== "merge") return null; const b = explainer.brief(c.id);
-      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(c.id, (() => { try { return load(keyOf(c.id)); } catch { return null; } })()), running: !!b?.running, latest: b?.latest ?? null };
+      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(c.id, (() => { try { return load(keyOf(c.id)); } catch { return null; } })()), running: !!b?.running, generating: !!b?.generating, latest: b?.latest ?? null };
     },
     /** A Task's entry to the room on its reviewed branch (the Task page): once Studio's review passed at its head, or a room exists. */
     taskEntry(run: any) {

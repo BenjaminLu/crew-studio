@@ -40,7 +40,10 @@ function roomData(s: Sources, id: string, full: boolean): Record<string, unknown
       runs: (full ? x.runs ?? [] : (x.runs ?? []).slice(-3)).map((r: any) => ({ n: r.n, kind: r.kind, skill: r.skill ? { id: r.skill.id, v: r.skill.v, name: r.skill.name } : null, status: r.status, at: r.at, ended: r.ended, provider: r.provider, model: r.model,
         rounds: (r.rounds ?? []).length, cost: r.cost ?? null, why: r.why ?? null, decided: r.decided ?? null, prepare: r.prepare ? { state: r.prepare.state } : null, version: r.version ?? null,
         question: r.question ?? null, prompt: r.prompt ?? null, stop: r.stop ?? null, error: r.error ?? null, summary: r.summary ?? null })),
-      versions: (x.versions ?? []).slice(full ? 0 : -5).map((ver: any) => ({ n: ver.n, run: ver.run, skill: ver.skill, at: ver.at, kind: ver.kind, entry: ver.entry, prompt: ver.prompt ?? null, question: ver.question ?? null, summary: ver.summary ?? null })),
+      // each version with the run that made it: the head it explains, the model and what it cost
+      versions: (x.versions ?? []).slice(full ? 0 : -5).map((ver: any) => { const by = (x.runs ?? []).find((r: any) => r.n === ver.run);
+        return { n: ver.n, run: ver.run, skill: ver.skill, at: ver.at, kind: ver.kind, entry: ver.entry, head: by?.head ?? null, provider: by?.provider ?? null, model: by?.model ?? null, cost: by?.cost ?? null,
+          prompt: ver.prompt ?? null, question: ver.question ?? null, summary: ver.summary ?? null }; }),
     } : null,
   };
 }
@@ -86,7 +89,7 @@ registerKind({
       "errors[].run", "errors[].kind", "errors[].status", "explain.selected", "explain.running",
       "explain.runs[].n", "explain.runs[].kind", "explain.runs[].skill", "explain.runs[].status", "explain.runs[].at", "explain.runs[].ended", "explain.runs[].provider", "explain.runs[].model", "explain.runs[].rounds",
       "explain.runs[].cost", "explain.runs[].why", "explain.runs[].decided", "explain.runs[].prepare", "explain.runs[].version", "explain.runs[].stop",
-      "explain.versions[].n", "explain.versions[].run", "explain.versions[].skill", "explain.versions[].at", "explain.versions[].kind", "explain.versions[].entry",
+      "explain.versions[].n", "explain.versions[].run", "explain.versions[].skill", "explain.versions[].at", "explain.versions[].kind", "explain.versions[].entry", "explain.versions[].head", "explain.versions[].provider", "explain.versions[].model", "explain.versions[].cost",
       "notes.items[].kind", "notes.items[].author", "notes.items[].at", "notes.items[].state", "notes.items[].path", "withheld", "versions", "repository", "zone"].map((path) => ({ path, trust: "studio" as const })),
     ...["explain.runs[].question", "explain.runs[].prompt", "explain.versions[].prompt", "explain.versions[].question"].map((path) => ({ path, trust: "captain" as const })),
     { path: "pr.title", trust: "untrusted", source: "the pull request's title (GitHub)" },

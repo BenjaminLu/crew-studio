@@ -113,9 +113,11 @@ try {
     ok(!r.other, "a card that is not a merge card has no review room");
     // each state reads as one sentence: no page yet (being made or not), pages (with one more being made or not)
     const says = await p.evaluate((list) => list.map((rr) => { const a = document.createElement("div"); document.body.append(a); window.crewCard.mountCard(a, rr); return a.querySelector("[data-review-room-summary]")?.textContent.split(" (")[0]; }),
-      [{ versions: 0, usd: 0, running: false }, { versions: 0, usd: 0, running: true }, { versions: 1, usd: 1.6, running: true }, { versions: 1, usd: 1.6, running: false }].map((o) => card("merge", { reviewRoom: { ...summary, ...o } })));
-    ok(JSON.stringify(says) === JSON.stringify(["Read a page on how and why this change works before you merge.", "A page on how and why this change works is being made.", "1 version of the page · US$1.60 · a new one is being made.", "1 version of the page · US$1.60."]),
-      "the merge card's line reads naturally in each state: nothing yet, the first page being made, a new version being made, pages made", JSON.stringify(says));
+      [{ versions: 0, usd: 0, running: false }, { versions: 0, usd: 0, running: true, generating: true }, { versions: 1, usd: 1.6, running: true, generating: true }, { versions: 1, usd: 1.6, running: false },
+        { versions: 1, usd: 1.6, running: true, generating: false }, { versions: 0, usd: 0.42, running: false }, { versions: 0, usd: 0.42, running: true, generating: false }].map((o) => card("merge", { reviewRoom: { ...summary, ...o } })));
+    ok(JSON.stringify(says) === JSON.stringify(["Read a page on how and why this change works before you merge.", "A page on how and why this change works is being made.", "1 version of the page · US$1.60 · a new one is being made.", "1 version of the page · US$1.60.",
+      "1 version of the page · US$1.60.", "No page yet · US$0.42 spent.", "No page yet · US$0.42 spent."]),
+      "the merge card's line reads naturally in each state: nothing yet, the first page being made, a new version being made, pages made; the tutor answering a question changes nothing; money spent with no page says so", JSON.stringify(says));
     await ctx.close(); }
 
   // ---------- two routes, two pages: #/review is the Library's artifact review, #/room the review room ----------
@@ -143,7 +145,7 @@ try {
 
   // ---------- the pull request box: opening the room starts baton; nothing else is sent ----------
   { const { ctx, p } = await open(1440, "en"); const opened = [];
-    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: null }, tutors: [], providers: [] } }));
+    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { tutor: null }, tutors: [], providers: [] } }));
     await p.route(/\/api\/review-room\/paste-offer/, (r) => { opened.push("offer"); r.fulfill({ json: {} }); });
     await p.route(/\/api\/review-room\/open-pr$/, (r) => { opened.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { id: "SC-50", href: "#/room/SC-50", room: ROOM } }); });
     await p.goto(`${base}/#/room`); await p.waitForSelector('[data-pr-box="home"]', { timeout: 15000 });

@@ -190,6 +190,7 @@ await until(() => !!X.view(id).runs.at(-1).rounds[0]?.job && X.view(id).log.leng
 e = await refused(() => X.ask(id, { question: "Meanwhile?", version: 1, confirm: askOffer.hash }, "captain"));
 ok(e?.code === "busy", "while the skill works, the tutor takes no question in this room", e?.message);
 ok(X.view(id).log.some((l: any) => /explain_progress/.test(l.text)), "the live log shows the round's tool calls", JSON.stringify(X.view(id).log));
+{ const b: any = X.brief(id), sm: any = room.summary(E.cards.get(id)!); ok(b.running && b.generating && sm.running && sm.generating, "a page being made: the room's brief and the merge card's summary say a page is being made", JSON.stringify({ b, sm })); }
 X.stop(id);
 const run4 = await waitRun(6, 20000);
 ok(run4.status === "stopped" && /captain/.test(run4.stop) && run4.version === null && X.view(id).versions.length === 2 && X.view(id).running === null, "Stop ends the run at once; nothing half-made becomes a version", JSON.stringify(run4));
@@ -368,6 +369,15 @@ delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
 const started = X.view(id).runs.filter((x: any) => x.rounds.length).length;
 ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === started && E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain-start").length === started,
   "every run that started is on the ledger twice: when it starts (so one a stopped Studio interrupted is still there) and when it ends");
+// ---------- a question being answered is a run, but no page is being made: the merge card's line stays as it was ----------
+{ script.push([["hang", null]]); release = null; const n0 = X.view(id).runs.length;
+  const q = { question: "What is the riskiest line?", version: X.view(id).versions.at(-1).n }, first = await refused(() => X.ask(id, q, "captain"));
+  if (first?.code === "confirm_required") await X.ask(id, { ...q, confirm: first.offer.hash, consent: true }, "captain"); else if (first) throw first;
+  await until(() => X.view(id).runs.length > n0 && !!release, 10000);
+  const b: any = X.brief(id), sm: any = room.summary(E.cards.get(id)!);
+  ok(b.running === true && b.generating === false && sm.running === true && sm.generating === false, "while the tutor answers a question the room is running, but no page is being made (generating stays false)", JSON.stringify({ b, sm }));
+  X.stop(id); release?.(); await waitRun(n0 + 1, 20000); }
+
 // ---------- page.txt's visible text: what the page hides is not what a question is grounded on ----------
 { const { shownHtml } = await import("../src/domain/review-explain");
   const t = (h: string) => shownHtml(h).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();

@@ -944,8 +944,10 @@ export function installExplainer(d: ExplainerDeps) {
     brief(id: string) { let k: any; try { k = d.keyOf(id); } catch { return null; } const st = read(k);
       const usd = st.runs.reduce((n, r) => n + (typeof r.cost?.usd === "number" ? r.cost.usd : 0), 0), last = st.runs.filter((r) => r.ended).at(-1)?.ended ?? null;
       const heads = [...new Set(st.runs.filter((r) => r.kind === "generate" && r.status === "done" && r.head).map((r) => r.head!))];
-      const latest = st.versions.at(-1) ?? null;
-      return { versions: st.versions.length, questions: st.runs.filter((r) => r.kind === "ask").length, runs: st.runs.length, usd: Math.round(usd * 10000) / 10000, running: running.has(k.id),
+      const latest = st.versions.at(-1) ?? null, live = running.get(k.id);
+      // running: any run (a page or a question); generating: a page is being made (a question's run is not one)
+      return { versions: st.versions.length, questions: st.runs.filter((r) => r.kind === "ask").length, runs: st.runs.length, usd: Math.round(usd * 10000) / 10000, running: !!live,
+        generating: !!live && st.runs.find((r) => r.n === live.run)?.kind === "generate",
         updatedAt: last, latest: latest ? { n: latest.n, at: latest.at, skill: latest.skill.name } : null, heads }; },
     /** a room's versions as kept, for the Library: each version's folder and record (never changed once written) */
     pages(id: string) { const k = d.keyOf(id), st = read(k); return st.versions.map((v) => ({ ...v, dir: join(dirOf(k), `v${v.n}`), run: st.runs.find((r) => r.n === v.run) ?? null })); },

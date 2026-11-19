@@ -30,8 +30,10 @@ room's own questions about that page, answered by the room's tutor in a chat bes
   redraws the page the captain moved on to.
 
 The merge card shows a summary in one sentence: how many versions of the page there are and what the room cost (its runs
-and an old whiteboard's turns), or that the first page, or a new version, is being made (`summary`: `href`, `opened`, `versions`, `questions`,
-`usd`, `running`, `latest`; `public/scard.js` `reviewRoomView`). Display only: the room never answers the merge card, never
+and an old whiteboard's turns); that the first page, or a new version, is being made; or, with money spent and no page yet,
+"No page yet · US$x spent" (`summary`: `href`, `opened`, `versions`, `questions`, `usd`, `running` (any run), `generating`
+(a page being made: a question the tutor is answering is not one, and leaves the line as it was), `latest`;
+`public/scard.js` `reviewRoomView`). Display only: the room never answers the merge card, never
 holds or releases it, and never changes merge readiness. The card's stored file, its options and its evidence are untouched
 (`cards.view` adds `reviewRoom`).
 
@@ -617,8 +619,8 @@ and the total (`cost.usd`: the pages' runs plus the old board's, or none when an
 sum). Nothing is written to GitHub.
 
 It reads without Studio's cache, the worktree or GitHub (`GET /api/review-room/library/<artifact>?v=<n>`, `librarySnapshot`,
-with the artifact's versions and `integrity`: `store.verify`). The Library's page of a saved room offers "Replay in the review
-room" for its latest version and "Replay" for each (`#/room/lib:<artifact>@<n>`), never review, notes, approval or compare,
+with the artifact's versions and `integrity`: `store.verify`). The Library's page of a saved room offers "Open the saved room ·
+vN" for its latest version and "Open" for each (`#/room/lib:<artifact>@<n>`), never review, notes, approval or compare,
 and the Library refuses any write to it (`room-snapshot-read-only`) except its deletion (`DELETE /api/artifacts/room-<id>`, the
 desktop captain: the artifact and all its versions; the room then no longer links it, and a later save makes it again from v1).
 The room's route of a saved version is read-only: its header (the subject, "Saved … · read-only", its versions), each page
