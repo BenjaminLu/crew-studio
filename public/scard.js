@@ -515,7 +515,7 @@ function mountCard(el, card, opts = {}) {
     const gen = !!r.generating;
     const said = n ? (gen ? T(`${n} version${n === 1 ? "" : "s"} of the page${usd} · a new one is being made.`, `頁面 ${n} 個版本${usd} · 新的一版產生中。`) : T(`${n} version${n === 1 ? "" : "s"} of the page${usd}.`, `頁面 ${n} 個版本${usd}。`))
       : gen ? T(`A page on how and why this change works is being made${usd}.`, `正在產生一頁說明：這個改動怎麼運作、為什麼這樣做${usd}。`)
-      : usd ? T(`No page yet${usd} spent.`, `還沒有頁面${usd} 已花費。`)
+      : usd ? T(`No page yet${usd} spent.`, `還沒有頁面 · 已花費 US$${r.usd.toFixed(2)}。`)
       : T("Read a page on how and why this change works before you merge.", "合併前，先看一頁說明：這個改動怎麼運作、為什麼這樣做。");
     return h("section", { class: "cc-room", "data-review-room": c.id, "data-review-room-generating": gen ? "" : null },
       h("a", { class: "btn", href: r.href, "data-card-link": "review-room", "data-review-room-open": c.id }, T("Open review room", "開啟審查室")),

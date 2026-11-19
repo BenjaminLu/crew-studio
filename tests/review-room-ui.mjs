@@ -118,6 +118,11 @@ try {
     ok(JSON.stringify(says) === JSON.stringify(["Read a page on how and why this change works before you merge.", "A page on how and why this change works is being made.", "1 version of the page · US$1.60 · a new one is being made.", "1 version of the page · US$1.60.",
       "1 version of the page · US$1.60.", "No page yet · US$0.42 spent.", "No page yet · US$0.42 spent."]),
       "the merge card's line reads naturally in each state: nothing yet, the first page being made, a new version being made, pages made; the tutor answering a question changes nothing; money spent with no page says so", JSON.stringify(says));
+    // and in 繁體中文: money spent with no page reads as one sentence, the amount after 已花費
+    { const z = await open(1440, "zh-TW"); await z.p.goto(`${base}/#/board`); await z.p.waitForFunction(() => window.crewCard?.mountCard);
+      const zh = await z.p.evaluate((rr) => { const a = document.createElement("div"); document.body.append(a); window.crewCard.mountCard(a, rr); return a.querySelector("[data-review-room-summary]")?.textContent.split("（")[0].trim(); },
+        card("merge", { reviewRoom: { ...summary, versions: 0, usd: 0.42, running: false } }));
+      ok(zh === "還沒有頁面 · 已花費 US$0.42。", "in 繁體中文, money spent with no page: 還沒有頁面 · 已花費 US$0.42。", JSON.stringify(zh)); await z.ctx.close(); }
     await ctx.close(); }
 
   // ---------- two routes, two pages: #/review is the Library's artifact review, #/room the review room ----------

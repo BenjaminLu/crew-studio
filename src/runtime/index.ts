@@ -861,7 +861,7 @@ export function createRuntime(d: RuntimeDeps) {
           // the captain opened the room: the default skill's generation for this head starts by itself when it is due (retry: "Try again")
           if (op === "auto") return json(await X.auto(id, by, b?.retry === true));
           if (op === "generate") return json(await X.generate(id, { skill: b?.skill, confirm: b?.confirm, prompt: b?.prompt, skillDecision: b?.skillDecision }, by));
-          return json(await X.ask(id, { question: b?.question, selection: b?.selection, version: b?.version, confirm: b?.confirm, consent: b?.consent, skillDecision: b?.skillDecision }, by));
+          return json(await X.ask(id, { question: b?.question, version: b?.version, confirm: b?.confirm, consent: b?.consent, skillDecision: b?.skillDecision }, by));
         } catch (e: any) { return fail(e); } }
       // a room: its view (GET), Check for new commits, Save to Library, its tutor, archive (POST, the desktop captain), its record
       // as a file (GET export). A room's old whiteboard routes (turn, cite, image, check-answer, translate, images, reset, auto,
