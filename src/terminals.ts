@@ -10,7 +10,8 @@
 //   Who: every write here (create, input, resize, kill, restart, dismiss) needs the desktop page's own session COOKIE on
 //   loopback with Origin and Sec-Fetch-Site same-origin; x-crew-session (a script) and a paired phone's token are refused.
 //   Not a boundary against local processes (they can read data/session-token). A phone may list and watch: the output with
-//   the generic link rule, and none at all from Claude Code with Remote Control on (states only), never the link itself.
+//   the generic link rule, and none at all once a terminal has shown a Claude Code session link (states only), never the
+//   link itself. Studio never turns Remote Control on: the captain does, by hand, when they want it.
 //   Bounds: a scrollback ring per terminal (CREW_TERMINAL_SCROLLBACK bytes, default 2 MiB), at most CREW_TERMINAL_MAX
 //   running (default 8), a transcript file per terminal capped at CREW_TERMINAL_TRANSCRIPT bytes (default 5 MiB), the 100
 //   newest records kept. Studio stopping kills every terminal (the process group, SIGHUP then SIGKILL); nothing is
@@ -42,9 +43,9 @@ import { rowBreaks } from "./terminal-rows";
 /** A line as text only: no C0 or C1 control (a tab stays) and no bidi control, which could show it in another order. */
 const plainText = (l: string) => l.replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 
-export type Preset = { id: string; label: string; bin: string; kind: AgentKind; remoteControl?: boolean };
+export type Preset = { id: string; label: string; bin: string; kind: AgentKind };
 export const PRESETS: Preset[] = [
-  { id: "claude", label: "Claude Code", bin: "claude", kind: "claude", remoteControl: true },
+  { id: "claude", label: "Claude Code", bin: "claude", kind: "claude" },
   { id: "codex", label: "Codex", bin: "codex", kind: "codex" },
   { id: "cursor-agent", label: "Cursor Agent", bin: "cursor-agent", kind: "cursor" },
   { id: "aider", label: "aider", bin: "aider", kind: "aider" },
@@ -59,16 +60,14 @@ export type TermGit = { branch: string | null; head: string; commits: number | n
 export type ReviewRequest = { terminal: string; project: string; commit: string; branch: string | null; label: string; command: string; by: string };
 export type TermView = { id: string; project: TermProject; preset: string | null; kind: AgentKind; label: string; command: string; by: string;
   startedAt: string; endedAt: string | null; exitCode: number | null; signal: string | null; state: TermState; reason: StateReason; ask: string | null;
-  cols: number; rows: number; running: boolean; git: { start: TermGit | null; end: TermGit | null }; review: { run: string; at: string } | null; remote: { enabled: boolean; mode: "flag" | "slash" | null; sent: boolean; url?: string | null } | null; transcriptTruncated: boolean;
+  cols: number; rows: number; running: boolean; git: { start: TermGit | null; end: TermGit | null }; review: { run: string; at: string } | null; transcriptTruncated: boolean;
   /** listed from its record after Studio restarted (it ended before, or Studio stopped it); `stopped`: Studio stopped it */
   restored: boolean; stopped: string | null };
 
-// Claude Code's Remote Control link: whoever holds it can drive the session from the Claude app, so it is a secret here
+// Claude Code's Remote Control link: whoever holds it can drive the session from the Claude app, so it is a secret here.
+// Studio never turns Remote Control on; the captain may, by hand, in any terminal, and its link is removed wherever Studio
+// shows or keeps the output (studio_logs, the transcript, a phone).
 export const REMOTE_URL = /https:\/\/(?:[a-z0-9-]+\.)*claude\.(?:ai|com)\/code[^\s\x00-\x1f\x7f"'<>`\\│|║┃｜]*/gi;
-/** The link the Mac's page may show for a Remote Control session: claude.ai or claude.com, /code/<one id>, at most an env
- *  parameter. The first such link a Claude terminal prints after Remote Control is on is the one shown; any later link
- *  (another program printing one, a link with other parameters or paths) is only hidden, never shown or replaced. */
-export const SHOWN_LINK = /^https:\/\/claude\.(?:ai|com)\/code\/[A-Za-z0-9_-]{6,80}(?:\?env=[A-Za-z0-9_-]{1,40})?$/;
 /** The characters a box's side is drawn with: light, ASCII, double, heavy and full-width (CJK) bars. */
 const BORDER = "│|║┃｜";
 export const REMOTE_REMOVED = "[remote-control link removed]";
@@ -139,9 +138,9 @@ export function linkSecrets(url: string): string[] {
 /**
  * The transcript's and the phone's view of a terminal's output: the generic link rule (LinkRedactor), and once the session's
  * own link is known, that link and its session id matched through escapes, wraps and encodings. A window at the end is held
- * back so a match that is still arriving is never cut in two. `holdUntilKnown` (Claude Code with Remote Control on): nothing
- * is let out before the link is known, so a link printed wrapped, coloured or encoded before Studio recognised it is still
- * removed. If the link never comes, the end flushes with the generic rule only.
+ * back so a match that is still arriving is never cut in two. `holdUntilKnown`: nothing is let out before a link is known,
+ * so a link printed wrapped, coloured or encoded before Studio recognised it is still removed. If the link never comes, the
+ * end flushes with the generic rule only.
  */
 export class SecretWindow {
   private buf = ""; private pats: RegExp[] = []; private W = 0; private link = new LinkRedactor(); private secrets = new Set<string>();
@@ -179,32 +178,6 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
     const { url, j } = linkFrom(lines, i, m, cols);
     if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4)) && !new RegExp(`[\\s${BORDER}]$`).test(raw)) return null;
     return url;
-  }
-  return null;
-}
-// The Claude CLI's own Remote Control banner, as Claude Code 2.1.327 writes it (its bridge_status message:
-// "/remote-control is active · Continue here, on your phone, or at <url>"); only that wording counts, not a line that
-// merely says Remote Control is on (a README, a log). What ends it: "Remote Control disconnected …", "Remote Control
-// stopped: …", "Remote Control session expired.". A line under Claude's tool-output mark (⎿) is a program's output shown
-// by Claude, never Claude's own banner. A program that prints the exact banner text itself cannot be told apart in the
-// output (docs/units/terminals.md "Remote Control"): the worst it can do is point the page at another Claude session.
-const BANNER = /\/remote-control is active\s*\u00b7?\s*Continue here, on your phone, or at\b|\/remote-control is active\s*$/;
-const BANNER_OFF = /^[\s│|║┃｜]*Remote Control (?:disconnected|stopped|session expired)\b/;
-const TOOL_OUTPUT = /^[\s│|║┃｜]*⎿/;
-/** The link on the newest Remote Control banner the output shows (the banner's own line, or the next one or two when the
- *  link wraps), or `off` when the newest banner news is that Remote Control ended; null when the output shows neither. */
-export function bannerLink(raw: string, cols: number, trailing = true): { url: string | null; off: boolean } | null {
-  const lines = linkLines(raw);
-  let b = -1, off = -1;
-  for (let i = 0; i < lines.length; i++) { if (TOOL_OUTPUT.test(lines[i])) continue; if (BANNER.test(lines[i])) b = i; if (BANNER_OFF.test(lines[i])) off = i; }
-  if (off > b) return { url: null, off: true };
-  if (b < 0) return null;
-  const from = lines[b].search(BANNER);
-  for (let i = b; i < Math.min(lines.length, b + 3); i++) {
-    const m = [...lines[i].matchAll(REMOTE_URL)].find((x) => i > b || (x.index ?? 0) > from); if (!m) continue;
-    const { url, j } = linkFrom(lines, i, m, cols);
-    if (!trailing && j === lines.length - 1 && !/\n\s*$/.test(raw.slice(-4))) return null;
-    return { url, off: false };
   }
   return null;
 }
@@ -247,11 +220,11 @@ function linkFrom(lines: string[], i: number, m: RegExpMatchArray, cols: number)
 /** A view of a terminal's output. mux: one of several terminals on one stream (GET /api/terminals/mux), each event naming its terminal. */
 type Sub = { phone: boolean; ctl: ReadableStreamDefaultController<Uint8Array>; device?: string; mux?: boolean };
 type Term = TermView & { proc: any; ring: Ring; tail: string; rawTail: string; lastChunk: string; lastOutAt: number; sawOutput: boolean; subs: Set<Sub>;
-  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; dismissedAtShutdown?: boolean; beforeRemote?: Set<string>; remoteUrl: string | null; seen: Set<string>; linkSeen: boolean;
+  decoder: TextDecoder; redactor: SecretWindow; tFile: string | null; tBytes: number; timer: any; spec: CreateSpec | null; killTimer?: any; userStopped?: boolean; dismissedAtShutdown?: boolean; seen: Set<string>; linkSeen: boolean;
   line: string; lineAt: { state: TermState; reason: StateReason } | null; inputs: string[];
   /** the transcript's file name in the record: kept for a terminal listed after a restart (it writes no more to it) */
   transcriptName: string | null; reviewing?: boolean };
-export type CreateSpec = { project: string; preset?: string | null; command?: string | null; args?: string[]; remoteControl?: boolean; cols?: number; rows?: number };
+export type CreateSpec = { project: string; preset?: string | null; command?: string | null; args?: string[]; cols?: number; rows?: number };
 export class TermError extends Error { constructor(readonly status: number, message: string, readonly code: string) { super(message); } }
 
 export type TerminalsOpts = {
@@ -298,7 +271,6 @@ const AGENT_KINDS = new Set<AgentKind>(["claude", "codex", "cursor", "aider", "o
 
 export class Terminals {
   private terms = new Map<string, Term>();
-  private probe = new Map<string, Promise<"flag" | "slash">>();
   readonly keepTranscripts: boolean; readonly maxSubs = 4;
   /** when the page last asked for a Studio window (POST /api/terminals/app-window), for its rate limit */
   appWindowAt = 0; appWindowBusy = false;
@@ -323,22 +295,9 @@ export class Terminals {
     const found = PRESETS.flatMap((p) => { const path = Bun.which(p.bin, { PATH }); return path ? [{ ...p, path }] : []; });
     return [...found, { id: "shell", label: "Shell", bin: this.shell(), kind: "shell" as AgentKind, path: this.shell() }];
   }
-  /** How this Claude Code turns Remote Control on: a launch flag when its --help lists one, else the /remote-control command. */
-  remoteMode(bin: string): Promise<"flag" | "slash"> {
-    let key = bin; try { key += ":" + statSync(bin).mtimeMs; } catch {}
-    let p = this.probe.get(key);
-    if (!p) { p = (async () => { try {
-      const proc = Bun.spawn([bin, "--help"], { env: terminalEnv(this.env(), this.o.secrets?.() ?? []), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-      const t = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 5000);
-      const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]); clearTimeout(t); await proc.exited;
-      return /--remote-control\b/.test(out + err) ? "flag" : "slash";
-    } catch { return "slash"; } })(); this.probe.set(key, p); }
-    return p;
-  }
-  view(t: Term, desktop: boolean): TermView {
-    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, remote, transcriptTruncated, git, review, restored, stopped } = t;
-    return { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, transcriptTruncated, git, review, restored, stopped,
-      remote: remote ? { enabled: remote.enabled, mode: remote.mode, sent: remote.sent, ...(desktop ? { url: t.remoteUrl } : {}) } : null };
+  view(t: Term, _desktop = true): TermView {
+    const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, transcriptTruncated, git, review, restored, stopped } = t;
+    return { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, state, reason, ask, cols, rows, running, transcriptTruncated, git, review, restored, stopped };
   }
   list(desktop = true): TermView[] { return [...this.terms.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt)).map((t) => this.view(t, desktop)); }
   get(id: string) { return this.terms.get(id) ?? null; }
@@ -385,15 +344,14 @@ export class Terminals {
     if (!project) throw new TermError(404, "choose a registered, enabled project", "project");
     try { if (!statSync(project.path).isDirectory()) throw 0; } catch { throw new TermError(409, `the project's folder is missing: ${project.path}`, "folder"); }
     const cols = Math.max(20, Math.min(500, Math.floor(Number(spec.cols) || 100))), rows = Math.max(5, Math.min(200, Math.floor(Number(spec.rows) || 30)));
-    let argv: string[], kind: AgentKind, label: string, preset: string | null = null, remote: Term["remote"] = null;
+    let argv: string[], kind: AgentKind, label: string, preset: string | null = null;
     const args = spec.args ?? [];
     if (!Array.isArray(args) || args.length > 32 || args.some((a) => typeof a !== "string" || a.length > 1000 || a.includes("\0"))) throw new TermError(400, "args: at most 32 strings", "args");
     if (spec.preset) {
       const p = this.presets().find((x) => x.id === spec.preset); if (!p) throw new TermError(404, `${spec.preset} is not installed on this Mac's PATH`, "preset");
+      // the Claude preset starts as `claude` does: Studio never adds --remote-control (an older page may still send
+      // remoteControl in its request, which is ignored)
       preset = p.id; kind = p.kind; label = p.label; argv = p.id === "shell" ? [p.path, "-l", ...args] : [p.path, ...args];
-      if (p.remoteControl) { const enabled = spec.remoteControl !== false; const mode = enabled ? await this.remoteMode(p.path) : null;
-        if (enabled && mode === "flag" && !args.some((a) => a.startsWith("--remote-control"))) argv.push("--remote-control");
-        remote = { enabled, mode, sent: enabled && mode === "flag" }; }
     } else {
       const c = typeof spec.command === "string" ? spec.command.trim() : "";
       if (!c || c.length > 2000 || c.includes("\0")) throw new TermError(400, "give a preset or a command (at most 2000 characters)", "command");
@@ -405,9 +363,9 @@ export class Terminals {
     const command = spec.preset ? [preset === "shell" ? this.shell() : PRESETS.find((p) => p.id === preset)!.bin, ...argv.slice(1)].join(" ") : String(spec.command).trim();
     const shown = new LinkRedactor().whole(command);
     const t: Term = { id, project, preset, kind, label, command: shown, by, startedAt: new Date().toISOString(), endedAt: null, exitCode: null, signal: null,
-      state: "working", reason: "starting", ask: null, cols, rows, running: true, remote, transcriptTruncated: false, restored: false, stopped: null, git: { start: gitFacts(project.path, project.base), end: null }, review: null, line: "", lineAt: null, inputs: [],
+      state: "working", reason: "starting", ask: null, cols, rows, running: true, transcriptTruncated: false, restored: false, stopped: null, git: { start: gitFacts(project.path, project.base), end: null }, review: null, line: "", lineAt: null, inputs: [],
       proc: null, ring: new Ring(this.cap), tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: false, subs: new Set(),
-      decoder: new TextDecoder(), redactor: new SecretWindow(!!remote?.enabled), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, remoteUrl: null, seen: new Set(), linkSeen: false, transcriptName: null };
+      decoder: new TextDecoder(), redactor: new SecretWindow(false), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, seen: new Set(), linkSeen: false, transcriptName: null };
     if (t.tFile) writeFileSync(t.tFile, "", { mode: 0o600 });
     try {
       t.proc = Bun.spawn(argv, { cwd: project.path, env: terminalEnv(this.env(), this.o.secrets?.() ?? []),
@@ -424,47 +382,35 @@ export class Terminals {
     t.ring.push(d); t.lastOutAt = Date.now(); t.sawOutput = true;
     const text = t.decoder.decode(d, { stream: true });
     t.lastChunk = text; t.tail = (t.tail + stripAnsi(text)).slice(-8000);
-    // the Remote Control link may arrive split: look in the raw text that ends here
+    // a Remote Control link may arrive split: look in the raw text that ends here
     t.rawTail = (t.rawTail + text).slice(-4096);
     this.scanLink(t, false);
     const safe = t.redactor.push(text);
     this.writeTranscript(t, safe);
     const b64 = JSON.stringify({ b64: Buffer.from(d).toString("base64"), end: t.ring.total });
-    // Claude Code with Remote Control on: a phone gets states only, never output (the session link is printed in it)
+    // a terminal that has shown a session link: a phone gets states only, never output
     const ph = safe && !this.phoneHidden(t) ? JSON.stringify({ text: safe }) : null;
     for (const s of t.subs) { if (s.phone) { if (ph) this.emit(t, s, this.ev(s, t, "out", ph)); } else this.emit(t, s, this.ev(s, t, "out", b64)); }
     this.evaluate(t);
     clearTimeout(t.timer); t.timer = setTimeout(() => this.evaluate(t), this.idleMs + 50);
   }
-  /** The newest Remote Control link in the recent output; one still at the very end counts once the output pauses. */
-  // the newest link is the one the page may show; every other link on the screen (boxes side by side) is learned too, to hide
+  /** Every Remote Control link in the recent output is learned, to be removed; one still at the very end counts once the
+   *  output pauses (the newest, then the others on the screen: boxes side by side). */
   private scanLink(t: Term, trailing: boolean) {
     const u = findLink(t.rawTail, t.cols, trailing);
     if (u) { for (const o of findLinks(t.rawTail, t.cols)) if (o !== u && !o.startsWith(u) && !u.startsWith(o)) this.learnLink(t, o); this.learnLink(t, u); }
-    this.pageLink(t, trailing);
-  }
-  /** The link the Mac's page shows (and its QR code): the one on the Claude CLI's own Remote Control banner, once Remote
-   *  Control is on in this terminal (the flag at start, or /remote-control sent). A link anywhere else (a program's output,
-   *  resumed history, a link printed before the banner) is only hidden. A new banner replaces it; "Remote Control
-   *  disconnected" and the process ending clear it. */
-  private pageLink(t: Term, trailing: boolean) {
-    if (!t.running || !t.remote?.enabled || (t.remote.mode === "slash" && !t.remote.sent)) return;
-    const b = bannerLink(t.rawTail, t.cols, trailing); if (!b) return;
-    const url = b.url && SHOWN_LINK.test(b.url) && !t.beforeRemote?.has(b.url) ? b.url : null;
-    if (url === t.remoteUrl || (!url && !b.off)) return;
-    t.remoteUrl = url; this.pushMeta(t); this.changed();
   }
   /** A Remote Control link read from the terminal's output (its raw stream, or the screen Terminals.tail drew). */
   private learnLink(t: Term, u: string) {
-    if (u === t.remoteUrl || t.seen.has(u)) return;
-    // any terminal that prints a Remote Control link (a shell running claude, Remote Control turned on by hand): its link is
-    // redacted from then on and a phone gets no more of its output; only the Claude preset shows the link on the Mac's page
+    if (t.seen.has(u)) return;
+    // any terminal that prints a Remote Control link (Remote Control turned on by hand, a shell running claude): its link is
+    // redacted from then on and a phone gets no more of its output
     t.seen.add(u); t.linkSeen = true; t.redactor.know(u); if (t.ask) t.ask = this.scrubAsk(t, t.ask);
     this.writeTranscript(t, t.redactor.push("")); this.pushMeta(t); this.changed();
   }
-  private phoneHidden(t: Term) { return !!t.remote?.enabled || t.linkSeen; }
+  private phoneHidden(t: Term) { return t.linkSeen; }
   /** A question shown in lists and to phones: the known link and anything link-like are removed first. */
-  private scrubAsk(t: Term, ask: string) { let a = t.redactor.scrub(ask); if (t.remote || t.linkSeen) a = a.replace(/\S*(?:claude\.(?:ai|com)|https?:\/\/)\S*/gi, REMOTE_REMOVED); return a; }
+  private scrubAsk(t: Term, ask: string) { let a = t.redactor.scrub(ask); if (t.linkSeen) a = a.replace(/\S*(?:claude\.(?:ai|com)|https?:\/\/)\S*/gi, REMOTE_REMOVED); return a; }
   /** One event for one view: on a shared stream it names its terminal ({"id": …} first in its data). */
   private ev(s: Sub, t: Term, event: string, json: string) {
     return enc.encode(`event: ${event}\ndata: ${s.mux ? `{"id":${JSON.stringify(t.id)}${json === "{}" ? "" : ","}${json.slice(1)}` : json}\n\n`);
@@ -486,10 +432,6 @@ export class Terminals {
     if (Date.now() - t.lastOutAt >= 300) this.scanLink(t, true);
     const d = detectState({ kind: t.kind, tail: t.tail, lastChunk: t.lastChunk, quietMs: Date.now() - t.lastOutAt, idleMs: this.idleMs, sawOutput: t.sawOutput, exited: !t.running, exitCode: t.exitCode });
     t.state = d.state; t.reason = d.reason; t.ask = d.ask ? this.scrubAsk(t, d.ask) : null;
-    // an older Claude Code without the launch flag: /remote-control, once, when it first sits idle at its prompt
-    if (t.running && t.remote?.enabled && t.remote.mode === "slash" && !t.remote.sent && d.state === "waiting" && d.reason === "prompt") {
-      t.remote.sent = true; t.beforeRemote = new Set(findLinks(t.rawTail, t.cols)); try { t.proc.terminal.write("/remote-control"); setTimeout(() => { try { if (t.running) t.proc.terminal.write("\r"); } catch {} }, 200); } catch {}
-    }
     if (`${t.state}/${t.reason}/${t.ask}` !== before) { this.pushMeta(t); this.changed(); }
     if (t.running && d.state === "working") { clearTimeout(t.timer); t.timer = setTimeout(() => this.evaluate(t), Math.max(250, this.idleMs / 2)); }
   }
@@ -504,7 +446,7 @@ export class Terminals {
   }
   private onExit(t: Term, code: number) {
     if (!t.running) return;
-    t.running = false; clearTimeout(t.timer); clearTimeout(t.killTimer); t.remoteUrl = null;
+    t.running = false; clearTimeout(t.timer); clearTimeout(t.killTimer);
     this.writeTranscript(t, t.redactor.push(t.decoder.decode()) + t.redactor.flush());
     const sig = t.proc?.signalCode ?? null;
     t.exitCode = sig ? null : (typeof code === "number" ? code : null); t.signal = sig; t.endedAt = new Date().toISOString();
@@ -522,7 +464,7 @@ export class Terminals {
   private saveMeta(t: Term, extra: Record<string, unknown> = {}) {
     const { id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, transcriptTruncated, git, review } = t;
     try { writeFileSync(join(this.dir, `${id}.json`), JSON.stringify({ id, project, preset, kind, label, command, by, startedAt, endedAt, exitCode, signal, cols, rows, git, review,
-      transcript: t.tFile ? `${id}.log` : t.transcriptName, transcriptBytes: t.tBytes, transcriptTruncated, remoteControl: t.remote ? { enabled: t.remote.enabled, mode: t.remote.mode } : null,
+      transcript: t.tFile ? `${id}.log` : t.transcriptName, transcriptBytes: t.tBytes, transcriptTruncated,
       sandboxed: false, evidence: false, ...(t.stopped ? { reason: t.stopped } : {}), ...(t.dismissedAtShutdown ? { dismissed: true } : {}), ...extra }, null, 1), { mode: 0o600 }); } catch {}
   }
   /** The terminals' own records (data/terminals/<id>.json), not their input files. */
@@ -552,14 +494,14 @@ export class Terminals {
       let text = "";
       if (m.transcript) { try { const b = readFileSync(join(this.dir, `${m.id}.log`)); const tail = b.subarray(Math.max(0, b.length - this.cap)); ring.push(new Uint8Array(tail)); ring.dropped = b.length - tail.length; text = tail.toString("utf8"); } catch {} }
       let inputs: string[] = []; try { const j = JSON.parse(readFileSync(join(this.dir, `${m.id}.inputs.json`), "utf8")); if (Array.isArray(j?.lines)) inputs = j.lines.map(String).slice(-40); } catch {}
-      const remote = m.remoteControl ? { enabled: !!m.remoteControl.enabled, mode: m.remoteControl.mode ?? null, sent: false } : null;
+      // a record written while Studio still turned Remote Control on carries remoteControl: it is ignored
       const t: Term = { id: m.id, project, preset: m.preset ?? null, kind: m.kind ?? "custom", label: String(m.label ?? "terminal"), command: String(m.command ?? ""), by: String(m.by ?? "desktop"),
         startedAt: String(m.startedAt ?? m.endedAt), endedAt: m.endedAt, exitCode: typeof m.exitCode === "number" ? m.exitCode : null, signal: m.signal ?? null,
-        state: m.exitCode === 0 && !stopped ? "done" : "exited", reason: "exit", ask: null, cols: Number(m.cols) || 100, rows: Number(m.rows) || 30, running: false, remote,
+        state: m.exitCode === 0 && !stopped ? "done" : "exited", reason: "exit", ask: null, cols: Number(m.cols) || 100, rows: Number(m.rows) || 30, running: false,
         transcriptTruncated: !!m.transcriptTruncated, git: { start: facts(m.git?.start), end: facts(m.git?.end) }, review: m.review ?? null, restored: true, stopped, line: "", lineAt: null, inputs,
         transcriptName: m.transcript === `${m.id}.log` ? m.transcript : null,
         proc: null, ring, tail: "", rawTail: "", lastChunk: "", lastOutAt: Date.now(), sawOutput: !!text, subs: new Set(), decoder: new TextDecoder(), redactor: new SecretWindow(false),
-        tFile: null, tBytes: Number(m.transcriptBytes) || 0, timer: null, spec: null, remoteUrl: null, seen: new Set(),
+        tFile: null, tBytes: Number(m.transcriptBytes) || 0, timer: null, spec: null, seen: new Set(),
         // the transcript is already redacted; a phone still gets no output from one that ever showed a Remote Control link
         linkSeen: text.includes(REMOTE_REMOVED) };
       this.terms.set(t.id, t);
@@ -714,7 +656,7 @@ export async function terminalRoutes(svc: Terminals, req: Request, url: URL, who
     }
     if (p === "/api/terminals" && !writing) {
       return json({ terminals: svc.list(desktop), canWrite: desktop && cookie, idleMs: svc.idleMs, boot: svc.boot, restartEnded: [...svc.restartEnded],
-        ...(desktop ? { presets: svc.presets().map(({ id, label, kind, remoteControl, path }) => ({ id, label, kind, remoteControl: !!remoteControl, path })), projects: svc.projects() } : {}) });
+        ...(desktop ? { presets: svc.presets().map(({ id, label, kind, path }) => ({ id, label, kind, path })), projects: svc.projects() } : {}) });
     }
     if (p === "/api/terminals" && writing) { const b = await req.json().catch(() => null); return json({ terminal: await svc.create(b ?? {}, "desktop") }); }
     // the page opens Studio again as an app window, where the browser keeps no key for itself (the new-tab, close and

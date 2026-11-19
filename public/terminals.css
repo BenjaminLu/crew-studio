@@ -9,7 +9,6 @@
 .wt-row input{font-family:var(--f-mono, ui-monospace, monospace);font-size:12.5px}
 .wt-warn{margin:0;font-size:12px;color:var(--warn);background:var(--warn-soft);border-radius:8px;padding:6px 8px;overflow-wrap:anywhere}
 .wt-presets{display:flex;flex-wrap:wrap;gap:6px}
-.wt-rc{font-size:12px;color:var(--text-2);display:flex;gap:6px;align-items:flex-start}
 .wt-list{display:flex;flex-direction:column;gap:4px}
 .wt-item{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);text-decoration:none}
 .wt-item[aria-current="page"]{border-color:var(--accent);background:var(--accent-soft)}
@@ -22,10 +21,6 @@
 .wt-cmd{flex-basis:100%;font-size:12px;overflow-wrap:anywhere}
 .wt-actions{display:flex;gap:6px}
 .wt-ask{font-size:13px;color:var(--human);background:var(--human-soft);border-radius:8px;padding:6px 10px;overflow-wrap:anywhere}
-.wt-remote{display:flex;gap:12px;align-items:center;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--surface)}
-.wt-remote p{margin:2px 0 4px;font-size:12px}
-.wt-remote a{font-size:12px;overflow-wrap:anywhere}
-.wt-qr{background:#fff;padding:6px;border-radius:8px;flex:none;line-height:0}
 .wt-xterm{height:min(68vh,720px);min-height:260px;border-radius:10px;overflow:hidden;background:var(--surface-2);border:1px solid var(--border)}
 /* the padding is on xterm's own element, which its fit addon subtracts (on the host, border-box, it was counted as room and
    the last column ran under the scrollbar); xterm's viewport is painted by the theme, never by its stylesheet's black */
@@ -134,4 +129,3 @@ kbd.off{opacity:.4;text-decoration:line-through}
 .wt-minfo p{margin:0}
 .wt-minfo .wt-ask{font-size:12px;padding:4px 8px}
 .wt-minfo .wt-review{gap:4px 8px}
-.wt-sheet .wt-remote{border:0;border-radius:0;padding:16px}

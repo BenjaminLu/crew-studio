@@ -2,7 +2,8 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Web terminals in a real browser (public/terminals.js, docs/units/web-terminal.md), stub CLIs only:
 //   the desktop page: the unsandboxed warning with the project's path, presets, a custom command started in xterm.js,
 //   "waiting for you" in the terminal's badge, the sidebar's Terminals item and the Firstmate panel's Terminals tab,
-//   typing answers it; Claude Code's Remote Control link and its QR code in the ⋯ menu;
+//   typing answers it; Claude Code starts without Remote Control (no toggle, no link item, no QR code), and a session
+//   link it prints (Remote Control the captain turned on) reaches neither the menu nor a phone;
 //   a paired phone: the same list and states, the output drawn read only (no input element, no launcher, no controls,
 //   no link), at 390 px without a horizontal scroll; and with an xterm stub, the page asks xterm for no input on a phone.
 //   The vendored xterm.js files equal the pinned packages.
@@ -54,7 +55,8 @@ writeFileSync(join(data, "terminals", "T-seeded-before1.json"), JSON.stringify({
   git: { start: { branch: "main", head: seededHead, commits: 0, base: "main" }, end: { branch: "agent/seeded", head: seededHead, commits: 1, base: "main" } }, review: null, transcript: null, transcriptBytes: 0, transcriptTruncated: false, remoteControl: null, sandboxed: false, evidence: false }));
 writeFileSync(join(bin, "claude"), `#!/bin/sh
 if [ "$1" = "--help" ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; exit 0; fi
-for a in "$@"; do [ "$a" = "--remote-control" ] && printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-UIFAKE789\\r\\n'; done
+echo "args:[$*]" >> "$(dirname "$0")/claude-args.log"
+printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-UIFAKE789\\r\\n'
 while :; do printf '\\r\\n> '; IFS= read -r line || exit 0; printf 'you said %s\\r\\n' "$line"; done
 `); chmodSync(join(bin, "claude"), 0o755);
 const BUN = process.versions.bun ? process.execPath : execFileSync("which", ["bun"], { encoding: "utf8" }).trim();
@@ -83,7 +85,7 @@ try {
   ok(await seen(p.locator("[data-term-warning]")), "the Terminals page opens on the desktop");
   ok((await p.locator("[data-term-warning]").innerText()).includes(`full permissions in ${proj}`) && /Not sandboxed/.test(await p.locator("[data-term-warning]").innerText()), "it says, before anything starts: not sandboxed, full permissions, in the project's path");
   ok(await p.locator('[data-preset="claude"]').count() === 1 && await p.locator('[data-preset="shell"]').count() === 1 && await p.locator('[data-preset="aider"]').count() === 0, "presets: the CLIs on PATH and the shell");
-  ok(await p.locator("#termRc").isChecked(), "Claude Code's Remote Control toggle is on by default");
+  ok(await p.locator("#termRc, .wt-rc").count() === 0 && !/Remote Control/i.test(await p.locator(".wt-new").innerText()), "the launcher has no Remote Control toggle or wording");
   // a terminal that ended before Studio started is listed from its record, marked, and can still be sent for review
   await p.goto(base + "/#/terminals/T-seeded-before1");
   await seen(p.locator(".wt-stage .wt-pane"), 10000); await menu(p);
@@ -116,15 +118,17 @@ try {
   ok(await seen(p.locator('.wt-tabs [aria-selected="true"] [data-term-state="done"]'), 8000), "exit 0: done");
   ok(await until(async () => (await p.locator("#navTerms").isHidden())), "nothing waits any more: the count goes");
 
-  // Claude Code with Remote Control: the link and its QR code, from the ⋯ menu (with a terminal shown, Launch… opens the launcher)
+  // Claude Code: started without Remote Control; the session link it prints (the captain's own Remote Control) gets no
+  // menu item, sheet or QR code (with a terminal shown, Launch… opens the launcher)
   await launch(p);
   await p.locator('[data-preset="claude"]').click();
-  ok(await until(async () => { await menu(p); const n = await p.locator('[data-term-menu-pop] [data-term-mi="remote"]').count(); if (!n) await unmenu(p); return n; }, 10000), "Claude Code's Remote Control link is an item of the menu");
-  await p.locator('[data-term-menu-pop] [data-term-mi="remote"]').click();
-  ok(await seen(p.locator("[data-term-remote-url]"), 3000) && (await p.locator("[data-term-remote-url]").innerText()) === "https://claude.ai/code/rc-UIFAKE789" && await p.locator(".wt-qr svg").count() === 1, "with the link and a QR code drawn on the page");
+  ok(await until(async () => (await p.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("Continue here"), 10000), "Claude Code starts and prints its output");
+  const claudeArgs = readFileSync(join(bin, "claude-args.log"), "utf8").trim().split("\n").at(-1);
+  ok(claudeArgs === "args:[]", "Studio starts it with no Remote Control flag", claudeArgs);
+  await menu(p);
+  ok(await p.locator('[data-term-menu-pop] [data-term-mi="remote"]').count() === 0 && await p.locator("[data-term-remote], [data-term-remote-url], [data-term-remote-sheet], .wt-qr").count() === 0, "no Remote Control item in the menu, no link sheet, no QR code");
+  await unmenu(p);
   const claudeId = decodeURIComponent(p.url().split("/terminals/")[1] || "");
-  if (shots) await p.screenshot({ path: join(shots, "terminals-desktop-remote.png") });
-  await p.keyboard.press("Escape"); await until(async () => !(await p.locator("[data-term-remote-sheet]").count()));
 
   // ---------- Send for review: a finished terminal whose branch has commits ----------
   await launch(p);
@@ -167,7 +171,7 @@ try {
   await q.goto(`${phoneBase}/#/terminals/${encodeURIComponent(claudeId)}`);
   await seen(q.locator(".wt-stage .wt-pane"), 10000); await menu(q);
   ok(await seen(q.locator("[data-term-menu-pop] [data-term-readonly]"), 10000), "the phone gets the page, view only (its menu says so)");
-  ok(await seen(q.locator(".wt-xterm .xterm-rows"), 10000) && await until(async () => (await q.locator(".wt-xterm .xterm-rows").innerText()).includes("not shown on a phone")), "with Remote Control on, the phone says why it shows no output");
+  ok(await seen(q.locator(".wt-xterm .xterm-rows"), 10000) && await until(async () => (await q.locator(".wt-xterm .xterm-rows").innerText()).includes("not shown on a phone")), "a terminal that printed a session link: the phone says why it shows no output");
   ok(await q.locator(".wt-xterm textarea, .wt-xterm input, .wt-xterm [contenteditable]").count() === 0, "the phone's terminal has no input element (no keyboard)");
   ok(await q.locator("[data-term-menu-pop]").count() === 1 && await q.locator("[data-term-run], [data-preset], #termCmd, [data-term-new], [data-term-kill], [data-term-restart], [data-term-dismiss], [data-term-send]").count() === 0, "no launcher and no Launch, Stop, Restart or Send for review in the phone's menu");
   await unmenu(q);
@@ -176,7 +180,7 @@ try {
   ok(await q.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "no horizontal scroll at 390 px");
   const q2 = await pctx.newPage(); q2.on("pageerror", (e) => errors.push(`phone2: ${e}`));
   await q2.goto(`${phoneBase}/#/terminals/${encodeURIComponent(firstId)}`);
-  ok(await until(async () => (await q2.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("answer:y"), 10000), "a terminal without Remote Control: the phone draws its output"); await q2.close();
+  ok(await until(async () => (await q2.locator(".wt-xterm .xterm-rows").innerText().catch(() => "")).includes("answer:y"), 10000), "a terminal without a session link: the phone draws its output"); await q2.close();
   await q.locator(".wt-xterm").tap().catch(() => {}); await q.keyboard.type("hijack\n").catch(() => {});
   await new Promise((r) => setTimeout(r, 600));
   ok(!(await p.locator(".wt-xterm .xterm-rows").innerText()).includes("hijack"), "tapping and typing on the phone sends nothing");
@@ -191,7 +195,7 @@ try {
   await sp.goto(`${phoneBase}/#/terminals/${encodeURIComponent(claudeId)}`);
   const xt = await until(async () => { const v = await sp.evaluate(() => window.__xt); return v?.writes?.length && v; });
   ok(xt?.opts?.disableStdin === true && xt.onData === 0, "on a phone the page creates xterm with stdin disabled and listens to no keys", JSON.stringify(xt?.opts));
-  ok(xt && !xt.writes.join("").includes("UIFAKE789") && !xt.writes.join("").includes("Remote Control active"), "with Remote Control on, xterm on the phone never receives the output");
+  ok(xt && !xt.writes.join("").includes("UIFAKE789") && !xt.writes.join("").includes("Remote Control active"), "a terminal that printed a session link: xterm on the phone never receives the output");
   ok(await sp.locator(".wt-xterm textarea").count() === 0, "the input element xterm made is removed");
   await post(port, `/api/terminals/${claudeId}/kill`, {}, { cookie: "", "x-crew-session": TOKEN }).catch(() => {});
   ok(!errors.length, "no page errors", errors.join(" | "));

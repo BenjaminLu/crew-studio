@@ -2,9 +2,9 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // Web terminals (src/terminals.ts, docs/units/web-terminal.md) against a real Studio on temporary data, stub CLIs only:
 //   a PTY round trip (create, attach with replay, input, resize, exit code), kill takes the process group, the child's env
 //   carries no Studio internals, a phone may list and watch but never type, start, resize or stop, a script's
-//   x-crew-session cannot type either, scrollback and transcript are bounded, Claude Code's Remote Control is turned on
-//   once (launch flag or /remote-control), its link is shown to the desktop only and removed from the transcript, the
-//   toggle off sends nothing, Studio stopping kills every terminal, the routes live on the loopback listener only.
+//   x-crew-session cannot type either, scrollback and transcript are bounded, Studio never turns Claude Code's Remote
+//   Control on (no flag, nothing typed), a session link the captain's own Remote Control prints is removed from the
+//   transcript, the lists and phones, Studio stopping kills every terminal, the routes live on the loopback listener only.
 import { spawn } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -170,13 +170,14 @@ const home = join(tmp, "home"), proj = join(tmp, "proj"), state = join(tmp, "sta
 for (const d of [home, proj, state, data, bin, join(home, ".codex")]) mkdirSync(d, { recursive: true });
 writeFileSync(join(data, "projects.json"), JSON.stringify([{ id: "demo", name: "Demo", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: true },
   { id: "off", name: "Off", path: proj, base: "main", sensitive: [], proposed: null, proposedAt: null, approvedAt: null, enabled: false }]));
-// a stub Claude Code: --help lists --remote-control only when ./mode says "flag"; it prints a fake Remote Control link
-// when started with the flag or when it reads /remote-control; it logs its arguments and every line it reads
+// a stub Claude Code: --help lists --remote-control only when ./mode says "flag"; at start it prints ./print when there
+// is one (Remote Control the captain turned on in its own settings), and a fake Remote Control link when it reads
+// /remote-control (the captain typing it); it logs its arguments and every line it reads
 writeFileSync(join(bin, "claude"), `#!/bin/sh
 d=$(dirname "$0")
 if [ "$1" = "--help" ]; then if [ "$(cat "$d/mode")" = flag ]; then echo "  --remote-control [name]   Start an interactive session with Remote Control enabled"; else echo "  -p, --print"; fi; exit 0; fi
 echo "$$ start: $*" >> "$d/calls.log"
-for a in "$@"; do [ "$a" = "--remote-control" ] && { if [ -f "$d/print" ]; then cat "$d/print"; else printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-FAKEFLAG123?env=x\\r\\n'; fi; }; done
+[ -f "$d/print" ] && cat "$d/print"
 while :; do printf '\\r\\n> '; IFS= read -r line || exit 0; echo "$$ input: $line" >> "$d/calls.log"
   case "$line" in /remote-control*) printf '/remote-control is active \\302\\267 Continue here, on your phone, or at https://claude.ai/code/rc-FAKESLASH456\\r\\n';; quit) exit 0;; *) printf 'you said %s\\r\\n' "$line";; esac; done
 `); chmodSync(join(bin, "claude"), 0o755); writeFileSync(join(bin, "mode"), "flag");
@@ -223,7 +224,7 @@ try {
   await boot();
   // ---------- what the page sees ----------
   const L = await list();
-  ok(L?.canWrite === true && L.presets?.some((p: any) => p.id === "claude" && p.remoteControl) && L.presets.some((p: any) => p.id === "shell"), "the page lists the presets on PATH (the stub claude, with Remote Control) and the shell", JSON.stringify(L?.presets));
+  ok(L?.canWrite === true && L.presets?.some((p: any) => p.id === "claude" && !("remoteControl" in p)) && L.presets.some((p: any) => p.id === "shell"), "the page lists the presets on PATH (the stub claude, with no Remote Control setting) and the shell", JSON.stringify(L?.presets));
   ok(L.presets.every((p: any) => p.id !== "codex" || existsSync(p.path)) && !L.presets.some((p: any) => p.id === "aider"), "a CLI that is not on PATH is not offered");
   ok(L.projects?.some((p: any) => p.id === "demo" && p.path === proj) && !L.projects.some((p: any) => p.id === "off"), "registered, enabled projects only");
   ok((await create({ project: "off", command: "true" })).body?.code === "project", "a disabled project cannot host a terminal");
@@ -306,15 +307,16 @@ try {
   for (const r of many) if (r.body?.terminal) await raw("POST", `/api/terminals/${r.body.terminal.id}/kill`, {});
   await until(async () => (await list()).terminals.every((t: any) => !t.running));
 
-  // ---------- Claude Code's Remote Control ----------
+  // ---------- Claude Code's Remote Control: Studio never turns it on; the link of one the captain turns on is removed ----------
   writeFileSync(join(bin, "calls.log"), "");
+  writeFileSync(join(bin, "print"), "/remote-control is active \u00b7 Continue here, on your phone, or at https://claude.ai/code/rc-FAKEFLAG123?env=x\r\n");
   const c6 = await create({ preset: "claude" }); const id6 = c6.body.terminal.id;
-  ok(c6.body.terminal.remote?.enabled && c6.body.terminal.remote.mode === "flag" && c6.body.terminal.command.endsWith("--remote-control"), "a Claude Code whose --help lists --remote-control starts with it (on by default)", JSON.stringify(c6.body.terminal));
-  const t6 = await until(async () => { const t = await term(id6); return t?.remote?.url && t; });
-  ok(t6?.remote.url === "https://claude.ai/code/rc-FAKEFLAG123?env=x", "the page gets the session's Remote Control link", JSON.stringify(t6?.remote));
-  ok((await term(id6, { as: "phone", token: ptok }))?.remote && !("url" in (await term(id6, { as: "phone", token: ptok })).remote), "the phone does not get the link");
+  ok(!c6.body.terminal.command.includes("--remote-control") && !("remote" in c6.body.terminal), "the Claude preset starts without Remote Control, even when its --help lists the flag", JSON.stringify(c6.body.terminal));
+  ok(await until(() => /start: *$/m.test(calls())) && !calls().includes("--remote-control"), "it was started with no arguments", calls());
+  await until(async () => (await term(id6))?.state === "waiting");
+  ok(!JSON.stringify(await term(id6)).includes("FAKEFLAG") && !JSON.stringify(await list()).includes("FAKEFLAG"), "the link the captain's Remote Control printed is in no list or view");
   const pw = attach(id6, { as: "phone", token: ptok }); await until(() => pw.events.some((e) => e.ev === "replay")); await sleep(600); pw.close();
-  ok(pw.events.find((e) => e.ev === "replay")?.data?.hidden === "remote-control" && pw.out === "" && !pw.events.some((e) => e.ev === "out") && pw.events.some((e) => e.ev === "meta"), "with Remote Control on, a phone gets the states and no output at all", JSON.stringify(pw.events.map((e) => e.ev)));
+  ok(pw.events.find((e) => e.ev === "replay")?.data?.hidden === "remote-control" && pw.out === "" && !pw.events.some((e) => e.ev === "out") && pw.events.some((e) => e.ev === "meta"), "once it printed a session link, a phone gets the states and no output at all", JSON.stringify(pw.events.map((e) => e.ev)));
   const views = [1, 2, 3, 4].map(() => attach(id6)); await sleep(400);
   const fifth = await raw("GET", `/api/terminals/${id6}/stream`); views.forEach((v) => v.close());
   ok(fifth.status === 429 && fifth.body?.code === "tooManyViews", "at most four views of one terminal at once", JSON.stringify(fifth));
@@ -330,11 +332,11 @@ try {
   const c11 = await create({ command: "sleep 1; printf 'started https://claude.ai/code/rc-SHELLLINK0123456789abc\\r\\n'; sleep 1; echo after-the-link; sleep 2" }); const id11 = c11.body.terminal.id;
   const p11 = attach(id11, { as: "phone", token: ptok });
   await until(async () => !(await term(id11))?.running, 8000); await sleep(300); p11.close();
-  ok(!/SHELLLINK/i.test(p11.out) && !p11.out.includes("after-the-link") && (await term(id11))?.remote === null, "a shell that prints a link: the phone gets none of it and nothing after it", JSON.stringify(p11.out));
+  ok(!/SHELLLINK/i.test(p11.out) && !p11.out.includes("after-the-link") && !("remote" in ((await term(id11)) ?? {})), "a shell that prints a link: the phone gets none of it and nothing after it", JSON.stringify(p11.out));
   ok(!/SHELLLINK/i.test(readFileSync(join(data, "terminals", `${id11}.log`), "utf8")) && readFileSync(join(data, "terminals", `${id11}.log`), "utf8").includes("after-the-link"), "and its transcript keeps the output without the link");
   ok(await until(async () => (await term(id6))?.state === "waiting" && (await term(id6)).reason === "prompt"), "Claude at its prompt: waiting (prompt)");
   await sleep(900);
-  ok(!calls().includes("input: /remote-control"), "with the flag, no /remote-control is typed");
+  ok(!calls().includes("input: /remote-control"), "Studio types no /remote-control at the prompt");
   // what the captain types at the agent's own prompt is kept (for Send for review's spec writer), redacted, as data
   await raw("POST", `/api/terminals/${id6}/input`, { data: "add a percent() helper" }); await raw("POST", `/api/terminals/${id6}/input`, { data: "\x7f\x7f with a test\r" });
   await sleep(300); await until(async () => (await term(id6))?.reason === "prompt");
@@ -355,8 +357,6 @@ try {
     `Open ${W90} now? [y/N] `);
   // the banner (64 columns) and 62 characters of the link fill the line, so the terminal wraps it there
   const cw = await create({ preset: "claude", cols: 126 }); const idw = cw.body.terminal.id;
-  const tw = await until(async () => { const t = await term(idw); return t?.remote?.url && t; });
-  ok(tw?.remote.url === W90, "the page gets the whole link even when the terminal wrapped it", JSON.stringify(tw?.remote));
   const askW = await until(async () => { const t = await term(idw, { as: "phone", token: ptok }); return t?.state === "waiting" && t; });
   const phoneView = JSON.stringify(await list({ as: "phone", token: ptok }));
   ok(askW?.reason === "question" && /^Open \[remote-control link removed\] now\? \[y\/N\]$/.test(askW.ask ?? "") && !/PTYLEAK|claude\.ai/i.test(phoneView), "a question whose own line carries the link reaches the phone's list without it", `${askW?.ask} ${phoneView.slice(0, 300)}`);
@@ -368,26 +368,23 @@ try {
   ok(!/PTYLEAK/i.test(logW.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")) && logW.includes(REMOTE_REMOVED), "the transcript has every form of the link removed", JSON.stringify(logW.slice(0, 400)));
   rmSync(join(bin, "print"), { force: true });
 
-  // an older Claude Code without the flag: /remote-control, typed once, when it first sits at its prompt
+  // an older Claude Code without the flag: nothing is typed either; /remote-control the captain types prints a link that is
+  // removed from the transcript
   writeFileSync(join(bin, "mode"), "slash"); const later = new Date(Date.now() + 5000); utimesSync(join(bin, "claude"), later, later); writeFileSync(join(bin, "calls.log"), "");
   const c7 = await create({ preset: "claude" }); const id7 = c7.body.terminal.id;
-  ok(c7.body.terminal.remote?.mode === "slash" && !c7.body.terminal.command.includes("--remote-control"), "without the flag in --help: no flag, the slash command instead", JSON.stringify(c7.body.terminal.remote));
-  const t7 = await until(async () => { const t = await term(id7); return t?.remote?.url && t; });
-  ok(t7?.remote.url === "https://claude.ai/code/rc-FAKESLASH456" && t7.remote.sent, "/remote-control was sent and its link is shown", JSON.stringify(t7?.remote));
-  await sleep(1500);
-  ok((calls().match(/input: \/remote-control/g) ?? []).length === 1, "it was sent exactly once", calls());
-  await raw("POST", `/api/terminals/${id7}/kill`, {}); await until(async () => !(await term(id7))?.running);
-  ok(!readFileSync(join(data, "terminals", `${id7}.log`), "utf8").includes("FAKESLASH456"), "that link is removed from the transcript too");
-
-  // the toggle off: nothing sent, nothing shown
-  writeFileSync(join(bin, "calls.log"), "");
-  const c8 = await create({ preset: "claude", remoteControl: false }); const id8 = c8.body.terminal.id;
-  ok(c8.body.terminal.remote?.enabled === false && c8.body.terminal.remote.mode === null, "Remote Control off: recorded as off");
+  await until(async () => (await term(id7))?.state === "waiting"); await sleep(1500);
+  ok(!calls().includes("input: /remote-control") && !calls().includes("--remote-control"), "an older Claude Code: no flag and no /remote-control typed", calls());
+  await raw("POST", `/api/terminals/${id7}/input`, { data: "/remote-control\r" });
+  ok(await until(() => calls().includes("input: /remote-control")), "the captain types /remote-control by hand");
+  await sleep(800); await raw("POST", `/api/terminals/${id7}/kill`, {}); await until(async () => !(await term(id7))?.running);
+  const log7 = readFileSync(join(data, "terminals", `${id7}.log`), "utf8");
+  ok(!log7.includes("FAKESLASH456") && log7.includes(REMOTE_REMOVED), "the link it printed is removed from the transcript", JSON.stringify(log7.slice(-300)));
+  // an older page still sends remoteControl: true; it is ignored
+  writeFileSync(join(bin, "mode"), "flag"); writeFileSync(join(bin, "calls.log"), "");
+  const c8 = await create({ preset: "claude", remoteControl: true } as any); const id8 = c8.body.terminal.id;
   await until(async () => (await term(id8))?.state === "waiting"); await sleep(1200);
-  ok(!/--remote-control|input: \/remote-control/.test(calls()) && !(await term(id8))?.remote?.url, "toggle off: no flag, no /remote-control, no link", calls());
+  ok(c8.status === 200 && !/--remote-control|input: \/remote-control/.test(calls()) && !("remote" in (await term(id8))), "an older page's remoteControl: true is ignored: no flag, nothing typed", calls());
   await raw("POST", `/api/terminals/${id8}/kill`, {});
-  const c9 = await create({ command: "echo https://claude.ai/code/rc-NOTAGENT; sleep 1" }); await sleep(800);
-  ok((await term(c9.body.terminal.id))?.remote === null, "another program has no Remote Control: nothing to show");
 
   // ---------- loopback only; Studio stopping kills every terminal ----------
   ok((await raw("GET", "/api/terminals", undefined, { host: "192.168.1.50:4210" })).status === 421, "an unknown Host (another interface's name) is refused");

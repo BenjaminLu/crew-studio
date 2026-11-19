@@ -11,7 +11,7 @@ export function terminalRow(t: any) {
   return { id: t.id, project: t.project?.id ?? null, preset: t.preset ?? null, kind: t.kind, label: t.label, command: t.command, by: t.by, startedAt: t.startedAt, endedAt: t.endedAt ?? null,
     exitCode: t.exitCode ?? null, signal: t.signal ?? null, state: t.state, reason: t.reason, waitsForInput: t.state === "waiting" && (t.reason === "question" || t.reason === "prompt"), running: !!t.running,
     git: t.git ? { start: t.git.start ? { branch: t.git.start.branch, head: t.git.start.head } : null, end: t.git.end ? { branch: t.git.end.branch, head: t.git.end.head, commits: t.git.end.commits } : null } : null,
-    review: t.review ?? null, restored: !!t.restored, stopped: t.stopped ?? null, remoteControl: !!t.remote?.enabled };
+    review: t.review ?? null, restored: !!t.restored, stopped: t.stopped ?? null };
 }
 const entity = (t: any): Entity => ({ id: t.id, title: `${t.id} ${t.preset ?? t.kind} (${t.state})`, updatedAt: t.endedAt ?? t.startedAt ?? null, project: t.project?.id ?? null, data: terminalRow(t) });
 const rows = (s: Sources): any[] => { try { return termsOf(s)?.list(true) ?? []; } catch { return []; } };
@@ -30,7 +30,7 @@ registerKind({
   scope: (e) => e.project ?? null, grantable: false, viewer: "desktop",
   filters: { waiting: { type: "boolean", description: "true: only terminals waiting for input" }, running: { type: "boolean", description: "true: only running terminals" } },
   fields: [
-    ...["id", "project", "preset", "kind", "by", "startedAt", "endedAt", "exitCode", "signal", "state", "reason", "waitsForInput", "running", "git", "review", "restored", "stopped", "remoteControl"].map((path) => ({ path, trust: "studio" as const })),
+    ...["id", "project", "preset", "kind", "by", "startedAt", "endedAt", "exitCode", "signal", "state", "reason", "waitsForInput", "running", "git", "review", "restored", "stopped"].map((path) => ({ path, trust: "studio" as const })),
     { path: "label", trust: "captain" }, { path: "command", trust: "captain" },
   ],
   list: (s, filter) => rows(s).map(entity).filter((e) => (filter.waiting !== true || (e.data as any).waitsForInput) && (filter.running !== true || (e.data as any).running)),

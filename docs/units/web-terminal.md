@@ -38,18 +38,17 @@ keyboard. Each pane's fit addon follows every resize, and its PTY gets the new s
 The ⋯ menu (⌘., Ctrl+Shift+. elsewhere; the chat head's Firstmate menu look) holds every action, each with the chord that
 works where the page is, the harmless first (opened, its first item has the focus, so ⌘. ↓ ↩ never stops an agent): new
 tab, split right and down, go to, zoom, clear, rename tab, close pane, close tab; Launch…, Send for review (disabled with its
-reason while it cannot go), In review, Remote Control link…, Retry the output that waits, Restart; Open in a Studio window
+reason while it cannot go), In review, Retry the output that waits, Restart; Open in a Studio window
 (in a browser tab), the sidebar, **?** Keyboard shortcuts; and last, past a separator, Stop or Remove. Its head is the
 focused terminal: its name, state, command and folder on one line (in full in its title), the question it asks, its branch
-and commits (only once there is a commit beyond the base to send), Remote Control waiting for its link, a terminal from
-before a restart, view only. A dot on ⋯ says when something waits there: Send for review is ready, or a Remote Control link
-came. The arrows, Home and End move, Enter runs, ? opens the key table, Esc closes it; a click outside or a focus that
+and commits (only once there is a commit beyond the base to send), a terminal from before a restart, view only. A dot on ⋯
+says when something waits there: Send for review is ready. The arrows, Home and End move, Enter runs, ? opens the key table, Esc closes it; a click outside or a focus that
 leaves it (Tab) closes it. After an item the keys go back to the terminal, unless the item opened a sheet or the
 launcher's field. It is drawn in place, never with a full render, so the terminals keep their focus and selection.
 Over the terminal the page adds one line only when it needs the captain: a refused Send for review (it stays until the
 next try), and on a pane a quiet notice while its output waits (too many views). **Launch…** opens the launcher (agent
 presets, a command, every terminal listed) above the panes with its command field focused; starting a terminal closes it;
-it starts open while nothing is running. Remote Control's link and QR code open from the menu as a sheet. A phone sees the
+it starts open while nothing is running. A phone sees the
 same strip; a phone allowed to drive keeps every item, and a view-only device's menu leaves out what starts, stops or sends; at 760 px and below the sidebar stays the top bar (its theme
 and gear row is hidden on this page), the panes take the screen's width and the menu fits it. With no tab at all, the page
 is the launcher and the list, as before.
@@ -200,11 +199,12 @@ starts ("Not sandboxed: runs with your user's full permissions in <path>"). What
 ## Wire
 
 - `GET /api/terminals`: the list (and, for the page, the presets found on PATH and the registered, enabled projects).
-- `POST /api/terminals` `{project, preset | command, args?, remoteControl?, cols, rows}`: a preset runs its binary with
-  `args`; a custom command runs as `$SHELL -lc <command>`.
+- `POST /api/terminals` `{project, preset | command, args?, cols, rows}`: a preset runs its binary with
+  `args` and nothing more; a custom command runs as `$SHELL -lc <command>`. A `remoteControl` field an older page still
+  sends is ignored.
 - `GET /api/terminals/<id>/stream`: server-sent events. `meta` (the summary), `replay` (the scrollback ring), then `out`
   (live output), `meta` on each state change, `exit`. The page gets raw bytes (base64) and xterm.js decodes UTF-8 across
-  chunks; a phone gets text with the Remote Control link removed.
+  chunks; a phone gets text with Claude Code session links removed.
 - `GET /api/terminals/mux?ids=<id>,<id>…`: the same events for several terminals on one stream, each event's data naming
   its terminal (`{"id": …}`); `gone` for one that is not there or may not be viewed. Ids are well-formed ones only, once
   each, at most 64. A replay and each `out` carry `end`, where the terminal's output stands (every byte it wrote, kept or
@@ -294,50 +294,34 @@ and the captain allowed notifications. A phone sees the same states.
 
 ## Claude Code Remote Control
 
-For the Claude Code preset, Remote Control is on by default (a toggle on the page). Studio asks the installed CLI how:
-`claude --help` (no model call; cached per binary and modification time) lists `--remote-control`, so the session starts
-with that flag. A CLI whose help does not list it gets `/remote-control` typed once, the first time the session sits idle at
-its own prompt (`reason: prompt`; never at a question or a mere pause). When Claude Code prints its session link (`https://claude.ai/code…`), the terminal's
-⋯ menu offers it (Remote Control link…), a sheet with a QR code drawn on the page (the vendored qrcode library). The link lets anyone signed in to the
-account drive the session, so it is treated as a secret:
+Studio never turns Remote Control on, by the captain's decision: the Claude Code preset starts `claude` with no
+`--remote-control` flag and nothing is typed at its prompt. There is no toggle, no link in the ⋯ menu and no QR code. A
+terminal record or an older page that still carries the old setting keeps working; the setting is ignored.
 
-- Studio finds it even when the terminal wrapped it at its width (Ink breaks long links over indented lines) or put an
-  escape inside it, in any letter case. Once known, the link, the link without its scheme and its session id are matched
-  through escapes, line wraps, box borders and percent-encoding, in any case (`SecretWindow`, `fuzzy`).
-- The transcript of a Claude Code terminal with Remote Control on is held back until the link is known, then written with
-  every form of it removed (`[remote-control link removed]`). If the link never comes, the held text is written at the end
-  with the generic rule only (a link Studio never recognised in any form is not known to it).
-- A phone gets **no output** from such a terminal (its replay says why), only its state; the question it shows (`ask`) has
-  the link and anything link-like removed, in lists, the page's stream and the phone's meta events.
-- Never in the record, the activity log or the list a phone receives.
+The captain may turn Remote Control on by hand (`/remote-control`, or Claude Code's own settings). Its session link
+(`https://claude.ai/code…`, `claude.com` too) lets anyone signed in to the account drive the session, so wherever Studio
+gives out or keeps a terminal's output it is treated as a secret, in any terminal:
 
-**Which link the page shows** (`pageLink`, `bannerLink` in src/terminals.ts):
-- Only the link on Claude Code's own Remote Control banner, in the wording Claude Code 2.1.327 writes (its
-  `bridge_status` message): `/remote-control is active · Continue here, on your phone, or at <url>`.
-- Only once Remote Control is on: the flag at start, or `/remote-control` sent. In slash mode, a link already on the
-  screen when it is sent is never taken.
-- Only a link of a Remote Control link's shape (`SHOWN_LINK`): claude.ai or claude.com, `/code/<one id>`, at most an `env`
-  parameter.
-- A newer banner replaces it. "Remote Control disconnected …", "… stopped: …", "… session expired." and the process
-  ending clear it.
-- A banner or a disconnect line under Claude's tool-output mark (`⎿`) is a program's output shown by Claude, so it
-  counts for nothing. A line that only says Remote Control is on (a README, a log) is no banner either. Every link other
-  than the banner's is hidden, never shown.
+- Studio finds it even when the terminal wrapped it at its width (Ink breaks long links over indented lines), placed it
+  with cursor moves, put it in an OSC 8 hyperlink or put an escape inside it, in any letter case. Once known, the link, the
+  link without its scheme and its session id are matched through escapes, line wraps, box borders and percent-encoding, in
+  any case (`SecretWindow`, `fuzzy`).
+- studio_logs (`Terminals.tail`) and the transcript get every form of it removed (`[remote-control link removed]`).
+- A phone gets **no output** from a terminal once it has shown such a link (its replay says why), only its state. The
+  question it shows (`ask`) has the link and anything link-like removed: in lists, in the page's stream and in the
+  phone's meta events.
+- It is never in the record, the activity log or the list a phone receives.
 
-**What this cannot tell apart.** A program running in the terminal that prints the exact banner text itself, outside
-Claude's tool output, cannot be told apart from Claude Code's own banner in the output alone: nothing in-band
-authenticates it. The worst it can do is point the page, and its QR code, at another Claude Code session link of the
-right shape, never at a page of another site.
+The Mac's own terminal shows the output as the program wrote it, link included: that is the captain's own screen.
 
-Other agents have no such feature and show nothing; their phone view shows the output with the generic link rule.
-
-Not verified against a live Claude Code here (that would register a real session); the tests use a stub CLI that prints a
-fake link, with and without the flag in its help.
+Checked once against a live, signed-in Claude Code 2.1.327, the reason for the tests' cursor-placed case: its banner
+places the words with cursor moves and puts the link on the next row, in an OSC 8 hyperlink. The tests use stand-in CLIs
+that print fake links.
 
 ## Phone
 
-View only: the page lists terminals and states and draws the output (none for Claude Code with Remote Control on) with
-xterm.js created with `disableStdin`, and the input element xterm makes is removed, so a tap never opens a keyboard. No launcher, no Stop or Restart, no Remote Control
+View only: the page lists terminals and states and draws the output (none once a terminal has shown a Claude Code session link) with
+xterm.js created with `disableStdin`, and the input element xterm makes is removed, so a tap never opens a keyboard. No launcher, no Stop or Restart, never a session
 link. A revoked phone's streams end.
 
 ## Send for review
