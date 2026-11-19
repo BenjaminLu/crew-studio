@@ -109,8 +109,15 @@ try {
       return { link: a.querySelector("[data-review-room-open]")?.getAttribute("href"), text: a.querySelector("[data-review-room-open]")?.textContent, summary: a.querySelector("[data-review-room-summary]")?.textContent, merge: !!a.querySelector('[data-option="merge"]'), other: !!b.querySelector("[data-review-room]") }; },
       [card("merge", { reviewRoom: summary }), card("dispatch")]);
     ok(r.link === "#/room/SC-50" && r.text === "Open review room" && r.merge, "a merge card shows Open review room beside its own options", JSON.stringify(r));
-    ok(/^3 versions of the page · US\$1\.23 /.test(r.summary) && /never answers this card or changes whether it can merge/.test(r.summary) && !/question|check|source/.test(r.summary), "the card shows the room's summary: baton's versions and what they cost; display only", r.summary);
+    ok(/^3 versions of the page · US\$1\.23\. /.test(r.summary) && /never answers this card or changes whether it can merge/.test(r.summary) && !/question|check|source/.test(r.summary), "the card shows the room's summary: baton's versions and what they cost; display only", r.summary);
     ok(!r.other, "a card that is not a merge card has no review room");
+    // each state reads as one sentence: no page yet (being made or not), pages (with one more being made or not)
+    const says = await p.evaluate((list) => list.map((rr) => { const a = document.createElement("div"); document.body.append(a); window.crewCard.mountCard(a, rr); return a.querySelector("[data-review-room-summary]")?.textContent.split(" (")[0]; }),
+      [{ versions: 0, usd: 0, running: false }, { versions: 0, usd: 0, running: true, generating: true }, { versions: 1, usd: 1.6, running: true, generating: true }, { versions: 1, usd: 1.6, running: false },
+        { versions: 1, usd: 1.6, running: true, generating: false }, { versions: 0, usd: 0.42, running: false }, { versions: 0, usd: 0.42, running: true, generating: false }].map((o) => card("merge", { reviewRoom: { ...summary, ...o } })));
+    ok(JSON.stringify(says) === JSON.stringify(["Read a page on how and why this change works before you merge.", "A page on how and why this change works is being made.", "1 version of the page · US$1.60 · a new one is being made.", "1 version of the page · US$1.60.",
+      "1 version of the page · US$1.60.", "No page yet · US$0.42 spent.", "No page yet · US$0.42 spent."]),
+      "the merge card's line reads naturally in each state: nothing yet, the first page being made, a new version being made, pages made; the tutor answering a question changes nothing; money spent with no page says so", JSON.stringify(says));
     await ctx.close(); }
 
   // ---------- two routes, two pages: #/review is the Library's artifact review, #/room the review room ----------
@@ -138,7 +145,7 @@ try {
 
   // ---------- the pull request box: opening the room starts baton; nothing else is sent ----------
   { const { ctx, p } = await open(1440, "en"); const opened = [];
-    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { autoTeach: true, tutor: null }, tutors: [], providers: [] } }));
+    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { tutor: null }, tutors: [], providers: [] } }));
     await p.route(/\/api\/review-room\/paste-offer/, (r) => { opened.push("offer"); r.fulfill({ json: {} }); });
     await p.route(/\/api\/review-room\/open-pr$/, (r) => { opened.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ json: { id: "SC-50", href: "#/room/SC-50", room: ROOM } }); });
     await p.goto(`${base}/#/room`); await p.waitForSelector('[data-pr-box="home"]', { timeout: 15000 });

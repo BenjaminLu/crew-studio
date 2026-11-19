@@ -4,33 +4,21 @@
 
 /* ---------- the room's paper: tokens (light, then dark under the system preference and under the dark theme) ---------- */
 :root {
-  --rr-paper: #fffcf4; --rr-paper-edge: #efe6cf; --rr-dot: rgba(31,42,68,.14); --rr-ink: #1f2a44; --rr-ink-2: #5b6478; --rr-marker: #1d3f72;
-  --rr-ok: #2e9e6b; --rr-ok-soft: #e3f4ea; --rr-bad: #c8463d; --rr-bad-soft: #fbe9e7; --rr-hl: rgba(255,214,90,.62); --rr-new: #2f5bd3; --rr-new-soft: rgba(47,91,211,.10);
-  --rr-cite-bg: rgba(29,63,114,.07); --rr-cite-ink: #1d3f72; --rr-caption: #fff7e0; --rr-sticky: #fff3b0; --rr-sticky-ink: #1f2a44; --rr-img-bg: #ffffff;
-  --rr-code-bg: rgba(31,42,68,.05); --rr-inf-bg: rgba(201,134,26,.16); --rr-inf-ink: #7a4d00; --rr-add: rgba(46,158,107,.18); --rr-del: rgba(200,70,61,.15);
-  --rr-shadow: 0 1px 0 rgba(31,42,68,.04), 0 10px 30px -12px rgba(31,42,68,.22);
-  --rr-hand: "LXGW WenKai TC", "Caveat", "Kaiti TC", "STKaiti", cursive;
+  --rr-paper: #fffcf4; --rr-paper-edge: #efe6cf; --rr-ink: #1f2a44; --rr-ink-2: #5b6478; --rr-marker: #1d3f72;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-dot: rgba(232,235,241,.09); --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
-  --rr-ok: #5cc994; --rr-ok-soft: #14291f; --rr-bad: #ff8a80; --rr-bad-soft: #35181b; --rr-hl: rgba(255,205,80,.26); --rr-new: #8eb0ff; --rr-new-soft: rgba(142,176,255,.12);
-  --rr-cite-bg: rgba(156,192,255,.10); --rr-cite-ink: #b9d0ff; --rr-caption: #232833; --rr-sticky: #3a3420; --rr-sticky-ink: #ece6d6; --rr-img-bg: #f4f1ea;
-  --rr-code-bg: rgba(232,235,241,.06); --rr-inf-bg: rgba(232,176,79,.18); --rr-inf-ink: #f0c46a; --rr-add: rgba(92,201,148,.18); --rr-del: rgba(255,138,128,.16);
-  --rr-shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -14px rgba(0,0,0,.7); } }
+  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
+  } }
 :root[data-theme="dark"] {
-  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-dot: rgba(232,235,241,.09); --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
-  --rr-ok: #5cc994; --rr-ok-soft: #14291f; --rr-bad: #ff8a80; --rr-bad-soft: #35181b; --rr-hl: rgba(255,205,80,.26); --rr-new: #8eb0ff; --rr-new-soft: rgba(142,176,255,.12);
-  --rr-cite-bg: rgba(156,192,255,.10); --rr-cite-ink: #b9d0ff; --rr-caption: #232833; --rr-sticky: #3a3420; --rr-sticky-ink: #ece6d6; --rr-img-bg: #f4f1ea;
-  --rr-code-bg: rgba(232,235,241,.06); --rr-inf-bg: rgba(232,176,79,.18); --rr-inf-ink: #f0c46a; --rr-add: rgba(92,201,148,.18); --rr-del: rgba(255,138,128,.16);
-  --rr-shadow: 0 1px 0 rgba(0,0,0,.3), 0 14px 34px -14px rgba(0,0,0,.7); }
-/* the handwriting, only for the board's titles and picture labels: LXGW WenKai first in a Chinese room, Caveat first in English */
+  --rr-paper: #1b1f27; --rr-paper-edge: #2a303b; --rr-ink: #ece6d6; --rr-ink-2: #a9b0bf; --rr-marker: #9cc0ff;
+  }
 
 /* ---------- focus mode (app.js pageFocus: body[data-focus="room"]; the rail, the Firstmate sheet and the hidden button are
    every focus page's, in styles.css) ---------- */
 body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !important; max-height: none !important; }
 @media (max-width: 760px) { body[data-focus="room"] .side { display: none; } body[data-focus="room"] { overflow: hidden; } }
 
-/* ---------- the room: five fixed rows, only the board flexes ---------- */
+/* ---------- the room: its header and pills (the room list's rows, below) ---------- */
 .rr-room { height: 100vh; height: 100dvh; display: grid; grid-template-rows: 48px minmax(0, 1fr) 56px; gap: 10px; padding: 12px 24px; box-sizing: border-box; margin: 0 auto; min-width: 0; }
 .rr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .rr-back { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 13px; white-space: nowrap; flex: none; text-decoration: none; cursor: pointer; }
@@ -48,35 +36,16 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-pill .add { color: var(--ok); } .rr-pill .del { color: var(--bad); }
 .rr-ic { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
-/* the highlighter under a scene's title: drawn once, when the scene first shows */
-
-/* a scene's points: the one being read marked, the ones not reached yet dimmed */
-
 @keyframes rr-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
-/* the caption follows the point being read */
-
-/* the play bar: point back, the dots, point forward, play, replay, the scene */
-
-/* the dock: quick actions, the question, the transcript; what needs a word opens above it */
-
+/* the line's chips (Generate again, full screen, new tab: public/review-explain.js) */
 .rr-chip { height: 36px; padding: 0 12px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; white-space: nowrap; cursor: pointer; flex: none; }
 .rr-chip.lead { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .rr-chip:disabled { opacity: .5; cursor: default; }
 
-@keyframes rr-pulse { 50% { opacity: .3; } }
-
-/* the transcript drawer and a citation: over the room, never pushing the board */
-
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
-/* ---------- the board's pictures and excerpts ---------- */
-
 .rr-err { color: var(--bad, #c33); }
-
-/* pictures: screenshots (before / after), charts, generated illustrations; a click enlarges one */
-
-/* someone else's words (a reviewer, a commit message), quoted as plain text: a gist, the original folded */
 
 /* the Review Room's home and a project's page: the pull request URL box */
 .rr-prbox { display: grid; gap: 8px; max-width: 720px; }
@@ -85,36 +54,10 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-prbox .btn { justify-self: start; }
 @media (max-width: 560px) { .rr-prbox .btn { min-height: 44px; } }
 
-/* a narrower window: the dock's quick actions give way to the question */
+/* a narrower window: tighter edges, shorter pills */
 @media (max-width: 1100px) { .rr-room { padding: 10px 14px; }  .rr-pill { max-width: 180px; } }
 
-/* a table on the board (the tutor's, or one from an older answer): text cells */
-
-/* the transcript: the tutor's full answer, folded */
-
-/* the check on the board: big option buttons; right and wrong by colour and by a drawn mark */
-
- 
- 
-
- 
-
- 
-
-/* ---------- motion: one timeline, only what is new moves (a picture's new parts, a new point, a new title) ----------
-   nodes are drawn by the pen (stroke-dashoffset, 450ms), edges 350ms then their arrowhead 120ms, 180ms apart; labels are
-   written left to right (clip-path, 400ms); the highlighter 450ms; bars 600ms; a check mark 250ms. Reduced motion: the
-   final picture at once. */
-
-@keyframes rr-pen { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-@keyframes rr-write { from { clip-path: inset(-30% 100% -30% 0); } to { clip-path: inset(-30% -4% -30% 0); } }
-@keyframes rr-scale { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@keyframes rr-fadein { from { opacity: 0; } to { opacity: 1; } }
-
-/* the welcome scene's call to action */
-
-/* the explanation's language (EN / 繁 / 简), the answers to one question and "Regenerate with…" */
-
+/* a Library save's versions; the tutor menu (its options are .rr-regenopt) */
 .rr-vers { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
 .rr-ver { border: 1px solid var(--rr-paper-edge); background: var(--rr-paper); color: var(--rr-ink-2); border-radius: 99px; padding: 1px 8px; font-size: 11px; cursor: pointer; text-decoration: none; }
 .rr-ver[aria-pressed="true"], .rr-ver[aria-current="page"] { border-color: var(--rr-marker); color: var(--rr-marker); font-weight: 600; }
@@ -124,7 +67,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-regenopt:disabled { opacity: .55; cursor: default; }
 .rr-regenopt .rr-pill { height: 22px; line-height: 20px; }
 
-/* where you are, the rooms on this machine, the reviewers' notes (folded), a running turn's progress */
+/* where you are, and the rooms on this machine */
 .rr-crumb { font-size: 12px; color: var(--text-3); white-space: nowrap; }
 .rr-crumb a { color: var(--text-2); text-decoration: none; }
 .rr-crumb a:hover { text-decoration: underline; }
@@ -143,158 +86,31 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-repo { margin-top: 8px; }
 .rr-repo h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-2); overflow-wrap: anywhere; }
 
-/* a changed item, before and after (one layout for every item) */
-
-/* one request, in order */
-
-/* ---------- a phone (390×844): the header in one line, a read-only dock (the transcript a tap away) ---------- */
+/* ---------- a phone (390×844): the header in one line ---------- */
 @media (max-width: 760px) {
   .rr-room { grid-template-rows: 44px minmax(0, 1fr) auto; gap: 8px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
   .rr-head { gap: 6px; }
   .rr-back span, .rr-htitle span, .rr-pills .rr-pill:not([data-pr-state]), [data-room-check], [data-room-github], [data-room-save], [data-room-library], .rr-head .rr-back[href^="#/inbox"] { display: none; }
   .rr-htitle b { font-size: 14px; }
-  
-  
-  
-  
-  
-  
-  
 }
 
-/* ---------- the lesson report (baton's packet): a teach answer read top to bottom ----------
-   Sections are cards on the room's paper: a numbered heading in a display serif, the points as prose or as findings with
-   a tone stripe, and Studio's drawing under them in a figure card. The report scrolls inside the room; the page does not. */
-
-.rp-top { padding: 14px 0 16px; border-bottom: 2px solid var(--rr-ink); margin-bottom: 18px; max-width: 78rem; }
-.rp-eyebrow { font: 600 11px var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--rr-ink-2); margin-bottom: 8px; overflow-wrap: anywhere; }
-.rp-title { font-family: var(--rp-serif); font-size: clamp(22px, 2.6vw, 34px); font-weight: 600; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
-.rp-lede { margin: 0; font-size: 14.5px; color: var(--rr-ink-2); max-width: 46rem; line-height: 1.6; }
-.rp-sec { max-width: 78rem; margin: 0 0 16px; scroll-margin-top: 8px; display: grid; gap: 10px; }
-.rp-card, .rp-fig { background: var(--rr-paper); border: 1px solid var(--rr-paper-edge); border-radius: 8px; box-shadow: var(--rr-shadow); }
-.rp-card { padding: 16px 20px; }
-.rp-head { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: baseline; margin-bottom: 8px; }
-.rp-num { grid-row: 1 / span 2; font: 600 12px var(--f-mono); color: var(--rr-new); font-variant-numeric: tabular-nums; }
-.rp-head h3 { margin: 0; font-family: var(--rp-serif); font-size: 21px; font-weight: 600; line-height: 1.3; text-wrap: balance; }
-.rp-of { font-family: var(--rp-serif); color: var(--rr-ink-2); font-weight: 500; }
-.rp-sub { grid-column: 2; margin: 2px 0 0; font: 13px var(--f-mono); color: var(--rr-ink-2); }
-.rp-prose p { margin: 0 0 8px; font-size: 15px; line-height: 1.68; max-width: 46rem; }
-.rp-prose p.lead { font-size: 17px; line-height: 1.56; max-width: 44rem; }
-.rp-prose p:last-child { margin-bottom: 0; }
-.rp-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.rp-points li { display: grid; gap: 2px; background: var(--rr-paper); border: 1px solid var(--rr-paper-edge); border-left: 3px solid var(--border-strong); border-radius: 5px; padding: 9px 12px; font-size: 14.5px; line-height: 1.6; }
-.rp-points li.risk { border-left-color: var(--rr-bad); } .rp-points li.warn { border-left-color: var(--rr-inf-ink); } .rp-points li.ok { border-left-color: var(--rr-new); }
-.rp-tag { font: 700 10px var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--rr-ink-2); }
-.rp-points li.risk .rp-tag { color: var(--rr-bad); } .rp-points li.warn .rp-tag { color: var(--rr-inf-ink); } .rp-points li.ok .rp-tag { color: var(--rr-new); }
-.rp-skip { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--rr-ink-2); border-left: 3px solid var(--rr-inf-ink); padding: 6px 12px; background: var(--rr-code-bg); border-radius: 3px; }
-.rp-skip-k { font: 700 10px var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--rr-inf-ink); }
-.rp-sec.skipped .rp-card { box-shadow: none; }
-/* the figure card: Studio's drawing at the size it was laid out for, never scaled past one and a half */
-.rp-fig { margin: 0; padding: 14px 16px 10px; display: grid; gap: 8px; min-width: 0; }
-.rp-figbody { overflow-x: auto; display: grid; justify-items: center; min-width: 0; }
-.rp-figbody > svg { width: 100%; height: auto; max-height: 560px; }
-
-.rp-fig figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: var(--rr-ink-2); }
-
-/* the report's drawings in the page's text faces (the board keeps its handwriting) */
-
- 
- 
-/* what talks to what: the change marked on the node, context dashed */
-
-.rp-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; font-size: 12px; color: var(--rr-ink-2); }
-.rp-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.rp-legend .sw { width: 11px; height: 11px; border-radius: 2px; border: 2px solid var(--rr-new); background: var(--rr-new-soft); }
-.rp-legend .sw.removed { border-color: var(--rr-bad); border-style: dashed; background: none; }
-.rp-legend .sw.ctx { border-color: var(--rr-ink-2); border-style: dashed; background: none; }
-/* a decision: the option taken solid, the ones turned down dashed and dimmed */
-
-/* the lifecycle: every transition a numbered row; the one picked shows what it writes */
-.rp-smap { width: 100%; display: grid; gap: 10px; }
-.rp-trans { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; text-align: left; width: 100%; }
-.rp-trans li { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 6px 10px; border-radius: 6px; border: 1px solid transparent; font-size: 13.5px; }
-.rp-trans li.on { border-color: var(--rr-new); background: var(--rr-new-soft); }
-.rp-tn { border: 0; background: none; color: var(--rr-new); font: 600 15px var(--f-mono); cursor: pointer; padding: 0; }
-.rp-tl { color: var(--rr-ink-2); }
-.rp-td { margin: 2px 0 4px; font: 12.5px var(--f-mono); color: var(--rr-ink-2); }
-.rp-trans li:not(.on) .rp-td { display: none; }
-.rp-foot { max-width: 78rem; margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--rr-paper-edge); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font: 12px var(--f-mono); color: var(--rr-ink-2); }
-.rp-cost { margin-left: auto; }
+/* a labelled control in a line (Studio's default tutor) */
 .rr-imgopt { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); margin: 6px 0 2px; }
 .rr-imgopt input { margin-top: 3px; }
-@media (max-width: 760px) {
-  .rp-card { padding: 12px 14px; } .rp-fig { padding: 10px; }
-  .rp-head h3 { font-size: 18px; } .rp-prose p.lead { font-size: 15.5px; }
-  .rp-cost { margin-left: 0; }
+
+/* ---------- amber: what needs attention (the paste note) ---------- */
+:root {
+  --fig-amber: #a8792c; --fig-amber-tint: rgba(184,145,90,.14);
 }
-/* the report's drawings are as tall as they are drawn (the board's are fitted to its box) */
-.rp-figbody svg { height: auto !important; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); } }
+:root[data-theme="dark"] {
+  --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); }
 
- 
- 
+/* the pull request box's note: what opening the room starts */
+.rr-paste-offer { font-size: 12.5px; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--fig-amber); background: var(--fig-amber-tint); }
 
-/* an edge's label masked by the paper: a line never runs through its words */
-
-.rp-rej { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; text-align: left; width: 100%; }
-
-/* ---------- figures in the room's semantic palette (diagram-design's style guide, mapped to the room's tokens):
-   accent = this change (1–2 focal), ok = new / ends well, amber = needs attention / a way back, seal = cannot be undone,
-   muted = context, outside this change. A figure the tutor draws uses only these as var(--fig-…). */
-:root { --fig-paper: var(--rr-paper); --fig-card: #ffffff; --fig-card-2: #f2efe6; --fig-ink: #2d3142; --fig-muted: #4f5d75; --fig-soft: #7a8399; --fig-rule: rgba(45,49,66,.14); --fig-rule-strong: #bfc0c0;
-  --fig-accent: #e0622c; --fig-accent-tint: rgba(235,108,54,.10); --fig-ok: #4f7d4a; --fig-ok-tint: rgba(79,125,74,.10); --fig-amber: #a8792c; --fig-amber-tint: rgba(184,145,90,.14); --fig-seal: #9c4f38; --fig-seal-tint: rgba(156,79,56,.10); --fig-link: #2e5aa8;
-  --fig-sans: var(--f-sans); --fig-mono: var(--f-mono); --fig-serif: "Songti TC", Georgia, serif; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --fig-card: #262b36; --fig-card-2: #2e3442; --fig-ink: #ece6d6; --fig-muted: #b6bdcb; --fig-soft: #8e98ac; --fig-rule: rgba(245,245,245,.14); --fig-rule-strong: rgba(191,192,192,.3);
-  --fig-accent: #f08a59; --fig-accent-tint: rgba(240,138,89,.14); --fig-ok: #8fbf86; --fig-ok-tint: rgba(143,191,134,.14); --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); --fig-seal: #d08a72; --fig-seal-tint: rgba(208,138,114,.14); --fig-link: #8eb0ff; } }
-:root[data-theme="dark"] { --fig-card: #262b36; --fig-card-2: #2e3442; --fig-ink: #ece6d6; --fig-muted: #b6bdcb; --fig-soft: #8e98ac; --fig-rule: rgba(245,245,245,.14); --fig-rule-strong: rgba(191,192,192,.3);
-  --fig-accent: #f08a59; --fig-accent-tint: rgba(240,138,89,.14); --fig-ok: #8fbf86; --fig-ok-tint: rgba(143,191,134,.14); --fig-amber: #d3ad7a; --fig-amber-tint: rgba(211,173,122,.16); --fig-seal: #d08a72; --fig-seal-tint: rgba(208,138,114,.14); --fig-link: #8eb0ff; }
-
- 
-
- 
-
- 
- 
-
-.rp-txpanel { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--rr-paper-edge); border-radius: 8px; background: var(--fig-card); display: grid; gap: 8px; }
-.rp-txp-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; } .rp-txp-h .rp-tn { color: var(--fig-accent); font-weight: 700; }
-.rp-legend .rp-hint { color: var(--fig-soft); }
-
- 
-.rp-legend .sw.start { border-color: var(--fig-ink); background: none; } .rp-legend .sw.ok { border-color: var(--fig-ok); background: var(--fig-ok-tint); }
-.rp-legend .sw.seal { border-color: var(--fig-seal); background: var(--fig-seal-tint); } .rp-legend .sw.back { border-color: var(--fig-amber); border-style: dashed; background: none; }
-.rp-legend .sw.accent { border-color: var(--fig-accent); background: var(--fig-accent-tint); }
-.rp-entity { margin: 0; font-size: 12.5px; color: var(--rr-ink-2); align-self: start; }
- 
- 
- 
-/* a transaction: the envelope solid, what is written outside it dashed and set apart */
-.rp-tx { display: grid; gap: 8px; margin: 6px 0; }
-.rp-tx-env { border: 2px solid var(--fig-accent); border-radius: 6px; padding: 8px 10px; background: var(--fig-accent-tint); }
-.rp-tx-cap { font: 700 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--rr-ink-2); margin-bottom: 4px; }
-.rp-tx-env > .rp-tx-cap { color: var(--fig-accent); }
-.rp-tx-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-.rp-op { font: 700 10px var(--f-mono); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--fig-rule-strong); color: var(--rr-ink-2); text-transform: uppercase; }
-.rp-op.insert, .rp-op.upsert { border-color: var(--fig-ok); color: var(--fig-ok); } .rp-op.update { border-color: var(--fig-amber); color: var(--fig-amber); } .rp-op.delete { border-color: var(--fig-seal); color: var(--fig-seal); }
-.rp-guard { font-size: 12px; color: var(--rr-ink-2); }
-.rp-fields, .rp-kv { border-collapse: collapse; font-size: 12.5px; width: 100%; } .rp-fields td, .rp-kv td { padding: 2px 6px; border-bottom: 1px solid var(--fig-rule); vertical-align: top; }
-.rp-fields .k, .rp-kv .k { width: 1%; white-space: nowrap; color: var(--rr-ink-2); } .rp-fields .was { color: var(--rr-ink-2); } .rp-fields .now { color: var(--rr-ink); }
-.rp-outside { border: 1.5px dashed var(--fig-muted); border-radius: 6px; padding: 8px 10px; } .rp-outside ul { margin: 0; padding-left: 1.1em; font-size: 12.5px; }
-/* every call */
-.rp-calls { display: grid; gap: 12px; width: 100%; text-align: left; }
-.rp-call { border: 1px solid var(--rr-paper-edge); border-radius: 6px; padding: 10px 12px; background: var(--fig-card); }
-.rp-call header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; } .rp-call-name { font-weight: 700; }
-.rp-call-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; } .rp-call-cols h5 { margin: 0 0 4px; font: 700 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--rr-ink-2); }
-.rp-errs { margin: 6px 0 0; padding-left: 1.1em; font-size: 12px; color: var(--fig-seal); }
-@media (max-width: 760px) { .rp-call-cols { grid-template-columns: minmax(0, 1fr); } }
-/* a figure the tutor drew: as Studio took it */
-
- 
- 
-.rp-figbody { justify-items: start; } .rp-figbody > .rp-smap { justify-items: center; }
-.rr-paste-offer { font-size: 12.5px; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--fig-amber); background: var(--fig-amber-tint); }  
-
-/* ---------- full screen (review-room.js FS; docs/units/review-room.md 41): only the board, the whole window. #view is what the
-   Fullscreen API holds; body.rr-fs is the same layout while it is pending, when it is refused and on a phone ---------- */
+/* ---------- full screen: #view is what the Fullscreen API holds (the output's own full screen is review-explain.js's) ---------- */
 
 #view:fullscreen { background: var(--bg); }
 
@@ -313,15 +129,10 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-tutordefaults .rr-othermodel { margin-top: 8px; }
 @media (max-width: 760px) { .rr-tutormenu { right: 16px; top: 56px; } }
 
-/* steps and illustrations: a step's number picks it; the illustration zooms to what the step is about, the rest dimmed; a
-   connector is a wide click target that opens what that step does and why */
-
- 
-
 /* ---------- "Explain with": the room presented by one of the captain's skills (public/review-explain.js) ---------- */
 .rx-pick { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; flex: none; margin-left: auto; }
 .rx-pickbtn { cursor: pointer; color: var(--text); font: inherit; font-size: 13px; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.rx-pickbtn:focus-visible, .rx-opt:focus-visible, .rx-over:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rx-pickbtn:focus-visible, .rx-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rx-ic { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; flex: none; margin-right: 6px; vertical-align: -3px; }
 .rx-state { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid; max-width: 520px; }
 .rx-state p { margin: 4px 0 0; }
@@ -339,25 +150,19 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-more summary { cursor: pointer; font-size: 13px; color: var(--text-2); padding: 6px 2px; }
 .rx-x { border: 0; background: none; color: var(--text-3); cursor: pointer; font: inherit; padding: 0 4px; margin-left: 4px; }
 .rx-x:hover { color: var(--text); }
-.rx-kept { pointer-events: none; }
-.rx-pop { position: absolute; z-index: 2; width: 250px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 10px; padding: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.14); font-size: 12.5px; }
-.rx-pophead { display: flex; justify-content: space-between; align-items: center; }
-.rx-pop .rx-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-.rx-pop .rr-chip { height: 26px; font-size: 12px; padding: 0 9px; }
-.rx-own { margin-top: 6px; border: 0; background: none; color: var(--accent-text); cursor: pointer; font: inherit; font-size: 12px; padding: 0; }
 .rx-queued { opacity: .85; }
 .rx-pending { opacity: .85; }
 .rx-pending.refused { opacity: 1; outline: 1px dashed var(--border); }
 .rx-pendstate { display: block; margin-top: 4px; font-size: 11px; color: var(--text-3); }
 .rx-ro { padding: 12px; border-top: 1px solid var(--border); margin: 0; font-size: 13px; }
-/* the room: its header, a note when it has one (an old board, an error), then the explainer, which takes the rest */
+/* the room: its header, a note when it has one (an old whiteboard, an error), then the explainer, which takes the rest */
 .rr-room.rx-room { display: flex; flex-direction: column; }
 .rr-room.rx-room > .rr-head { flex: none; min-height: 48px; }
 .rr-room.rx-room > .rr-oldboard, .rr-room.rx-room > .rr-err { flex: none; margin: 0; }
 .rr-room.rx-room > .rx-body { flex: 1; min-height: 0; }
 .rx-body { --rx-pane: clamp(320px, var(--rr-pane-explain, clamp(360px, 32vw, 560px)), 55%); position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--rx-pane); min-height: 0; min-width: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
-/* the output's line (public/review-explain.js bar): the board / output switch (the board's own .rb-seg), the version menu's
-   button and what the shown version was made from, on one line over the output; the versions open in a menu under it */
+/* the output's line (public/review-explain.js bar): the version menu's button and what the shown version was made from, on
+   one line over the output; the versions open in a menu under it */
 .rx-line { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; min-width: 0; background: var(--surface); border-bottom: 1px solid var(--border); }
 
 .rx-verbtn { flex: none; min-width: 0; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: min(260px, 45%); }
@@ -471,8 +276,6 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-promptacts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .rx-promptacts [hidden] { display: none; }
 .rx-saved { color: var(--ok, #1a7f37); }
-.rx-over { position: absolute; inset: 0; cursor: crosshair; background: rgba(0, 0, 0, .04); touch-action: none; }
-.rx-selbox { position: absolute; display: none; border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 4px; pointer-events: none; }
 .rx-chat { min-width: 0; min-height: 0; border-left: 1px solid var(--border); display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 .rx-msgs { overflow: auto; overscroll-behavior: contain; padding: 14px 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
 .rx-m { overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; border-radius: 10px; padding: 10px 13px; }
@@ -508,7 +311,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-foot > .rx-footmsg:not(.err) { border-color: var(--border); background: var(--surface-2); }
 .rx-foot > .rx-footmsg[hidden] { display: none; }
 .rx-modal > .rx-foot { position: sticky; bottom: -18px; margin: 8px -18px -18px; padding: 10px 18px; background: var(--surface); border-top: 1px solid var(--border); z-index: 1; }
-/* the splitter between the main area and the right-hand pane (the board's questions, the skill's chat; public/review-room.js
+/* the splitter between the main area and the right-hand pane (the room's questions; public/review-room.js
    crewRoomPane): drag it, or focus it and use the arrow keys; double-click or Enter goes back to the default width. The look of
    the Firstmate panel's grip (styles.css .grip) */
 .rr-split { position: absolute; top: 0; bottom: 0; width: 12px; z-index: 6; cursor: col-resize; touch-action: none; outline: none; }
@@ -541,22 +344,7 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-stagein.gen { grid-template-rows: auto minmax(0, 1fr); }
 /* a link in Studio's toast (dark on light, light on dark) reads as part of it */
 .toast a[href] { color: inherit; text-decoration: underline; font-weight: 600; }
-/* a scene's full explanation (its body): under its points, folded to one line until the captain opens it; markdown as text */
 
-/* the narration bar floats over the bottom of the board: an open body ends with room for it */
-
-/* a lesson that ended before its tutor said it is complete, for no fault (two rounds with nothing new, the ceiling, cancelled) */
-
-/* a drawing too large for its column: a preview, "View drawing" opens it at its own size; a sequence's steps listed */
-
-.rp-seqlist { margin: 6px 0 0; font-size: 13px; color: var(--rr-ink); }
-.rp-seqlist > summary { cursor: pointer; color: var(--rr-marker); }
-.rp-seqlist ol { margin: 6px 0 0; padding-left: 26px; max-height: 360px; overflow: auto; }
-.rp-seqlist li { margin: 1px 0; }
-
-/* a big drawing's preview opens the viewer on a click; a long transition list folds */
-
-.rp-translist > summary { cursor: pointer; color: var(--rr-marker); font-size: 13px; margin: 6px 0; }
 /* a room from before: its whiteboard is kept on disk and offered as a file; one compact line over the room */
 .rr-oldboard { display: flex; gap: 10px; align-items: center; margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--surface); font-size: 13px; }
 .rr-oldboard > div { flex: 1; min-width: 0; }

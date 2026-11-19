@@ -16,7 +16,7 @@ the brief's TESTS section, and so on for the other five.
 - `studio/deliver`: a deliver producer in a drafted (custom) workflow.
 - `studio/crew`: the Studio team: seats, who runs each node, the crew tools and cards.
 - `studio/pages`: what the captain sees on each page (Board, Inbox, Crew, Tasks, Workflows, Library).
-- `studio/pages/review-room`: the review room: the lesson, questions, Explain with, and what Firstmate may read there.
+- `studio/pages/review-room`: the review room: its page (baton's by default), the captain's questions, and what Firstmate may read there.
 - `studio/pages/prs`: the pull request list: open, merged until production, the pods a merge waits on.
 
 ## code-firstmate (local repository and GitHub)

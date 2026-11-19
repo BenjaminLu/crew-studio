@@ -1,4 +1,4 @@
-// baton, the review room's default way to explain a change (docs/units/review-room.md, "Explain with your own skill").
+// baton, the review room's default way to explain a change (docs/units/review-room.md, "The page and its questions").
 // Studio ships upstream baton as a built-in library skill (packs/core/skills/studio-baton/, copied byte for byte, credit in its
 // NOTICE.md and THIRD_PARTY_NOTICES.md) and pins it here by both of the library's hashes: SKILL.md (sha256) and every other
 // file (filesSha256). The pinned version is the one the captain decided to run by itself when a room opens: its scripts are

@@ -12,189 +12,75 @@ import a8 from "../public/compare.js" with { type: "file" };
 import a9 from "../public/court.js" with { type: "file" };
 import a10 from "../public/ext.css" with { type: "file" };
 import a11 from "../public/ext.js" with { type: "file" };
-import a12 from "../public/fonts/OFL-Caveat.txt" with { type: "file" };
-import a13 from "../public/fonts/OFL-IBM-Plex.txt" with { type: "file" };
-import a14 from "../public/fonts/OFL-LXGW-WenKai-TC.txt" with { type: "file" };
-import a15 from "../public/fonts/hand/caveat-latin-ext.woff2" with { type: "file" };
-import a16 from "../public/fonts/hand/caveat-latin.woff2" with { type: "file" };
-import a17 from "../public/fonts/hand/wenkai-0.woff2" with { type: "file" };
-import a18 from "../public/fonts/hand/wenkai-1.woff2" with { type: "file" };
-import a19 from "../public/fonts/hand/wenkai-10.woff2" with { type: "file" };
-import a20 from "../public/fonts/hand/wenkai-101.woff2" with { type: "file" };
-import a21 from "../public/fonts/hand/wenkai-102.woff2" with { type: "file" };
-import a22 from "../public/fonts/hand/wenkai-103.woff2" with { type: "file" };
-import a23 from "../public/fonts/hand/wenkai-104.woff2" with { type: "file" };
-import a24 from "../public/fonts/hand/wenkai-105.woff2" with { type: "file" };
-import a25 from "../public/fonts/hand/wenkai-106.woff2" with { type: "file" };
-import a26 from "../public/fonts/hand/wenkai-107.woff2" with { type: "file" };
-import a27 from "../public/fonts/hand/wenkai-108.woff2" with { type: "file" };
-import a28 from "../public/fonts/hand/wenkai-109.woff2" with { type: "file" };
-import a29 from "../public/fonts/hand/wenkai-11.woff2" with { type: "file" };
-import a30 from "../public/fonts/hand/wenkai-110.woff2" with { type: "file" };
-import a31 from "../public/fonts/hand/wenkai-111.woff2" with { type: "file" };
-import a32 from "../public/fonts/hand/wenkai-112.woff2" with { type: "file" };
-import a33 from "../public/fonts/hand/wenkai-113.woff2" with { type: "file" };
-import a34 from "../public/fonts/hand/wenkai-114.woff2" with { type: "file" };
-import a35 from "../public/fonts/hand/wenkai-115.woff2" with { type: "file" };
-import a36 from "../public/fonts/hand/wenkai-116.woff2" with { type: "file" };
-import a37 from "../public/fonts/hand/wenkai-117.woff2" with { type: "file" };
-import a38 from "../public/fonts/hand/wenkai-118.woff2" with { type: "file" };
-import a39 from "../public/fonts/hand/wenkai-119.woff2" with { type: "file" };
-import a40 from "../public/fonts/hand/wenkai-12.woff2" with { type: "file" };
-import a41 from "../public/fonts/hand/wenkai-120.woff2" with { type: "file" };
-import a42 from "../public/fonts/hand/wenkai-121.woff2" with { type: "file" };
-import a43 from "../public/fonts/hand/wenkai-122.woff2" with { type: "file" };
-import a44 from "../public/fonts/hand/wenkai-123.woff2" with { type: "file" };
-import a45 from "../public/fonts/hand/wenkai-16.woff2" with { type: "file" };
-import a46 from "../public/fonts/hand/wenkai-2.woff2" with { type: "file" };
-import a47 from "../public/fonts/hand/wenkai-23.woff2" with { type: "file" };
-import a48 from "../public/fonts/hand/wenkai-24.woff2" with { type: "file" };
-import a49 from "../public/fonts/hand/wenkai-25.woff2" with { type: "file" };
-import a50 from "../public/fonts/hand/wenkai-26.woff2" with { type: "file" };
-import a51 from "../public/fonts/hand/wenkai-27.woff2" with { type: "file" };
-import a52 from "../public/fonts/hand/wenkai-28.woff2" with { type: "file" };
-import a53 from "../public/fonts/hand/wenkai-29.woff2" with { type: "file" };
-import a54 from "../public/fonts/hand/wenkai-3.woff2" with { type: "file" };
-import a55 from "../public/fonts/hand/wenkai-30.woff2" with { type: "file" };
-import a56 from "../public/fonts/hand/wenkai-31.woff2" with { type: "file" };
-import a57 from "../public/fonts/hand/wenkai-32.woff2" with { type: "file" };
-import a58 from "../public/fonts/hand/wenkai-33.woff2" with { type: "file" };
-import a59 from "../public/fonts/hand/wenkai-34.woff2" with { type: "file" };
-import a60 from "../public/fonts/hand/wenkai-35.woff2" with { type: "file" };
-import a61 from "../public/fonts/hand/wenkai-36.woff2" with { type: "file" };
-import a62 from "../public/fonts/hand/wenkai-37.woff2" with { type: "file" };
-import a63 from "../public/fonts/hand/wenkai-38.woff2" with { type: "file" };
-import a64 from "../public/fonts/hand/wenkai-39.woff2" with { type: "file" };
-import a65 from "../public/fonts/hand/wenkai-4.woff2" with { type: "file" };
-import a66 from "../public/fonts/hand/wenkai-40.woff2" with { type: "file" };
-import a67 from "../public/fonts/hand/wenkai-41.woff2" with { type: "file" };
-import a68 from "../public/fonts/hand/wenkai-42.woff2" with { type: "file" };
-import a69 from "../public/fonts/hand/wenkai-43.woff2" with { type: "file" };
-import a70 from "../public/fonts/hand/wenkai-44.woff2" with { type: "file" };
-import a71 from "../public/fonts/hand/wenkai-45.woff2" with { type: "file" };
-import a72 from "../public/fonts/hand/wenkai-46.woff2" with { type: "file" };
-import a73 from "../public/fonts/hand/wenkai-47.woff2" with { type: "file" };
-import a74 from "../public/fonts/hand/wenkai-48.woff2" with { type: "file" };
-import a75 from "../public/fonts/hand/wenkai-49.woff2" with { type: "file" };
-import a76 from "../public/fonts/hand/wenkai-50.woff2" with { type: "file" };
-import a77 from "../public/fonts/hand/wenkai-51.woff2" with { type: "file" };
-import a78 from "../public/fonts/hand/wenkai-52.woff2" with { type: "file" };
-import a79 from "../public/fonts/hand/wenkai-53.woff2" with { type: "file" };
-import a80 from "../public/fonts/hand/wenkai-54.woff2" with { type: "file" };
-import a81 from "../public/fonts/hand/wenkai-55.woff2" with { type: "file" };
-import a82 from "../public/fonts/hand/wenkai-56.woff2" with { type: "file" };
-import a83 from "../public/fonts/hand/wenkai-57.woff2" with { type: "file" };
-import a84 from "../public/fonts/hand/wenkai-58.woff2" with { type: "file" };
-import a85 from "../public/fonts/hand/wenkai-59.woff2" with { type: "file" };
-import a86 from "../public/fonts/hand/wenkai-60.woff2" with { type: "file" };
-import a87 from "../public/fonts/hand/wenkai-61.woff2" with { type: "file" };
-import a88 from "../public/fonts/hand/wenkai-62.woff2" with { type: "file" };
-import a89 from "../public/fonts/hand/wenkai-63.woff2" with { type: "file" };
-import a90 from "../public/fonts/hand/wenkai-64.woff2" with { type: "file" };
-import a91 from "../public/fonts/hand/wenkai-65.woff2" with { type: "file" };
-import a92 from "../public/fonts/hand/wenkai-66.woff2" with { type: "file" };
-import a93 from "../public/fonts/hand/wenkai-67.woff2" with { type: "file" };
-import a94 from "../public/fonts/hand/wenkai-68.woff2" with { type: "file" };
-import a95 from "../public/fonts/hand/wenkai-69.woff2" with { type: "file" };
-import a96 from "../public/fonts/hand/wenkai-70.woff2" with { type: "file" };
-import a97 from "../public/fonts/hand/wenkai-71.woff2" with { type: "file" };
-import a98 from "../public/fonts/hand/wenkai-72.woff2" with { type: "file" };
-import a99 from "../public/fonts/hand/wenkai-73.woff2" with { type: "file" };
-import a100 from "../public/fonts/hand/wenkai-74.woff2" with { type: "file" };
-import a101 from "../public/fonts/hand/wenkai-75.woff2" with { type: "file" };
-import a102 from "../public/fonts/hand/wenkai-76.woff2" with { type: "file" };
-import a103 from "../public/fonts/hand/wenkai-77.woff2" with { type: "file" };
-import a104 from "../public/fonts/hand/wenkai-78.woff2" with { type: "file" };
-import a105 from "../public/fonts/hand/wenkai-79.woff2" with { type: "file" };
-import a106 from "../public/fonts/hand/wenkai-80.woff2" with { type: "file" };
-import a107 from "../public/fonts/hand/wenkai-81.woff2" with { type: "file" };
-import a108 from "../public/fonts/hand/wenkai-82.woff2" with { type: "file" };
-import a109 from "../public/fonts/hand/wenkai-83.woff2" with { type: "file" };
-import a110 from "../public/fonts/hand/wenkai-84.woff2" with { type: "file" };
-import a111 from "../public/fonts/hand/wenkai-85.woff2" with { type: "file" };
-import a112 from "../public/fonts/hand/wenkai-86.woff2" with { type: "file" };
-import a113 from "../public/fonts/hand/wenkai-87.woff2" with { type: "file" };
-import a114 from "../public/fonts/hand/wenkai-88.woff2" with { type: "file" };
-import a115 from "../public/fonts/hand/wenkai-89.woff2" with { type: "file" };
-import a116 from "../public/fonts/hand/wenkai-90.woff2" with { type: "file" };
-import a117 from "../public/fonts/hand/wenkai-91.woff2" with { type: "file" };
-import a118 from "../public/fonts/hand/wenkai-92.woff2" with { type: "file" };
-import a119 from "../public/fonts/hand/wenkai-93.woff2" with { type: "file" };
-import a120 from "../public/fonts/hand/wenkai-94.woff2" with { type: "file" };
-import a121 from "../public/fonts/hand/wenkai-95.woff2" with { type: "file" };
-import a122 from "../public/fonts/hand/wenkai-96.woff2" with { type: "file" };
-import a123 from "../public/fonts/hand/wenkai-97.woff2" with { type: "file" };
-import a124 from "../public/fonts/hand/wenkai-latin-ext.woff2" with { type: "file" };
-import a125 from "../public/fonts/hand/wenkai-latin.woff2" with { type: "file" };
-import a126 from "../public/fonts/hand.css" with { type: "file" };
-import a127 from "../public/fonts/ibm-plex-mono-latin-400-normal.woff2" with { type: "file" };
-import a128 from "../public/fonts/ibm-plex-mono-latin-500-normal.woff2" with { type: "file" };
-import a129 from "../public/fonts/ibm-plex-sans-latin-400-normal.woff2" with { type: "file" };
-import a130 from "../public/fonts/ibm-plex-sans-latin-500-normal.woff2" with { type: "file" };
-import a131 from "../public/fonts/ibm-plex-sans-latin-600-normal.woff2" with { type: "file" };
-import a132 from "../public/fonts.css" with { type: "file" };
-import a133 from "../public/gates.js" with { type: "file" };
-import a134 from "../public/graph-layout.js" with { type: "file" };
-import a135 from "../public/i18n.js" with { type: "file" };
-import a136 from "../public/icon-192.png" with { type: "file" };
-import a137 from "../public/icon-512.png" with { type: "file" };
-import a138 from "../public/icon.svg" with { type: "file" };
-import a139 from "../public/index.html" with { type: "file" };
-import a140 from "../public/issues.js" with { type: "file" };
-import a141 from "../public/kit.js" with { type: "file" };
-import a142 from "../public/lan.css" with { type: "file" };
-import a143 from "../public/lan.js" with { type: "file" };
-import a144 from "../public/list-tools.css" with { type: "file" };
-import a145 from "../public/list-tools.js" with { type: "file" };
-import a146 from "../public/m2.js" with { type: "file" };
-import a147 from "../public/m25.js" with { type: "file" };
-import a148 from "../public/m3.css" with { type: "file" };
-import a149 from "../public/m3.js" with { type: "file" };
-import a150 from "../public/m6.js" with { type: "file" };
-import a151 from "../public/m7.js" with { type: "file" };
-import a152 from "../public/m8.js" with { type: "file" };
-import a153 from "../public/manifest.webmanifest" with { type: "file" };
-import a154 from "../public/onboarding.css" with { type: "file" };
-import a155 from "../public/onboarding.js" with { type: "file" };
-import a156 from "../public/ootb.js" with { type: "file" };
-import a157 from "../public/pack-genesis.css" with { type: "file" };
-import a158 from "../public/pack-genesis.js" with { type: "file" };
-import a159 from "../public/pr-follow.js" with { type: "file" };
-import a160 from "../public/projects.css" with { type: "file" };
-import a161 from "../public/projects.js" with { type: "file" };
-import a162 from "../public/prs.css" with { type: "file" };
-import a163 from "../public/prs.js" with { type: "file" };
-import a164 from "../public/review-explain.js" with { type: "file" };
-import a165 from "../public/review-room.css" with { type: "file" };
-import a166 from "../public/review-room.js" with { type: "file" };
-import a167 from "../public/runstate.js" with { type: "file" };
-import a168 from "../public/runtime.css" with { type: "file" };
-import a169 from "../public/runtime.js" with { type: "file" };
-import a170 from "../public/scard.js" with { type: "file" };
-import a171 from "../public/skills.css" with { type: "file" };
-import a172 from "../public/skills.js" with { type: "file" };
-import a173 from "../public/skins.js" with { type: "file" };
-import a174 from "../public/styles.css" with { type: "file" };
-import a175 from "../public/takeover.css" with { type: "file" };
-import a176 from "../public/takeover.js" with { type: "file" };
-import a177 from "../public/team.css" with { type: "file" };
-import a178 from "../public/team.js" with { type: "file" };
-import a179 from "../public/term-keys.js" with { type: "file" };
-import a180 from "../public/term-theme.js" with { type: "file" };
-import a181 from "../public/terminals.css" with { type: "file" };
-import a182 from "../public/terminals.js" with { type: "file" };
-import a183 from "../public/transcripts.css" with { type: "file" };
-import a184 from "../public/transcripts.js" with { type: "file" };
-import a185 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
-import a186 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
-import a187 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
-import a188 from "../public/vendor/xterm-6.0.0.css" with { type: "file" };
-import a189 from "../public/vendor/xterm-6.0.0.min.js" with { type: "file" };
-import a190 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
-import a191 from "../public/vendor/xterm-addon-fit-0.11.0.min.js" with { type: "file" };
-import a192 from "../public/vendor/xterm-addon-unicode11-0.9.0.min.js" with { type: "file" };
-import a193 from "../public/wf-rail.css" with { type: "file" };
-import a194 from "../public/wf-rail.js" with { type: "file" };
+import a12 from "../public/fonts/OFL-IBM-Plex.txt" with { type: "file" };
+import a13 from "../public/fonts/ibm-plex-mono-latin-400-normal.woff2" with { type: "file" };
+import a14 from "../public/fonts/ibm-plex-mono-latin-500-normal.woff2" with { type: "file" };
+import a15 from "../public/fonts/ibm-plex-sans-latin-400-normal.woff2" with { type: "file" };
+import a16 from "../public/fonts/ibm-plex-sans-latin-500-normal.woff2" with { type: "file" };
+import a17 from "../public/fonts/ibm-plex-sans-latin-600-normal.woff2" with { type: "file" };
+import a18 from "../public/fonts.css" with { type: "file" };
+import a19 from "../public/gates.js" with { type: "file" };
+import a20 from "../public/graph-layout.js" with { type: "file" };
+import a21 from "../public/i18n.js" with { type: "file" };
+import a22 from "../public/icon-192.png" with { type: "file" };
+import a23 from "../public/icon-512.png" with { type: "file" };
+import a24 from "../public/icon.svg" with { type: "file" };
+import a25 from "../public/index.html" with { type: "file" };
+import a26 from "../public/issues.js" with { type: "file" };
+import a27 from "../public/kit.js" with { type: "file" };
+import a28 from "../public/lan.css" with { type: "file" };
+import a29 from "../public/lan.js" with { type: "file" };
+import a30 from "../public/list-tools.css" with { type: "file" };
+import a31 from "../public/list-tools.js" with { type: "file" };
+import a32 from "../public/m2.js" with { type: "file" };
+import a33 from "../public/m25.js" with { type: "file" };
+import a34 from "../public/m3.css" with { type: "file" };
+import a35 from "../public/m3.js" with { type: "file" };
+import a36 from "../public/m6.js" with { type: "file" };
+import a37 from "../public/m7.js" with { type: "file" };
+import a38 from "../public/m8.js" with { type: "file" };
+import a39 from "../public/manifest.webmanifest" with { type: "file" };
+import a40 from "../public/onboarding.css" with { type: "file" };
+import a41 from "../public/onboarding.js" with { type: "file" };
+import a42 from "../public/ootb.js" with { type: "file" };
+import a43 from "../public/pack-genesis.css" with { type: "file" };
+import a44 from "../public/pack-genesis.js" with { type: "file" };
+import a45 from "../public/pr-follow.js" with { type: "file" };
+import a46 from "../public/projects.css" with { type: "file" };
+import a47 from "../public/projects.js" with { type: "file" };
+import a48 from "../public/prs.css" with { type: "file" };
+import a49 from "../public/prs.js" with { type: "file" };
+import a50 from "../public/review-explain.js" with { type: "file" };
+import a51 from "../public/review-room.css" with { type: "file" };
+import a52 from "../public/review-room.js" with { type: "file" };
+import a53 from "../public/runstate.js" with { type: "file" };
+import a54 from "../public/runtime.css" with { type: "file" };
+import a55 from "../public/runtime.js" with { type: "file" };
+import a56 from "../public/scard.js" with { type: "file" };
+import a57 from "../public/skills.css" with { type: "file" };
+import a58 from "../public/skills.js" with { type: "file" };
+import a59 from "../public/skins.js" with { type: "file" };
+import a60 from "../public/styles.css" with { type: "file" };
+import a61 from "../public/takeover.css" with { type: "file" };
+import a62 from "../public/takeover.js" with { type: "file" };
+import a63 from "../public/team.css" with { type: "file" };
+import a64 from "../public/team.js" with { type: "file" };
+import a65 from "../public/term-keys.js" with { type: "file" };
+import a66 from "../public/term-theme.js" with { type: "file" };
+import a67 from "../public/terminals.css" with { type: "file" };
+import a68 from "../public/terminals.js" with { type: "file" };
+import a69 from "../public/transcripts.css" with { type: "file" };
+import a70 from "../public/transcripts.js" with { type: "file" };
+import a71 from "../public/vendor/opencc-js-1.4.2-t2cn.min.js" with { type: "file" };
+import a72 from "../public/vendor/opencc-js-LICENSE.txt" with { type: "file" };
+import a73 from "../public/vendor/qrcode-1.4.4.min.js" with { type: "file" };
+import a74 from "../public/vendor/xterm-6.0.0.css" with { type: "file" };
+import a75 from "../public/vendor/xterm-6.0.0.min.js" with { type: "file" };
+import a76 from "../public/vendor/xterm-LICENSE.txt" with { type: "file" };
+import a77 from "../public/vendor/xterm-addon-fit-0.11.0.min.js" with { type: "file" };
+import a78 from "../public/vendor/xterm-addon-unicode11-0.9.0.min.js" with { type: "file" };
+import a79 from "../public/wf-rail.css" with { type: "file" };
+import a80 from "../public/wf-rail.js" with { type: "file" };
 
 export const ASSETS: Record<string, string> = {
   "/app.css": a0,
@@ -209,187 +95,73 @@ export const ASSETS: Record<string, string> = {
   "/court.js": a9,
   "/ext.css": a10,
   "/ext.js": a11,
-  "/fonts/OFL-Caveat.txt": a12,
-  "/fonts/OFL-IBM-Plex.txt": a13,
-  "/fonts/OFL-LXGW-WenKai-TC.txt": a14,
-  "/fonts/hand/caveat-latin-ext.woff2": a15,
-  "/fonts/hand/caveat-latin.woff2": a16,
-  "/fonts/hand/wenkai-0.woff2": a17,
-  "/fonts/hand/wenkai-1.woff2": a18,
-  "/fonts/hand/wenkai-10.woff2": a19,
-  "/fonts/hand/wenkai-101.woff2": a20,
-  "/fonts/hand/wenkai-102.woff2": a21,
-  "/fonts/hand/wenkai-103.woff2": a22,
-  "/fonts/hand/wenkai-104.woff2": a23,
-  "/fonts/hand/wenkai-105.woff2": a24,
-  "/fonts/hand/wenkai-106.woff2": a25,
-  "/fonts/hand/wenkai-107.woff2": a26,
-  "/fonts/hand/wenkai-108.woff2": a27,
-  "/fonts/hand/wenkai-109.woff2": a28,
-  "/fonts/hand/wenkai-11.woff2": a29,
-  "/fonts/hand/wenkai-110.woff2": a30,
-  "/fonts/hand/wenkai-111.woff2": a31,
-  "/fonts/hand/wenkai-112.woff2": a32,
-  "/fonts/hand/wenkai-113.woff2": a33,
-  "/fonts/hand/wenkai-114.woff2": a34,
-  "/fonts/hand/wenkai-115.woff2": a35,
-  "/fonts/hand/wenkai-116.woff2": a36,
-  "/fonts/hand/wenkai-117.woff2": a37,
-  "/fonts/hand/wenkai-118.woff2": a38,
-  "/fonts/hand/wenkai-119.woff2": a39,
-  "/fonts/hand/wenkai-12.woff2": a40,
-  "/fonts/hand/wenkai-120.woff2": a41,
-  "/fonts/hand/wenkai-121.woff2": a42,
-  "/fonts/hand/wenkai-122.woff2": a43,
-  "/fonts/hand/wenkai-123.woff2": a44,
-  "/fonts/hand/wenkai-16.woff2": a45,
-  "/fonts/hand/wenkai-2.woff2": a46,
-  "/fonts/hand/wenkai-23.woff2": a47,
-  "/fonts/hand/wenkai-24.woff2": a48,
-  "/fonts/hand/wenkai-25.woff2": a49,
-  "/fonts/hand/wenkai-26.woff2": a50,
-  "/fonts/hand/wenkai-27.woff2": a51,
-  "/fonts/hand/wenkai-28.woff2": a52,
-  "/fonts/hand/wenkai-29.woff2": a53,
-  "/fonts/hand/wenkai-3.woff2": a54,
-  "/fonts/hand/wenkai-30.woff2": a55,
-  "/fonts/hand/wenkai-31.woff2": a56,
-  "/fonts/hand/wenkai-32.woff2": a57,
-  "/fonts/hand/wenkai-33.woff2": a58,
-  "/fonts/hand/wenkai-34.woff2": a59,
-  "/fonts/hand/wenkai-35.woff2": a60,
-  "/fonts/hand/wenkai-36.woff2": a61,
-  "/fonts/hand/wenkai-37.woff2": a62,
-  "/fonts/hand/wenkai-38.woff2": a63,
-  "/fonts/hand/wenkai-39.woff2": a64,
-  "/fonts/hand/wenkai-4.woff2": a65,
-  "/fonts/hand/wenkai-40.woff2": a66,
-  "/fonts/hand/wenkai-41.woff2": a67,
-  "/fonts/hand/wenkai-42.woff2": a68,
-  "/fonts/hand/wenkai-43.woff2": a69,
-  "/fonts/hand/wenkai-44.woff2": a70,
-  "/fonts/hand/wenkai-45.woff2": a71,
-  "/fonts/hand/wenkai-46.woff2": a72,
-  "/fonts/hand/wenkai-47.woff2": a73,
-  "/fonts/hand/wenkai-48.woff2": a74,
-  "/fonts/hand/wenkai-49.woff2": a75,
-  "/fonts/hand/wenkai-50.woff2": a76,
-  "/fonts/hand/wenkai-51.woff2": a77,
-  "/fonts/hand/wenkai-52.woff2": a78,
-  "/fonts/hand/wenkai-53.woff2": a79,
-  "/fonts/hand/wenkai-54.woff2": a80,
-  "/fonts/hand/wenkai-55.woff2": a81,
-  "/fonts/hand/wenkai-56.woff2": a82,
-  "/fonts/hand/wenkai-57.woff2": a83,
-  "/fonts/hand/wenkai-58.woff2": a84,
-  "/fonts/hand/wenkai-59.woff2": a85,
-  "/fonts/hand/wenkai-60.woff2": a86,
-  "/fonts/hand/wenkai-61.woff2": a87,
-  "/fonts/hand/wenkai-62.woff2": a88,
-  "/fonts/hand/wenkai-63.woff2": a89,
-  "/fonts/hand/wenkai-64.woff2": a90,
-  "/fonts/hand/wenkai-65.woff2": a91,
-  "/fonts/hand/wenkai-66.woff2": a92,
-  "/fonts/hand/wenkai-67.woff2": a93,
-  "/fonts/hand/wenkai-68.woff2": a94,
-  "/fonts/hand/wenkai-69.woff2": a95,
-  "/fonts/hand/wenkai-70.woff2": a96,
-  "/fonts/hand/wenkai-71.woff2": a97,
-  "/fonts/hand/wenkai-72.woff2": a98,
-  "/fonts/hand/wenkai-73.woff2": a99,
-  "/fonts/hand/wenkai-74.woff2": a100,
-  "/fonts/hand/wenkai-75.woff2": a101,
-  "/fonts/hand/wenkai-76.woff2": a102,
-  "/fonts/hand/wenkai-77.woff2": a103,
-  "/fonts/hand/wenkai-78.woff2": a104,
-  "/fonts/hand/wenkai-79.woff2": a105,
-  "/fonts/hand/wenkai-80.woff2": a106,
-  "/fonts/hand/wenkai-81.woff2": a107,
-  "/fonts/hand/wenkai-82.woff2": a108,
-  "/fonts/hand/wenkai-83.woff2": a109,
-  "/fonts/hand/wenkai-84.woff2": a110,
-  "/fonts/hand/wenkai-85.woff2": a111,
-  "/fonts/hand/wenkai-86.woff2": a112,
-  "/fonts/hand/wenkai-87.woff2": a113,
-  "/fonts/hand/wenkai-88.woff2": a114,
-  "/fonts/hand/wenkai-89.woff2": a115,
-  "/fonts/hand/wenkai-90.woff2": a116,
-  "/fonts/hand/wenkai-91.woff2": a117,
-  "/fonts/hand/wenkai-92.woff2": a118,
-  "/fonts/hand/wenkai-93.woff2": a119,
-  "/fonts/hand/wenkai-94.woff2": a120,
-  "/fonts/hand/wenkai-95.woff2": a121,
-  "/fonts/hand/wenkai-96.woff2": a122,
-  "/fonts/hand/wenkai-97.woff2": a123,
-  "/fonts/hand/wenkai-latin-ext.woff2": a124,
-  "/fonts/hand/wenkai-latin.woff2": a125,
-  "/fonts/hand.css": a126,
-  "/fonts/ibm-plex-mono-latin-400-normal.woff2": a127,
-  "/fonts/ibm-plex-mono-latin-500-normal.woff2": a128,
-  "/fonts/ibm-plex-sans-latin-400-normal.woff2": a129,
-  "/fonts/ibm-plex-sans-latin-500-normal.woff2": a130,
-  "/fonts/ibm-plex-sans-latin-600-normal.woff2": a131,
-  "/fonts.css": a132,
-  "/gates.js": a133,
-  "/graph-layout.js": a134,
-  "/i18n.js": a135,
-  "/icon-192.png": a136,
-  "/icon-512.png": a137,
-  "/icon.svg": a138,
-  "/index.html": a139,
-  "/issues.js": a140,
-  "/kit.js": a141,
-  "/lan.css": a142,
-  "/lan.js": a143,
-  "/list-tools.css": a144,
-  "/list-tools.js": a145,
-  "/m2.js": a146,
-  "/m25.js": a147,
-  "/m3.css": a148,
-  "/m3.js": a149,
-  "/m6.js": a150,
-  "/m7.js": a151,
-  "/m8.js": a152,
-  "/manifest.webmanifest": a153,
-  "/onboarding.css": a154,
-  "/onboarding.js": a155,
-  "/ootb.js": a156,
-  "/pack-genesis.css": a157,
-  "/pack-genesis.js": a158,
-  "/pr-follow.js": a159,
-  "/projects.css": a160,
-  "/projects.js": a161,
-  "/prs.css": a162,
-  "/prs.js": a163,
-  "/review-explain.js": a164,
-  "/review-room.css": a165,
-  "/review-room.js": a166,
-  "/runstate.js": a167,
-  "/runtime.css": a168,
-  "/runtime.js": a169,
-  "/scard.js": a170,
-  "/skills.css": a171,
-  "/skills.js": a172,
-  "/skins.js": a173,
-  "/styles.css": a174,
-  "/takeover.css": a175,
-  "/takeover.js": a176,
-  "/team.css": a177,
-  "/team.js": a178,
-  "/term-keys.js": a179,
-  "/term-theme.js": a180,
-  "/terminals.css": a181,
-  "/terminals.js": a182,
-  "/transcripts.css": a183,
-  "/transcripts.js": a184,
-  "/vendor/opencc-js-1.4.2-t2cn.min.js": a185,
-  "/vendor/opencc-js-LICENSE.txt": a186,
-  "/vendor/qrcode-1.4.4.min.js": a187,
-  "/vendor/xterm-6.0.0.css": a188,
-  "/vendor/xterm-6.0.0.min.js": a189,
-  "/vendor/xterm-LICENSE.txt": a190,
-  "/vendor/xterm-addon-fit-0.11.0.min.js": a191,
-  "/vendor/xterm-addon-unicode11-0.9.0.min.js": a192,
-  "/wf-rail.css": a193,
-  "/wf-rail.js": a194,
+  "/fonts/OFL-IBM-Plex.txt": a12,
+  "/fonts/ibm-plex-mono-latin-400-normal.woff2": a13,
+  "/fonts/ibm-plex-mono-latin-500-normal.woff2": a14,
+  "/fonts/ibm-plex-sans-latin-400-normal.woff2": a15,
+  "/fonts/ibm-plex-sans-latin-500-normal.woff2": a16,
+  "/fonts/ibm-plex-sans-latin-600-normal.woff2": a17,
+  "/fonts.css": a18,
+  "/gates.js": a19,
+  "/graph-layout.js": a20,
+  "/i18n.js": a21,
+  "/icon-192.png": a22,
+  "/icon-512.png": a23,
+  "/icon.svg": a24,
+  "/index.html": a25,
+  "/issues.js": a26,
+  "/kit.js": a27,
+  "/lan.css": a28,
+  "/lan.js": a29,
+  "/list-tools.css": a30,
+  "/list-tools.js": a31,
+  "/m2.js": a32,
+  "/m25.js": a33,
+  "/m3.css": a34,
+  "/m3.js": a35,
+  "/m6.js": a36,
+  "/m7.js": a37,
+  "/m8.js": a38,
+  "/manifest.webmanifest": a39,
+  "/onboarding.css": a40,
+  "/onboarding.js": a41,
+  "/ootb.js": a42,
+  "/pack-genesis.css": a43,
+  "/pack-genesis.js": a44,
+  "/pr-follow.js": a45,
+  "/projects.css": a46,
+  "/projects.js": a47,
+  "/prs.css": a48,
+  "/prs.js": a49,
+  "/review-explain.js": a50,
+  "/review-room.css": a51,
+  "/review-room.js": a52,
+  "/runstate.js": a53,
+  "/runtime.css": a54,
+  "/runtime.js": a55,
+  "/scard.js": a56,
+  "/skills.css": a57,
+  "/skills.js": a58,
+  "/skins.js": a59,
+  "/styles.css": a60,
+  "/takeover.css": a61,
+  "/takeover.js": a62,
+  "/team.css": a63,
+  "/team.js": a64,
+  "/term-keys.js": a65,
+  "/term-theme.js": a66,
+  "/terminals.css": a67,
+  "/terminals.js": a68,
+  "/transcripts.css": a69,
+  "/transcripts.js": a70,
+  "/vendor/opencc-js-1.4.2-t2cn.min.js": a71,
+  "/vendor/opencc-js-LICENSE.txt": a72,
+  "/vendor/qrcode-1.4.4.min.js": a73,
+  "/vendor/xterm-6.0.0.css": a74,
+  "/vendor/xterm-6.0.0.min.js": a75,
+  "/vendor/xterm-LICENSE.txt": a76,
+  "/vendor/xterm-addon-fit-0.11.0.min.js": a77,
+  "/vendor/xterm-addon-unicode11-0.9.0.min.js": a78,
+  "/wf-rail.css": a79,
+  "/wf-rail.js": a80,
 };

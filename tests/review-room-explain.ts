@@ -5,7 +5,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 // that ends before explain_done is followed by another, with its notes), with live progress, a Stop, a configurable safety limit
 // and a stall guard; the materials are read-only files in the run's workspace; each generation and each follow-up that changes
 // the output is a new version; a follow-up carries the boxed selection; a version's page is served only with its capability,
-// under a CSP with no network, with Studio's storage shim and selection helper first; every run is on the ledger with its cost.
+// under a CSP with no network, with Studio's storage shim first; every run is on the ledger with its cost.
 //        bun tests/review-room-explain.ts
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,7 +137,7 @@ const cap = X.cap(id, 1);
 let page = X.page(cap.cap, id, "1", "index.html"), html = await page.text();
 ok(page.status === 200 && page.headers.get("content-security-policy") === OUTPUT_CSP && /default-src 'none'/.test(OUTPUT_CSP) && /connect-src 'none'/.test(OUTPUT_CSP) && /^sandbox allow-scripts;/.test(OUTPUT_CSP) && !/allow-same-origin/.test(OUTPUT_CSP) && page.headers.get("x-content-type-options") === "nosniff",
   "a version's page carries the output CSP: no network, an opaque-origin sandbox", JSON.stringify(Object.fromEntries(page.headers)));
-ok(html.indexOf(STORAGE_SHIM) > 0 && html.indexOf("crew-room-select") > 0 && html.indexOf(STORAGE_SHIM) < html.indexOf("<title>") && html.includes("data-node=\"round\""), "the storage shim and the selection helper come before anything of the page's own");
+ok(html.indexOf(STORAGE_SHIM) > 0 && !html.includes("crew-room-select") && !html.includes('data-crew-studio="select"') && html.indexOf(STORAGE_SHIM) < html.indexOf("<title>") && html.includes("data-node=\"round\""), "the storage shim comes before anything of the page's own, and it is Studio's only script there (no region helper: a question is about the whole page)");
 ok((await X.page("1.0", id, "1", "index.html").text()).includes("capability") && X.page("1.0", id, "1", "index.html").status === 401 && X.page(cap.cap, id, "2", "index.html").status === 401 && X.page(cap.cap, id, "9", "index.html").status === 401 && X.page(cap.cap, "PR-000000000000-9", "1", "index.html").status === 401,
   "no capability (or another version's, or another room's) serves nothing, and says nothing about whether the version or room exists");
 ok(X.page(cap.cap, id, "1", "../state.json").status !== 200 && X.page(cap.cap, id, "1", ".notes.md").status === 404, "nothing outside the version is served");
@@ -190,6 +190,7 @@ await until(() => !!X.view(id).runs.at(-1).rounds[0]?.job && X.view(id).log.leng
 e = await refused(() => X.ask(id, { question: "Meanwhile?", version: 1, confirm: askOffer.hash }, "captain"));
 ok(e?.code === "busy", "while the skill works, the tutor takes no question in this room", e?.message);
 ok(X.view(id).log.some((l: any) => /explain_progress/.test(l.text)), "the live log shows the round's tool calls", JSON.stringify(X.view(id).log));
+{ const b: any = X.brief(id), sm: any = room.summary(E.cards.get(id)!); ok(b.running && b.generating && sm.running && sm.generating, "a page being made: the room's brief and the merge card's summary say a page is being made", JSON.stringify({ b, sm })); }
 X.stop(id);
 const run4 = await waitRun(6, 20000);
 ok(run4.status === "stopped" && /captain/.test(run4.stop) && run4.version === null && X.view(id).versions.length === 2 && X.view(id).running === null, "Stop ends the run at once; nothing half-made becomes a version", JSON.stringify(run4));
@@ -368,6 +369,15 @@ delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
 const started = X.view(id).runs.filter((x: any) => x.rounds.length).length;
 ok(E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain").length === started && E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain-start").length === started,
   "every run that started is on the ledger twice: when it starts (so one a stopped Studio interrupted is still there) and when it ends");
+// ---------- a question being answered is a run, but no page is being made: the merge card's line stays as it was ----------
+{ script.push([["hang", null]]); release = null; const n0 = X.view(id).runs.length;
+  const q = { question: "What is the riskiest line?", version: X.view(id).versions.at(-1).n }, first = await refused(() => X.ask(id, q, "captain"));
+  if (first?.code === "confirm_required") await X.ask(id, { ...q, confirm: first.offer.hash, consent: true }, "captain"); else if (first) throw first;
+  await until(() => X.view(id).runs.length > n0 && !!release, 10000);
+  const b: any = X.brief(id), sm: any = room.summary(E.cards.get(id)!);
+  ok(b.running === true && b.generating === false && sm.running === true && sm.generating === false, "while the tutor answers a question the room is running, but no page is being made (generating stays false)", JSON.stringify({ b, sm }));
+  X.stop(id); release?.(); await waitRun(n0 + 1, 20000); }
+
 // ---------- page.txt's visible text: what the page hides is not what a question is grounded on ----------
 { const { shownHtml } = await import("../src/domain/review-explain");
   const t = (h: string) => shownHtml(h).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();

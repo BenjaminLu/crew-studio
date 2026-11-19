@@ -1,9 +1,9 @@
-// "Explain with": a review room presented by one of the captain's own skills (docs/units/review-room.md, "Explain with your
-// own skill"). The room's header picks how the change is explained: Studio's built-in tutor (the board, unchanged) or a skill
-// in Studio's skill library (the Skills page; a skills home such as ~/.claude/skills is imported there). A skill makes its own
+// The review room's page and its questions (docs/units/review-room.md, "The page and its questions"): a room presented by a
+// skill, baton (built in) by default; the room's header picks another skill of Studio's skill library (the Skills page; a skills
+// home such as ~/.claude/skills is imported there). A question about the page is the room tutor's, answered in the chat. A skill makes its own
 // kind of output (an HTML page, Markdown, pictures, a video) and the captain keeps asking about it.
 //   Generation is a background run of as many agent rounds as the skill needs: no round cap. Each round is one job of the room's
-//   tutor seat (the same model, admission, staffing receipt and round sandbox as a tutor turn); a round that ends before the skill
+//   tutor's member (the room's tutor model, admission like any role's, a staffing receipt for its seat, the round sandbox); a round that ends before the skill
 //   calls explain_done is followed by another, carrying its notes, until the skill says it is done, the captain stops it, the
 //   wall-clock safety limit passes (configurable, generous by default) or several rounds in a row (3 by default) leave the
 //   output unchanged, its notes included, whatever tools they call (stalled).
@@ -19,8 +19,8 @@
 //   The captain's confirmation names the interpreters, the network and the credentials a script gets; text only stays text only.
 //   Every generation, and every follow-up that changes the output, is a new version (v1, v2, …) kept in the room's folder.
 //   An output is shown to the captain only through Studio: an HTML page in an iframe with sandbox="allow-scripts" (never
-//   allow-same-origin) served with a CSP that allows no network at all, a storage shim (an opaque origin has no localStorage)
-//   and a small helper that answers "what lies in this rectangle" over postMessage; Markdown as a page rendered by Studio
+//   allow-same-origin) served with a CSP that allows no network at all and a storage shim (an opaque origin has no
+//   localStorage); Markdown as a page rendered by Studio
 //   under the same policy; pictures and video in Studio's own elements.
 //   data/…/<room>-explain/state.json      the room's explainer: selected skill, runs (rounds, cost, progress), versions, chat
 //   data/…/<room>-explain/v<n>/            a version's files, never changed once written
@@ -153,7 +153,7 @@ type XRun = { n: number; kind: "generate" | "ask"; skill: Pin; status: "running"
 type XVersion = { n: number; run: number; skill: { id: string; v: number; name: string }; at: string; entry: string; kind: OutKind; files: { path: string; bytes: number; sha256: string }[]; summary: string; from: number | null;
   /** a generation's: the captain's instructions it was made with ("" = the skill's default); a follow-up's: the question that made it */
   prompt?: string; question?: string };
-/** tutor: the captain picked Studio's tutor's board for this room (otherwise a room with no pick is explained with the default skill);
+/** tutor: an old room's mark that the captain picked the tutor's board (gone: such a room is explained with the default skill);
  *  autoTried: each head Studio started (or tried to start) the default skill's generation for by itself, with why it could not */
 type XState = { schema: 1; selected: { id: string; v: number } | null; runs: XRun[]; versions: XVersion[]; consent?: { plan: string; by: string; at: string }; tutor?: boolean;
   autoTried?: { head: string; skill: string; at: string; run?: number; error?: string; code?: string }[] };
@@ -194,19 +194,8 @@ export const kindOf = (entry: string): OutKind => { const e = extname(entry).toL
 export const OUTPUT_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 /** A page in an opaque origin throws SecurityError on localStorage: this keeps an in-memory one in its place (nothing is kept). */
 export const STORAGE_SHIM = `(function(){var m={},st={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},setItem:function(k,v){m[String(k)]=String(v)},removeItem:function(k){delete m[String(k)]},clear:function(){m={}},key:function(i){return Object.keys(m)[i]||null},get length(){return Object.keys(m).length}};var bad=function(n){try{var s=window[n];s.length;return false}catch(e){return true}};try{if(bad('localStorage'))Object.defineProperty(window,'localStorage',{value:st,configurable:true});if(bad('sessionStorage'))Object.defineProperty(window,'sessionStorage',{value:st,configurable:true})}catch(e){}})();`;
-/** Studio's helper in an output page: asked for a rectangle (the page's viewport coordinates), it answers with what lies there,
- *  as text only: the visible text, the nearest headings, the ids of figure elements. Only its parent (Studio) can ask. */
-export const SELECT_HELPER = `(function(){var T=function(s){return String(s||'').replace(/\\s+/g,' ').trim()};addEventListener('message',function(e){var d=e.data;if(e.source!==parent||!d||d.type!=='crew-room-select'||!d.rect)return;
-var r=d.rect,x0=+r.x||0,y0=+r.y||0,x1=x0+(+r.w||0),y1=y0+(+r.h||0),hit=function(b){return b.width+b.height>0&&b.right>x0&&b.left<x1&&b.bottom>y0&&b.top<y1};
-var texts=[],total=0,first=null,w=document.createTreeWalker(document.body||document.documentElement,NodeFilter.SHOW_TEXT),n;
-while((n=w.nextNode())){var t=T(n.nodeValue),p=n.parentElement;if(!t||!p||/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(p.tagName))continue;var rg=document.createRange();rg.selectNodeContents(n);var rs=rg.getClientRects(),on=false;for(var i=0;i<rs.length;i++)if(hit(rs[i])){on=true;break}
-if(on){if(!first)first=p;texts.push(t);total+=t.length;if(total>4000)break}}
-var heads=[],hs=document.querySelectorAll('h1,h2,h3,h4,h5,[role=heading]'),before=null;for(var j=0;j<hs.length;j++){var h=hs[j];if(hit(h.getBoundingClientRect()))heads.push(T(h.textContent).slice(0,160));else if(first&&(h.compareDocumentPosition(first)&Node.DOCUMENT_POSITION_FOLLOWING))before=h}
-if(before)heads.unshift(T(before.textContent).slice(0,160));
-var ids=[],seen={};document.querySelectorAll('[data-node],[data-node-id],[data-id],svg [id]').forEach(function(el){var id=el.getAttribute('data-node')||el.getAttribute('data-node-id')||el.getAttribute('data-id')||el.id;if(id&&!seen[id]&&ids.length<40&&hit(el.getBoundingClientRect())){seen[id]=1;ids.push(String(id).slice(0,80))}});
-parent.postMessage({type:'crew-room-selection',id:String(d.id||''),text:texts.join(' ').slice(0,4000),headings:heads.slice(0,8),nodes:ids,title:T(document.title).slice(0,200)},'*')})})();`;
-/** the two scripts at the very start of a served page, before anything of its own runs */
-export const injected = (html: string) => { const add = `<script data-crew-studio="storage">${STORAGE_SHIM}</script><script data-crew-studio="select">${SELECT_HELPER}</script>`;
+/** Studio's one script at the very start of a served page, before anything of its own runs: the storage shim */
+export const injected = (html: string) => { const add = `<script data-crew-studio="storage">${STORAGE_SHIM}</script>`;
   const m = /<head[^>]*>/i.exec(html); return m ? html.slice(0, m.index + m[0].length) + add + html.slice(m.index + m[0].length) : add + html; };
 
 /** the explainer's own settings (Studio-wide): the wall-clock safety limit of one run, in minutes */
@@ -301,9 +290,9 @@ export function installExplainer(d: ExplainerDeps) {
   const rawSettings = (): any => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8")); return j && typeof j === "object" && !Array.isArray(j) ? j : {}; } catch { return {}; } };
   const saveSettings = (j: any) => { const f = settingsFile(); writeFileSync(f + ".tmp", JSON.stringify(j)); renameSync(f + ".tmp", f); };
   /** limitMin: one run's safety limit; defaultSkill: what a room the captain never picked for is explained with (baton by default;
-   *  null: Studio's tutor); autoRun: that skill's generation starts by itself when the captain opens a room whose head has none */
+   *  null: none, the room asks the captain to pick); autoRun: that skill's generation starts by itself when the captain opens a room whose head has none */
   const settings = () => { const j = rawSettings(), v = Number(j?.limitMin);
-    // CREW_REVIEW_EXPLAIN_DEFAULT_SKILL: the default when the captain set none ("" = Studio's tutor: the board's own suites)
+    // CREW_REVIEW_EXPLAIN_DEFAULT_SKILL: the default when the captain set none ("" = none: tests that pick their skill themselves)
     const env = process.env.CREW_REVIEW_EXPLAIN_DEFAULT_SKILL, dflt = env === undefined ? BATON_PIN.id : SKILL_ID.test(env) ? env : null;
     const ds = j?.defaultSkill === null ? null : typeof j?.defaultSkill === "string" && SKILL_ID.test(j.defaultSkill) ? j.defaultSkill : dflt;
     return { limitMin: Number.isFinite(v) && v >= LIMIT_RANGE.min && v <= LIMIT_RANGE.max ? v : LIMIT_DEFAULT(), defaultSkill: ds, autoRun: j?.autoRun !== false }; };
@@ -443,9 +432,9 @@ export function installExplainer(d: ExplainerDeps) {
       billing: { en: `Billed to the ${t.provider} account Studio runs ${t.provider} with on this Mac (your own sign-in or key).`, zh: `由這台 Mac 上 Studio 使用的 ${t.provider} 帳號付費（你自己的登入或金鑰）。` } };
   };
   // ---------- the default skill: what a room is explained with when the captain never picked, started by itself on opening ----------
-  /** the default skill at its current version (null: none, or Studio's tutor) */
+  /** the default skill at its current version (null: none) */
   const defaultSel = () => { const id = settings().defaultSkill; if (!id) return null; const s = library().find((x) => x.id === id); return s ? { id: s.id, v: s.current as number } : null; };
-  /** the skill a room is explained with: the captain's pick, else (no pick, and not the tutor's board) Studio's default skill */
+  /** the skill a room is explained with: the captain's pick, else Studio's default skill */
   // the tutor's board is gone from the page: a room once set to it (tutor) is explained with the default skill like any other
   const selectedOf = (st: XState) => st.selected ?? defaultSel();
   /** The built-in baton, exactly as pinned (src/domain/review-baton.ts): its scripts are approved in advance, the captain's
@@ -942,7 +931,7 @@ export function installExplainer(d: ExplainerDeps) {
     /** the captain opened the room: the default skill's generation for this head starts by itself when it is due; retry: once more
      *  after one that did not finish (the stage's "Try again") */
     auto(id: string, by: string, retry = false) { return auto(id, by, retry); },
-    /** the room is explained with a skill (picked, or the default one): Studio's tutor starts no lesson by itself */
+    /** the room is explained with a skill (picked, or the default one) */
     bySkill(id: string) { try { return !!selectedOf(read(d.keyOf(id))); } catch { return false; } },
     ask(id: string, a: any, by: string) { return start(id, "ask", a, by); },
     /** stop the run: its round is cancelled now (what it cost so far is recorded); a generation stopped keeps no version */
@@ -955,8 +944,10 @@ export function installExplainer(d: ExplainerDeps) {
     brief(id: string) { let k: any; try { k = d.keyOf(id); } catch { return null; } const st = read(k);
       const usd = st.runs.reduce((n, r) => n + (typeof r.cost?.usd === "number" ? r.cost.usd : 0), 0), last = st.runs.filter((r) => r.ended).at(-1)?.ended ?? null;
       const heads = [...new Set(st.runs.filter((r) => r.kind === "generate" && r.status === "done" && r.head).map((r) => r.head!))];
-      const latest = st.versions.at(-1) ?? null;
-      return { versions: st.versions.length, questions: st.runs.filter((r) => r.kind === "ask").length, runs: st.runs.length, usd: Math.round(usd * 10000) / 10000, running: running.has(k.id),
+      const latest = st.versions.at(-1) ?? null, live = running.get(k.id);
+      // running: any run (a page or a question); generating: a page is being made (a question's run is not one)
+      return { versions: st.versions.length, questions: st.runs.filter((r) => r.kind === "ask").length, runs: st.runs.length, usd: Math.round(usd * 10000) / 10000, running: !!live,
+        generating: !!live && st.runs.find((r) => r.n === live.run)?.kind === "generate",
         updatedAt: last, latest: latest ? { n: latest.n, at: latest.at, skill: latest.skill.name } : null, heads }; },
     /** a room's versions as kept, for the Library: each version's folder and record (never changed once written) */
     pages(id: string) { const k = d.keyOf(id), st = read(k); return st.versions.map((v) => ({ ...v, dir: join(dirOf(k), `v${v.n}`), run: st.runs.find((r) => r.n === v.run) ?? null })); },
@@ -964,7 +955,7 @@ export function installExplainer(d: ExplainerDeps) {
       if (a?.limitMin === undefined && a?.defaultSkill === undefined && a?.autoRun === undefined) throw refuse("limitMin, defaultSkill or autoRun", "bad_request");
       if (a.limitMin !== undefined) { const v = Number(a.limitMin);
         if (!Number.isFinite(v) || v < LIMIT_RANGE.min || v > LIMIT_RANGE.max) throw refuse(`limitMin is a number of minutes from ${LIMIT_RANGE.min} to ${LIMIT_RANGE.max}`, "bad_request"); next.limitMin = Math.round(v); }
-      if (a.defaultSkill !== undefined) { if (a.defaultSkill !== null && !library().some((x) => x.id === a.defaultSkill)) throw refuse("defaultSkill is a skill of Studio's skill library, or null for Studio's tutor", "bad_request"); next.defaultSkill = a.defaultSkill; }
+      if (a.defaultSkill !== undefined) { if (a.defaultSkill !== null && !library().some((x) => x.id === a.defaultSkill)) throw refuse("defaultSkill is a skill of Studio's skill library, or null for none (the room then asks the captain to pick one)", "bad_request"); next.defaultSkill = a.defaultSkill; }
       if (a.autoRun !== undefined) { if (typeof a.autoRun !== "boolean") throw refuse("autoRun is true or false", "bad_request"); next.autoRun = a.autoRun; }
       saveSettings({ ...rawSettings(), ...next }); return settings(); },
     /** every skill's default instructions and last ones, the cap and the built-in example (inserted only when the captain asks) */
@@ -982,7 +973,7 @@ export function installExplainer(d: ExplainerDeps) {
     /** a capability for one version's page (the page's frame has an opaque origin: no cookie goes with it) */
     cap(id: string, v: unknown) { const k = d.keyOf(id), x = versionOf(k, v), exp = Date.now() + CAP_TTL, cap = `${exp}.${capSig(k.id, x.n, exp)}`;
       return { cap, base: `/rrx/${encodeURIComponent(cap)}/${k.id}/${x.n}/`, entry: x.entry, kind: x.kind }; },
-    /** GET /rrx/<cap>/<room>/<v>/<path>: a version's file under the output policy; HTML and Markdown with Studio's two scripts first */
+    /** GET /rrx/<cap>/<room>/<v>/<path>: a version's file under the output policy; HTML and Markdown with Studio's storage shim first */
     page(cap: string, id: string, v: string, rel: string): Response {
       if (!capOk(id, Number(v), cap)) return new Response("invalid or expired capability", { status: 401, headers: head("text/plain; charset=utf-8") });
       try { const k = d.keyOf(id), x = versionOf(k, v);

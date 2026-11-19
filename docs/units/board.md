@@ -583,9 +583,10 @@ through the current rules: `bun scripts/issue-eval.ts mine|label|import|score <p
 ## The merge card's review room
 
 Every merge card, wherever it is shown (the Inbox, the Task page), carries the same "Open review room" entry and the
-room's summary (questions asked, the understanding check, sources). The room is its own page (`#/room/<card>`): a tutor
-on the reviewer seat explains the pull request on a board and in a chat, read-only, each turn a paid round the captain
-confirms; it never answers the card or changes merge readiness. Unit spec: [review-room.md](review-room.md).
+room's summary: how many versions of the page it has and what they cost (`3 versions of the page · US$1.23.`), or that the
+first page is being made. The room is its own page (`#/room/<card>`): a skill's page about the change (baton, built in, by
+default) and the room's tutor answering questions about it, read-only, each run paid and confirmed; it never answers the
+card or changes merge readiness. Unit spec: [review-room.md](review-room.md).
 
 ### A reviewed branch, and a pull request by its URL
 
@@ -595,6 +596,5 @@ never published ("· new commits" when the head moved since the captain last loo
 and a connected project's page take a pull request's URL (`https://github.com/<owner>/<repo>/pull/<n>`, a repository of a
 registered project connected to GitHub only; anything else is refused with the reason) and open its room
 (`#/room/PR-…`): its state on GitHub (open, draft, approved at this head and by whom, merged, closed, from a fork), how
-many commits came since the captain last looked, "Check for new commits" (an explicit read, never a polling loop), what
-reviewers asked as a scene of their words, and what changed since last time as the next turn's first scene. Merged or
-closed, the room stays readable and takes no turn. A pull request no Studio Task made asks on the project's approved crew reviewer (its first confirmed turn makes a small host Task; no approved crew: "Approve this project's crew first"). Unit spec: [review-room.md](review-room.md), "Subjects".
+many commits came since the last page, "Check for new commits" (an explicit read, never a polling loop), and the
+reviewers' notes. Merged or closed, the room stays readable and takes no run. A pull request no Studio Task made runs on the project's approved crew reviewer (its first confirmed run makes a small host Task; no approved crew: "Approve this project's crew first"). Unit spec: [review-room.md](review-room.md), "Subjects".

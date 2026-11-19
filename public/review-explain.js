@@ -1,20 +1,18 @@
-// "Explain with" in the review room (docs/units/review-room.md, src/domain/review-explain.ts): the room presented by one of the
-// captain's own skills instead of the built-in tutor's board. The header's picker chooses; a skill's run is paid and confirmed
-// (the model, who pays, the cost so far and an estimate, the materials, the expected time, the safety limit, the isolation); it
-// runs in the background with live progress and a Stop, and Studio says when it ends; every generation and every follow-up that
-// changes the output is a version in the menu on the output's one-line bar (no column of its own); the chat on the right asks
-// follow-ups, about the whole output, a region boxed on it, or a paused video frame (a question asked while the first output is
-// still being made waits for it).
+// The review room's page and its questions (docs/units/review-room.md, src/domain/review-explain.ts): the room presented by a
+// skill, baton (built in) by default; the header's picker chooses another. A skill's run is paid and confirmed (the model, who
+// pays, the cost so far and an estimate, the materials, the expected time, the safety limit, the isolation); it runs in the
+// background with live progress and a Stop, and Studio says when it ends; every generation is a version in the menu on the
+// output's one-line bar. The chat on the right asks the room's tutor about the page shown: the answer is in the chat only, never
+// a new version (a question asked while the first page is still being made waits for it).
 // An output page lives in a sandboxed iframe (allow-scripts only: an opaque origin) on a page Studio serves with a CSP that allows
-// no network. The frame sits in a layer of its own over the stage, so a redraw of the room never reloads it; its helper answers
-// "what lies in this rectangle" through postMessage, and only the frame Studio made is listened to. Model text only ever goes
-// into text nodes here. A generation carries the captain's own instructions ("What should it produce?", prefilled with what this
-// skill was last asked for, part of the confirmed offer); every version shows what it was made from. The output fills the
+// no network. The frame sits in a layer of its own over the stage, so a redraw of the room never reloads it. Model text only ever
+// goes into text nodes here. A generation carries the captain's own instructions ("What should it produce?", prefilled with what
+// this skill was last asked for, part of the confirmed offer); every version shows what it was made from. The output fills the
 // screen (the Fullscreen API on its layer, a picture or a video natively; a fixed full-window layer when fullscreen is refused)
 // and opens in a tab of its own (a fresh capability, framed exactly as here).
 (() => {
-const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), sel: new Map(), draft: new Map(), caps: new Map(),
-  posting: new Set(), autoPosted: new Set(), autoErr: new Map(), ask: null, consent: new Set(), boxing: null, logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null };
+const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), draft: new Map(), caps: new Map(),
+  posting: new Set(), autoPosted: new Set(), autoErr: new Map(), ask: null, consent: new Set(), logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null };
 const enc = encodeURIComponent;
 /** Studio's built-in baton (src/domain/review-baton.ts BATON_PIN.id): the room's default skill */
 const BUILTIN = "studio-baton";
@@ -414,7 +412,7 @@ function view(r) {
 /** show a version: only what the stage shows changes. The room's selected skill stays (a version another skill made is read,
  *  never a switch of the skill the room generates with: that is the picker's) */
 function showVersion(r, v) {
-  const id = r.card.id; X.shown.set(id, v.n); X.sel.delete(id); X.boxing = null; X.err.delete(id);
+  const id = r.card.id; X.shown.set(id, v.n); X.err.delete(id);
   render();
 }
 /** the focused control inside a part about to be redrawn, as a selector that finds its replacement */
@@ -586,7 +584,7 @@ const PEND_STARTING_MS = 400;
 const pendRun = (id, st) => { const p = X.pend.get(id); return p && st ? st.runs.find((x) => x.kind === "ask" && x.n > p.after && x.question === p.q) || null : null; };
 function settled(id) { const p = X.pend.get(id); if (p && (p.phase === "sending" || p.phase === "starting") && pendRun(id, state(id))) { clearTimeout(p.timer); X.pend.delete(id); } }
 const pendInView = () => requestAnimationFrame(() => document.querySelector("[data-explain-pending]")?.scrollIntoView({ block: "nearest" }));
-/** Ask in room id: its own state, version, selection and draft, only while that room is the one shown and explained by a skill
+/** Ask in room id: its own state, version and draft, only while that room is the one shown and explained by a skill
  *  (a question never goes to another room's /ask, whatever was drawn last). The paid confirmation comes back as an offer. */
 async function send(id, q, confirm, consent, decision) {
   const r = window.crewReviewRoomData?.(id); if (!r || !onRoom(id) || !active(id)) return;
@@ -595,14 +593,14 @@ async function send(id, q, confirm, consent, decision) {
   // the first output is still being made: the question waits for it (sent when the run ends with a version)
   if (m === "queue") { if (X.pend.get(id)?.q === text) unpend(id, true); X.queue.set(id, text); X.draft.delete(id); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta) ta.value = ""; refresh(id); return; }
   if (m !== "ask" || X.posting.has(`${id}/ask`)) return;
-  const v = shownVersion(id), s = null, st0 = state(id); X.posting.add(`${id}/ask`); X.ask = null;
+  const v = shownVersion(id), st0 = state(id); X.posting.add(`${id}/ask`); X.ask = null;
   // the question is in the chat now and out of the ask box (Cancel or a refusal gives it back: nothing is lost)
   clearTimeout(X.pend.get(id)?.timer);
-  const p = { q: text, sel: s || null, v: v.n, phase: "sending", why: null, after: st0?.runs.at(-1)?.n ?? 0, timer: null }; X.pend.set(id, p);
+  const p = { q: text, v: v.n, phase: "sending", why: null, after: st0?.runs.at(-1)?.n ?? 0, timer: null }; X.pend.set(id, p);
   p.timer = setTimeout(() => { if (X.pend.get(id) === p && p.phase === "sending") { p.phase = "starting"; refresh(id); } }, PEND_STARTING_MS);
   X.draft.delete(id); const ta0 = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta0) ta0.value = "";
   refresh(id); pendInView();
-  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, ...(confirm ? { confirm, consent: !!consent } : {}), ...(decision ? { skillDecision: decision } : {}) })); X.sel.delete(id); X.boxing = null;
+  try { X.st.set(id, await postJ(`${base(id)}/ask`, { question: text, version: v.n, ...(confirm ? { confirm, consent: !!consent } : {}), ...(decision ? { skillDecision: decision } : {}) }));
     clearTimeout(p.timer); if (X.pend.get(id) === p) X.pend.delete(id); schedule(id); }
   catch (e) { clearTimeout(p.timer); const mine = X.pend.get(id) === p;
     if (e.code === "confirm_required" && e.offer) { X.ask = { id, q: text, offer: e.offer }; if (mine) p.phase = "confirm"; want = "[data-explain-askok]"; }
@@ -612,10 +610,8 @@ async function send(id, q, confirm, consent, decision) {
 /** the pending question set aside: back into the ask box when the box is empty (Cancel on the confirmation, or on a refusal) */
 function unpend(id, drop) { const p = X.pend.get(id); if (!p) return; clearTimeout(p.timer); X.pend.delete(id);
   if (!drop && !X.draft.get(id)) { X.draft.set(id, p.q); const ta = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-q]`); if (ta && !ta.value) ta.value = p.q; } }
-/** Retry a refused question: the same text and the same boxed region (or frame), while the version it was about is shown; another
- *  version shown since, the region is not on it: the question goes about the whole output shown (the About line says so) */
-function retry(id) { const p = X.pend.get(id); if (!p || p.phase !== "refused") return;
-  if (p.sel && shownVersion(id)?.n === p.v) X.sel.set(id, p.sel); else { if (p.sel) p.sel = null; X.sel.delete(id); } send(id, p.q); }
+/** Retry a refused question: the same text, about the version shown now */
+function retry(id) { const p = X.pend.get(id); if (!p || p.phase !== "refused") return; send(id, p.q); }
 function chat(r, st) {
   const id = r.card.id;
   if (readOnly()) return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st), h("p", { class: "rx-ro faint", "data-explain-readonly": "" }, T("Read only here: ask and run the skill on the Mac.", "這裡只能看：在 Mac 上追問和執行 skill。")));
@@ -634,9 +630,6 @@ function scope(r, st) {
   const id = r.card.id, v = shownVersion(id);
   return h("div", { class: "rx-scope", "data-x-scope": "" }, h("span", { "data-explain-scope": "page" }, v ? T(`About: the page shown (v${v.n})`, `對象：目前這一版頁面（v${v.n}）`) : T("About: the page, once it is made", "對象：頁面產生之後")));
 }
-const clearSel = (id) => { X.sel.delete(id); refresh(id); };
-/** what a question was about, as the chat shows it: the paused frame or the boxed region's last heading */
-const thumb = (sel) => (sel ? h("span", { class: "rx-thumb" }, sel.time != null ? `⏸ ${ts(sel.time)}` : `▭ ${sel.headings?.slice(-1)[0] || T("boxed region", "框選的區域")}`) : null);
 /** an answer's Markdown as the chat shows it, built from text nodes only (never HTML from the model): paragraphs, lists,
  *  tables, headings, **bold** and `code` */
 const mdInline = (t) => { const out = [], re = /\*\*([^*\n]+?)\*\*|`([^`\n]+)`/g; let i = 0, m; const s = String(t);
@@ -667,7 +660,6 @@ function msgs(r, st) {
       if (run.status === "done" || run.status === "running") out.push(h("div", { class: "rx-m sys", "data-explain-run": run.n, "data-status": run.status }, run.status === "running" ? T(`${sk(run.skill)}: generating…`, `${sk(run.skill)}：產生中…`) : T(`${sk(run.skill)} v${run.version} made · ${spent}`, `${sk(run.skill)} v${run.version} 完成 · ${spent}`)));
       else { const w = whyOf(run); out.push(h("div", { class: `rx-m ${run.status === "stopped" ? "warn" : "err"}`, "data-explain-run": run.n, "data-status": run.status }, h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), h("b", {}, sk(run.skill)), " ", w.text, spent ? h("small", { class: "faint" }, ` · ${spent}`) : null)); }
       continue; }
-    const sel = run.selection;
     out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, run.from ? h("span", { class: "rx-thumb", "data-explain-about": run.from }, T(`about v${run.from}`, `關於 v${run.from}`)) : null, run.question));
     out.push(h("div", { class: `rx-m ${run.status === "done" || run.status === "running" ? "ai" : run.status === "stopped" ? "warn" : "err"}`, "data-explain-answer": run.n, "data-status": run.status },
       run.status === "running" ? [h("span", { class: "faint" }, T("Working on it…", "處理中…")), ...(run.progress || []).slice(-3).map((p) => { if (p.script) { const s = scriptLine(p.script); return h("div", { class: `rx-callrow ${s.cls}` }, h("span", { class: "d" }, s.mark), " ", s.body); } return h("div", { class: "faint" }, `· ${p.text}`); }),
@@ -712,8 +704,7 @@ function fullBar(id, v) {
 /** native fullscreen of the output's layer (a picture or a video: of that element, natively); refused, a fixed full-window layer */
 async function enterFull(id, v) {
   if (L.full || !L.el) return; const slot = document.querySelector("[data-x-slot]"); L.saved = scrollers(slot);
-  if (X.boxing === id) { X.boxing = null; refresh(id); }
-  const el = layerEl(); el.querySelectorAll(".rx-over,.rx-kept,.rx-pop").forEach((x) => x.remove()); // a kept box is drawn again once back
+  const el = layerEl();
   const media = v.kind === "video" ? L.video : v.kind === "image" ? el.querySelector("[data-explain-image]") : null, target = media || el;
   el.querySelector("[data-explain-fullbar]")?.remove(); el.append(fullBar(id, v));
   Object.assign(el.style, { clipPath: "" }); el.hidden = false; L.full = "native";
@@ -733,9 +724,9 @@ function exitFull() {
   back(); requestAnimationFrame(() => requestAnimationFrame(back));
 }
 addEventListener("fullscreenchange", () => { if (L.full === "native" && !document.fullscreenElement) exitFull(); });
-/** F on the stage (or on the output's layer): full screen; never while typing, boxing or with a modifier */
+/** F on the stage (or on the output's layer): full screen; never while typing or with a modifier */
 addEventListener("keydown", (e) => {
-  if (e.key !== "f" && e.key !== "F" || e.metaKey || e.ctrlKey || e.altKey || L.full || X.boxing || document.querySelector(".rx-modal")) return;
+  if (e.key !== "f" && e.key !== "F" || e.metaKey || e.ctrlKey || e.altKey || L.full || document.querySelector(".rx-modal")) return;
   const t = e.target; if (!t?.closest || t.closest("textarea,input,select,[contenteditable=''],[contenteditable='true']")) return;
   if (!t.closest("[data-x-stage]") && !t.closest("[data-x-line]") && !(L.el && L.el.contains(t))) return;
   const slot = document.querySelector("[data-x-slot]"); if (!slot) return; const [id, n] = [slot.dataset.xSlot.split("/").slice(0, -1).join("/"), Number(slot.dataset.xSlot.split("/").at(-1))];
@@ -748,7 +739,7 @@ async function openTab(id, v) {
 async function capFor(id, v) { const k = `${id}/${v.n}`, had = X.caps.get(k); if (had && had.exp > Date.now()) return had.src;
   const j = await api(`${base(id)}/cap?v=${v.n}`); const src = `${j.base}${v.entry.split("/").map(enc).join("/")}`; X.caps.set(k, { src, exp: Date.now() + 20 * 60_000 }); return src; }
 function mount(id, v) {
-  const s = X.sel.get(id), key = `${id}/${v.n}/${X.boxing === id ? "box" : ""}/${s?.rect ? JSON.stringify(s.rect) : ""}`, el = layerEl(); if (L.key === key) return;
+  const key = `${id}/${v.n}/`, el = layerEl(); if (L.key === key) return;
   const sameOutput = L.key && L.key.split("/").slice(0, 2).join("/") === `${id}/${v.n}`; L.key = key;
   if (!sameOutput) {
     el.replaceChildren(); L.frame = null; L.video = null;
@@ -759,48 +750,7 @@ function mount(id, v) {
     } else if (v.kind === "video") { L.video = h("video", { class: "rx-media", controls: true, preload: "metadata", src: `${base(id)}/media/${v.n}/${v.entry.split("/").map(enc).join("/")}`, "data-explain-video": "" }); el.append(L.video); }
     else el.append(h("img", { class: "rx-media", alt: v.summary || v.entry, src: `${base(id)}/media/${v.n}/${v.entry.split("/").map(enc).join("/")}`, "data-explain-image": "" }));
   }
-  el.querySelectorAll(".rx-over,.rx-kept,.rx-pop").forEach((x) => x.remove());
-  if (X.boxing === id) el.append(boxOverlay(id, v));
-  else if (s?.rect) el.append(...keptBox(id, s));
 }
-/** the region the captain boxed stays drawn until the question is sent or cleared, with quick questions beside it */
-function keptBox(id, s) {
-  const r = s.rect, box = h("div", { class: "rx-selbox rx-kept", "data-explain-kept": "", style: `display:block;left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px` });
-  const quick = [T("What does this show?", "這塊在說什麼？"), T("Why is it designed this way?", "為什麼這樣設計？"), T("What could go wrong here?", "哪裡有風險？"), T("Draw this in more detail", "畫得更細")];
-  const W = L.el.clientWidth || 800, H = L.el.clientHeight || 600, right = r.x + r.w + 268 < W, left = Math.max(8, right ? r.x + r.w + 10 : Math.min(r.x, W - 268)), top = right ? Math.max(8, Math.min(r.y, H - 190)) : Math.min(r.y + r.h + 10, H - 190);
-  const pop = h("div", { class: "rx-pop", role: "group", "aria-label": T("Ask about the boxed region", "問框起來的這塊"), "data-explain-pop": "", style: `left:${left}px;top:${Math.max(8, top)}px` },
-    h("div", { class: "rx-pophead" }, h("b", {}, T("Ask about this region", "問框起來的這塊")), h("button", { type: "button", class: "rx-x", "aria-label": T("Clear the box", "取消框選"), onclick: () => clearSel(id) }, "✕")),
-    h("div", { class: "rx-chips" }, quick.map((q) => h("button", { type: "button", class: "rr-chip", "data-explain-quick": "", onclick: () => send(id, q) }, q))),
-    h("button", { type: "button", class: "rx-own", onclick: () => focusLater("[data-explain-q]") }, T("…or type your own question", "…或自己打問題")));
-  return [box, pop];
-}
-/** drag a rectangle over the output (or Enter: what is in view); the frame's helper says what lies there (text only) */
-function boxOverlay(id, v) {
-  const over = h("div", { class: "rx-over", "data-explain-overlay": "", tabindex: "0", role: "application", "aria-label": T("Drag to box a region, or press Enter to ask about what is in view", "拖出一塊來框選，或按 Enter 問目前看得到的部分") }),
-    box = h("div", { class: "rx-selbox" }); over.append(box); let from = null;
-  // the focus goes into the popover beside the box (its quick questions, then "type your own"), never left behind the frame
-  const take = async (rect) => { const got = await readRegion(rect); X.sel.set(id, { rect, ...got }); X.boxing = null; refresh(id); requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector("[data-explain-pop] [data-explain-quick]")?.focus())); };
-  over.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); take({ x: 0, y: 0, w: over.clientWidth, h: over.clientHeight }); } });
-  over.addEventListener("pointerdown", (e) => { const b = over.getBoundingClientRect(); from = [e.clientX - b.left, e.clientY - b.top]; Object.assign(box.style, { display: "block", left: `${from[0]}px`, top: `${from[1]}px`, width: "0px", height: "0px" }); over.setPointerCapture?.(e.pointerId); });
-  over.addEventListener("pointermove", (e) => { if (!from) return; const b = over.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top; Object.assign(box.style, { left: `${Math.min(x, from[0])}px`, top: `${Math.min(y, from[1])}px`, width: `${Math.abs(x - from[0])}px`, height: `${Math.abs(y - from[1])}px` }); });
-  over.addEventListener("pointerup", (e) => { if (!from) return; const b = over.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top, rect = { x: Math.min(x, from[0]), y: Math.min(y, from[1]), w: Math.abs(x - from[0]), h: Math.abs(y - from[1]) }; from = null;
-    if (rect.w < 6 || rect.h < 6) return; take(rect); });
-  return over;
-}
-function readRegion(rect) {
-  const f = L.frame; if (!f?.contentWindow) return Promise.resolve({ text: "", headings: [], nodes: [] });
-  const nonce = Math.random().toString(36).slice(2);
-  return new Promise((res) => {
-    const done = (v) => { removeEventListener("message", on); clearTimeout(t); res(v); };
-    // only the frame Studio made, answering this very request; what it says is page text, kept as text
-    const on = (e) => { const d = e.data; if (e.source !== f.contentWindow || !d || d.type !== "crew-room-selection" || d.id !== nonce) return;
-      const words = (a, n, each) => (Array.isArray(a) ? a : []).map((x) => String(x ?? "").slice(0, each)).filter(Boolean).slice(0, n);
-      done({ text: String(d.text ?? "").slice(0, 4000), headings: words(d.headings, 8, 160), nodes: words(d.nodes, 40, 80), title: String(d.title ?? "").slice(0, 200) }); };
-    const t = setTimeout(() => done({ text: "", headings: [], nodes: [] }), 1500);
-    addEventListener("message", on); f.contentWindow.postMessage({ type: "crew-room-select", id: nonce, rect }, "*");
-  });
-}
-function pauseAsk(id, v) { const vid = L.video; if (!vid) return; try { vid.pause(); } catch {} X.sel.set(id, { time: Math.round((vid.currentTime || 0) * 100) / 100, text: "", headings: [], nodes: [] }); refresh(id); focusLater("[data-explain-q]"); }
 function tick() {
   const slot = document.querySelector("[data-x-slot]"), modal = document.querySelector(".rx-modalbg");
   // off the room (or on the tutor's board): the output is unloaded, so its scripts stop
@@ -824,16 +774,14 @@ function tickStart() { if (!L.on) { L.on = true; requestAnimationFrame(tick); } 
 addEventListener("keydown", (e) => { if (e.key !== "Escape") return; const id = S.route?.name === "room" ? S.route.arg : null; if (!id) return;
   if (X.confirm || X.pick) { e.preventDefault(); e.stopPropagation(); closeDialog(); }
   else if (X.verMenu === id) { closeVerMenu(); document.querySelector("[data-explain-versions]")?.focus(); e.preventDefault(); }
-  else if (X.boxing === id) { X.boxing = null; refresh(id); focusLater("[data-explain-box]"); e.preventDefault(); }
-  else if (L.full) { exitFull(); e.preventDefault(); }
-  else if (X.sel.has(id) && !e.target?.closest?.("textarea")) { clearSel(id); e.preventDefault(); } }, true);
+  else if (L.full) { exitFull(); e.preventDefault(); } }, true);
 /** the version menu closes in place (no redraw: the control the focus went to stays the same element) */
 function closeVerMenu() {
   X.verMenu = null; document.querySelectorAll("[data-explain-vermenu],[data-explain-verscrim]").forEach((e) => e.remove());
   if (want?.includes("[data-explain-vermenu]")) want = null; // a focus still on its way into the menu does not land elsewhere
   document.querySelector("[data-explain-versions]")?.setAttribute("aria-expanded", "false");
 }
-addEventListener("hashchange", () => { if (L.full) exitFull(); X.boxing = null; X.verMenu = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
+addEventListener("hashchange", () => { if (L.full) exitFull(); X.verMenu = null; X.pick = null; X.confirm = null; const id = S.route?.name === "room" ? S.route.arg : null; if (id && !id.startsWith("lib:")) load(id); });
 
 window.crewRoomExplain = { ensure, state, active, picker, view, load, dialogs, full: () => L.full };
 })();

@@ -98,7 +98,8 @@ const PR_PAGES = 3, PR_CACHE_BYTES = () => (Number(process.env.CREW_REVIEW_PR_CA
   /** a paid run on a pull request read longer ago than this reads it again first (a merged or closed one then refuses the run) */
   PR_FRESH_MS = () => (process.env.CREW_REVIEW_PR_FRESH_MS !== undefined && Number(process.env.CREW_REVIEW_PR_FRESH_MS) >= 0 ? Number(process.env.CREW_REVIEW_PR_FRESH_MS) : 5 * 60_000);
 const refuse = (message: string, code: string, extra: Record<string, any> = {}) => Object.assign(new Error(message), { code, ...extra });
-export const TUTOR_SEAT = "review-room-tutor", TUTOR_ROLE = "reviewer";
+/** the role a room's tutor runs as (its seats are the explainer's: review-room-explainer…, review-room-qa) */
+export const TUTOR_ROLE = "reviewer";
 /** a pull request's address, exactly https://github.com/<owner>/<repo>/pull/<n>: no other host, path, query or fragment */
 export function parsePrUrl(u: unknown): { repository: string; n: number; url: string } | null {
   const m = /^https:\/\/github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})\/pull\/([1-9]\d{0,8})\/?$/.exec(String(u ?? "").trim());
@@ -166,14 +167,12 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   // read from disk only once per process: an illustration still pending there had its job in a Studio that stopped
   const load = (k: Key): Room | null => { const had = cache.get(k.file); if (had) return had; try { const r: Room = JSON.parse(readFileSync(k.file, "utf8"));
     cache.set(k.file, r); return r; } catch { return null; } };
-  /** the review room's own settings (Studio-wide): autoTeach, a room's full analysis (its lesson) starting by itself when the
-   *  captain opens the room, by any route, or pastes its pull request (default on) */
+  /** the review room's own settings (Studio-wide): its default tutor (tutor: {provider, model}, picked by the captain; null:
+   *  Automatic, Studio picks the most independent model it can run). An older file's autoTeach is no longer read. */
   const settingsFile = () => join(o.dataDir, "review-room-settings.json");
-  /** the review room's Studio-wide tutor (tutor: {provider, model}, picked by the captain; null: Automatic, Studio picks the
-   *  most independent model it can run, as before) */
-  const settings = (): { autoTeach: boolean; tutor: { provider: string; model: string } | null } => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8"));
+  const settings = (): { tutor: { provider: string; model: string } | null } => { try { const j = JSON.parse(readFileSync(settingsFile(), "utf8"));
     const t = j?.tutor && typeof j.tutor.provider === "string" && typeof j.tutor.model === "string" ? { provider: j.tutor.provider, model: j.tutor.model } : null;
-    return { autoTeach: j?.autoTeach !== false, tutor: t }; } catch { return { autoTeach: true, tutor: null }; } };
+    return { tutor: t }; } catch { return { tutor: null }; } };
   /** rooms started over: their old object (held by a background job: a picture, a Library save) is never written back */
   const startedOver = new WeakSet<Room>(), resetGen = new Map<string, number>();
   const save = (k: Key, r: Room) => { if (startedOver.has(r)) return; r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
@@ -699,7 +698,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     /** the summary a merge card shows: the room's pages and what they cost; never readiness, never an answer */
     summary(c: SCard) {
       if (c.kind !== "merge") return null; const b = explainer.brief(c.id);
-      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(c.id, (() => { try { return load(keyOf(c.id)); } catch { return null; } })()), running: !!b?.running, latest: b?.latest ?? null };
+      return { href: `#/room/${encodeURIComponent(c.id)}`, opened: !!stats()[c.run]?.openedAt, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(c.id, (() => { try { return load(keyOf(c.id)); } catch { return null; } })()), running: !!b?.running, generating: !!b?.generating, latest: b?.latest ?? null };
     },
     /** A Task's entry to the room on its reviewed branch (the Task page): once Studio's review passed at its head, or a room exists. */
     taskEntry(run: any) {

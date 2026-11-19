@@ -1,10 +1,10 @@
 import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
-// "Explain with" on the page (public/review-explain.js, docs/units/review-room.md): the header's picker (the tutor and the
+// The room's page on the page (public/review-explain.js, docs/units/review-room.md): the header's picker (baton built in and the
 // captain's library skill), the paid run's confirmation, the background run's progress and Stop, the output in a sandboxed
 // frame served by a real Studio under the output CSP (the page in it cannot fetch, cannot read Studio, has working storage),
-// boxing a region (the frame's helper says what lies there) and a follow-up that carries it, the answer with its citations and
-// the new version in the rail, an older version, a video paused at a frame. A real isolated Studio serves the skill import,
-// the capability and the version's page; the room and the paid runs are answered by the test: nothing paid runs.
+// a question about the page shown and its answer in the chat, the version menu, an older version, a video. A real isolated
+// Studio serves the skill import, the capability and the version's page; the room and the paid runs are answered by the test:
+// nothing paid runs.
 //        node tests/review-room-explain-ui.mjs
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";

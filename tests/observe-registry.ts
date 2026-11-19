@@ -72,6 +72,8 @@ try {
   ok(room.data.subject.number === 1645 && room.data.subject.repository === REPO, "Q1: the room names the pull request under review", J(room.data.subject));
   { const asked = room.data.explain.runs.filter((r: any) => r.kind === "ask");
     ok(asked.length === 1 && asked[0].question === "Why does the retry give up after five attempts?" && J(room.data.questions) === J({ asked: 1, done: 1, failed: 0 }), "Q1: the captain's question about the page, in their words (captain trust, not wrapped), and how many they asked", J([asked, room.data.questions])); }
+  { const v1 = room.data.explain.versions.find((v: any) => v.n === 1);
+    ok(v1?.head === "a".repeat(40) && v1.provider === "claude" && v1.model === "fixture-model" && J(v1.cost) === J({ usd: 0.42 }), "a page version says the head it explains, the model that made it and what it cost (from its run)", J(v1)); }
   ok(J(room.data.pages) === J({ versions: 1, runs: 2, failed: 0 }) && room.data.explain.versions.at(-1)?.n === 1 && room.data.explain.versions.at(-1)?.skill?.name === "baton", "Q1: the room's page is baton's version 1, of two page runs", J([room.data.pages, room.data.explain.versions]));
   ok(J(room.data.oldBoard) === J({ turns: 2, items: 3, usd: 0.2 }) && !("turns" in room.data) && !("lesson" in room.data), "an old whiteboard is only said to exist, with what its turns cost: its turns and lesson are not read", J(room.data.oldBoard));
   ok(room.untrusted.includes("data.pr.title") && room.untrusted.some((p: string) => /explain\.runs\[\d+\]\.summary/.test(p)) && room.untrusted.some((p: string) => /explain\.versions\[\d+\]\.summary/.test(p)) && room._meta["studio/trust"].untrusted.length === room.untrusted.length,

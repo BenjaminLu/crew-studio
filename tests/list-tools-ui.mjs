@@ -56,7 +56,7 @@ const rooms = Array.from({ length: 96 }, (_, i) => ({ id: `PR-${String(i).padSta
 const projects = Array.from({ length: 36 }, (_, i) => ({ id: `proj-${i}`, name: `owner/${pick(["billing", "search", "auth", "infra", "sdk-js", "status-page"])}-${i}`, kind: i === 0 ? "studio" : pick(["local", "local", "external", "builtin"]), enabled: rnd() > 0.15, attention: rnd() > 0.8 ? 1 : 0, running: rnd() > 0.6 ? 2 : 0, held: 0, failed24h: rnd() > 0.85 ? 1 : 0, mini: [], connected: false }));
 const API = { "/api/wruns": { runs, cards: [] }, "/api/wf": { workflows: wfList, held: [], trash: [], names: {}, checks: [] }, "/api/skills": { skills, roles: [], caps: {} }, "/api/skills/homes": { homes: [] },
   "/api/crew/live": crew, "/api/terminals": { terminals: terms, presets: [], projects: [], canWrite: true }, "/api/artifacts": { artifacts: arts, runs: [], render: {} }, "/api/library": { code, files: [], artifacts: arts, mergedKept: 50 },
-  "/api/review-room": { rooms, settings: { autoTeach: false }, tutors: [], providers: [] }, "/api/projects/overview": { projects }, "/api/scards": { cards: scards } };
+  "/api/review-room": { rooms, settings: { tutor: null }, tutors: [], providers: [] }, "/api/projects/overview": { projects }, "/api/scards": { cards: scards } };
 
 const port = await freePort(), base = `http://127.0.0.1:${port}`, env = { ...process.env };
 for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
