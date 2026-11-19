@@ -185,16 +185,19 @@ export function findLink(raw: string, cols: number, trailing = true): string | n
 // The Claude CLI's own Remote Control banner, as a signed-in Claude Code 2.1.327 drew it in a real terminal (and as its
 // bridge_status message words it): "  /remote-control is active · Continue here, on your phone, or at" on its own row,
 // the link on the next one. Ink places its words with cursor moves, not spaces (linkLines puts the spaces back).
-// It counts only where Claude Code draws it: right below the header (which ends "· /rc" while Remote Control is on) or
-// below the prompt row the command was typed on ("❯ /remote-control", at the left edge). Claude's answers start with "⏺"
-// and go on indented below other rows, and a tool's output sits under "⎿", so a model or a program repeating the banner
-// in an answer or a tool output is not it.
+// It counts only where Claude Code draws it: right below the header's folder row (after the logo, or repainted alone at
+// column 8 or more, ending "· /rc" while Remote Control is on) or below the prompt row the command was typed on
+// ("❯ /remote-control", at the left edge). Claude's answers and tool calls start with "⏺" at the left edge; everything
+// from there to the next prompt row with text, or Claude Code's header, is the model's or a tool's (tool output sits
+// under "⎿" inside it), so nothing there counts, however it is worded or indented.
 // Remote Control ends with "⎿  Remote Control disconnected." right below that same prompt row (also seen live), or one
 // of Claude Code's own status lines at the left edge ("Remote Control disconnected …", "… stopped: …", "… session
-// expired."). A program printing the exact banner on its own rows cannot be told apart in the output
-// (docs/units/web-terminal.md "Claude Code Remote Control"): at worst it points the page at another Claude session.
+// expired."). Text at the left edge cannot be told from Claude Code's own (docs/units/web-terminal.md "What this cannot
+// tell apart"): a program writing the prompt row and banner there can point the page at another Claude session, and a
+// status line there clears it.
 const BANNER = /^\s{0,3}\/remote-control\s+is\s+active\s*\u00b7?\s*Continue here, on your phone, or at\b/;
-const BANNER_AFTER = /^❯\s*\/remote-control\b|\u00b7\s*\/rc\s*$/;
+const BANNER_AFTER = /^❯\s*\/remote-control\b|^(?:\s?▝▝\s+▝▝\s+|\s{8,})\S.*\u00b7\s*\/rc\s*$/;
+const ANSWER = /^⏺/, ANSWER_END = /^❯\s*\S|^\s?▐▛███▛█\s+Claude Code v\d/;
 const OFF_TEXT = /Remote Control (?:disconnected|stopped|session expired)\b/;
 const OFF_UNDER_COMMAND = /^\s*⎿\s*Remote Control (?:disconnected|stopped|session expired)\b/, OFF_STATUS = /^Remote Control (?:disconnected|stopped|session expired)\b/;
 const COMMAND = /^❯\s*\/remote-control\b/;
@@ -205,8 +208,10 @@ const before = (lines: string[], i: number) => { for (let k = i - 1; k >= 0; k--
 export function bannerLink(raw: string, cols: number, trailing = true): { url: string | null; off: boolean } | null {
   const lines = linkLines(raw);
   let b = -1, off = -1;
+  let answer = false;
   for (let i = 0; i < lines.length; i++) {
-    if (BANNER.test(lines[i]) && BANNER_AFTER.test(before(lines, i))) b = i;
+    if (ANSWER.test(lines[i])) answer = true; else if (ANSWER_END.test(lines[i])) answer = false;
+    if (!answer && BANNER.test(lines[i]) && BANNER_AFTER.test(before(lines, i))) b = i;
     if (OFF_TEXT.test(lines[i]) && (OFF_STATUS.test(lines[i]) || (OFF_UNDER_COMMAND.test(lines[i]) && COMMAND.test(before(lines, i))))) off = i;
   }
   if (off > b) return { url: null, off: true };

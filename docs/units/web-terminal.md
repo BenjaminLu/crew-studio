@@ -317,8 +317,9 @@ account drive the session, so it is treated as a secret:
   your phone, or at`, with the link on the row below.
   - Ink places those words with cursor moves rather than spaces, so Studio turns the moves back into spaces before
     reading.
-  - The banner counts only right below Claude Code's header, which ends `· /rc` while Remote Control is on, or right below
-    the prompt row the command was typed on (`❯ /remote-control`, at the left edge).
+  - The banner counts only right below the folder row of Claude Code's header, or right below the prompt row the
+    command was typed on (`❯ /remote-control`, at the left edge). The folder row comes after the logo, or is repainted
+    alone at column 8 or more, and ends `· /rc` while Remote Control is on.
 - Only once Remote Control is on: the flag at start, or `/remote-control` sent. In slash mode, a link already on the
   screen when it is sent is never taken.
 - Only a link of a Remote Control link's shape (`SHOWN_LINK`): claude.ai or claude.com, `/code/<one id>`, at most an `env`
@@ -331,16 +332,21 @@ account drive the session, so it is treated as a secret:
     `… session expired.`)
   - the process ending
 - **What never counts:**
-  - a model answer (it starts with `⏺` and goes on indented) or a tool's output (under `⎿`), even when it repeats the
-    banner or "disconnected" word for word, which the live check saw a model do
+  - anything from a `⏺` at the left edge (a model answer or a tool call, with its output under `⎿`) to the next prompt
+    row with text or Claude Code's header, however it is worded or indented. This holds even when it repeats the
+    banner, a `· /rc` row or "disconnected" word for word, which the live check saw a model do.
   - a line that only says Remote Control is on (a README, a log)
 
   Every link other than the banner's is hidden, never shown.
 
-**What this cannot tell apart.** A program running in the terminal that prints the exact banner text itself, outside
-Claude's tool output, cannot be told apart from Claude Code's own banner in the output alone: nothing in-band
-authenticates it. The worst it can do is point the page, and its QR code, at another Claude Code session link of the
-right shape, never at a page of another site.
+**What this cannot tell apart.** Text written at the left edge cannot be told apart from Claude Code's own in the
+output alone: nothing in-band authenticates it.
+- A program that writes a `❯ /remote-control` row and the banner there is read as Claude Code's banner.
+- A `Remote Control disconnected.` line written there clears the link.
+
+The worst such a program can do is point the page, and its QR code, at another Claude Code session link of the right
+shape, never at a page of another site. Claude Code's own rendering never puts a model's or a tool's text there:
+answers sit after `⏺`, and tool output sits under `⎿`.
 
 Other agents have no such feature and show nothing; their phone view shows the output with the generic link rule.
 
