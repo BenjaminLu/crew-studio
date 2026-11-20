@@ -22,6 +22,12 @@ room's own questions about that page, answered by the room's tutor in a chat bes
   the arrow keys (Shift for bigger steps, Home and End for the bounds), Enter or a double-click goes back to the default width;
   the width is kept per view on this browser. The chat is 440 px or more at 1440 and wider on a wide screen; long chat scrolls
   inside the pane, never the page. A phone and a narrow window never scroll sideways and show no splitter.
+- **The chat keeps the captain's place.** A redraw (a poll every 2.5 s while a run works, a live update, a whole-page redraw)
+  patches the chat in place by each message's key and never draws a message already read again. Scrolled up to read, the
+  chat stays exactly where it is; a new answer then shows "↓ New messages" / 「↓ 新訊息」 at the list's foot instead of moving
+  it. At (or within 48 px of) the end, it stays at the end as an answer comes in. A room opens at its newest message beside
+  the output; a phone, where the whole room scrolls as one column, opens at the output and keeps its place the same way. The
+  version menu's list, the progress card and the skill's live log keep their place across redraws too.
 - **On a paired phone** the room reads only: the chat has no ask box (a note says to ask on the Mac), the picker is hidden
   (760 px and narrower), and every route that changes a room or starts a run is the desktop captain's (`desktopOnly`).
 - **Model text only in text nodes.** The chat's answers are a small Markdown (paragraphs, lists, tables, **bold**, `code`)
@@ -797,6 +803,9 @@ Done when (each line proved by the named suite; `bun run test:review-room` runs 
     card's room with an old lesson: one line …", "the board's code, styles and handwriting fonts are not loaded …", "no
     whiteboard route is left …", "no voice route is left …"; review-room-explain-ui "a room with an old whiteboard …", "a
     paired phone reads the room but its whole record is refused …".
+26. The chat keeps the captain's place across polls and redraws: scrolled up it does not move (a new answer shows "New
+    messages"), at the end it stays at the end; the version menu's list and a phone's room keep theirs. —
+    review-room-chat-scroll-ui (each rule).
 
 Tests: `tests/review-baton.ts`; `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub provider);
 `tests/review-room-admission.ts` (a staffed Task: the seat's receipt and native admission, the adaptive tutor on one vendor, two
@@ -806,6 +815,6 @@ host Task, a scripted skill); `tests/review-room-directory.ts` (a local bare rep
 `tests/review-room-zones.ts`; `tests/review-room-explain.ts`; `tests/review-room-explain-scripts.ts` (a made-up skill package's
 real scripts in the real sandbox); and on the page, in a real isolated Studio and Chromium, `tests/review-room-ui.mjs`,
 `tests/review-room-zones-ui.mjs`, `tests/review-room-explain-ui.mjs` (1440, 900 and 390 wide, light and dark, English and
-繁體中文) and `tests/review-room-pane-ui.mjs`. `tests/route-names.ts` keeps route names apart.
+繁體中文) `tests/review-room-pane-ui.mjs` and `tests/review-room-chat-scroll-ui.mjs`. `tests/route-names.ts` keeps route names apart.
 
 Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request.

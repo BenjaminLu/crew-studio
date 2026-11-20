@@ -12,7 +12,7 @@
 // and opens in a tab of its own (a fresh capability, framed exactly as here).
 (() => {
 const X = { st: new Map(), loading: new Set(), err: new Map(), poll: new Map(), pick: null, confirm: null, shown: new Map(), draft: new Map(), caps: new Map(),
-  posting: new Set(), autoPosted: new Set(), autoErr: new Map(), ask: null, consent: new Set(), logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null };
+  posting: new Set(), autoPosted: new Set(), autoErr: new Map(), ask: null, consent: new Set(), logOpen: new Set(), queue: new Map(), pend: new Map(), returnTo: null, more: new Set(), madeOpen: new Set(), verMenu: null, news: new Set() };
 const enc = encodeURIComponent;
 /** Studio's built-in baton (src/domain/review-baton.ts BATON_PIN.id): the room's default skill */
 const BUILTIN = "studio-baton";
@@ -111,7 +111,10 @@ function refresh(id) {
   const st = state(id); tickStart();
   // a poll redraws the output's line, the open version menu with it: the control that had the focus there gets it back
   const kept = focusIn(el.querySelector("[data-x-line]"));
-  for (const [sel, make] of [["[data-x-line]", () => bar(r, st)], ["[data-x-stage]", () => stage(r, st)], ["[data-x-msgs]", () => msgs(r, st)], ["[data-x-scope]", () => scope(r, st)], ["[data-x-askrow]", () => askRow(r, st)]]) { const old = el.querySelector(sel); if (old) old.replaceWith(make()); }
+  for (const [sel, make] of [["[data-x-line]", () => bar(r, st)], ["[data-x-stage]", () => stage(r, st)], ["[data-x-scope]", () => scope(r, st)], ["[data-x-askrow]", () => askRow(r, st)]]) { const old = el.querySelector(sel); if (old) old.replaceWith(make()); }
+  // the chat's messages are patched in place, never drawn again: the place the captain reads at stays where it is
+  const om = el.querySelector("[data-x-msgs]"); if (om) patchMsgs(id, om, msgs(r, st));
+  applyKeep(id);
   if (kept) { const back = el.querySelector(kept); if (back) back.focus({ preventScroll: true }); else if (kept.includes("data-explain-version=")) el.querySelector("[data-explain-versions]")?.focus({ preventScroll: true }); }
   syncAsk(r, st);
   const pk = document.querySelector("[data-explain-picker]"); if (pk) pk.replaceWith(picker(r));
@@ -405,8 +408,8 @@ function view(r) {
   const id = r.card.id, st = state(id);
   if (!st) return h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"));
   // shown with its skill: a question that waited for this room's first output goes now (once; behind its confirmation)
-  queueMicrotask(() => { tickStart(); syncAsk(r, st); flushQueue(id); });
-  return h("div", { class: "rx-body", "data-explain-room": id }, h("main", { class: "rx-stage" }, bar(r, st), stage(r, st)), window.crewRoomPane?.handle("explain") ?? null, chat(r, st), dialogs(r));
+  queueMicrotask(() => { tickStart(); syncAsk(r, st); flushQueue(id); applyKeep(id); });
+  return h("div", { class: "rx-body", "data-explain-room": id, "data-x-keep": "body" }, h("main", { class: "rx-stage" }, bar(r, st), stage(r, st)), window.crewRoomPane?.handle("explain") ?? null, chat(r, st), dialogs(r));
 }
 /** show a version; one made by another skill switches the room to that skill (so the header, the chat and Generate agree) */
 /** show a version: only what the stage shows changes. The room's selected skill stays (a version another skill made is read,
@@ -429,7 +432,7 @@ function bar(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate";
   return h("div", { class: "rx-line", "data-x-line": "" },
     st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
-        title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
+        title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; forget("vermenu"); refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
       // a long skill name is cut, never the version, the count or "generating"
       h("span", { class: "rx-vername" }, gen ? sk(run.skill) : cur ? skillName(st, cur.skill.id) : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
       h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
@@ -463,7 +466,7 @@ function verMenu(r, st) {
   const keys = (e) => { const items = [...e.currentTarget.querySelectorAll("button:not([disabled])")], i = items.indexOf(document.activeElement);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
     else if (e.key === "Home" || e.key === "End") { e.preventDefault(); (e.key === "Home" ? items[0] : items.at(-1))?.focus(); } };
-  return h("div", { class: "rx-vermenu", id: "rx-vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
+  return h("div", { class: "rx-vermenu", id: "rx-vermenu", "data-x-keep": "vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
       onfocusout: (e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && !e.relatedTarget.closest("[data-explain-versions]")) closeVerMenu(); } },
     h("h6", {}, T("Outputs", "產出")),
     run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, sk(run.skill)), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
@@ -542,7 +545,7 @@ function progressCard(r, st, run) {
   const id = r.card.id, ms = Date.now() - Date.parse(run.at), rounds = run.rounds.length, prog = run.progress || [], prep = run.prepare || null, read = prog.length > 1 || rounds > 0 || !!prep;
   const pct = Math.max(2, Math.min(100, Math.round((ms / (run.limitMin * 60000)) * 100)));
   const step = (cls, mark, text, kids) => h("li", { class: cls }, h("span", { class: "d", "aria-hidden": "true" }, mark), h("div", {}, text, kids || null));
-  return h("div", { class: "rx-gen", "data-x-stage": "", "data-explain-progress": run.n },
+  return h("div", { class: "rx-gen", "data-x-stage": "", "data-x-keep": "gen", "data-explain-progress": run.n },
     h("div", { class: "rx-gencard" },
       h("h3", {}, T(`${sk(run.skill)} is making the explanation`, `${sk(run.skill)} 正在產生說明`)),
       h("div", { class: "faint", "data-explain-model": "" }, whoPays(run)),
@@ -563,7 +566,7 @@ function progressCard(r, st, run) {
       h("div", { class: "rx-foot" },
         h("button", { type: "button", class: "btn sm", "data-explain-log": "", "aria-expanded": String(X.logOpen.has(id)), onclick: () => { if (X.logOpen.has(id)) X.logOpen.delete(id); else X.logOpen.add(id); refresh(id); } }, T("The skill's live log", "skill 的即時紀錄")),
         readOnly() ? null : h("button", { type: "button", class: "btn sm", "data-explain-stop": "", disabled: X.posting.has(`${id}/stop`) ? true : null, onclick: () => stop(id) }, T("Stop", "停止"))),
-      X.logOpen.has(id) ? h("pre", { class: "rx-log", "data-explain-logtext": "" }, (st.log || []).map((l) => `${hhmm(l.ts)} ${l.kind} ${l.text}`).join("\n") || T("(nothing yet)", "（還沒有）")) : null));
+      X.logOpen.has(id) ? h("pre", { class: "rx-log", "data-explain-logtext": "", "data-x-keep": "log" }, (st.log || []).map((l) => `${hhmm(l.ts)} ${l.kind} ${l.text}`).join("\n") || T("(nothing yet)", "（還沒有）")) : null));
 }
 async function stop(id) { const was = state(id)?.running; X.posting.add(`${id}/stop`); refresh(id); try { X.st.set(id, await postJ(`${base(id)}/stop`, {})); ended(id, was); } catch (e) { X.err.set(id, bi(e.message)); } finally { X.posting.delete(`${id}/stop`); load(id); } }
 
@@ -653,15 +656,17 @@ function answerView(text) {
 }
 function msgs(r, st) {
   const id = r.card.id, a = X.ask && X.ask.id === id ? X.ask : null, out = [];
-  out.push(h("div", { class: "rx-m sys" }, T("Ask about this page: the room's tutor answers here, from the page shown and the change's code. It never changes the page; Generate again does.", "問這一頁：審查室的導師在這裡回答，依據目前這一版頁面和改動的程式碼。它不會改頁面；要改頁面請按重新產生。")));
+  // every message has a key (data-k) the in-place patch finds it by (patchMsgs)
+  const put = (k, e) => { e.dataset.k = k; out.push(e); };
+  put("intro", h("div", { class: "rx-m sys" }, T("Ask about this page: the room's tutor answers here, from the page shown and the change's code. It never changes the page; Generate again does.", "問這一頁：審查室的導師在這裡回答，依據目前這一版頁面和改動的程式碼。它不會改頁面；要改頁面請按重新產生。")));
   for (const run of st.runs) {
     const spent = [run.ended ? fmtMin(Date.parse(run.ended) - Date.parse(run.at)) : null, money(run.cost)].filter(Boolean).join(" · ");
     if (run.kind === "generate") {
-      if (run.status === "done" || run.status === "running") out.push(h("div", { class: "rx-m sys", "data-explain-run": run.n, "data-status": run.status }, run.status === "running" ? T(`${sk(run.skill)}: generating…`, `${sk(run.skill)}：產生中…`) : T(`${sk(run.skill)} v${run.version} made · ${spent}`, `${sk(run.skill)} v${run.version} 完成 · ${spent}`)));
-      else { const w = whyOf(run); out.push(h("div", { class: `rx-m ${run.status === "stopped" ? "warn" : "err"}`, "data-explain-run": run.n, "data-status": run.status }, h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), h("b", {}, sk(run.skill)), " ", w.text, spent ? h("small", { class: "faint" }, ` · ${spent}`) : null)); }
+      if (run.status === "done" || run.status === "running") put(`g${run.n}`, h("div", { class: "rx-m sys", "data-explain-run": run.n, "data-status": run.status }, run.status === "running" ? T(`${sk(run.skill)}: generating…`, `${sk(run.skill)}：產生中…`) : T(`${sk(run.skill)} v${run.version} made · ${spent}`, `${sk(run.skill)} v${run.version} 完成 · ${spent}`)));
+      else { const w = whyOf(run); put(`g${run.n}`, h("div", { class: `rx-m ${run.status === "stopped" ? "warn" : "err"}`, "data-explain-run": run.n, "data-status": run.status }, h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), h("b", {}, sk(run.skill)), " ", w.text, spent ? h("small", { class: "faint" }, ` · ${spent}`) : null)); }
       continue; }
-    out.push(h("div", { class: "rx-m me", "data-explain-q-run": run.n }, run.from ? h("span", { class: "rx-thumb", "data-explain-about": run.from }, T(`about v${run.from}`, `關於 v${run.from}`)) : null, run.question));
-    out.push(h("div", { class: `rx-m ${run.status === "done" || run.status === "running" ? "ai" : run.status === "stopped" ? "warn" : "err"}`, "data-explain-answer": run.n, "data-status": run.status },
+    put(`q${run.n}`, h("div", { class: "rx-m me", "data-explain-q-run": run.n }, run.from ? h("span", { class: "rx-thumb", "data-explain-about": run.from }, T(`about v${run.from}`, `關於 v${run.from}`)) : null, run.question));
+    put(`a${run.n}`, h("div", { class: `rx-m ${run.status === "done" || run.status === "running" ? "ai" : run.status === "stopped" ? "warn" : "err"}`, "data-explain-answer": run.n, "data-status": run.status },
       run.status === "running" ? [h("span", { class: "faint" }, T("Working on it…", "處理中…")), ...(run.progress || []).slice(-3).map((p) => { if (p.script) { const s = scriptLine(p.script); return h("div", { class: `rx-callrow ${s.cls}` }, h("span", { class: "d" }, s.mark), " ", s.body); } return h("div", { class: "faint" }, `· ${p.text}`); }),
         readOnly() ? null : h("div", {}, h("button", { type: "button", class: "btn sm", "data-explain-stop": "", onclick: () => stop(id) }, T("Stop", "停止")))]
       : run.status === "done" ? [answerView(run.answer),
@@ -670,25 +675,76 @@ function msgs(r, st) {
       : (() => { const w = whyOf(run); return [h("span", { class: "rx-ic", "aria-hidden": "true" }, run.status === "stopped" ? "⚠" : "✕"), w.text, w.detail ? h("small", { class: "faint" }, ` ${w.detail}`) : null]; })()));
   }
   const q = X.queue.get(id);
-  if (q) out.push(h("div", { class: "rx-m me rx-queued", "data-explain-queued": "" }, h("span", { class: "rx-thumb" }, T("waits for the output", "等產出好了再問")), q,
+  if (q) put("queued", h("div", { class: "rx-m me rx-queued", "data-explain-queued": "" }, h("span", { class: "rx-thumb" }, T("waits for the output", "等產出好了再問")), q,
     h("button", { type: "button", class: "rx-x", "aria-label": T("Do not ask it", "不問了"), onclick: () => { X.queue.delete(id); refresh(id); } }, "✕")));
   // the question being sent, until the server's run (above) is it
   const p = X.pend.get(id);
   if (p && !pendRun(id, st)) { const PH = { sending: T("Sending…", "送出中…"), starting: T("Starting…", "開始中…"), confirm: T("Waits for your confirmation", "等你確認"), refused: T("Not asked", "沒有送出") };
-    out.push(h("div", { class: `rx-m me rx-pending${p.phase === "refused" ? " refused" : ""}`, "data-explain-pending": p.phase, "aria-busy": p.phase === "sending" || p.phase === "starting" ? "true" : null }, h("span", { class: "rx-thumb" }, T(`about v${p.v}`, `關於 v${p.v}`)), p.q,
+    put("pending", h("div", { class: `rx-m me rx-pending${p.phase === "refused" ? " refused" : ""}`, "data-explain-pending": p.phase, "aria-busy": p.phase === "sending" || p.phase === "starting" ? "true" : null }, h("span", { class: "rx-thumb" }, T(`about v${p.v}`, `關於 v${p.v}`)), p.q,
       h("small", { class: "rx-pendstate", role: "status", "data-explain-pendstate": "" }, PH[p.phase])));
-    if (p.phase === "refused") out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), p.why,
+    if (p.phase === "refused") put("refused", h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), p.why,
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", "data-explain-pendx": "", onclick: () => { unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Back to the ask box", "放回輸入框")),
         h("button", { type: "button", class: "btn sm primary", "data-explain-retry": "", disabled: askMode(r, st) === "ask" ? null : true, title: askMode(r, st) === "ask" ? "" : T("Wait for the skill to finish", "等 skill 做完"), onclick: () => retry(id) }, T("Retry", "重試"))))); }
-  if (a) out.push(h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid question", "確認付費提問") },
+  if (a) put(`confirm:${a.offer.hash}:${a.q}`, h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid question", "確認付費提問") },
     h("p", {}, T(`The room's tutor answers this question: a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"}. It reads the page shown and the change's code, and never changes the page.`, `審查室的導師回答這個問題：用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 付費執行。它讀目前這一版頁面和改動的程式碼，不會改頁面。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
     h("label", {}, h("input", { type: "checkbox", "data-explain-consent": "", onchange: (e) => { if (e.target.checked) X.consent.add(id); else X.consent.delete(id); } }),
       T(" Ask the next questions here on this tutor without confirming each", " 之後在這裡問同一位導師時不用再確認")),
     h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; if (X.pend.get(id)?.phase === "confirm") unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Cancel", "取消")),
       h("button", { type: "button", class: "btn sm primary", "data-explain-askok": "", onclick: () => send(id, a.q, a.offer.hash, X.consent.has(id)) }, T("Confirm and ask", "確認並提問")))));
 
-  const err = X.err.get(id); if (err) out.push(h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), err));
-  return h("div", { class: "rx-msgs", "data-x-msgs": "" }, out);
+  const err = X.err.get(id); if (err) put("err", h("div", { class: "rx-m err", role: "alert", "data-explain-error": "" }, h("span", { class: "rx-ic", "aria-hidden": "true" }, "✕"), err));
+  // what the patch compares: the message as drawn (a message whose markup did not change is kept, never drawn again)
+  for (const e of out) e._sig = e.outerHTML;
+  // a new answer while the captain reads further up: a button to the end, never a jump (shown by patchMsgs)
+  const more = h("button", { type: "button", class: "rx-new", "data-explain-new": "", "data-k": "new", hidden: !X.news.has(id), onclick: () => toEnd(id) }, "↓ ", T("New messages", "新訊息"));
+  return h("div", { class: "rx-msgs", "data-x-msgs": "", "data-x-keep": "msgs" }, out, more);
+}
+// ---------- the chat's place: a redraw never moves what the captain reads ----------
+/** within this many pixels of the end counts as reading the end: new content keeps it there */
+const NEAR = 48;
+const atEnd = (e) => e.scrollHeight - e.scrollTop - e.clientHeight <= NEAR;
+/** the last place of each part that scrolls (data-x-keep), per room: kept from the captain's own scrolling, so a part drawn anew
+ *  (a poll's redraw of the line or the stage, a whole-page redraw) is put back where it was */
+const KEEP = new Map();
+const PIN = new Set(["msgs", "body", "log"]);
+const forget = (k) => { for (const key of [...KEEP.keys()]) if (key.endsWith(`|${k}`)) KEEP.delete(key); };
+/** what scrolls the chat: its list beside the output, the whole room on a narrow screen (one column) */
+const chatScroller = (m) => (/(auto|scroll)/.test(getComputedStyle(m).overflowY) ? m : m.closest(".rx-body") || m);
+const newsShown = (id) => { const b = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-new]`); if (b) b.hidden = !X.news.has(id); };
+function toEnd(id) { const m = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-x-msgs]`); X.news.delete(id); newsShown(id); if (m) pin(chatScroller(m)); }
+/** to the end, and kept there while what was just drawn settles (its fonts, its layout): unless the captain scrolls away first */
+function pin(e) { const at = () => { e.scrollTop = e.scrollHeight; e._pinTop = e.scrollTop; }; at();
+  const again = () => { if (e.isConnected && e._pinTop != null && Math.abs(e.scrollTop - e._pinTop) <= 1) at(); };
+  requestAnimationFrame(() => { again(); requestAnimationFrame(again); }); setTimeout(again, 300); document.fonts?.ready.then(again); }
+addEventListener("scroll", (ev) => { const e = ev.target; if (!(e instanceof Element) || !e.dataset.xKeep) return; const id = e.closest("[data-explain-room]")?.dataset.explainRoom; if (id == null) return;
+  // a scroll Studio made to keep the end (pin) is the end, even when what it was drawing grew before the event came
+  if (e._pinTop != null && Math.abs(e.scrollTop - e._pinTop) > 1) e._pinTop = null;
+  const end = e._pinTop != null || atEnd(e); KEEP.set(`${id}|${e.dataset.xKeep}`, { top: e.scrollTop, end });
+  if (end && X.news.has(id) && (e.dataset.xKeep === "msgs" || e.dataset.xKeep === "body")) { X.news.delete(id); newsShown(id); } }, true);
+/** the scrolling parts back where the captain left them: one drawn anew to its last place, one at the end (the chat, the log)
+ *  kept at the end; the chat opens at its newest message where it scrolls by itself (beside the output) */
+function applyKeep(id) {
+  const room = document.querySelector(`[data-explain-room="${CSS.escape(id)}"]`); if (!room) return;
+  for (const e of [room, ...room.querySelectorAll("[data-x-keep]")]) { const k = e.dataset.xKeep, m = KEEP.get(`${id}|${k}`), fresh = !e._kept; e._kept = true;
+    if (m?.end && PIN.has(k)) pin(e);
+    else if (m && fresh) e.scrollTop = m.top;
+    else if (!m && fresh && (k === "log" || (k === "msgs" && chatScroller(e) === e))) pin(e); }
+}
+/** a poll's chat patched in place by each message's key: a message whose markup is the same is kept as it is (its place, its
+ *  focus, a box ticked in it), a changed one is swapped, a new one added. At the end it stays at the end; further up nothing
+ *  moves, and a new message shows the button to the end */
+function patchMsgs(id, old, fresh) {
+  const s = chatScroller(old), end = atEnd(s), prev = new Map([...old.children].map((c) => [c.dataset.k, c]));
+  let news = false;
+  const next = [...fresh.children].map((n) => { const k = n.dataset.k, o = prev.get(k);
+    if (k === "new") return o || n;
+    if (o && o._sig === n._sig) return o;
+    if (!o || (o.dataset.status !== n.dataset.status && n.dataset.status !== "running")) news = true;
+    return n; });
+  for (const c of [...old.children]) if (!next.includes(c)) c.remove();
+  next.forEach((n, i) => { if (old.children[i] !== n) old.insertBefore(n, old.children[i] || null); });
+  if (end) { X.news.delete(id); pin(s); } else if (news) X.news.add(id);
+  newsShown(id);
 }
 
 // ---------- the output's layer: placed over the stage's slot, rebuilt only when the version shown changes ----------
@@ -777,7 +833,7 @@ addEventListener("keydown", (e) => { if (e.key !== "Escape") return; const id = 
   else if (L.full) { exitFull(); e.preventDefault(); } }, true);
 /** the version menu closes in place (no redraw: the control the focus went to stays the same element) */
 function closeVerMenu() {
-  X.verMenu = null; document.querySelectorAll("[data-explain-vermenu],[data-explain-verscrim]").forEach((e) => e.remove());
+  X.verMenu = null; forget("vermenu"); document.querySelectorAll("[data-explain-vermenu],[data-explain-verscrim]").forEach((e) => e.remove());
   if (want?.includes("[data-explain-vermenu]")) want = null; // a focus still on its way into the menu does not land elsewhere
   document.querySelector("[data-explain-versions]")?.setAttribute("aria-expanded", "false");
 }
