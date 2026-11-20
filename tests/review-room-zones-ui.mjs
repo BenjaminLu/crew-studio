@@ -37,7 +37,8 @@ const open = async (lang, width) => { const ctx = await browser.newContext({ vie
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(e.message)); await p.goto(`${base}/#/room`); await p.waitForSelector("[data-room-zones]", { timeout: 20000 }); return { p, ctx }; };
 const zoneOf = (p, id) => p.$eval(`[data-room-row="${id}"]`, (e) => e.closest("[data-room-zone]").dataset.roomZone).catch(() => null);
 const shows = (p, id) => p.$eval(`[data-room-link="${id}"]`, (e) => e.checkVisibility({ contentVisibilityAuto: true })).catch(() => false);
-const search = async (p, q) => { await p.fill("[data-room-search]", q); await p.waitForTimeout(50); };
+// the list filters on the input event; two frames, not a fixed sleep, before the rows are read (a busy machine renders late)
+const search = async (p, q) => { await p.fill("[data-room-search]", q); await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); };
 
 try {
   { const { p, ctx } = await open("en", 1440);

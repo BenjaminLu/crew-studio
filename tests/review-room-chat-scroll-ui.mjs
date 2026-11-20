@@ -46,6 +46,7 @@ const ROOM = { card: { id: ID, run: "R-050", node: "review", title: { en: "Pull 
 const ANSWER = "Rounding happens once, at the end: percent() multiplies the part by 100 first and only then divides by the total, so no intermediate value is truncated.\n\n- ratio() no longer rounds\n- format() rounds once\n\nThe old code rounded twice, once inside ratio() and once in format(), and the two could disagree by one.";
 const run = (n, kind, extra = {}) => ({ n, kind, skill: { id: "walkthrough", v: 1, name: "walkthrough", sha256: "x" }, status: "done", by: "captain", at: "2026-11-01T10:00:00Z", ended: "2026-11-01T10:04:00Z", provider: "claude", model: "claude-opus-5", effort: null, confirm: "c", limitMin: 120, rounds: [], cost: { usd: 0.42 }, error: null, progress: [], from: 1, version: null, ...extra });
 const ask = (n, extra = {}) => run(n, "ask", { question: `Why does 2.5 round up here (${n})?`, answer: ANSWER, cites: ["src/percent.ts:L3-L9"], ...extra });
+const ASK_OFFER = { kind: "ask", skill: { id: "walkthrough", v: 1, name: "walkthrough" }, provider: "claude", model: "claude-opus-5", effort: null, paid: true, hash: "c0ffee0000000002", limitMin: 120 };
 let polls = 0;
 /** the room's explainer state the page reads: `asks` answered questions, then (optionally) one being answered, or a new version being made */
 const S = { asks: 14, live: null, gen: false, menu: false };
@@ -65,6 +66,8 @@ async function open(width) {
   await ctx.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
   await ctx.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
   await ctx.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: X() }));
+  // a question asked: the paid confirmation comes back (nothing runs)
+  await ctx.route(new RegExp(`/api/review-room/${ID}/explain/ask$`), (r) => r.fulfill({ status: 409, json: { error: "confirm", code: "confirm_required", offer: ASK_OFFER } }));
   const p = await ctx.newPage(); p.on("pageerror", (e) => errors.push(`${width}: ${e.message}`));
   await p.goto(`${base}/#/room/${ID}`);
   await p.waitForSelector("[data-x-msgs] [data-explain-answer]", { timeout: 15000 }); await p.waitForTimeout(500);
@@ -117,6 +120,21 @@ try {
   await p.click("[data-explain-new]"); await p.waitForTimeout(300);
   const c2 = await pos(p);
   ok(c2.gap <= 4 && await p.$eval("[data-explain-new]", (e) => e.hidden), "the new-messages button goes to the end and goes away", JSON.stringify(c2));
+  const foc = await p.evaluate(() => { const a = document.activeElement, m = document.querySelector("[data-x-msgs]"), last = [...m.children].reverse().find((c) => c.dataset.k !== "new"); return { tag: a?.tagName, isLast: a === last, k: a?.dataset?.k }; });
+  ok(foc.isLast && foc.k === "a17", "pressing it moves the focus to the newest message, not <body>", JSON.stringify(foc));
+  ok(await p.$eval("[data-explain-announce]", (e) => e.getAttribute("aria-live") === "polite" && /New message/.test(e.textContent)), "a polite live region said the new message");
+  await pollsPast(p, 0); await p.evaluate((id) => window.crewRoomExplain.load(id), ID); await p.waitForTimeout(300);
+  ok(await p.evaluate(() => document.activeElement?.dataset?.k === "a17"), "the next redraw keeps the focus on that same message");
+
+  // ---------- scrolled up, the captain asks: their own question and its confirmation come into view, not "New messages" ----------
+  await scrollTo(p, 300);
+  await p.fill("[data-explain-q]", "And what about negative numbers?");
+  await p.click("[data-explain-send]");
+  await p.waitForSelector("[data-explain-askconfirm]", { timeout: 6000 }); await p.waitForTimeout(250);
+  const own = await p.evaluate(() => { const m = document.querySelector("[data-x-msgs]"), c = document.querySelector("[data-explain-askconfirm]").getBoundingClientRect(), r = m.getBoundingClientRect();
+    return { inView: c.top >= r.top - 1 && c.bottom <= r.bottom + 1, top: m.scrollTop, news: !document.querySelector("[data-explain-new]").hidden, pending: !!document.querySelector("[data-explain-pending]") }; });
+  ok(own.inView && own.top > 300 && own.pending, "the captain's own question and its confirmation are scrolled into view", JSON.stringify(own));
+  ok(!own.news, "the captain's own messages are not announced as new messages", JSON.stringify(own));
 
   // ---------- the version menu's list keeps its place across polls ----------
   S.menu = true; S.gen = true; S.live = null;

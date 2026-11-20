@@ -617,8 +617,8 @@ function unpend(id, drop) { const p = X.pend.get(id); if (!p) return; clearTimeo
 function retry(id) { const p = X.pend.get(id); if (!p || p.phase !== "refused") return; send(id, p.q); }
 function chat(r, st) {
   const id = r.card.id;
-  if (readOnly()) return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st), h("p", { class: "rx-ro faint", "data-explain-readonly": "" }, T("Read only here: ask and run the skill on the Mac.", "這裡只能看：在 Mac 上追問和執行 skill。")));
-  return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st),
+  if (readOnly()) return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st), announcer(), h("p", { class: "rx-ro faint", "data-explain-readonly": "" }, T("Read only here: ask and run the skill on the Mac.", "這裡只能看：在 Mac 上追問和執行 skill。")));
+  return h("aside", { class: "rx-chat", "data-x-chat": "" }, msgs(r, st), announcer(),
     h("div", { class: "rx-ask" },
       h("textarea", { "data-explain-q": "", rows: "3", "aria-label": T("Your question", "你的問題"), oninput: (e) => X.draft.set(id, e.target.value), onkeydown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(id); } } }, X.draft.get(id) || ""),
       scope(r, st), askRow(r, st)));
@@ -711,7 +711,18 @@ const forget = (k) => { for (const key of [...KEEP.keys()]) if (key.endsWith(`|$
 /** what scrolls the chat: its list beside the output, the whole room on a narrow screen (one column) */
 const chatScroller = (m) => (/(auto|scroll)/.test(getComputedStyle(m).overflowY) ? m : m.closest(".rx-body") || m);
 const newsShown = (id) => { const b = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-new]`); if (b) b.hidden = !X.news.has(id); };
-function toEnd(id) { const m = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-x-msgs]`); X.news.delete(id); newsShown(id); if (m) pin(chatScroller(m)); }
+/** "New messages" pressed: the end, and the focus on the newest message (the button it was on goes away; never <body>) */
+function toEnd(id) { const m = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-x-msgs]`); X.news.delete(id); newsShown(id); if (!m) return; pin(chatScroller(m));
+  const last = [...m.children].reverse().find((c) => c.dataset.k && c.dataset.k !== "new");
+  // tabindex is set after the message's markup was recorded (_sig): the next poll still keeps this same node, and the focus with it
+  if (last) { last.setAttribute("tabindex", "-1"); last.focus({ preventScroll: true }); } }
+/** a polite live region beside the chat: a new message is said to a screen reader wherever the captain is reading */
+const announcer = () => h("div", { class: "sr", role: "status", "aria-live": "polite", "data-explain-announce": "" });
+function announce(id, text) { const el = document.querySelector(`[data-explain-room="${CSS.escape(id)}"] [data-explain-announce]`); if (!el) return;
+  el.textContent = ""; requestAnimationFrame(() => { el.textContent = text; }); }
+/** the captain's own messages (a question being sent or waiting, its paid confirmation, its refusal, the question as asked):
+ *  brought into view when they appear, never announced as "New messages" */
+const OWN = /^(pending|refused|queued|confirm:|q\d)/;
 /** to the end, and kept there while what was just drawn settles (its fonts, its layout): unless the captain scrolls away first */
 function pin(e) { const at = () => { e.scrollTop = e.scrollHeight; e._pinTop = e.scrollTop; }; at();
   const again = () => { if (e.isConnected && e._pinTop != null && Math.abs(e.scrollTop - e._pinTop) <= 1) at(); };
@@ -735,15 +746,20 @@ function applyKeep(id) {
  *  moves, and a new message shows the button to the end */
 function patchMsgs(id, old, fresh) {
   const s = chatScroller(old), end = atEnd(s), prev = new Map([...old.children].map((c) => [c.dataset.k, c]));
-  let news = false;
+  let news = false, own = null;
   const next = [...fresh.children].map((n) => { const k = n.dataset.k, o = prev.get(k);
     if (k === "new") return o || n;
     if (o && o._sig === n._sig) return o;
-    if (!o || (o.dataset.status !== n.dataset.status && n.dataset.status !== "running")) news = true;
+    if (OWN.test(k)) { if (!o) own = n; }
+    // news: a message that arrives finished (an answer, a version, an error), or one that just finished; an answer that only
+    // started (the captain's own question being worked on) or its progress is not
+    else if (o ? o.dataset.status !== n.dataset.status && n.dataset.status !== "running" : n.dataset.status !== "running") news = true;
     return n; });
   for (const c of [...old.children]) if (!next.includes(c)) c.remove();
   next.forEach((n, i) => { if (old.children[i] !== n) old.insertBefore(n, old.children[i] || null); });
   if (end) { X.news.delete(id); pin(s); } else if (news) X.news.add(id);
+  if (own && !end) own.scrollIntoView({ block: "nearest" });
+  if (news) announce(id, T("New message in the chat", "對話有新訊息"));
   newsShown(id);
 }
 
