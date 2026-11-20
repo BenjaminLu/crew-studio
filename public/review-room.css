@@ -375,3 +375,6 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-new { position: sticky; bottom: 8px; justify-self: center; z-index: 2; font: inherit; font-size: 12.5px; padding: 4px 12px; border-radius: 99px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); box-shadow: var(--shadow-2, 0 4px 12px rgba(0,0,0,.14)); cursor: pointer; }
 .rx-new:hover { background: var(--surface-2); }
 .rx-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* the newest message takes the focus from "New messages": a ring for the keyboard only */
+.rx-m[tabindex="-1"]:focus { outline: none; }
+.rx-m[tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

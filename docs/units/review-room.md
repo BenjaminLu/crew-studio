@@ -25,7 +25,9 @@ room's own questions about that page, answered by the room's tutor in a chat bes
 - **The chat keeps the captain's place.** A redraw (a poll every 2.5 s while a run works, a live update, a whole-page redraw)
   patches the chat in place by each message's key and never draws a message already read again. Scrolled up to read, the
   chat stays exactly where it is; a new answer then shows "↓ New messages" / 「↓ 新訊息」 at the list's foot instead of moving
-  it. At (or within 48 px of) the end, it stays at the end as an answer comes in. A room opens at its newest message beside
+  it; pressed, it goes to the end and the focus lands on the newest message, and a polite live region says a new message
+  came. The captain's own messages (the question being sent or waiting, its paid confirmation, a refusal) are brought into
+  view instead, never announced as new. At (or within 48 px of) the end, it stays at the end as an answer comes in. A room opens at its newest message beside
   the output; a phone, where the whole room scrolls as one column, opens at the output and keeps its place the same way. The
   version menu's list, the progress card and the skill's live log keep their place across redraws too.
 - **On a paired phone** the room reads only: the chat has no ask box (a note says to ask on the Mac), the picker is hidden
