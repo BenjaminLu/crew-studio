@@ -746,10 +746,12 @@ function applyKeep(id) {
  *  moves, and a new message shows the button to the end */
 function patchMsgs(id, old, fresh) {
   const s = chatScroller(old), end = atEnd(s), prev = new Map([...old.children].map((c) => [c.dataset.k, c]));
-  let news = false, own = null;
+  let news = false, own = null, refocus = null;
   const next = [...fresh.children].map((n) => { const k = n.dataset.k, o = prev.get(k);
     if (k === "new") return o || n;
     if (o && o._sig === n._sig) return o;
+    // a message swapped while the focus is in it (an answer still being made, focused from "New messages"): its new node takes it
+    if (o && o.contains(document.activeElement)) refocus = n;
     if (OWN.test(k)) { if (!o) own = n; }
     // news: a message that arrives finished (an answer, a version, an error), or one that just finished; an answer that only
     // started (the captain's own question being worked on) or its progress is not
@@ -758,6 +760,7 @@ function patchMsgs(id, old, fresh) {
   for (const c of [...old.children]) if (!next.includes(c)) c.remove();
   next.forEach((n, i) => { if (old.children[i] !== n) old.insertBefore(n, old.children[i] || null); });
   if (end) { X.news.delete(id); pin(s); } else if (news) X.news.add(id);
+  if (refocus?.isConnected) { refocus.setAttribute("tabindex", "-1"); refocus.focus({ preventScroll: true }); }
   if (own && !end) own.scrollIntoView({ block: "nearest" });
   if (news) announce(id, T("New message in the chat", "對話有新訊息"));
   newsShown(id);

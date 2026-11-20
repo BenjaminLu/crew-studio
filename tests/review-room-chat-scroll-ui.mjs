@@ -49,9 +49,11 @@ const ask = (n, extra = {}) => run(n, "ask", { question: `Why does 2.5 round up 
 const ASK_OFFER = { kind: "ask", skill: { id: "walkthrough", v: 1, name: "walkthrough" }, provider: "claude", model: "claude-opus-5", effort: null, paid: true, hash: "c0ffee0000000002", limitMin: 120 };
 let polls = 0;
 /** the room's explainer state the page reads: `asks` answered questions, then (optionally) one being answered, or a new version being made */
-const S = { asks: 14, live: null, gen: false, menu: false };
+const S = { asks: 14, live: null, gen: false, menu: false, note: false };
 const X = () => { polls++;
   const runs = [run(1, "generate", { version: 1, from: null }), ...Array.from({ length: S.asks }, (_, i) => ask(i + 2))];
+  // a finished version line before the newest question: news while the newest message is an answer still being made
+  if (S.note) runs.push(run(80, "generate", { version: 1, from: null }));
   if (S.live) runs.push(ask(S.live.n, S.live.done ? {} : { status: "running", ended: null, answer: null, cost: null, progress: [{ text: `Reading the diff (poll ${polls})` }] }));
   if (S.gen) runs.push(run(90, "generate", { status: "running", ended: null, version: null, from: null, progress: [{ text: `round ${polls}` }] }));
   const running = S.gen ? 90 : S.live && !S.live.done ? S.live.n : null;
@@ -125,6 +127,19 @@ try {
   ok(await p.$eval("[data-explain-announce]", (e) => e.getAttribute("aria-live") === "polite" && /New message/.test(e.textContent)), "a polite live region said the new message");
   await pollsPast(p, 0); await p.evaluate((id) => window.crewRoomExplain.load(id), ID); await p.waitForTimeout(300);
   ok(await p.evaluate(() => document.activeElement?.dataset?.k === "a17"), "the next redraw keeps the focus on that same message");
+
+  // ---------- "New messages" while the newest message is an answer still being made: the focus survives its progress ----------
+  await scrollTo(p, 300);
+  S.asks = 16; S.live = { n: 18, done: false }; S.note = true;
+  await p.evaluate((id) => window.crewRoomExplain.load(id), ID); await p.waitForSelector('[data-explain-answer="18"][data-status="running"]'); await p.waitForTimeout(200);
+  ok(await p.$eval("[data-explain-new]", (e) => !e.hidden), "a finished message above an answer being made shows New messages");
+  await p.click("[data-explain-new]"); await p.waitForTimeout(150);
+  const f0 = await p.evaluate(() => document.activeElement?.dataset?.k);
+  const before = await p.$eval('[data-explain-answer="18"]', (e) => e.textContent);
+  await pollsPast(p, 2);
+  const f1 = await p.evaluate(() => ({ k: document.activeElement?.dataset?.k, tag: document.activeElement?.tagName, text: document.activeElement?.textContent }));
+  ok(f0 === "a18" && f1.k === "a18" && f1.text !== before, "the focused answer is redrawn with its progress and keeps the focus (never <body>)", JSON.stringify({ f0, f1: { k: f1.k, tag: f1.tag } }));
+  S.live = { n: 18, done: true }; await pollsPast(p, 1); await p.waitForSelector('[data-explain-answer="18"][data-status="done"]', { timeout: 6000 });
 
   // ---------- scrolled up, the captain asks: their own question and its confirmation come into view, not "New messages" ----------
   await scrollTo(p, 300);
