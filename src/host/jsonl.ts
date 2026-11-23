@@ -1,4 +1,5 @@
 import { claudeCredentialFds } from "../providers/credential-fds";
+import { cliEnv } from "../providers/no-self-update";
 import { scriptArgv } from "../self";
 // A child process speaking newline-delimited JSON on stdin/stdout.
 export type JsonProc = {
@@ -11,7 +12,7 @@ export type JsonProc = {
 
 export function spawnJsonl(argv: string[], cwd: string, env: Record<string, string>, onLine: (o: any) => void): JsonProc {
   if (env.OPENAI_API_KEY || env.CODEX_API_KEY) throw new Error("Host JSONL requires file-based Codex login, never an API-key environment");
-  const auth = claudeCredentialFds(env);
+  const auth = claudeCredentialFds(cliEnv(env));
   let p: ReturnType<typeof Bun.spawn>;
   try { p = Bun.spawn(argv, { cwd, env: auth.env, stdio: ["pipe", "pipe", "pipe", ...auth.fds] }); }
   finally { auth.close(); }

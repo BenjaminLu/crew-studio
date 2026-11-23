@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { claudeAccountContext, type Login, type LoginKind } from "../providers/login";
 import type { ClaudeCapability, ClaudePair } from "../providers/claude-native";
 import { validClaudePair } from "../providers/claude-native";
+import { NO_SELF_UPDATE } from "../providers/no-self-update";
 import type { HostRefusalCode } from "./types";
 
 export type ClaudePermissionMode = "auto" | "default";
@@ -102,5 +103,5 @@ export async function claudePrimaryReadiness(o: { pair: ClaudePair; status: () =
   // an API key: Studio's own config folder, whose settings.json is that same file
   const identity: Record<string, string> = login.kind === "account" ? { ...claudeAccountContext().env, CREW_PRIMARY_SETTINGS_FILE: join(o.configDir, "settings.json") } : { CLAUDE_CONFIG_DIR: o.configDir };
   return { ok: true, model: o.pair.model, effort: o.pair.effort, source: login.source, permissionMode: pm.mode, autoMode,
-    env: { ...identity, DISABLE_AUTOUPDATER: "1", ...(o.pair.effort ? { CLAUDE_CODE_EFFORT_LEVEL: o.pair.effort } : {}), ...login.env } };
+    env: { ...identity, ...NO_SELF_UPDATE, ...(o.pair.effort ? { CLAUDE_CODE_EFFORT_LEVEL: o.pair.effort } : {}), ...login.env } };
 }
