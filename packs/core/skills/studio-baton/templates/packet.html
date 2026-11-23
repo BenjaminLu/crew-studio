@@ -336,6 +336,150 @@ button.act:disabled{opacity:.4;cursor:default}
   text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:.35rem}
 .handoff p{margin:0;font-size:.9rem;color:var(--muted);line-height:1.55}
 .handoff .row{display:flex;gap:.4rem;flex-wrap:wrap;flex:0 0 auto}
+
+/* ---- Components (v2): every label is HTML in rem, never text inside a scaled SVG ---- */
+.kcard{background:var(--card);border:1px solid var(--rule);border-radius:6px;box-shadow:var(--shadow);
+  padding:1.25rem 1.35rem 1.35rem}
+.kcard>h3{font-family:var(--serif);font-size:1.32rem;font-weight:600;line-height:1.3;margin:0 0 .35rem}
+.kcard>.cap{font-size:.95rem;color:var(--muted);line-height:1.55;margin:0 0 1rem}
+.kcard>.claim{font-size:1.02rem;line-height:1.55;margin:.35rem 0 1rem}
+.kcard>.claim b{color:var(--accent)}
+.ktag{display:inline-block;font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+  padding:.18rem .5rem;border-radius:3px;font-weight:700;color:#fff;background:var(--rule-strong);margin-right:.4rem}
+.ktag.risk{background:var(--seal)} .ktag.warn{background:var(--amber)} .ktag.ok{background:var(--ok)}
+/* chain: the same component chain twice, broken hop vs changed hop */
+.chain{display:grid;gap:.9rem}
+.lane{border:1px solid var(--rule);border-left:4px solid var(--amber);border-radius:6px;
+  background:var(--card);padding:.85rem 1rem 1rem}
+.lane.seal{border-left-color:var(--seal)} .lane.after{border-left-color:var(--ok)}
+.lane .lt{font-family:var(--mono);font-size:.7rem;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);margin:0 0 .7rem;font-weight:700}
+.cgrid{display:grid;align-items:stretch;row-gap:.6rem}
+.cnode{border:1.5px solid var(--rule-strong);border-radius:8px;padding:.6rem .65rem;background:var(--card-2);
+  min-height:4.4rem;display:flex;flex-direction:column;justify-content:center;text-align:center;min-width:0}
+.cnode .nm{font-weight:650;font-size:.98rem;line-height:1.3}
+.cnode .sb{font-family:var(--mono);font-size:.76rem;color:var(--muted);margin-top:.3rem;line-height:1.4;overflow-wrap:break-word}
+.cnode .sb.tx{font-family:var(--sans);font-size:.86rem}
+.cnode.k-client{border-style:dashed}
+.cnode.k-store{border-radius:10px/18px}
+.cnode.k-external{outline:1px solid var(--rule-strong);outline-offset:-5px}
+.cnode.bad{border:2px solid var(--amber);background:var(--card)} .lane.seal .cnode.bad{border-color:var(--seal)}
+.cnode.good{border:2px solid var(--accent);background:var(--accent-tint)}
+.cnode.bad .nm::before{content:"✕ ";color:var(--amber)} .cnode.good .nm::before{content:"● ";color:var(--accent)}
+.carrow{align-self:center;display:flex;flex-direction:column;align-items:center;padding:0 .25rem;min-width:0}
+.carrow .hl{font-family:var(--mono);font-size:.68rem;color:var(--muted);text-align:center;line-height:1.25;
+  margin-bottom:.2rem;word-break:keep-all;overflow-wrap:break-word;max-width:100%}
+.carrow .ln{width:100%;min-width:1.6rem;height:0;border-top:2px solid var(--rule-strong);position:relative}
+.carrow .ln::after{content:"";position:absolute;right:-2px;top:-7px;border:6px solid transparent;
+  border-left:9px solid var(--rule-strong);border-right:0}
+.carrow.bad .ln{border-top-color:var(--amber)} .carrow.bad .ln::after{border-left-color:var(--amber)}
+.carrow.good .ln{border-top-color:var(--accent)} .carrow.good .ln::after{border-left-color:var(--accent)}
+.carrow.end .ln{border-top-color:var(--amber)} .carrow.end .ln::after{border-left-color:var(--amber)}
+.lane.after .carrow.end .ln{border-top-color:var(--ok)} .lane.after .carrow.end .ln::after{border-left-color:var(--ok)}
+.cout{border:2px solid var(--amber);border-radius:8px;padding:.6rem .75rem;font-weight:700;font-size:1rem;
+  line-height:1.35;display:flex;align-items:center;justify-content:center;text-align:center;min-height:4.4rem}
+.lane.seal .cout{border-color:var(--seal)} .lane.after .cout{border-color:var(--ok)}
+.callout{position:relative;border:1px solid var(--amber);border-radius:6px;background:var(--card-2);
+  padding:.55rem .75rem;font-size:.92rem;line-height:1.55;margin-top:.35rem}
+.callout::before{content:"";position:absolute;top:-8px;left:var(--px,2.5rem);border:7px solid transparent;
+  border-top:0;border-bottom:8px solid var(--amber)}
+.callout.r::before{left:auto;right:var(--px,2.5rem)}
+.lane.after .callout{border-color:var(--accent)} .lane.after .callout::before{border-bottom-color:var(--accent)}
+.callout .why{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--amber);font-weight:700;margin-right:.35rem}
+.lane.after .callout .why{color:var(--accent)}
+.proof{display:flex;flex-wrap:wrap;gap:.45rem;align-items:center;margin-top:.2rem}
+.proof .pl{font-family:var(--mono);font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+  font-weight:700;margin-right:.2rem}
+.pchip{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--rule-strong);border-radius:999px;
+  padding:.22rem .65rem;font-size:.82rem;line-height:1.3;background:var(--card)}
+.pchip i{width:.55rem;height:.55rem;border-radius:50%;background:var(--rule-strong);flex:0 0 auto}
+.pchip.verified i{background:var(--ok)} .pchip.code-only i{background:var(--amber)} .pchip.absent i{background:var(--seal)}
+.pchip.absent{border-style:dashed}
+.pchip .pt{font-family:var(--mono);font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+/* boundary map */
+.bmap .cnode{position:relative}
+.badge{position:absolute;top:-.6rem;right:-.6rem;width:1.5rem;height:1.5rem;border-radius:50%;background:var(--amber);
+  color:#fff;font:700 .8rem/1.5rem var(--mono);text-align:center;box-shadow:0 0 0 2px var(--card)}
+.badge.risk{background:var(--seal)}
+.carrow .badge{position:static;display:inline-block;margin-bottom:.2rem}
+.carrow.okl .ln{border-top-color:var(--ok)} .carrow.okl .ln::after{border-left-color:var(--ok)}
+.carrow.okl .hl::after{content:" ✓";color:var(--ok)}
+.bfind{display:grid;grid-template-columns:auto auto 1fr auto;gap:.55rem .7rem;align-items:center;margin-top:1rem}
+.bfind .badge{position:static}
+.bfind .ttl{line-height:1.5}
+.bfind button{font:inherit;font-size:.8rem;border:1px solid var(--rule-strong);background:var(--card-2);color:var(--fg);
+  border-radius:4px;padding:.25rem .6rem;cursor:pointer;white-space:nowrap}
+.bok{margin-top:1rem;border:1px solid var(--ok);border-left:4px solid var(--ok);border-radius:6px;padding:.7rem .9rem;
+  line-height:1.55}
+.bok::before{content:"✓ ";color:var(--ok);font-weight:700}
+/* compare (from → to) */
+table.cmp,table.mtx{width:100%;border-collapse:separate;border-spacing:0;font-size:.95rem}
+table.cmp th,table.mtx th{font-size:.8rem;font-weight:600;color:var(--muted);text-align:left;padding:.45rem .6rem;
+  border-bottom:1px solid var(--rule-strong)}
+table.cmp td,table.mtx td{padding:.65rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.5}
+table.cmp td.dim{font-weight:650;white-space:nowrap}
+table.cmp td.from{color:var(--muted);font-style:italic}
+table.cmp td.arr{color:var(--accent);font-weight:700;padding:.65rem .2rem}
+table.cmp td.to{font-weight:600}
+table.mtx td.c,table.mtx th.c{text-align:center}
+.mk{display:inline-flex;width:1.55rem;height:1.55rem;border-radius:50%;border:2px solid;align-items:center;
+  justify-content:center;font:700 .8rem var(--mono)}
+.mk.have{color:var(--ok)} .mk.part{color:var(--amber)} .mk.gap{color:var(--seal)} .mk.plan{color:var(--accent)} .mk.na{color:var(--soft)}
+.mlegend{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.8rem;font-size:.85rem;color:var(--muted);align-items:center}
+.mlegend span{display:inline-flex;gap:.4rem;align-items:center}
+/* steps (horizontal flow, arrows automatic) */
+.hflow{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:1.6rem}
+.hstep{position:relative;border:1px solid var(--rule);border-top:3px solid var(--rule-strong);border-radius:6px;
+  background:var(--card-2);padding:.75rem .85rem}
+.hstep.accent{border-top-color:var(--accent)} .hstep.warn{border-top-color:var(--amber)} .hstep.ok{border-top-color:var(--ok)}
+.hstep + .hstep::before{content:"→";position:absolute;left:-1.3rem;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:700}
+.hstep .fn{font-family:var(--mono);font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.hstep b{display:block;font-size:1rem;margin:.25rem 0}
+.hstep p{margin:0;font-size:.88rem;color:var(--muted);line-height:1.5}
+/* chart: categorical slots validated (dataviz validate_palette.js) on this page's
+   card surfaces — light #ffffff, dark #393e53; contrast WARN → table view always ships */
+:root{--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--grid:rgba(45,49,66,.10)}
+@media (prefers-color-scheme:dark){:root{--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--grid:rgba(245,245,245,.10)}}
+:root[data-theme=dark]{--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--grid:rgba(245,245,245,.10)}
+:root[data-theme=light]{--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--grid:rgba(45,49,66,.10)}
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .tip{position:absolute;pointer-events:none;background:var(--card);border:1px solid var(--rule-strong);
+  border-radius:6px;box-shadow:var(--shadow);padding:.45rem .6rem;font-size:.82rem;line-height:1.45;opacity:0;
+  transition:opacity .12s;min-width:8rem;z-index:3}
+.chart .tip.on{opacity:1}
+.chart .tip .tx{color:var(--muted);font-size:.74rem;margin-bottom:.2rem}
+.chart .tip .r{display:flex;align-items:center;gap:.45rem}
+.chart .tip .r i{width:.9rem;height:2px;border-radius:1px;flex:0 0 auto}
+.chart .tip .r b{font-variant-numeric:tabular-nums}
+.chart .tip .r span{color:var(--muted)}
+.clegend{display:flex;flex-wrap:wrap;gap:.4rem 1.1rem;margin:.2rem 0 .6rem;font-size:.85rem;color:var(--muted)}
+.clegend span{display:inline-flex;align-items:center;gap:.45rem}
+.clegend i{display:inline-block;width:.75rem;height:.75rem;border-radius:2px}
+.clegend i.ln{height:2px;width:1rem;border-radius:1px}
+.csrc{font-size:.8rem;color:var(--muted);margin-top:.55rem}
+.csrc b{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;margin-right:.35rem}
+details.ctable{margin-top:.5rem;font-size:.85rem}
+details.ctable summary{cursor:pointer;color:var(--muted);font-size:.8rem}
+details.ctable table{margin-top:.4rem}
+details.ctable td,details.ctable th{font-variant-numeric:tabular-nums}
+.chart .hit:focus{outline:2px solid var(--link);outline-offset:1px}
+.spark{display:block;margin-top:.35rem}
+@media (max-width:56rem){
+  .cgrid{display:flex!important;flex-direction:column}
+  .carrow{flex-direction:row;gap:.5rem;justify-content:center;min-height:1.8rem}
+  .carrow .ln{width:0;min-width:0;height:1.4rem;border-top:0;border-left:2px solid var(--rule-strong)}
+  .carrow .ln::after{right:auto;left:-7px;top:auto;bottom:-3px;border:6px solid transparent;border-top:9px solid var(--rule-strong);border-bottom:0}
+  .carrow.bad .ln,.carrow.end .ln{border-left-color:var(--amber)} .carrow.good .ln{border-left-color:var(--accent)}
+  .carrow.bad .ln::after,.carrow.end .ln::after{border-top-color:var(--amber);border-left-color:transparent}
+  .carrow.good .ln::after{border-top-color:var(--accent);border-left-color:transparent}
+  .lane.after .carrow.end .ln{border-left-color:var(--ok)} .lane.after .carrow.end .ln::after{border-top-color:var(--ok);border-left-color:transparent}
+  .callout::before{left:2rem!important;right:auto!important}
+  .hflow{grid-auto-flow:row}
+  .hstep + .hstep::before{content:"↓";left:50%;top:-1.35rem;transform:translateX(-50%)}
+  .bfind{grid-template-columns:auto 1fr}
+}
 /* Print / Save-as-PDF: same palette (exact colours), every step visible, chrome off. */
 @media print{
   .rail,.langs,.nav,.handoff,.foot button,#theme{display:none!important}
@@ -527,8 +671,253 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     return h;
   }
 
+  // ---- v2 components. Each returns the language-dependent inner HTML of a
+  // .kbox; build() makes the shell once, paint() refills it per language.
+  const W3=(en,hant,hans)=>({en,hant,hans});
+  const KL={
+    before:W3('Before','改動前','改动前'), after:W3('After','改動後','改动后'),
+    why:W3('why','為什麼','为什么'), fix:W3('why this fixes it','為什麼這樣就好','为什么这样就好'),
+    proof:W3('Proof','證據','证据'), see:W3('see card','看卡片','看卡片'),
+    verified:W3('verified','已驗證','已验证'), 'code-only':W3('code only','只有程式碼','只有代码'),
+    absent:W3('absent','沒有證據','没有证据')
+  };
+  const sub=(v,lang)=>{
+    if(v==null) return '';
+    if(typeof v==='string') return '<div class="sb">'+rich(v)+'</div>';   // plain string = code term
+    return '<div class="sb tx">'+rich(pick(v,lang))+'</div>';
+  };
+  // One lane = the component chain once. Grid columns: node, arrow, node, …, arrow, outcome.
+  function laneHTML(nodes, row, key, lang, opts){
+    opts=opts||{};
+    const hot=new Set(row.hot||[]); const n=nodes.length; const after=key==='after';
+    const cols=[]; for(let i=0;i<n;i++){ cols.push('minmax(0,1fr)'); if(i<n-1||row.outcome!=null) cols.push('minmax(4.2rem,.5fr)'); }
+    if(row.outcome!=null) cols.push('minmax(0,1.05fr)');
+    let h='<div class="cgrid" style="grid-template-columns:'+cols.join(' ')+'">';
+    const whyAt=row.why&&row.why.at;
+    nodes.forEach((nd,i)=>{
+      const st=hot.has(nd.id)?(after?'good':'bad'):'';
+      const badge=(opts.badges||{})[nd.id];
+      h+='<div class="cnode k-'+E(nd.kind||'service')+' '+st+'" style="grid-column:'+(2*i+1)+';grid-row:1">'+
+         (badge?badge:'')+'<div class="nm">'+rich(pick(nd.name,lang))+'</div>'+sub((row.sub||{})[nd.id],lang)+'</div>';
+      if(whyAt===nd.id && row.why.text){
+        const left=i<n/2; const span=Math.min(3,2*n+1-(2*i));
+        const gc=left?((2*i+1)+' / span '+Math.max(1,span)):(Math.max(1,2*i-1)+' / '+(2*i+2));
+        h+='<div class="callout'+(left?'':' r')+'" style="grid-column:'+gc+';grid-row:2;--px:'+(left?'2.2rem':'2.2rem')+'">'+
+           '<span class="why">'+pick(after?KL.fix:KL.why,lang)+'</span>'+rich(pick(row.why.text,lang))+'</div>';
+      }
+      if(i===n-1 && row.outcome==null) return;
+      const nxtHot=i+1<n&&hot.has(nodes[i+1].id);
+      let ac=i===n-1?'end':((hot.has(nd.id)||nxtHot)?(after?'good':'bad'):'');
+      const hb=(opts.linkBadges||{})[i];
+      if(hb) ac='bad'; else if(opts.okLinks && i<n-1) ac='okl';
+      const hl=(row.hops||{})[i];
+      h+='<div class="carrow '+ac+'" style="grid-column:'+(2*i+2)+';grid-row:1">'+(hb?hb:'')+
+         (hl!=null?'<div class="hl">'+E(typeof hl==='string'?hl:pick(hl,lang))+'</div>':'')+'<div class="ln"></div></div>';
+    });
+    if(row.outcome!=null) h+='<div class="cout" style="grid-column:'+(2*n+1)+';grid-row:1">'+rich(pick(row.outcome,lang))+'</div>';
+    return h+'</div>';
+  }
+  function proofHTML(list, lang){
+    if(!list||!list.length) return '';
+    return '<div class="proof"><span class="pl">'+pick(KL.proof,lang)+'</span>'+list.map(p=>
+      '<span class="pchip '+E(p.state||'verified')+'" title="'+E(pick(KL[p.state||'verified'],lang))+'"><i></i>'+
+      (p.type?'<span class="pt">'+E(p.type)+'</span>':'')+rich(pick(p.label,lang))+'</span>').join('')+'</div>';
+  }
+  function chainHTML(s, lang){
+    const seal=(s.tone==='risk')?' seal':'';
+    let h='<div class="chain">';
+    h+='<div class="lane'+seal+'"><div class="lt">'+pick(KL.before,lang)+'</div>'+laneHTML(s.nodes,s.before,'before',lang)+'</div>';
+    h+='<div class="lane after"><div class="lt">'+pick(KL.after,lang)+'</div>'+laneHTML(s.nodes,s.after,'after',lang)+'</div>';
+    h+=proofHTML(s.proof,lang)+'</div>';
+    return h;
+  }
+  function boundaryHTML(s, lang){
+    const F=s.findings||[]; const nb={}; const lb={};
+    const ix={}; (s.systems||[]).forEach((n,i)=>ix[n.id]=i);
+    F.forEach(f=>{
+      const b='<span class="badge '+E(f.tone||'warn')+'">'+E(f.n)+'</span>';
+      if(String(f.at).includes('>')){ const a=String(f.at).split('>')[0]; if(ix[a]!=null) lb[ix[a]]=(lb[ix[a]]||'')+b; }
+      else nb[f.at]=(nb[f.at]||'')+b;
+    });
+    let h='<div class="bmap">'+laneHTML(s.systems||[], {sub:s.sub||{}, hops:s.hops||{}, hot:[]}, 'map', lang,
+      {badges:nb, linkBadges:lb, okLinks:true})+'</div>';
+    if(F.length){
+      h+='<div class="bfind">'+F.map(f=>{
+        const target=secs.findIndex(x=>x.kind==='chain' && f.card && pick(x.heading,'en')===f.card);
+        return '<span class="badge '+E(f.tone||'warn')+'">'+E(f.n)+'</span><span class="ktag '+E(f.tone||'warn')+'">'+E(f.lens)+'</span>'+
+          '<span class="ttl">'+rich(pick(f.title,lang))+'</span>'+
+          (target>=0?'<button type="button" data-go="'+target+'">'+pick(KL.see,lang)+' '+(target+1)+' →</button>':'<span></span>');
+      }).join('')+'</div>';
+    } else {
+      h+='<div class="bok">'+rich(pick(s.ok,lang))+'</div>';
+    }
+    return h;
+  }
+  function compareHTML(s, lang){
+    const c=s.cols||[];
+    let h='<table class="cmp"><thead><tr><th>'+E(pick(c[0],lang))+'</th><th>'+E(pick(c[1],lang))+'</th><th></th><th>'+E(pick(c[2],lang))+'</th></tr></thead><tbody>';
+    (s.rows||[]).forEach(r=>{ h+='<tr><td class="dim">'+rich(pick(r[0],lang))+'</td><td class="from">'+rich(pick(r[1],lang))+
+      '</td><td class="arr">→</td><td class="to">'+rich(pick(r[2],lang))+'</td></tr>'; });
+    return h+'</tbody></table>';
+  }
+  const MK={have:'✓',part:'~',gap:'✕',plan:'○',na:'—'};
+  function matrixHTML(s, lang){
+    let h='<table class="mtx"><thead><tr><th></th>'+(s.cols||[]).map(c=>'<th class="c">'+E(pick(c,lang))+'</th>').join('')+'</tr></thead><tbody>';
+    (s.rows||[]).forEach(r=>{ h+='<tr><td>'+rich(pick(r.k,lang))+'</td>'+(r.v||[]).map(v=>
+      '<td class="c"><span class="mk '+E(v)+'">'+(MK[v]||'')+'</span></td>').join('')+'</tr>'; });
+    h+='</tbody></table>';
+    if(s.legend) h+='<div class="mlegend">'+Object.keys(s.legend).map(k=>
+      '<span><span class="mk '+E(k)+'">'+(MK[k]||'')+'</span>'+E(pick(s.legend[k],lang))+'</span>').join('')+'</div>';
+    return h;
+  }
+  function stepsHTML(s, lang){
+    return '<div class="hflow">'+(s.steps||[]).map(t=>'<div class="hstep '+E(t.tone||'')+'">'+
+      (t.fn?'<div class="fn">'+E(t.fn)+'</div>':'')+'<b>'+rich(pick(t.title,lang))+'</b>'+
+      (t.text?'<p>'+rich(pick(t.text,lang))+'</p>':'')+'</div>').join('')+'</div>';
+  }
+  function statsHTML(s, lang){ return proseHTML([{stats:s.items||[]}], lang); }
+
+  // ---- chart: drawn at the container's real width, so labels are never scaled down.
+  const SLOT=['var(--s1)','var(--s2)','var(--s3)','var(--s4)'];
+  const CL={table:W3('Data table','資料表','数据表'), src:W3('Source','來源','来源'),
+            conv:W3('conversion','轉換','转换'), total:W3('total','合計','合计')};
+  const fmt=(v,u)=>{ if(v==null||isNaN(v)) return '—';
+    const a=Math.abs(v); let t= a>=1e6? (v/1e6).toFixed(a>=1e7?0:1)+'M' : a>=1e4? (v/1e3).toFixed(a>=1e5?0:1)+'K' :
+      (Number.isInteger(v)? v.toLocaleString('en-US') : (+v.toFixed(2)).toString());
+    return t+(u||''); };
+  function niceMax(m){ if(m<=0) return 1; const p=Math.pow(10,Math.floor(Math.log10(m))); const f=m/p;
+    return (f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*p; }
+  function chartHTML(s, lang){
+    const ser=s.series||[]; let h='<div class="chart" data-sec="'+secs.indexOf(s)+'">';
+    if(ser.length>=2 && s.type!=='funnel'){
+      h+='<div class="clegend">'+ser.map((x,i)=>'<span><i class="'+(s.type==='line'?'ln':'')+'" style="background:'+SLOT[i]+'"></i>'+
+        E(pick(x.name,lang))+'</span>').join('')+'</div>';
+    }
+    h+='<div class="plot"></div><div class="tip" role="status"></div></div>';
+    // table view: every value reachable without hover (contrast relief + a11y)
+    const xs=(s.x||[]).map(v=>typeof v==='object'?pick(v,lang):v);
+    h+='<details class="ctable"><summary>'+pick(CL.table,lang)+'</summary><table class="mtx"><thead><tr><th></th>'+
+      ser.map(x=>'<th class="c">'+E(pick(x.name,lang))+'</th>').join('')+'</tr></thead><tbody>'+
+      xs.map((x,j)=>'<tr><td>'+E(x)+'</td>'+ser.map(se=>'<td class="c">'+E(fmt(se.values[j],s.unit))+'</td>').join('')+'</tr>').join('')+
+      '</tbody></table></details>';
+    if(s.source) h+='<div class="csrc"><b>'+pick(CL.src,lang)+'</b>'+rich(pick(s.source,lang))+'</div>';
+    return h;
+  }
+  function svgEl(t,a){ const e=document.createElementNS('http://www.w3.org/2000/svg',t);
+    for(const k in a) e.setAttribute(k,a[k]); return e; }
+  function txt(x,y,str,a){ const e=svgEl('text',Object.assign({x,y,'font-size':12,fill:'var(--muted)','font-family':'var(--sans)'},a||{}));
+    e.textContent=str; return e; }
+  function drawChart(box, s, lang){
+    const wrap=box.querySelector('.chart'); if(!wrap) return;
+    const plot=wrap.querySelector('.plot'), tip=wrap.querySelector('.tip');
+    plot.innerHTML='';
+    const W=Math.max(320, plot.clientWidth||900);
+    const ser=s.series||[], xs=(s.x||[]).map(v=>typeof v==='object'?pick(v,lang):v), u=s.unit||'';
+    const showTip=(px,py,title,rows)=>{
+      tip.textContent='';
+      const t=document.createElement('div'); t.className='tx'; t.textContent=title; tip.appendChild(t);
+      rows.forEach(r=>{ const d=document.createElement('div'); d.className='r';
+        const i=document.createElement('i'); i.style.background=r.c; const b=document.createElement('b'); b.textContent=r.v;
+        const sp=document.createElement('span'); sp.textContent=r.n; d.append(i,b,sp); tip.appendChild(d); });
+      const left=Math.min(px+14, W-170); tip.style.left=Math.max(0,left)+'px'; tip.style.top=Math.max(0,py-10)+'px';
+      tip.classList.add('on'); };
+    const hideTip=()=>tip.classList.remove('on');
+    if(s.type==='funnel'){
+      const v=(ser[0]||{}).values||[]; const n=v.length, rowH=54, top=8, lw=Math.min(220, W*.28);
+      const H=top+n*rowH+4; const svg=svgEl('svg',{viewBox:'0 0 '+W+' '+H,role:'img'});
+      const max=Math.max.apply(null,v.concat([1])); const bw=W-lw-90;
+      v.forEach((val,j)=>{
+        const y=top+j*rowH+16, w=Math.max(2,(val/max)*bw);
+        svg.appendChild(txt(lw-12,y+16,xs[j],{'text-anchor':'end',fill:'var(--fg)','font-size':13}));
+        svg.appendChild(svgEl('path',{d:'M'+lw+' '+y+'h'+(w-4)+'a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4h-'+(w-4)+'z',fill:SLOT[0]}));
+        svg.appendChild(txt(lw+w+8,y+16,fmt(val,u),{fill:'var(--fg)','font-weight':600,'font-size':13}));
+        if(j>0 && v[j-1]>0){ const pct=(val/v[j-1]*100);
+          svg.appendChild(txt(lw-12,y-3,'↳ '+(pct>=10?pct.toFixed(0):pct.toFixed(1))+'%',{'text-anchor':'end','font-size':11})); }
+        const hit=svgEl('rect',{x:0,y:y-6,width:W,height:rowH-8,fill:'transparent',class:'hit',tabindex:0});
+        const show=()=>showTip(lw+w, y, xs[j], [{c:SLOT[0], v:fmt(val,u), n:j>0&&v[j-1]>0? (val/v[j-1]*100).toFixed(1)+'% '+pick(CL.conv,lang):''}]);
+        hit.addEventListener('pointermove',show); hit.addEventListener('focus',show);
+        hit.addEventListener('pointerleave',hideTip); hit.addEventListener('blur',hideTip);
+        svg.appendChild(hit);
+      });
+      plot.appendChild(svg); return;
+    }
+    const H=290, m={l:52,r:s.type==='line'?140:16,t:14,b:34}, iw=W-m.l-m.r, ih=H-m.t-m.b;
+    const svg=svgEl('svg',{viewBox:'0 0 '+W+' '+H,role:'img'});
+    const stacked=s.type==='stacked';
+    const tot=xs.map((_,j)=>ser.reduce((a,se)=>a+(+se.values[j]||0),0));
+    const dataMax=stacked? Math.max.apply(null,tot) : Math.max.apply(null,ser.flatMap(se=>se.values.map(Number)));
+    const ymax=niceMax(s.ymax||dataMax); const Y=v=>m.t+ih-(v/ymax)*ih;
+    const NT=(ymax/4)%1===0?4:((ymax/5)%1===0?5:4);
+    for(let k=0;k<=NT;k++){ const v=ymax*k/NT, y=Y(v);
+      svg.appendChild(svgEl('line',{x1:m.l,x2:W-m.r,y1:y,y2:y,stroke:k?'var(--grid)':'var(--rule-strong)','stroke-width':1}));
+      svg.appendChild(txt(m.l-8,y+4,fmt(v,u),{'text-anchor':'end','font-variant-numeric':'tabular-nums'})); }
+    const n=xs.length, band=iw/Math.max(1,n);
+    const every=Math.ceil(n/Math.max(1,Math.floor(iw/72)));
+    xs.forEach((x,j)=>{ if(j%every===0) svg.appendChild(txt(m.l+band*(j+.5),H-12,x,{'text-anchor':'middle'})); });
+    if(s.type==='line'){
+      const X=j=>m.l+band*(j+.5);
+      ser.forEach((se,i)=>{
+        const d=se.values.map((v,j)=>(j?'L':'M')+X(j).toFixed(1)+' '+Y(+v).toFixed(1)).join(' ');
+        svg.appendChild(svgEl('path',{d,fill:'none',stroke:SLOT[i],'stroke-width':2,'stroke-linejoin':'round','stroke-linecap':'round'}));
+        const lj=se.values.length-1, ly=Y(+se.values[lj]);
+        svg.appendChild(svgEl('circle',{cx:X(lj),cy:ly,r:4,fill:SLOT[i],stroke:'var(--card)','stroke-width':2}));
+        if(ser.length<=4) svg.appendChild(txt(X(lj)+10,ly+4,pick(se.name,lang)+' '+fmt(+se.values[lj],u),{fill:'var(--fg)'}));
+      });
+      (s.marks||[]).forEach(mk=>{ const x=X(mk.at);
+        svg.appendChild(svgEl('line',{x1:x,x2:x,y1:m.t,y2:m.t+ih,stroke:'var(--rule-strong)','stroke-width':1}));
+        svg.appendChild(txt(x+4,m.t+10,pick(mk.label,lang),{'font-size':11})); });
+      const cross=svgEl('line',{y1:m.t,y2:m.t+ih,stroke:'var(--soft)','stroke-width':1,opacity:0});
+      svg.appendChild(cross);
+      const ov=svgEl('rect',{x:m.l,y:m.t,width:iw,height:ih,fill:'transparent',class:'hit',tabindex:0});
+      let fj=n-1;
+      const at=j=>{ j=Math.max(0,Math.min(n-1,j)); fj=j; const x=X(j); cross.setAttribute('x1',x); cross.setAttribute('x2',x); cross.setAttribute('opacity',1);
+        showTip(x, m.t, xs[j], ser.map((se,i)=>({c:SLOT[i],v:fmt(+se.values[j],u),n:pick(se.name,lang)}))); };
+      ov.addEventListener('pointermove',e=>{ const r=svg.getBoundingClientRect(); const px=(e.clientX-r.left)*(W/r.width);
+        at(Math.round((px-m.l)/band-.5)); });
+      ov.addEventListener('keydown',e=>{ if(e.key==='ArrowLeft') at(fj-1); if(e.key==='ArrowRight') at(fj+1); });
+      ov.addEventListener('focus',()=>at(fj));
+      const off=()=>{ cross.setAttribute('opacity',0); hideTip(); };
+      ov.addEventListener('pointerleave',off); ov.addEventListener('blur',off);
+      svg.appendChild(ov);
+    } else {
+      const k=stacked?1:ser.length, bwid=Math.min(24,(band*.7-(k-1)*2)/k);
+      xs.forEach((x,j)=>{
+        let base=0; const cx=m.l+band*(j+.5);
+        ser.forEach((se,i)=>{
+          const v=+se.values[j]||0; if(v<=0 && stacked) return;
+          const x0=stacked? cx-bwid/2 : cx-(k*bwid+(k-1)*2)/2+i*(bwid+2);
+          const y1=Y(base+v), y0=Y(base), hgt=Math.max(0,y0-y1-(stacked&&base>0?2:0));
+          const isTop=!stacked || ser.slice(i+1).every(o=>!(+o.values[j]>0));
+          const r=isTop?Math.min(4,hgt,bwid/2):0;
+          const d='M'+x0+' '+(y0-(stacked&&base>0?2:0))+'v'+(-(hgt-r))+(r?'a'+r+' '+r+' 0 0 1 '+r+' '+(-r)+'h'+(bwid-2*r)+'a'+r+' '+r+' 0 0 1 '+r+' '+r:'h'+bwid)+'v'+(hgt-r)+'z';
+          const p=svgEl('path',{d,fill:SLOT[i],class:'hit',tabindex:0}); svg.appendChild(p);
+          const show=()=>showTip(x0+bwid, y1, x, stacked? ser.map((o,q)=>({c:SLOT[q],v:fmt(+o.values[j],u),n:pick(o.name,lang)})).concat([{c:'transparent',v:fmt(tot[j],u),n:pick(CL.total,lang)}])
+                                                         : [{c:SLOT[i],v:fmt(v,u),n:pick(se.name,lang)}]);
+          p.addEventListener('pointermove',show); p.addEventListener('focus',show);
+          p.addEventListener('pointerleave',hideTip); p.addEventListener('blur',hideTip);
+          if(stacked) base+=v;
+        });
+        if(ser.length===1 || stacked){ const top=stacked?tot[j]:+ser[0].values[j];
+          svg.appendChild(txt(cx,Y(top)-6,fmt(top,u),{'text-anchor':'middle',fill:'var(--fg)','font-size':11.5})); }
+      });
+    }
+    plot.appendChild(svg);
+  }
+  const KR={chain:chainHTML, boundary:boundaryHTML, compare:compareHTML, matrix:matrixHTML, steps:stepsHTML, stats:statsHTML, chart:chartHTML};
+
   function build(s){
     const el=document.createElement('article'); el.className='step';
+    if (KR[s.kind]){
+      const c=document.createElement('div'); c.className='kcard';
+      const h=document.createElement('h3'); h.dataset.i='heading'; c.appendChild(h);
+      if(s.tag||s.severity){ const t=document.createElement('span'); t.className='ktag '+(s.tone||'warn');
+        t.textContent=s.tag||s.severity; c.insertBefore(t,h); }
+      if(s.claim){ const p=document.createElement('p'); p.className='claim'; p.dataset.i='claim'; c.appendChild(p); }
+      if(s.caption){ const p=document.createElement('p'); p.className='cap'; p.dataset.i='caption'; c.appendChild(p); }
+      const box=document.createElement('div'); box.className='kbox'; box.dataset.sec=String(secs.indexOf(s));
+      c.appendChild(box); el.appendChild(c);
+      return el;
+    }
     if (s.kind==='figure'){
       const f=document.createElement('figure'); f.className='fig';
       const head=document.createElement('div'); head.className='card';
@@ -638,6 +1027,16 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
   // bar, not buried in the third clause of a sentence.
   //   {h}  sub-head        {p}  paragraph (+lead)   {note} aside
   //   {stats:[{n,k,tone}]}  {bars:{rows:[{k,v,label,tone}]}}  {kv:[[k,v]]}
+  // 12-ish point trend under a stat: de-emphasis line, current point in the accent.
+  function spark(tr){
+    if(!Array.isArray(tr)||tr.length<2) return '';
+    const w=120,h=26,mn=Math.min.apply(null,tr),mx=Math.max.apply(null,tr),r=(mx-mn)||1;
+    const pts=tr.map((v,i)=>[(i/(tr.length-1))*(w-6)+3, h-3-((v-mn)/r)*(h-6)]);
+    const last=pts[pts.length-1];
+    return '<svg class="spark" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" aria-hidden="true">'+
+      '<polyline points="'+pts.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')+'" fill="none" stroke="var(--soft)" stroke-width="1.5" stroke-linejoin="round"/>'+
+      '<circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="3" fill="var(--accent)"/></svg>';
+  }
   function proseHTML(v, lang){
     if(v==null) return '';
     const blocks = Array.isArray(v) ? v : [{p:v}];
@@ -649,7 +1048,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       if(b.stats){
         h+='<div class="stats">'+b.stats.map(t=>
           '<div class="stat '+E(t.tone||'')+'"><span class="n">'+E(t.n)+'</span>'+
-          '<span class="k">'+rich(pick(t.k,lang))+'</span></div>').join('')+'</div>';
+          '<span class="k">'+rich(pick(t.k,lang))+'</span>'+spark(t.trend)+'</div>').join('')+'</div>';
         return;
       }
       if(b.bars){
@@ -717,12 +1116,17 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       if(vbox){ vbox.innerHTML=vulnHTML(s,lang);
         vbox.querySelectorAll('svg text[data-en]').forEach(n=>{
           n.textContent=n.hasAttribute('data-'+lang)?n.getAttribute('data-'+lang):n.getAttribute('data-en');});}
+      const kb=el.querySelector('.kbox');
+      if(kb){ kb.innerHTML=KR[s.kind](s,lang);
+        if(s.kind==='chart') drawChart(kb,s,lang);
+        kb.querySelectorAll('button[data-go]').forEach(b=>b.addEventListener('click',()=>go(+b.dataset.go))); }
+      const cl=el.querySelector('[data-i=claim]'); if(cl) cl.innerHTML=rich(pick(s.claim,lang));
       const h=el.querySelector('[data-i=heading]'); if(h) h.textContent=pick(s.heading,lang);
       const tx=el.querySelector('[data-i=text]');
       if(tx) tx.innerHTML = rich(pick(s.text,lang));
       const pr=el.querySelector('[data-i=prose]');
       if(pr) pr.innerHTML = proseHTML(s.text,lang);
-      const cp=el.querySelector('[data-i=caption]'); if(cp) cp.textContent=pick(s.caption,lang);
+      const cp=el.querySelector('[data-i=caption]'); if(cp) cp.innerHTML=rich(pick(s.caption,lang));
       const hn=el.querySelector('[data-i=hint]');
       if(hn) hn.textContent = s.hint ? pick(s.hint,lang) : (T[lang].smapHint||'');
       el.querySelectorAll('[data-item]').forEach(sp=>{
@@ -767,6 +1171,8 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       (D.layer_note?' · '+String(pick(D.layer_note,lang)).replace(/`/g,''):'');
   }
 
+  let rsT=0; window.addEventListener('resize',()=>{ clearTimeout(rsT); rsT=setTimeout(()=>{
+    built.forEach((el,i)=>{ const s=secs[i]; if(s.kind==='chart'){ const kb=el.querySelector('.kbox'); if(kb) drawChart(kb,s,lang); } }); },150); });
   function go(n){
     if(n<0||n>=secs.length) return;
     built[idx].classList.remove('on');

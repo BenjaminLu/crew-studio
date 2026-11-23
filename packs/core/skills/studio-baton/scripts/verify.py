@@ -128,6 +128,9 @@ def check_before_after(data):
     """
     problems = []
     for idx, s in enumerate((data or {}).get("sections", [])):
+        # chain sections carry structured before/after rows; check_components owns them
+        if s.get("kind") == "chain":
+            continue
         is_card = s.get("kind") == "vuln"
         has_pair = "before" in s or "after" in s
         if not (is_card or has_pair):
@@ -161,6 +164,179 @@ def check_before_after(data):
     return problems
 
 
+LENSES = {"identity", "truth", "effect", "dependency", "coexist", "edges"}
+MARKS = {"have", "part", "gap", "plan", "na"}
+PROOF_STATES = {"verified", "code-only", "absent"}
+
+
+def _en(v):
+    if isinstance(v, dict):
+        return str(v.get("en") or "")
+    return "" if v is None else str(v)
+
+
+def _ids(nodes):
+    return {n.get("id") for n in nodes or []}
+
+
+def check_components(data):
+    """Every section is a component, not a slab of text (spec.md § Section kinds).
+
+    The page exists to be read in minutes. A section that is mostly sentences,
+    a list of findings typed as lines, or a three-box change card all read as
+    plain text — which is the thing this format replaces.
+    """
+    problems = []
+    for i, s in enumerate((data or {}).get("sections") or []):
+        name = _en(s.get("heading")) or f"section {i+1}"
+        k = s.get("kind") or "prose"
+        if k == "vuln":
+            problems.append(f'"{name}": kind "vuln" is retired — draw the change as a "chain" '
+                            "(the real component chain before/after, with proof)")
+        elif k == "points":
+            if s.get("role") != "questions":
+                problems.append(f'"{name}": a "points" list reads as plain text — findings and risks go '
+                                'in "chain" cards or the "boundary" map; points are only for '
+                                '"role": "questions"')
+            items = s.get("items") or []
+            if len(items) > 6:
+                problems.append(f'"{name}": {len(items)} open questions — keep the 6 that block most')
+            for it in items:
+                if len(_en(it.get("text"))) > 200:
+                    problems.append(f'"{name}": an open question over 200 characters — one question, one sentence')
+        elif k == "prose":
+            blocks = s.get("text")
+            blocks = blocks if isinstance(blocks, list) else [{"p": blocks}]
+            chars = sum(len(_en(b.get("p"))) + len(_en(b.get("note"))) for b in blocks if isinstance(b, dict))
+            paras = sum(1 for b in blocks if isinstance(b, dict) and (b.get("p") is not None or b.get("note") is not None))
+            visual = any(isinstance(b, dict) and (b.get("stats") or b.get("bars")) for b in blocks)
+            if chars > 480 or paras > 3:
+                problems.append(f'"{name}": {chars} characters in {paras} paragraphs — turn it into a component '
+                                "(chain / compare / matrix / steps / stats) or cut to a two-sentence lead")
+            elif not visual and chars > 300:
+                problems.append(f'"{name}": prose with no visual — add a stats row or move it into a component')
+            for b in blocks:
+                if isinstance(b, dict) and b.get("kv") and len(b["kv"]) > 6:
+                    problems.append(f'"{name}": a {len(b["kv"])}-row key/value list — use a "compare" or '
+                                    '"matrix" section instead')
+        elif k == "chain":
+            nodes = s.get("nodes") or []
+            ids = _ids(nodes)
+            if not 3 <= len(nodes) <= 6:
+                problems.append(f'"{name}": a chain needs 3–6 real components, has {len(nodes)}')
+            for key in ("before", "after"):
+                row = s.get(key) or {}
+                hot = set(row.get("hot") or [])
+                if not hot or not hot <= ids:
+                    problems.append(f'"{name}" {key}: mark the {"broken" if key=="before" else "changed"} '
+                                    "node(s) in `hot` using node ids")
+                why = row.get("why") or {}
+                if why.get("at") not in hot or not _en(why.get("text")):
+                    problems.append(f'"{name}" {key}: `why` must sit on a hot node and say why that hop '
+                                    "produces the outcome")
+                if not _en(row.get("outcome")):
+                    problems.append(f'"{name}" {key}: no outcome')
+                missing = [n.get("id") for n in nodes if n.get("id") in hot and not (row.get("sub") or {}).get(n.get("id"))]
+                if missing:
+                    problems.append(f'"{name}" {key}: hot node(s) {missing} carry no mechanism (`sub`)')
+            for lang in ("en", "hant"):
+                bo = ((s.get("before") or {}).get("outcome") or {})
+                ao = ((s.get("after") or {}).get("outcome") or {})
+                bo = bo.get(lang) if isinstance(bo, dict) else bo
+                ao = ao.get(lang) if isinstance(ao, dict) else ao
+                r = lazy_after_reason(bo or "", ao or "")
+                if r:
+                    problems.append(f'"{name}" [{lang}]: {r}')
+            for key in ("before", "after"):
+                row = s.get(key) or {}
+                for nid, v in (row.get("sub") or {}).items():
+                    if isinstance(v, str) and len(v) > 24:
+                        problems.append(f'"{name}" {key}.{nid}: code label "{v}" is {len(v)} chars — '
+                                        "keep code labels ≤ 24 so they do not break mid-token")
+                for hi, v in (row.get("hops") or {}).items():
+                    t = v if isinstance(v, str) else _en(v)
+                    if len(t) > 16:
+                        problems.append(f'"{name}" {key}.hop{hi}: "{t}" is {len(t)} chars — hop labels ≤ 16')
+            proof = s.get("proof") or []
+            if not proof:
+                problems.append(f'"{name}": no proof — list the tests, CI runs, live checks or reproductions '
+                                'that show the AFTER, with "state": verified | code-only | absent')
+            for pr in proof:
+                if pr.get("state", "verified") not in PROOF_STATES:
+                    problems.append(f'"{name}": proof state "{pr.get("state")}" is not one of {sorted(PROOF_STATES)}')
+        elif k == "compare":
+            rows = s.get("rows") or []
+            if len(rows) > 6:
+                problems.append(f'"{name}": {len(rows)} compare rows — split, never shrink (max 6)')
+            if any(len(r) != 3 for r in rows):
+                problems.append(f'"{name}": every compare row is [dimension, from, to]')
+        elif k == "matrix":
+            cols = s.get("cols") or []
+            for r in s.get("rows") or []:
+                v = r.get("v") or []
+                if len(v) != len(cols) or not set(v) <= MARKS:
+                    problems.append(f'"{name}": matrix row "{_en(r.get("k"))}" must hold one of '
+                                    f"{sorted(MARKS)} per column")
+            if len(s.get("rows") or []) > 12:
+                problems.append(f'"{name}": more than 12 matrix rows — split it')
+        elif k == "chart":
+            t = s.get("type")
+            ser = s.get("series") or []
+            n = len(s.get("x") or [])
+            if t not in ("line", "bar", "stacked", "funnel"):
+                problems.append(f'"{name}": chart type "{t}" is not line | bar | stacked | funnel')
+            if not _en(s.get("source")):
+                problems.append(f'"{name}": a chart without `source` is a number nobody can check — '
+                                "name the query, dashboard or file the data came from")
+            if not ser or len(ser) > 4 or (t == "funnel" and len(ser) != 1):
+                problems.append(f'"{name}": {len(ser)} series — charts carry 1–4 (funnel exactly 1); '
+                                "fold the rest into Other or split into small multiples")
+            for se in ser:
+                vals = se.get("values") or []
+                if len(vals) != n or not all(isinstance(v, (int, float)) for v in vals):
+                    problems.append(f'"{name}": series "{_en(se.get("name"))}" needs {n} numeric values')
+            if s.get("y2") or s.get("unit2"):
+                problems.append(f'"{name}": a second axis — split into two charts instead')
+        elif k == "steps":
+            if not 3 <= len(s.get("steps") or []) <= 5:
+                problems.append(f'"{name}": steps hold 3–5 items')
+    return problems
+
+
+def check_boundary_review(html, data):
+    """The last section is the boundary map (boundary-review.md)."""
+    sections = (data or {}).get("sections") or []
+    if not sections or sections[-1].get("kind") != "boundary":
+        return ['the last section must be the boundary map — kind "boundary" '
+                "(references/boundary-review.md); with no finding it carries `ok`, "
+                "saying what was checked"]
+    sec = sections[-1]
+    problems = []
+    ids = _ids(sec.get("systems"))
+    if len(ids) < 2:
+        problems.append("the boundary map needs at least two systems")
+    chains = {_en(s.get("heading")) for s in sections if s.get("kind") == "chain"}
+    finds = sec.get("findings") or []
+    for f in finds:
+        at = str(f.get("at", ""))
+        ends = at.split(">") if ">" in at else [at]
+        if not all(e in ids for e in ends):
+            problems.append(f'boundary finding {f.get("n")}: `at` "{at}" is not a system id or "a>b" link')
+        if f.get("lens") not in LENSES:
+            problems.append(f'boundary finding {f.get("n")}: lens "{f.get("lens")}" is not one of {sorted(LENSES)}')
+        if f.get("card") not in chains:
+            problems.append(f'boundary finding {f.get("n")}: `card` must name the chain card that draws it')
+    if not finds and not _en(sec.get("ok")):
+        problems.append("a boundary map with no finding must say what was checked in `ok`")
+    if finds and sec.get("ok"):
+        problems.append("`ok` must stand alone — drop it or the findings")
+    m = re.search(r'<script id="baton-context"[^>]*>(.*?)</script>', html, re.S)
+    if m and "## Boundary review" not in m.group(1):
+        problems.append('context lacks a "## Boundary review" heading in layer (b) — record the '
+                        "boundaries checked, each lens's result, and dropped candidates")
+    return problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("packet")
@@ -169,14 +345,16 @@ def main():
     a = ap.parse_args()
 
     html, data = load(a.packet)
-    groups = [("context", check_context(html)), ("before/after", check_before_after(data))]
+    groups = [("context", check_context(html)), ("before/after", check_before_after(data)),
+              ("components", check_components(data)),
+              ("boundary review", check_boundary_review(html, data))]
     if a.register == "eli5":
         groups.append(("register",
                        check_register(data, (data or {}).get("glossary", []))))
 
     total = sum(len(p) for _, p in groups)
     if not total:
-        print("ok — context, before/after and register checked. "
+        print("ok — context, components, before/after, boundary map and register checked. "
               "Diagrams are checked in the browser (pipeline §6).")
         return 0
 

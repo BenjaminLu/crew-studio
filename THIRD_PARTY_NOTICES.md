@@ -10,7 +10,7 @@
   list, the IPv4-in-IPv6 decoding and the loopback-name rule). The Apache License 2.0 text is at
   https://www.apache.org/licenses/LICENSE-2.0.
 - **baton, vendored** (MIT License, copyright (c) Benjamin Lu; https://github.com/BenjaminLu/baton, commit
-  c382464ab02a14ad3dda364143c74bff58ddbcfc): SKILL.md, requirements.txt, references/, scripts/ and templates/packet.html,
+  e74aeed230ce8126b7b5be5c42d1dcb202d93a40): SKILL.md, requirements.txt, references/, scripts/ and templates/packet.html,
   copied byte for byte into `packs/core/skills/studio-baton/`, the review room's built-in default skill, with a subset of
   **diagram-design** (MIT License, copyright (c) 2025 Cathryn Lavery; commit 5d59b9b6bd4d7abc08bef2bb0fce8cfa525a203c: its
   LICENSE, skills/diagram-design/SKILL.md, assets/template.html and sixteen references) copied byte for byte into
