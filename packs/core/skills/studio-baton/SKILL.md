@@ -86,8 +86,8 @@ outcome is the new value, error, state or call. "No longer diluted", "不再被�
 or "✗ blocked" is the card title restated; `verify.py` rejects it.
 
 **Review proof, not code.** Every claim carries its evidence: tests, CI runs,
-end-to-end checks, logs, source reads — each marked `verified`, `code-only`
-or `absent`. A pull request packet opens with a proof matrix (claims ×
+end-to-end checks, logs, source reads — each explicitly marked `verified`,
+`code-only` or `absent` (no default; a chip without one fails `verify.py`). A pull request packet opens with a proof matrix (claims ×
 evidence type) so a reviewer sees in one glance what is shown and what is only
 asserted (`## Pull requests: review proof` below).
 

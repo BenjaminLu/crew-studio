@@ -2,10 +2,13 @@
 
 This folder is Crew Studio's built-in copy of baton, the review room's default way to explain a change.
 
-baton: https://github.com/BenjaminLu/baton, commit e74aeed230ce8126b7b5be5c42d1dcb202d93a40. SKILL.md, requirements.txt,
+baton: https://github.com/BenjaminLu/baton, commit ba68615428b9c366eb5339778683e67b9b6c31c7. SKILL.md, requirements.txt,
 references/ (boundary-review.md, components.md, diagrams.md, extraction.md, pipeline.md, spec.md), scripts/ (export_pdf.py,
 figures.py, render.py, snapshot.py, verify.py) and templates/packet.html are copied byte for byte. Its README.md and
-AGENTS.md (for baton's own contributors) are left out. baton's repository states its license as MIT in its README; the
+AGENTS.md (for baton's own contributors) are left out, and so is tests/: baton's own unit tests (test_attacks.py,
+test_links.py, test_soft_breaks.py, test_verify.py) check its scripts and template where baton is developed. A packet's
+build never runs them, and every file here is part of the skill the review room's model reads and Studio pins, so they
+would only add to both. baton's repository states its license as MIT in its README; the
 copyright holder is its author.
 
 diagram-design/: https://github.com/cathrynlavery/diagram-design, commit 5d59b9b6bd4d7abc08bef2bb0fce8cfa525a203c, its

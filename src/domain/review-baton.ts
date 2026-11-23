@@ -13,17 +13,17 @@
 export const BATON_PIN = {
   /** its own id, beside any baton the captain imported (that one is the captain's skill: picked per room, confirmed) */
   id: "studio-baton", name: "baton (built in)",
-  sha256: "96d3ca8f0dc741e1fd308ed6d6d3496f8618aa8f9f12de03031ab7bf5b721cb4",
-  filesSha256: "745774aad1f9aded7229689dc0d1c273659d4bbaf45d0e050d001d1ea9e9937b",
-  upstream: { repo: "https://github.com/BenjaminLu/baton", commit: "e74aeed230ce8126b7b5be5c42d1dcb202d93a40" },
+  sha256: "ee3a9f5221a1c77e10e2f8d3954d7ce558fc50ca3edd403e5a087d5ab2afce4a",
+  filesSha256: "b9e6622e7a06ee1d9674f7d589c93f9e4d6054fec7bf43647df28e4e2c1ffe06",
+  upstream: { repo: "https://github.com/BenjaminLu/baton", commit: "ba68615428b9c366eb5339778683e67b9b6c31c7" },
   /** each script and the lockfile, by sha256: what the approval in advance covers (requirements.txt pins OpenCC's wheels) */
   scripts: {
     "requirements.txt": "27ff1a4089723d36f4a626cb61fbb7b759747ad6a0046773a9ad73f7c9a67bfa",
     "scripts/export_pdf.py": "14edfe87fdbe16367da904f9f617f13976d6ec3f25e4e1ba215b11e181978a83",
     "scripts/figures.py": "95c308384b3a97661cfc0c02faff7d91f9c96c244de00288a645a27e0a6edb96",
-    "scripts/render.py": "d878f832f2a890e48fb9c235370cfe3c2c2b020237f19ac4f34484a3be1626c9",
-    "scripts/snapshot.py": "fab05d5cd7b0f58378b2c2e9f25089f6d5152160bb06d58131a7dc2665069ea2",
-    "scripts/verify.py": "c5a5a0a0fb676002be02a04ce31f8831bd854fed853bba2fc231b9c2d619ea74",
+    "scripts/render.py": "cb6fe69da67ca9833db0322a7893941de92575273f305c71213c779ec83e4b42",
+    "scripts/snapshot.py": "a385728d0609977c0e4d4bfc6159301eb7baf4c7cca7e54b189f4b04219d4800",
+    "scripts/verify.py": "ef24d889bc8dbd093f8b7b091893a4c00782c4131375ebf1a2d0aefbaac5e755",
   } as Record<string, string>,
 } as const;
 
@@ -37,6 +37,8 @@ export const isPinnedBaton = (p: { id: string; sha256: string; filesSha256: stri
  *  by an older built-in keeps naming its own commit in the room's version menu after an upgrade. */
 const BATON_UPSTREAM: Record<string, string> = {
   [`${BATON_PIN.sha256}:${BATON_PIN.filesSha256}`]: BATON_PIN.upstream.commit,
+  // e74aeed: baton v2 (PR 175)
+  "96d3ca8f0dc741e1fd308ed6d6d3496f8618aa8f9f12de03031ab7bf5b721cb4:745774aad1f9aded7229689dc0d1c273659d4bbaf45d0e050d001d1ea9e9937b": "e74aeed230ce8126b7b5be5c42d1dcb202d93a40",
   // c382464: the first built-in (PR 159)
   "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1:7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9": "c382464ab02a14ad3dda364143c74bff58ddbcfc",
 };
@@ -81,8 +83,6 @@ Review proof (a pull request)
 - You run no test here, on the base or on the head. Never say you ran one, and never mark a claim verified from a run you
   did not see in the record: a passing check in checks.md is ci verified; code you read and nothing ran is code-only; no
   evidence is absent.
-- Every proof chip sets its "state" ("verified", "code-only" or "absent"), on every chain, never left out: verify.py and the
-  page both read a chip with no state as verified, so a missing state shows a claim nobody checked as proven.
 
 Boundary review (the last section, every room)
 - Check platform and library behaviour against what the materials hold (head/<path>, the diff, a vendored copy, a
