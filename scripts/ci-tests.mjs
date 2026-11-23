@@ -20,6 +20,12 @@ export function testEnv(source) {
   return { ...Object.fromEntries(keep.filter(k => source[k] !== undefined).map(k => [k, source[k]])),
     CI: 'true', BUN_OPTIONS: '--no-env-file' };
 }
+/** The last lines of a failed command's log, printed under its FAIL line so the job log shows why without the artifact. */
+export function logTail(logPath, lines = 80) {
+  let text = ''; try { text = readFileSync(logPath, 'utf8'); } catch { return `(no log at ${logPath})`; }
+  const all = text.replace(/\n$/, '').split('\n');
+  return (all.length > lines ? [`… ${all.length - lines} earlier line(s) in ${logPath}`] : []).concat(all.slice(-lines)).join('\n');
+}
 export async function run(command, logPath, timeoutMs, env) {
   const log = createWriteStream(logPath);
   const start = Date.now();
@@ -66,6 +72,7 @@ async function main() {
     const result = await run(command, `${out}/${String(i + 1).padStart(3, '0')}.log`, timeoutMs, testEnv(process.env));
     results.push(result); save();
     console.log(`${result.code === 0 && !result.timedOut ? 'PASS' : 'FAIL'} (${Math.round(result.durationMs / 1000)}s) ${command}`);
+    if (result.code !== 0 || result.timedOut) console.log(`::group::last lines of ${command}\n${logTail(result.log)}\n::endgroup::`);
   }
   const failures = results.filter(x => x.code !== 0 || x.timedOut);
   const summary = `${results.length - failures.length}/${results.length} commands passed (${mode}, shard ${shard}).\n` + failures.map(x => `- ${x.timedOut ? 'TIMEOUT' : 'FAIL'}: ${x.command}`).join('\n') + '\n';

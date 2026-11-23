@@ -180,7 +180,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** remote readiness: the pauses before reading the pull request again while GitHub computes its mergeability (tests shorten them) */
   mergeabilityRetryMs?: number[]; improve?: { checkTriggers?: () => Promise<any> } | null;
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
-  seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void> };
+  seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void>;
+    /** reviewTree: called as a review attempt prepares its checkout ("prepare") and as its end drops it ("drop"); a throw models a file-system error there */
+    reviewTree?: (x: X, at: "prepare" | "drop") => void };
   /** the Library (Studio's artifact store): where an ended or saved review room's pages are kept read-only */
   artifacts?: import("../artifacts").ArtifactStore;
   /** the cloud hand-off's provider (tests: a loopback stub) and its GitHub polling interval */
@@ -1633,7 +1635,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   async function prepareReview(x: X) {
     x.ctx.reviewUnverified = null; x.ctx.reviewDepth = null;
     const wt = shellOk(x); x.ctx.head = head(wt); for (const k of ["verdict", "depth", "refused", "plan", "unverified", "runBase", "runDeps"]) x.rn.data[k] = null;
-    dropReviewTree(x); x.rn.data.tree = reviewTree(x); x.rn.data.plan = await reviewPlan(x, x.rn.data.tree); x.save();
+    dropReviewTree(x); o.seams?.reviewTree?.(x, "prepare"); x.rn.data.tree = reviewTree(x); x.rn.data.plan = await reviewPlan(x, x.rn.data.tree); x.save();
   }
   /**
    * run mode's place to run: the fresh checkout of the head, copied (no .git) and given its dependencies the way a round
@@ -1673,8 +1675,13 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     ...reviewHooks,
     prepare: prepareReview,
     preparePick: reviewSwap,
-    begin: async (x) => { await reviewHooks.begin?.(x); await prepareReview(x); },
-    end: async (x, how) => { dropReviewTree(x); await reviewHooks.end?.(x, how); },
+    // begin holds the Task's round lock before it prepares the checkout, and the engine runs end only after a begin that
+    // returned: a preparation that throws gives the lock back itself, and end releases it even when the drop throws.
+    // A kept lock refuses the node's retry (same visit, same holder) and every later round of the Task
+    begin: async (x) => { await reviewHooks.begin?.(x);
+      try { await prepareReview(x); }
+      catch (e) { try { dropReviewTree(x); } catch (d: any) { x.log(`review checkout drop: ${d?.message ?? d}`); } finally { await reviewHooks.end?.(x, "failed"); } throw e; } },
+    end: async (x, how) => { try { o.seams?.reviewTree?.(x, "drop"); dropReviewTree(x); } finally { await reviewHooks.end?.(x, how); } },
     sandbox: (x) => { const wt = x.ctx.worktree; const t = x.rn.data.tree; return wt && existsSync(wt) ? { writes: [], reads: [t ?? wt], cwd: t ?? wt } : null; }, // reads the checkout, writes nothing of it
     tools: (x) => { const tree = x.rn.data.tree ?? shellOk(x); const cfg = cfgOf(x); const mode = reviewMode(x); let runs = 0, attempts = 0, cmds = 0;
       // the listing and the search over the untrusted checkout: bounded and off the event loop like every read (src/review-read.ts)

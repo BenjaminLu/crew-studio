@@ -1,7 +1,7 @@
 import "./lib/isolated-env.mjs";
-import { artifactName, commands, run, testEnv } from '../scripts/ci-tests.mjs';
+import { artifactName, commands, logTail, run, testEnv } from '../scripts/ci-tests.mjs';
 import { strict as assert } from 'node:assert';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { checkedTempDir } from './lib/git-hygiene.mjs';
 import { join } from 'node:path';
 const temp = checkedTempDir('crew-ci-runner-');
@@ -18,6 +18,11 @@ try {
   check('runner drops inherited credentials and operator settings', () => assert(!('GITHUB_TOKEN' in env) && !('ACTIONS_RUNTIME_TOKEN' in env) && !('CREW_DATA' in env) && !('CREW_LOCAL_UNRESTRICTED' in env)));
   const failed = await run('printf fixture-output; exit 7', join(temp,'failed.log'), 2000, env);
   check('nonzero exit and exact log survive', () => { assert.equal(failed.code,7); assert.equal(readFileSync(join(temp,'failed.log'),'utf8'),'fixture-output'); });
+  check('a failed command shows its log tail, with the count of lines left out', () => {
+    writeFileSync(join(temp,'long.log'), Array.from({length: 100}, (_, i) => `line ${i + 1}`).join('\n') + '\n');
+    const tail = logTail(join(temp,'long.log'), 3).split('\n');
+    assert.deepEqual(tail.slice(1), ['line 98', 'line 99', 'line 100']); assert.match(tail[0], /^… 97 earlier line\(s\) in /);
+    assert.equal(logTail(join(temp,'failed.log')), 'fixture-output'); assert.match(logTail(join(temp,'missing.log')), /^\(no log at /); });
   const timed = await run('sleep 20', join(temp,'timeout.log'), 50, env);
   check('hung command times out with a failing result', () => { assert(timed.timedOut); assert.notEqual(timed.code,0); assert(timed.durationMs < 5000); });
   const detachedLog = join(temp, 'detached.log');
