@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { detectState, screenLines, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
 import { git } from "./git";
-import { cliEnv } from "./providers/no-self-update";
+import { cliEnv, CURSOR_NO_SELF_UPDATE } from "./providers/no-self-update";
 import { REDACTED, SECRET_VALUE, redactText } from "./secure";
 /** A secret that starts on one line and ends on the next, read as one text. When the first line was cut where it is (it
  *  fills the terminal's width, or a box's), a match running over is a secret in two pieces; when not, a secret that ends
@@ -352,7 +352,8 @@ export class Terminals {
       const p = this.presets().find((x) => x.id === spec.preset); if (!p) throw new TermError(404, `${spec.preset} is not installed on this Mac's PATH`, "preset");
       // the Claude preset starts as `claude` does: Studio never adds --remote-control (an older page may still send
       // remoteControl in its request, which is ignored)
-      preset = p.id; kind = p.kind; label = p.label; argv = p.id === "shell" ? [p.path, "-l", ...args] : [p.path, ...args];
+      // cursor-agent updates itself unless told not to (src/providers/no-self-update.ts); Claude is told through its env below
+      preset = p.id; kind = p.kind; label = p.label; argv = p.id === "shell" ? [p.path, "-l", ...args] : p.kind === "cursor" ? [p.path, ...CURSOR_NO_SELF_UPDATE, ...args] : [p.path, ...args];
     } else {
       const c = typeof spec.command === "string" ? spec.command.trim() : "";
       if (!c || c.length > 2000 || c.includes("\0")) throw new TermError(400, "give a preset or a command (at most 2000 characters)", "command");

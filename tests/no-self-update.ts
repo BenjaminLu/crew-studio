@@ -10,17 +10,20 @@ import { strict as assert } from "node:assert";
 
 const root = mkdtempSync(join(tmpdir(), "crew-no-self-update-")), home = join(root, "home"), bin = join(root, "bin"), dumps = join(root, "dumps");
 for (const d of [home, bin, dumps]) mkdirSync(d, { recursive: true });
-const claude = join(bin, "claude");
+const claude = join(bin, "claude"), cursor = join(bin, "cursor-agent");
 // the dump folder is written into the script: the probes hand the CLI a bare environment, so nothing could carry it there
-writeFileSync(claude, `#!/bin/sh
+for (const f of [claude, cursor]) {
+  writeFileSync(f, `#!/bin/sh
 f=$(/usr/bin/mktemp "${dumps}/env.XXXXXX")
-{ printf 'ARGV=%s\\n' "$*"; /usr/bin/env; } > "$f"
+{ printf 'BIN=%s\\n' "\${0##*/}"; printf 'ARGV=%s\\n' "$*"; /usr/bin/env; } > "$f"
 case "$*" in
   "auth status --json") printf '%s\\n' '{"loggedIn":true,"authMethod":"api_key","apiProvider":"firstParty"}'; exit 0;;
+  *--version) echo "1.0.0"; exit 0;;
 esac
 exit 0
 `);
-chmodSync(claude, 0o755);
+  chmodSync(f, 0o755);
+}
 process.env.HOME = home;
 process.env.PATH = `${bin}:${process.env.PATH}`;
 process.env.CREW_CLAUDE_BIN = claude;
@@ -97,38 +100,77 @@ try {
   await pp.exited; await pp.stop();
   carries(started("probe"), "any metadata probe (probeProcess)");
 
-  // the primary session's own environment
+  // the primary session: the environment claudePrimaryReadiness hands the Claude host, on the captain's own sign-in
   {
-    const src = readFileSync(join(import.meta.dirname, "../src/host/claude-primary.ts"), "utf8");
-    ok(/env: \{ \.\.\.identity, \.\.\.NO_SELF_UPDATE,/.test(src), "the primary session's environment carries NO_SELF_UPDATE");
+    const { claudePrimaryReadiness } = await import("../src/host/claude-primary");
+    const ready: any = await claudePrimaryReadiness({ pair, status: () => native.status(pair), signInPending: false, configDir: join(root, "primary"),
+      login: () => ({ ok: true, env: {}, source: "own account fixture", warn: null, kind: "account" as const }) });
+    started("auth status --json");
+    ok(ready.ok === true, "the primary readiness check passes on the fake CLI", JSON.stringify(ready).slice(0, 300));
+    ok(ready.env?.DISABLE_AUTOUPDATER === "1", "the primary session's environment carries DISABLE_AUTOUPDATER=1", JSON.stringify(ready.env));
   }
 
-  // a file that starts a process itself (not through the spawn layers above) and names a vendor CLI must take its
-  // environment from src/providers/no-self-update.ts, or be listed here with why it never starts one
-  const NEVER_STARTS_A_VENDOR_CLI: Record<string, string> = {
+  // Doctor: its `claude --version`, `claude auth status --json` and `cursor-agent --version` run in the captain's own HOME
+  {
+    const { diagnose } = await import("../src/doctor");
+    diagnose({ state: root, legacy: false, board: { writable: false }, gh: { connected: false, tokenSource: null, enabled: false }, keys: { anthropic: null, openai: null, compatBaseUrl: null },
+      chatProvider: "claude", lanIp: null, tailscale: { installed: false, running: false, dnsName: null }, claudeBin: claude, codexBin: "/nonexistent/codex", cursorBin: cursor, compiled: false } as any);
+    const runs = started("");
+    const claudeRuns = runs.filter((e) => e.BIN === "claude"), cursorRuns = runs.filter((e) => e.BIN === "cursor-agent");
+    ok(claudeRuns.some((e) => e.ARGV === "--version") && claudeRuns.some((e) => e.ARGV === "auth status --json"), "Doctor ran claude --version and claude auth status --json", JSON.stringify(claudeRuns.map((e) => e.ARGV)));
+    ok(claudeRuns.every((e) => e.DISABLE_AUTOUPDATER === "1"), "Doctor's claude reads carry DISABLE_AUTOUPDATER=1", JSON.stringify(claudeRuns.map((e) => [e.ARGV, e.DISABLE_AUTOUPDATER ?? null])));
+    ok(cursorRuns.length > 0 && cursorRuns.every((e) => e.ARGV === "--disable-auto-update --version"), "Doctor's cursor-agent --version passes --disable-auto-update", JSON.stringify(cursorRuns.map((e) => e.ARGV)));
+  }
+
+  // terminals: the Claude preset gets DISABLE_AUTOUPDATER=1, the Cursor Agent preset --disable-auto-update; a shell is the captain's own
+  {
+    const { Terminals } = await import("../src/terminals");
+    const project = join(root, "project"), data = join(root, "terminals");
+    mkdirSync(project, { recursive: true });
+    const svc = new Terminals({ dataDir: data, projects: () => [{ id: "p", name: "P", path: project }], transcripts: false, shell: "/bin/sh", env: { PATH: process.env.PATH!, HOME: home } });
+    const wait = async (bin: string) => { for (let i = 0; i < 250; i++) { const r = started("").filter((e) => e.BIN === bin); if (r.length) return r; await new Promise((r) => setTimeout(r, 20)); } return []; };
+    try {
+      await svc.create({ project: "p", preset: "claude", cols: 80, rows: 24 } as any);
+      const c = await wait("claude");
+      ok(c.length === 1 && c[0].DISABLE_AUTOUPDATER === "1", "the Claude preset terminal starts claude with DISABLE_AUTOUPDATER=1", JSON.stringify(c.map((e) => e.DISABLE_AUTOUPDATER ?? null)));
+      await svc.create({ project: "p", preset: "cursor-agent", cols: 80, rows: 24 } as any);
+      const k = await wait("cursor-agent");
+      ok(k.length === 1 && k[0].ARGV.split(" ")[0] === "--disable-auto-update", "the Cursor Agent preset terminal starts cursor-agent with --disable-auto-update", JSON.stringify(k.map((e) => e.ARGV)));
+    } finally { svc.shutdown(); }
+  }
+
+  // a file that starts a process itself (not through the spawn layers above) and names a vendor CLI must use the helpers of
+  // src/providers/no-self-update.ts, or be listed here with what it starts instead
+  const STARTS_NO_VENDOR_CLI_ITSELF: Record<string, string> = {
     "src/worktrees.ts": "git only",
     "src/skills.ts": "git clone only",
-    "src/host/cursor.ts": "cursor-agent, in a private HOME and data dir: an update could only land in that throwaway home",
     "src/host/probe.ts": "ps / lsof only (lists running CLIs)",
     "src/host/claude.ts": "starts the CLI through spawnJsonl",
     "src/providers/login.ts": "security (keychain) only",
     "src/runtime/checks.ts": "system tools only",
     "src/domain/commit-message.ts": "git only",
     "src/domain/review-room.ts": "gh and git only",
+    "scripts/lan-two-machine.ts": "starts Studio (bun src/main.ts), whose own spawn layers start the CLIs",
+    "scripts/lan-mutation-check.ts": "runs test commands through /bin/sh",
+  };
+  // starts cursor-agent only, always with a private throwaway HOME (where its update installs, $HOME/.local/share/cursor-agent)
+  const PRIVATE_HOME_CURSOR: Record<string, string> = {
+    "src/host/cursor.ts": "the Cursor host session: HOME, XDG_CONFIG_HOME and CURSOR_DATA_DIR under its private folder",
   };
   const layers = new Set(["src/host/jsonl.ts", "src/providers/probe-process.ts", "src/providers/proc.ts"]);
   const repo = join(import.meta.dirname, "..");
   const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []);
   const missing: string[] = [];
-  for (const f of walk(join(repo, "src"))) {
+  for (const f of [...walk(join(repo, "src")), ...walk(join(repo, "scripts"))]) {
     const rel = relative(repo, f), s = readFileSync(f, "utf8");
-    if (!/Bun\.spawn|spawnSync\(|[^.\w]spawn\(/.test(s) || !/claude|codex|cursor-agent/.test(s)) continue;
-    if (NEVER_STARTS_A_VENDOR_CLI[rel]) continue;
-    if (!/from ["'][./]*(providers\/)?no-self-update["']/.test(s)) missing.push(rel);
+    if (rel === "src/providers/no-self-update.ts" || !/Bun\.spawn|spawnSync\(|[^.\w]spawn\(/.test(s) || !/claude|codex|cursor-agent/.test(s)) continue;
+    if (STARTS_NO_VENDOR_CLI_ITSELF[rel] || PRIVATE_HOME_CURSOR[rel]) continue;
+    if (!/\b(cliEnv\(|NO_SELF_UPDATE\b|CURSOR_NO_SELF_UPDATE\b)/.test(s.replace(/^import .*$/gm, ""))) missing.push(rel);
   }
-  ok(missing.length === 0, "every file that starts a vendor CLI itself takes DISABLE_AUTOUPDATER from the shared helper", missing.join(", "));
+  ok(missing.length === 0, "every file in src/ and scripts/ that starts a vendor CLI itself uses the no-self-update helpers (not just imports them)", missing.join(", "));
+  for (const f of Object.keys(PRIVATE_HOME_CURSOR)) { const s = readFileSync(join(repo, f), "utf8"); ok(/HOME: join\(priv, "h"\)/.test(s), `${f}: ${PRIVATE_HOME_CURSOR[f]}`); }
   for (const f of layers) ok(/cliEnv\(/.test(readFileSync(join(repo, f), "utf8")), `${f} applies cliEnv to every child it starts`);
-  for (const f of Object.keys(NEVER_STARTS_A_VENDOR_CLI)) ok(existsSync(join(repo, f)), `${f} (listed as never starting a vendor CLI) still exists`);
+  for (const f of [...Object.keys(STARTS_NO_VENDOR_CLI_ITSELF), ...Object.keys(PRIVATE_HOME_CURSOR)]) ok(existsSync(join(repo, f)), `${f} (listed above) still exists`);
 
   console.log(`\n${count} no-self-update checks passed`);
 } finally {
