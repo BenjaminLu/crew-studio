@@ -17,6 +17,7 @@ import { homedir, userInfo } from "node:os";
 import { claudeAccountContext, claudeBilling, claudeLogin, codexLogin, cursorLogin, type Login } from "./login";
 import { dirname, join } from "node:path";
 import { accountHomeDir, type AccountContext } from "../runtime/checks";
+import { NO_SELF_UPDATE } from "./no-self-update";
 
 export type SandboxNeeds = {
   reads: string[]; hosts: string[]; tmpEnv: string[];
@@ -133,7 +134,7 @@ export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedCla
     home(dir) {
       // where there is no keychain (off macOS) the CLI keeps its sign-in in a file of the captain's own config folder: there it
       // runs in the captain's own account context (rounds there run only in local unrestricted mode; Linux rounds are refused)
-      if (own && !KEYCHAIN()) return { ...claudeAccountContext().env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ...loginUserEnv() };
+      if (own && !KEYCHAIN()) return { ...claudeAccountContext().env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ...NO_SELF_UPDATE, ...loginUserEnv() };
       const cfg = join(dir, ".claude-config"), captain = process.env.CLAUDE_CONFIG_DIR?.trim();
       mkdirSync(cfg, { recursive: true });
       // on the captain's own sign-in with a CLAUDE_CONFIG_DIR of theirs, the CLI must be told that path to find its item; the
@@ -141,7 +142,7 @@ export function claudeNeeds(bin: string, hosts: string[], approved?: ApprovedCla
       // (without one, CLAUDE_CONFIG_DIR stays unset: a set folder renames the item, and the CLI keeps its config in HOME/.claude)
       const config = own ? (captain ? { CLAUDE_CONFIG_DIR: captain } : {}) : { CLAUDE_CONFIG_DIR: cfg };
       if (own) linkClaudeKeychain(dir);
-      return { HOME: dir, ...config, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ...(own ? loginUserEnv() : {}) };
+      return { HOME: dir, ...config, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", ...NO_SELF_UPDATE, ...(own ? loginUserEnv() : {}) };
     },
     login: () => {
       if (!approved) { const l = claudeLogin(); return l.ok && l.kind !== mode ? { ok: false, error: "Claude billing changed while the round was being set up; start it again" } : l; }

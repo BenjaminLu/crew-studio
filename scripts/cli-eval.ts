@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { cliEnv } from "../src/providers/no-self-update";
 
 const root = join(import.meta.dir, "..");
 const arg = (n: string) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] ?? "" : null; };
@@ -127,7 +128,7 @@ const pick = arg("--questions")?.split(",") ?? null;
 const SYSTEM = "You are the captain's Firstmate. Answer in the captain's language, in at most five sentences, and cite the refs you used.";
 
 const run = (cmd: string, args: string[], env: Record<string, string>, timeout: number) => new Promise<{ stdout: string; stderr: string }>((done) => {
-  const p = spawn(cmd, args, { cwd: project, env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] }); let stdout = "", stderr = "";
+  const p = spawn(cmd, args, { cwd: project, env: cliEnv({ ...process.env, ...env }), stdio: ["ignore", "pipe", "pipe"] }); let stdout = "", stderr = "";
   p.stdout.on("data", (d) => { stdout += d; }); p.stderr.on("data", (d) => { stderr += d; });
   const t = setTimeout(() => { stderr += `\n${cmd} timed out after ${timeout} ms`; p.kill("SIGKILL"); }, timeout);
   p.on("close", () => { clearTimeout(t); done({ stdout, stderr }); }); });
