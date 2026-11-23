@@ -433,9 +433,10 @@ function focusIn(part) {
  *  what the shown version was made from; one line, so the output has the room's whole width */
 function bar(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate", count = st.versions.length;
-  // the button's whole name, read as one phrase: its text alone ("v2" next to the count badge "2") reads "v22"
+  // the button's own name, one sentence that follows the state: its text and the badge's label gave "walkthrough v2 2 versions ▾".
+  // It starts with what the button shows ("walkthrough v2", "walkthrough · generating"), so a spoken label finds it (WCAG 2.5.3)
   const name = gen ? T(`${sk(run.skill)}, generating, ${count} version${count === 1 ? "" : "s"}`, `${sk(run.skill)}，產生中，共 ${count} 版`)
-    : cur ? T(`${skillName(st, cur.skill.id)}, version ${cur.n} of ${count}`, `${skillName(st, cur.skill.id)}，第 ${cur.n} 版，共 ${count} 版`)
+    : cur ? T(`${skillName(st, cur.skill.id)} v${cur.n}, version ${cur.n} of ${count}`, `${skillName(st, cur.skill.id)} v${cur.n}，第 ${cur.n} 版，共 ${count} 版`)
     : T(`Versions, ${count}`, `版本，共 ${count} 版`);
   return h("div", { class: "rx-line", "data-x-line": "" },
     count || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id), "aria-label": name,

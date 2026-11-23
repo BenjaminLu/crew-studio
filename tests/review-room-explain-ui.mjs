@@ -466,9 +466,10 @@ try {
   // ---------- a page that tries to navigate itself out of Studio ----------
   onSelect = (r) => { const b = JSON.parse(r.request().postData() || "{}"); X = { ...X, selected: b.skill ? { id: b.skill, v: 1 } : null }; answer(r, X); };
   await pickVersion(p, 4); await p.waitForSelector('[data-explain-frame="4"]'); await p.waitForTimeout(2000);
-  // the version button reads as one phrase, never its text run together ("v4" beside the count badge "4" read "v44")
+  // the version button's name is one sentence that follows the state, not its text and the badge's label strung together
+  // ("walkthrough v4 4 versions ▾"), and it starts with the visible "walkthrough v4" (WCAG 2.5.3, label in name)
   { const n = await axName(p, "[data-explain-versions]"), badge = await p.$eval("[data-explain-versions] .rx-vercount", (e) => e.getAttribute("aria-label"));
-    ok(n === "walkthrough, version 4 of 4" && badge === null, "the version button's accessible name is \"walkthrough, version 4 of 4\" (no aria-label left on the badge span)", JSON.stringify({ n, badge })); }
+    ok(n === "walkthrough v4, version 4 of 4" && badge === null, "the version button's accessible name is \"walkthrough v4, version 4 of 4\" (no aria-label left on the badge span)", JSON.stringify({ n, badge })); }
   ok(!probeHits.length, "the output cannot carry anything out by navigating its frame: Studio's page refuses frames outside Studio", probeHits.join(","));
 
   // ---------- a run that ends while the captain is elsewhere: Studio says so ----------

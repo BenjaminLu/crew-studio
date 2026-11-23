@@ -6,8 +6,9 @@ export const NO_SELF_UPDATE: Readonly<Record<string, string>> = Object.freeze({ 
 /** cursor-agent has no environment switch: its update runs unless the root command gets --disable-auto-update (a hidden
  *  option of the root program since at least 2026.10.01). Its update installs under $HOME/.local/share/cursor-agent, so the
  *  Cursor Agent terminal, which runs in the captain's own HOME, passes it; rounds, host sessions and probes run with a
- *  private throwaway HOME, where an update could only land in that throwaway folder. Doctor's --version does not: it exits
- *  (commander's .version()) before the update is scheduled, and an older cursor-agent would reject the option. */
+ *  private throwaway HOME, where an update could only land in that throwaway folder. Doctor's --version does not: its own
+ *  -v, --version option's option:version listener calls process.exit(0) before the root action schedules the update (a
+ *  setTimeout), and an older cursor-agent would reject the option. */
 export const CURSOR_NO_SELF_UPDATE: readonly string[] = Object.freeze(["--disable-auto-update"]);
 export function cliEnv<T extends Record<string, string | undefined>>(env: T): T & { DISABLE_AUTOUPDATER: string } {
   return { ...env, ...NO_SELF_UPDATE } as T & { DISABLE_AUTOUPDATER: string };

@@ -119,8 +119,9 @@ try {
     const claudeRuns = runs.filter((e) => e.BIN === "claude"), cursorRuns = runs.filter((e) => e.BIN === "cursor-agent");
     ok(claudeRuns.some((e) => e.ARGV === "--version") && claudeRuns.some((e) => e.ARGV === "auth status --json"), "Doctor ran claude --version and claude auth status --json", JSON.stringify(claudeRuns.map((e) => e.ARGV)));
     ok(claudeRuns.every((e) => e.DISABLE_AUTOUPDATER === "1"), "Doctor's claude reads carry DISABLE_AUTOUPDATER=1", JSON.stringify(claudeRuns.map((e) => [e.ARGV, e.DISABLE_AUTOUPDATER ?? null])));
-    // cursor-agent's --version is commander's .version(): it prints and exits before the root action schedules the update, so
-    // --disable-auto-update gains nothing there, and a cursor-agent older than that option would read as unusable in Doctor
+    // cursor-agent's -v, --version is its own option: its option:version listener prints and calls process.exit(0) while the
+    // options are parsed, before the root action schedules the self-update (a setTimeout), so --disable-auto-update gains
+    // nothing there, and a cursor-agent older than that option would read as unusable in Doctor
     ok(cursorRuns.length > 0 && cursorRuns.every((e) => e.ARGV === "--version"), "Doctor's cursor-agent --version runs with no update option", JSON.stringify(cursorRuns.map((e) => e.ARGV)));
   }
 

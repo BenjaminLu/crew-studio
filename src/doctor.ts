@@ -146,8 +146,9 @@ export type DoctorInput = {
 export function diagnose(i: DoctorInput): Item[] {
   const claudeV = version(i.claudeBin ?? process.env.CREW_CLAUDE_BIN ?? "claude");
   const codexV = version(i.codexBin ?? process.env.CREW_CODEX_BIN ?? "codex");
-  // no --disable-auto-update here: cursor-agent's --version (commander's .version()) prints and exits before the root action
-  // schedules its update, so the option would gain nothing, and a cursor-agent older than the option would read as unusable
+  // no --disable-auto-update here: cursor-agent's -v, --version is its own option whose option:version listener prints and
+  // calls process.exit(0) while the options are parsed, before the root action schedules its self-update (a setTimeout). The
+  // option would gain nothing, and a cursor-agent older than it would read as unusable
   const cursorV = version(i.cursorBin ?? process.env.CREW_CURSOR_BIN ?? "cursor-agent", "--version", cursorEnv(scrubEnv()));
   const anyKey = !!(i.keys.anthropic || i.keys.openai || i.keys.compatBaseUrl);
   const statusChatOk = !!claudeV || !!codexV || !!cursorV || anyKey;
