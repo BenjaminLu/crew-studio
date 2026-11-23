@@ -1,4 +1,5 @@
 import { scrubEnv } from "./secure";
+import { cliEnv, CURSOR_NO_SELF_UPDATE } from "./providers/no-self-update";
 import {localUnrestricted} from "./local-execution";
 // The Doctor: what Studio can use on this machine, what is degraded, and the one
 // action that fixes each item. Studio itself needs nothing but its binary and a
@@ -25,15 +26,15 @@ const which = (bin: string): string | null => {
   for (const d of (process.env.PATH ?? "").split(":")) { const p = join(d, bin); try { accessSync(p, constants.X_OK); return p; } catch {} }
   return null;
 };
-const version = (bin: string, flag = "--version", env = scrubEnv()): string | null => {
+const version = (bin: string, flag = "--version", env = scrubEnv(), lead: readonly string[] = []): string | null => {
   if (!which(bin)) return null;
-  try { const r = Bun.spawnSync([bin, flag], { env, stdout: "pipe", stderr: "pipe", timeout: 8000 }); const v = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0]; return r.success ? v.slice(0, 80) : null; } catch { return null; }
+  try { const r = Bun.spawnSync([bin, ...lead, flag], { env: cliEnv(env), stdout: "pipe", stderr: "pipe", timeout: 8000 }); const v = (r.stdout.toString() || r.stderr.toString()).trim().split("\n")[0]; return r.success ? v.slice(0, 80) : null; } catch { return null; }
 };
 const present = (bin: string) => bin.includes("/") ? existsSync(bin) : (process.env.PATH ?? "").split(":").some(d => existsSync(join(d, bin)));
 /** Read the vendor's login status only: never start a conversation or login flow. */
 function authenticated(id: "claude" | "codex", bin: string): boolean | null {
   try {
-    const r = Bun.spawnSync([bin, ...(id === "claude" ? ["auth", "status", "--json"] : ["login", "status"])], { env: scrubEnv(), stdout: "pipe", stderr: "pipe", timeout: 8000 });
+    const r = Bun.spawnSync([bin, ...(id === "claude" ? ["auth", "status", "--json"] : ["login", "status"])], { env: cliEnv(scrubEnv()), stdout: "pipe", stderr: "pipe", timeout: 8000 });
     if (id === "claude") { const v = JSON.parse(r.stdout.toString()); return typeof v.loggedIn === "boolean" && (r.success || v.loggedIn === false) ? v.loggedIn : null; }
     const text = r.stdout.toString() + r.stderr.toString();
     if (/not logged in/i.test(text)) return false;
@@ -145,7 +146,7 @@ export type DoctorInput = {
 export function diagnose(i: DoctorInput): Item[] {
   const claudeV = version(i.claudeBin ?? process.env.CREW_CLAUDE_BIN ?? "claude");
   const codexV = version(i.codexBin ?? process.env.CREW_CODEX_BIN ?? "codex");
-  const cursorV = version(i.cursorBin ?? process.env.CREW_CURSOR_BIN ?? "cursor-agent", "--version", cursorEnv(scrubEnv()));
+  const cursorV = version(i.cursorBin ?? process.env.CREW_CURSOR_BIN ?? "cursor-agent", "--version", cursorEnv(scrubEnv()), CURSOR_NO_SELF_UPDATE);
   const anyKey = !!(i.keys.anthropic || i.keys.openai || i.keys.compatBaseUrl);
   const statusChatOk = !!claudeV || !!codexV || !!cursorV || anyKey;
   const items: Item[] = [];

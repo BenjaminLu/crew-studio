@@ -7,6 +7,7 @@ import{claudeProvider}from'./claude';import{claudeOnPath,claudeSettings,KEYCHAIN
 import type{ProviderCapability}from'./policy';
 import { claudeBilling as claudeAuthBilling, noteBilling } from '../lan/billing';
 import { scriptArgv } from "../self";
+import { cliEnv, NO_SELF_UPDATE } from "./no-self-update";
 export type ClaudePair={model:string;effort:string|null};
 /** The models Studio can choose for Claude: read from the installed CLI, or (only when that is impossible) a fixed list marked unverified with the reason. */
 export type ClaudeModelInventory={source:'cli'|'unverified-fallback';models:{id:string;efforts:string[];label:string|null}[];at:number;version:string|null;reason?:string};
@@ -52,7 +53,7 @@ const resolveBin=(bin:string)=>{const p=claudeOnPath(bin,process.env.PATH||'/usr
 // macOS: the CLI finds its login-Keychain credential by the login user; without USER/LOGNAME it reports no login.
 const loginUser=()=>{const e:Record<string,string>={};for(const k of['USER','LOGNAME'])if(process.env[k])e[k]=process.env[k]!;return e;};
 /** The ordinary account/config context the official `claude auth` commands run in: no copied secrets, only where the login lives. */
-export const claudeAccountEnv=():Record<string,string>=>({PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}});
+export const claudeAccountEnv=():Record<string,string>=>cliEnv({PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}});
 const argv=(bin:string,args:string[])=>scriptArgv(bin,args);
 export class ClaudeNative{
  private admitted=new Map<string,ClaudeCapability>();private authDenied=false;private cleanupBlocked=false;private denial:{code:string;resetAt:number|null;at:number}|null=null;
@@ -93,7 +94,7 @@ export class ClaudeNative{
    return this.base(p,{auth:'verified',loginState:'logged-in',context,reason:'Signed in; remaining quota and actual selected model execution are unverified. Studio verifies the exact model with one bounded request before its first round.'});
   }catch{return this.base(p,{reason:'Claude auth metadata is unavailable in this context'});}finally{if(proc)try{await proc.stop();}catch{clean=false;this.unknownProcess=proc;}if(clean)rmSync(root,{recursive:true,force:true});}
  }
- private accountEnv():Record<string,string>{return{PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}};}
+ private accountEnv():Record<string,string>{return cliEnv({PATH:process.env.PATH||'/usr/bin:/bin',HOME:process.env.HOME||homedir(),LANG:'en_US.UTF-8',...loginUser(),...(claudeBilling()==='api-key'&&process.env.ANTHROPIC_API_KEY?{ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY}:{}),...this.options.authEnv?.(),...process.env.CLAUDE_CONFIG_DIR?{CLAUDE_CONFIG_DIR:process.env.CLAUDE_CONFIG_DIR}:{}});}
  private inventory:{at:number;done:Promise<ClaudeModelInventory>}|null=null;
  /** The models the installed CLI offers this account: the stream-json `initialize` control request (the Agent SDK's
   * supportedModels()). Only that request is written and the process is stopped on its reply, so no user turn and no model
@@ -113,7 +114,7 @@ export class ClaudeNative{
    const args=['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--no-session-persistence','--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--setting-sources','','--permission-mode','dontAsk','--permission-prompts','none','--disable-slash-commands','--no-chrome','--safe-mode','--restricted'];
    // CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is left unset here on purpose: with it the CLI skips its own free
    // account model listing and reports only its built-in aliases (2.1.302: 4 models instead of 12)
-   proc=probeProcess(argv(binary,args),root,{...this.accountEnv(),DISABLE_AUTOUPDATER:'1'},m=>{if(m?.type==='control_response'&&m.response?.request_id==='models'&&!reply){reply=m.response;proc?.kill();}},{timeoutMs:15000,bytes:512*1024,lineBytes:256*1024});
+   proc=probeProcess(argv(binary,args),root,this.accountEnv(),m=>{if(m?.type==='control_response'&&m.response?.request_id==='models'&&!reply){reply=m.response;proc?.kill();}},{timeoutMs:15000,bytes:512*1024,lineBytes:256*1024});
    const abort=()=>proc?.kill();signal?.addEventListener('abort',abort,{once:true});
    try{proc.write({type:'control_request',request_id:'models',request:{subtype:'initialize'}});await proc.exited;await proc.stop();}finally{signal?.removeEventListener('abort',abort);}
    if(signal?.aborted)return failed('Claude model discovery was cancelled');
@@ -162,7 +163,7 @@ export class ClaudeNative{
    // folder in that home (security searches $HOME/Library/Keychains), none of the captain's files
    // (off macOS the CLI keeps its sign-in in a file of the captain's config folder: there it runs in the captain's own context)
    const own=process.env.CLAUDE_CONFIG_DIR?.trim();if(account&&KEYCHAIN())linkClaudeKeychain(home);
-   const env={PATH:process.env.PATH||'/usr/bin:/bin',...(account?(KEYCHAIN()?{HOME:home,...(own?{CLAUDE_CONFIG_DIR:own}:{})}:claudeAccountContext().env):{HOME:home,CLAUDE_CONFIG_DIR:config}),...loginUser(),TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
+   const env={PATH:process.env.PATH||'/usr/bin:/bin',...(account?(KEYCHAIN()?{HOME:home,...(own?{CLAUDE_CONFIG_DIR:own}:{})}:claudeAccountContext().env):{HOME:home,CLAUDE_CONFIG_DIR:config}),...loginUser(),TMPDIR:temp,CLAUDE_CODE_TMPDIR:temp,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',...NO_SELF_UPDATE,...login.env,...p.effort?{CLAUDE_CODE_EFFORT_LEVEL:p.effort}:{}};
    let init=false,result=false,assistant=false,invalid=false;
    const args=['-p','Reply with OK only. Do not use any tools.','--output-format','stream-json','--verbose','--include-partial-messages','--model',p.model,...p.effort?['--effort',p.effort]:[],'--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--permission-mode','dontAsk','--permission-prompts','none','--setting-sources','','--settings',JSON.stringify(claudeSettings(p)),'--safe-mode','--no-chrome','--disable-slash-commands','--no-session-persistence','--restricted','--max-turns','1','--max-budget-usd','0.05'];
    proc=probeProcess(argv(binary,args),work,env,m=>{

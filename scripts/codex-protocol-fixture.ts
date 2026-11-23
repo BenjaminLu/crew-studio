@@ -7,11 +7,12 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cliEnv } from "../src/providers/no-self-update";
 
 const bin = process.argv[2] ?? "codex";
 const out = join(import.meta.dir, "../tests/fixture/codex-app-server");
 const tmp = mkdtempSync(join(tmpdir(), "codex-schema-"));
-const run = (args: string[]) => { const r = Bun.spawnSync([bin, ...args], { stdout: "pipe", stderr: "pipe" }); if (!r.success) throw new Error(`${bin} ${args.join(" ")}: ${r.stderr}`); return r.stdout.toString().trim(); };
+const run = (args: string[]) => { const r = Bun.spawnSync([bin, ...args], { env: cliEnv(process.env), stdout: "pipe", stderr: "pipe" }); if (!r.success) throw new Error(`${bin} ${args.join(" ")}: ${r.stderr}`); return r.stdout.toString().trim(); };
 const version = run(["--version"]);
 run(["app-server", "generate-json-schema", "--out", tmp]);
 const bundle = JSON.parse(readFileSync(join(tmp, "codex_app_server_protocol.schemas.json"), "utf8"));

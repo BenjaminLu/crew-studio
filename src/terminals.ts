@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { detectState, screenLines, stripAnsi, DEFAULT_IDLE_MS, type AgentKind, type StateReason, type TermState } from "./terminal-state";
 import { git } from "./git";
+import { cliEnv, CURSOR_NO_SELF_UPDATE } from "./providers/no-self-update";
 import { REDACTED, SECRET_VALUE, redactText } from "./secure";
 /** A secret that starts on one line and ends on the next, read as one text. When the first line was cut where it is (it
  *  fills the terminal's width, or a box's), a match running over is a secret in two pieces; when not, a secret that ends
@@ -351,7 +352,8 @@ export class Terminals {
       const p = this.presets().find((x) => x.id === spec.preset); if (!p) throw new TermError(404, `${spec.preset} is not installed on this Mac's PATH`, "preset");
       // the Claude preset starts as `claude` does: Studio never adds --remote-control (an older page may still send
       // remoteControl in its request, which is ignored)
-      preset = p.id; kind = p.kind; label = p.label; argv = p.id === "shell" ? [p.path, "-l", ...args] : [p.path, ...args];
+      // cursor-agent updates itself unless told not to (src/providers/no-self-update.ts); Claude is told through its env below
+      preset = p.id; kind = p.kind; label = p.label; argv = p.id === "shell" ? [p.path, "-l", ...args] : p.kind === "cursor" ? [p.path, ...CURSOR_NO_SELF_UPDATE, ...args] : [p.path, ...args];
     } else {
       const c = typeof spec.command === "string" ? spec.command.trim() : "";
       if (!c || c.length > 2000 || c.includes("\0")) throw new TermError(400, "give a preset or a command (at most 2000 characters)", "command");
@@ -368,7 +370,9 @@ export class Terminals {
       decoder: new TextDecoder(), redactor: new SecretWindow(false), tFile: this.keepTranscripts ? join(this.dir, `${id}.log`) : null, tBytes: 0, timer: null, spec: { ...spec, cols, rows }, seen: new Set(), linkSeen: false, transcriptName: null };
     if (t.tFile) writeFileSync(t.tFile, "", { mode: 0o600 });
     try {
-      t.proc = Bun.spawn(argv, { cwd: project.path, env: terminalEnv(this.env(), this.o.secrets?.() ?? []),
+      // the Claude preset never updates the installed CLI under the captain's other sessions (src/providers/no-self-update.ts)
+      const env = terminalEnv(this.env(), this.o.secrets?.() ?? []);
+      t.proc = Bun.spawn(argv, { cwd: project.path, env: kind === "claude" ? cliEnv(env) : env,
         terminal: { cols, rows, data: (_term: any, d: Uint8Array) => this.onData(t, d) } } as any);
     } catch (e: any) { if (t.tFile) rmSync(t.tFile, { force: true }); throw new TermError(500, `could not start ${label}: ${e?.message ?? e}`, "spawn"); }
     this.terms.set(id, t); this.saveMeta(t);

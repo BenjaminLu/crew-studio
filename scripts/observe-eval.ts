@@ -16,10 +16,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { cliEnv } from "../src/providers/no-self-update";
 // The CLI runs as a child while this process serves the MCP endpoint (nativeEndpoint) in the same event loop: a blocking
 // spawnSync would leave its tools/list unanswered, so the CLI is awaited, with its own timeout.
 const run = (cmd: string, args: string[], o: { cwd: string; timeout: number }) => new Promise<{ stdout: string; stderr: string }>((done) => {
-  const p = spawn(cmd, args, { cwd: o.cwd, stdio: ["ignore", "pipe", "pipe"] }); let stdout = "", stderr = "";
+  const p = spawn(cmd, args, { cwd: o.cwd, env: cliEnv(process.env), stdio: ["ignore", "pipe", "pipe"] }); let stdout = "", stderr = "";
   p.stdout.on("data", (d) => { stdout += d; }); p.stderr.on("data", (d) => { stderr += d; });
   const t = setTimeout(() => { stderr += `\n${cmd} timed out after ${o.timeout} ms`; p.kill("SIGKILL"); }, o.timeout);
   p.on("error", (e) => { stderr += `\n${cmd}: ${e.message}`; });

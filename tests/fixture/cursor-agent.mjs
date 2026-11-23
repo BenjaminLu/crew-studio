@@ -47,7 +47,9 @@ const fail = (text, code = 1) => { out({ type: "result", subtype: "error", is_er
 // and SIGTERM, and rebinds chats in the user's /tmp/cursor-agent-persist-<uid>), and a parent cursor-agent's CURSOR_AGENT_*,
 // CURSOR_CONVERSATION_ID and CURSOR_REQUEST_ID are its own chat's: Studio's children (--version included) never inherit them
 { const tied = Object.keys(process.env).filter((k) => /^(TMUX(_|$)|CURSOR_AGENT_|CURSOR_(CONVERSATION|REQUEST)_ID$)/.test(k)); if (tied.length) fail(`cursor-agent fixture: run inside a terminal's persistent session or another agent's chat (${tied.join(", ")})`, 2); }
-if (argv.length === 1 && argv[0] === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
+// --disable-auto-update is a hidden option of the real CLI's root program (index.js, since at least 2026.10.01): Studio passes
+// it where cursor-agent runs in the captain's own HOME (src/providers/no-self-update.ts)
+if (argv.filter((a) => a !== "--disable-auto-update").join(" ") === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
 // --resume <chat> / --continue (544.index.js J → index.js K, before the key is even looked at): a chat id shaped as a UUID (and
 // --continue's latest chat) is first checked against cursor-agent's persistent sessions, which mkdirs a claim lock under the
 // hard-coded /tmp/cursor-agent-persist-<uid> (k()); an OS sandbox that keeps /tmp closed fails every such turn. Modelled with a
