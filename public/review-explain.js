@@ -40,6 +40,9 @@ const sk = (s) => s?.id === BUILTIN ? T("baton (built in)", "baton（內建）")
 const shownSkill = (id) => { const st = state(id), v = shownVersion(id); return v ? { id: v.skill.id, name: sk(v.skill) } : st?.selected ? { id: st.selected.id, name: skillName(st, st.selected.id) } : null; };
 /** the run that made a version (its model, cost and head) */
 const runOf = (st, v) => st?.runs?.find((r) => r.n === v?.run) || null;
+/** which skill version made a version (its own number counts the room's outputs): the built-in baton by its upstream commit,
+ *  "baton e74aeed" (the library's counter differs by machine); any other skill, or a changed built-in, "skill vN" */
+const skillTag = (v) => v?.skill?.upstream ? `baton ${v.skill.upstream}` : v?.skill?.v ? `${T("skill", "skill")} v${v.skill.v}` : "";
 const short = (h) => String(h || "").slice(0, 7);
 /** who runs it and who pays, in a line: the run's provider and model, billed to that provider's account on this Mac */
 const whoPays = (run) => T(`On ${run.provider} · ${run.model || "default model"} · billed to the ${run.provider} account Studio runs it with on this Mac`,
@@ -432,7 +435,7 @@ function bar(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate";
   return h("div", { class: "rx-line", "data-x-line": "" },
     st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
-        title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; forget("vermenu"); refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
+        title: T("Every version of this room's output", "這間審查室產出的每一版") + (cur && !gen && skillTag(cur) ? ` (${T("shown", "顯示中")}: ${skillTag(cur)})` : ""), onclick: () => { X.verMenu = X.verMenu === id ? null : id; forget("vermenu"); refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
       // a long skill name is cut, never the version, the count or "generating"
       h("span", { class: "rx-vername" }, gen ? sk(run.skill) : cur ? skillName(st, cur.skill.id) : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
       h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
@@ -472,7 +475,7 @@ function verMenu(r, st) {
     run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, sk(run.skill)), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
     [...st.versions].reverse().map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null,
         onclick: () => { X.verMenu = null; showVersion(r, v); focusLater("[data-explain-versions]"); } },
-      h("span", { class: "k" }, `${skillName(st, v.skill.id)} v${v.n}`), v.summary || v.entry, h("small", { "data-explain-verfacts": v.n }, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${runOf(st, v)?.head ? ` · ${T("head", "head")} ${short(runOf(st, v).head)}` : ""}${money(runOf(st, v)?.cost) ? ` · ${money(runOf(st, v).cost)}` : ""}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
+      h("span", { class: "k" }, `${skillName(st, v.skill.id)} v${v.n}`), v.summary || v.entry, h("small", { "data-explain-verfacts": v.n }, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${skillTag(v) ? ` · ${skillTag(v)}` : ""}${runOf(st, v)?.head ? ` · ${T("head", "head")} ${short(runOf(st, v).head)}` : ""}${money(runOf(st, v)?.cost) ? ` · ${money(runOf(st, v).cost)}` : ""}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
       madeFrom(v) ? h("small", { class: "rx-verprompt", "data-explain-verprompt": v.n, title: madeFrom(v).full }, madeFrom(v).short) : null)),
     // one Generate: here once an output exists; before that the stage has it
     sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => { X.verMenu = null; openConfirm(r, sid, "generate", "[data-explain-versions]", cur.skill.id === sid && typeof cur.prompt === "string" ? cur.prompt : undefined); } }, T("Generate a new version", "重新產生一版")) : null,

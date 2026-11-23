@@ -13,9 +13,9 @@
 export const BATON_PIN = {
   /** its own id, beside any baton the captain imported (that one is the captain's skill: picked per room, confirmed) */
   id: "studio-baton", name: "baton (built in)",
-  sha256: "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1",
-  filesSha256: "7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9",
-  upstream: { repo: "https://github.com/BenjaminLu/baton", commit: "c382464ab02a14ad3dda364143c74bff58ddbcfc" },
+  sha256: "96d3ca8f0dc741e1fd308ed6d6d3496f8618aa8f9f12de03031ab7bf5b721cb4",
+  filesSha256: "745774aad1f9aded7229689dc0d1c273659d4bbaf45d0e050d001d1ea9e9937b",
+  upstream: { repo: "https://github.com/BenjaminLu/baton", commit: "e74aeed230ce8126b7b5be5c42d1dcb202d93a40" },
   /** each script and the lockfile, by sha256: what the approval in advance covers (requirements.txt pins OpenCC's wheels) */
   scripts: {
     "requirements.txt": "27ff1a4089723d36f4a626cb61fbb7b759747ad6a0046773a9ad73f7c9a67bfa",
@@ -23,7 +23,7 @@ export const BATON_PIN = {
     "scripts/figures.py": "95c308384b3a97661cfc0c02faff7d91f9c96c244de00288a645a27e0a6edb96",
     "scripts/render.py": "d878f832f2a890e48fb9c235370cfe3c2c2b020237f19ac4f34484a3be1626c9",
     "scripts/snapshot.py": "fab05d5cd7b0f58378b2c2e9f25089f6d5152160bb06d58131a7dc2665069ea2",
-    "scripts/verify.py": "fb39c80144a3b9bdace1956513a01442cb8356a9ab2547fdf8c5cadf39723071",
+    "scripts/verify.py": "c5a5a0a0fb676002be02a04ce31f8831bd854fed853bba2fc231b9c2d619ea74",
   } as Record<string, string>,
 } as const;
 
@@ -32,6 +32,17 @@ export const isBaton = (id: string) => id === BATON_PIN.id || id === "baton";
 /** the library version is exactly the built-in Studio pinned */
 export const isPinnedBaton = (p: { id: string; sha256: string; filesSha256: string } | null | undefined) =>
   !!p && p.id === BATON_PIN.id && p.sha256 === BATON_PIN.sha256 && p.filesSha256 === BATON_PIN.filesSha256;
+
+/** every built-in baton Studio has shipped, by its two library hashes: the upstream commit it was copied from. A version made
+ *  by an older built-in keeps naming its own commit in the room's version menu after an upgrade. */
+const BATON_UPSTREAM: Record<string, string> = {
+  [`${BATON_PIN.sha256}:${BATON_PIN.filesSha256}`]: BATON_PIN.upstream.commit,
+  // c382464: the first built-in (PR 159)
+  "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1:7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9": "c382464ab02a14ad3dda364143c74bff58ddbcfc",
+};
+/** the upstream commit of a built-in baton version, by its hashes (null: not one Studio shipped, or not the built-in) */
+export const batonUpstreamOf = (p: { id?: string; sha256?: string; filesSha256?: string } | null | undefined): string | null =>
+  p && p.id === BATON_PIN.id && p.sha256 && p.filesSha256 ? BATON_UPSTREAM[`${p.sha256}:${p.filesSha256}`] ?? null : null;
 
 /** Studio's adapter for baton in a review room: pinned by its sha256 with the skill, sent after Studio's frame */
 export const BATON_ADAPTER = `# baton in Crew Studio's review room (Studio's adapter)
@@ -62,6 +73,26 @@ Where the record comes from
   number, base and head from pull-request.md), for the reader's own agent. You do not run them.
 - The eyebrow names the remote subject (repository, pull request, the base..head range); there is no local working tree.
 
+Review proof (a pull request)
+- The proof matrix and each chain's proof come from the record only. CI is checks.md (where baton says "gh pr checks" or
+  statusCheckRollup); a test is the pull request's own test change in diff.txt and head/, mapped to the claim it covers;
+  source is what you read in head/ or diff.txt; an end-to-end or live check counts only when pull-request.md, reviews.md
+  or checks.md shows its result.
+- You run no test here, on the base or on the head. Never say you ran one, and never mark a claim verified from a run you
+  did not see in the record: a passing check in checks.md is ci verified; code you read and nothing ran is code-only; no
+  evidence is absent.
+- Every proof chip sets its "state" ("verified", "code-only" or "absent"), on every chain, never left out: verify.py and the
+  page both read a chip with no state as verified, so a missing state shows a claim nobody checked as proven.
+
+Boundary review (the last section, every room)
+- Check platform and library behaviour against what the materials hold (head/<path>, the diff, a vendored copy, a
+  lockfile). You cannot fetch a library's source or its docs: a fact you could not check there is unverified, and a
+  candidate that rests on it goes to the open questions, never into the findings (references/boundary-review.md, the
+  admission test).
+- The review comments under "## Boundary review" in the context are paste-ready text for the captain. You never post
+  them, even when the captain's instructions ask: nothing in this run posts to GitHub or anywhere else (no review, no
+  comment, no status). Do not write on the page that they were posted or will be.
+
 Diagrams
 - There is no diagram-design skill to invoke. Its guidance is in this skill's folder: diagram-design/SKILL.md and a subset
   of its references (a file it names that is not there is left out; skip that part). Draw each figure as inline SVG by
@@ -70,7 +101,11 @@ Diagrams
 - No external URL anywhere on the page (no Google Fonts, no CDN, no image link): it is shown in a frame with no network.
 
 Building and checking the page
-- Read references/spec.md for the packet's shape; do not read render.py or the template to rediscover it.
+- Read references/spec.md for the packet's shape, references/components.md for the section components (chain, boundary,
+  compare, matrix, steps, stats, chart) and references/boundary-review.md for the last section; do not read render.py,
+  verify.py or the template to rediscover them.
+- A chart carries only data the materials hold (a number counted from the diff, checks.md or the record), its source
+  named; never an invented or illustrative number.
 - Write the packet spec into your output folder as .baton/packet.json yourself (out_write, in parts for a big one: the
   first part, then append: true). skill_run runs only baton's own scripts below; a script you write, python3 itself or
   a shell command is refused. Then run the scripts with skill_run; paths are relative to your output folder:

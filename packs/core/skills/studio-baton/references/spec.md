@@ -62,6 +62,12 @@ fix or names code, link it to the exact GitHub line:
 
 ## Section kinds
 
+**Prefer the v2 components** — `chain`, `boundary`, `compare`, `matrix`,
+`steps`, `stats` — whose shapes and limits are in `components.md`. They render
+as HTML in `rem`. The kinds below remain for leads (`prose`), SVG
+architecture (`figure`), open questions (`points` with `"role": "questions"`),
+and database stories (`statemap`, `txn`). `vuln` is retired.
+
 Every section takes `heading` (i18n). The default kind (no `kind` field) is
 prose.
 
@@ -99,6 +105,10 @@ proves the line.
 `tone` sets the colour. **Always set `tag`** — the defaults are a migration
 packet's vocabulary (`risk` prints "cannot be undone") and are usually false
 for other finding types.
+
+Findings and risks are not `points`: they are `chain` cards and pins on the
+`boundary` map (`components.md`). `points` is kept only for
+`"role": "questions"`.
 
 ### statemap / vuln / txn
 

@@ -65,22 +65,31 @@ if it does not, draw from the code or the document and say the drawing is
 your reading of it. The one thing never to ship is no diagram at all — a
 page of prose is the thing this format replaces.
 
-**Per-item drawings.** When the ask — or the document — enumerates items
-(each commit, each fix, each workstream, each requirement, each decision),
-every item gets its own small figure, not a prose list entry (pipeline §3,
-per-item rule). For a bugfix or fix series: one `vuln` card **per fix**, each
-with its own before/after severed-chain diagram, the fix's `file:line` in
-`ref`, and the mechanism named in the fix text (`diagrams.md` § Per-fix
-before / after). Generate the set from one layout function, never free-draw
-them one by one. A status page that never shows what was actually fixed
-reads as if nothing was.
+**Components, not text.** Every section is a component — `chain`,
+`boundary`, `compare`, `matrix`, `steps`, `stats`, or an SVG `figure` —
+with at most a two-sentence lead (`references/components.md`). Text lists
+and three-box before/after cards are retired: they read as plain text, which
+is what this format replaces. `verify.py` fails a section that is mostly
+sentences.
 
-**AFTER says what happens now — never that BEFORE stopped.** Every change
-card states the old behaviour and the new one as observable facts: the new
-value, error, state or call. "No longer diluted", "不再被稀釋", "✗ blocked" or a
-struck-through copy of the BEFORE box is not an AFTER; it is the card title
-restated. Use `scripts/figures.py` `before_after()` for the figure and fill
-`before` / `after` on the card; `verify.py` rejects the lazy forms.
+**Every change is a chain.** When the ask — or the document — enumerates
+items (each commit, each fix, each claim, each scenario), each gets a `chain`
+card: the **same real component chain** drawn twice, BEFORE with the node
+where it breaks marked and AFTER with the node that changed marked, a callout
+on that node giving the mechanism (with the identifier), the observable
+outcome at the end of each lane, and the proof underneath
+(`components.md` § chain). Name real components — `SyncDevice`,
+`devices_wallets`, `nginx filter.lua` — never "backend".
+
+**AFTER says what happens now — never that BEFORE stopped.** The AFTER
+outcome is the new value, error, state or call. "No longer diluted", "不再被稀釋"
+or "✗ blocked" is the card title restated; `verify.py` rejects it.
+
+**Review proof, not code.** Every claim carries its evidence: tests, CI runs,
+end-to-end checks, logs, source reads — each marked `verified`, `code-only`
+or `absent`. A pull request packet opens with a proof matrix (claims ×
+evidence type) so a reviewer sees in one glance what is shown and what is only
+asserted (`## Pull requests: review proof` below).
 
 **Do not guess.** The reader cannot tell your inferences from your facts, so
 do not mix them. Deployment state — whether a migration ran, whether users
@@ -91,6 +100,41 @@ here — ask" is a complete answer; a guess spends trust you cannot get back.
 **The context is complete.** Three layers (pipeline §2): the record, your
 own compaction, and how to pull more. Build it before the page, which is only
 a view of it. A context that could be regenerated from `git log` has failed.
+
+**End with the boundary map.** The last section is a `boundary` map of every
+place the work crosses between systems — client ↔ server contracts first,
+then services, queues, SDKs, shared data, external parties — checked through
+six lenses: identity, truth, effect, dependency, coexist (old/new versions),
+edges (`references/boundary-review.md`). Each real finding is a numbered pin
+on the node or link where it lives and has its own `chain` card; links with
+no finding render green. When nothing is wrong, the map says what was checked
+and that it is fine — never a padded finding. For a pull request, findings are
+also written as paste-ready review comments in the context; posting them is
+outward-facing and waits for the user to ask.
+
+## Pull requests: review proof
+
+When the input is a pull request, the engineer's job is to judge **whether
+the change is proven**, not to re-read every line. The packet is built for
+that judgement, in this order:
+
+1. **Proof matrix** (`matrix`) — one row per claim the PR makes (from its
+   title, body, commits and diff), columns for the evidence types that apply
+   (source read, unit/request test, CI, end-to-end or live check). Marks:
+   ✓ verified, ✕ missing, — not applicable. A `stats` lead counts claims with
+   proof, e.g. `3/5 claims tested`.
+2. **One `chain` per claim** — BEFORE/AFTER on the real components, the
+   mechanism on the marked node, and proof chips that link to the exact test
+   (`file:line`), CI run, or log. The strongest proof is a test that fails on
+   the base and passes on the head; say when you ran that, and only then mark
+   it verified.
+3. **What the PR does not prove** — every ✕ in the matrix is a concrete
+   to-do (the test to add, the drill to run), not a vague concern.
+4. **Boundary map** — last, as on every route.
+
+Read CI with `gh pr checks <N>` / `statusCheckRollup`; map the PR's own test
+changes to the claims they cover. A claim whose only evidence is "the code
+looks right" is `code-only`, never `verified`.
 
 ## If the input is done work: what only the session knows
 
@@ -163,7 +207,8 @@ then how to pull more: the specs it cites, the code that would implement it.
    - *What this is* — one paragraph a person could repeat
    - *What talks to what* — the design doc's architecture diagram, adapted;
      drawn from the code and labelled as inferred when there is none
-   - *The change itself* — per-item cards and figures (rule above)
+   - *Proof matrix* — PR route: claims × evidence (rule above)
+   - *The change itself* — one `chain` per change or claim (rule above)
    - *The order's life* — the state machine, each transition openable to its
      one database transaction — full set, never a subset (`diagrams.md`)
    - *One payment, in order* — the sequence diagram, real loops and
@@ -173,7 +218,9 @@ then how to pull more: the specs it cites, the code that would implement it.
    - *What to watch* — risks only, each traceable; an empty list is a
      finding, an invented one is a lie
    - Document route: the shapes from the table, with in / out panels and the
-     open questions last
+     open questions
+   - *Boundary map* — always last, every route
+     (`references/boundary-review.md`); "no issue" is a complete answer
 5. **Verify** — `verify.py --register <engineer|eli5>`; fix by finding a real
    word, never by deleting the sentence. Then the real-browser check, pipeline
    §6 — non-skippable; a packet once shipped on script checks alone was

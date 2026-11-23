@@ -254,6 +254,12 @@ means nothing teaches the reader to ignore the color that does.
 
 ## Per-change before / after: what it did, what it does now
 
+> **Superseded.** Change cards are now `chain` components
+> (`components.md` § chain): the real component chain drawn twice, the broken
+> and the changed node marked, the mechanism in a callout, proof underneath.
+> The `vuln` kind and `figures.before_after()` three-box figure are retired;
+> `verify.py` rejects them. The rule below about AFTER still holds.
+
 For a fix series — a security hardening, a bug-sweep branch, any PR that
 changes behaviour — a list that *names* the changes is not enough: a reader
 asked for exactly this once, having been given the list. **Every change gets

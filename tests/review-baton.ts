@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkedTempDir } from "./lib/git-hygiene.mjs";
 import { Skills } from "../src/skills";
-import { BATON_ADAPTER, BATON_PIN, isPinnedBaton } from "../src/domain/review-baton";
+import { BATON_ADAPTER, BATON_PIN, batonUpstreamOf, isPinnedBaton } from "../src/domain/review-baton";
 
 let pass = 0, fail = 0;
 const ok = (v: any, name: string, detail = "") => { console.log(`${v ? "  ok   " : "  FAIL "} ${name}${v ? "" : " " + detail}`); v ? pass++ : fail++; };
@@ -33,6 +33,8 @@ ok(!b?.files.some((f) => /__pycache__|\.pyc$|README\.md$|AGENTS\.md$/.test(f)) &
   "the package: baton's skill files, its template and diagram-design's guidance; no cache and no contributor docs", JSON.stringify(b?.files));
 ok(!!b?.fits?.roles?.includes("reviewer"), "baton says where it fits (a reviewer's or a tutor's seat)", JSON.stringify(b?.fits));
 
+ok(["references/boundary-review.md", "references/components.md"].every((f) => b?.files.includes(f)), "baton v2's references (the boundary review, the components) are in the package", JSON.stringify(b?.files));
+
 // credit and license
 const notice = readFileSync(join(dir, "NOTICE.md"), "utf8"), third = readFileSync(join(root, "THIRD_PARTY_NOTICES.md"), "utf8");
 ok(/MIT License/.test(notice) && notice.includes(BATON_PIN.upstream.commit) && /Cathryn Lavery/.test(notice) && existsSync(join(dir, "diagram-design/LICENSE")),
@@ -45,6 +47,24 @@ ok(/never run or imitate git or gh/.test(BATON_ADAPTER) && /mat_list, mat_read, 
   "the adapter: the room's materials, never git, gh or a transcript; diagram-design from the folder; no external URL; index.html as the entry");
 ok(/scripts\/render\.py \["\.baton\/packet\.json", "-o", "index\.html"\]/.test(BATON_ADAPTER) && /scripts\/verify\.py/.test(BATON_ADAPTER) && /scripts\/snapshot\.py/.test(BATON_ADAPTER),
   "the adapter runs baton's own scripts (render, verify, snapshot) through skill_run");
+
+ok(/checks\.md \(where baton says "gh pr checks"/.test(BATON_ADAPTER) && /You run no test here/.test(BATON_ADAPTER) && /code-only/.test(BATON_ADAPTER),
+  "the adapter: review proof comes from the room's record (CI from checks.md), and no test run is claimed");
+ok(/references\/boundary-review\.md/.test(BATON_ADAPTER) && /You never post\s+them/.test(BATON_ADAPTER) && /nothing in this run posts to GitHub/.test(BATON_ADAPTER),
+  "the adapter: the boundary review's PR comments stay in the context; nothing is posted");
+ok(/references\/components\.md/.test(BATON_ADAPTER) && /cannot fetch a library's source/.test(BATON_ADAPTER),
+  "the adapter: the components reference, and a library fact the materials cannot show is unverified (no network)");
+
+ok(/Every proof chip sets its "state"/.test(BATON_ADAPTER) && /never left out/.test(BATON_ADAPTER),
+  "the adapter: every proof chip sets its state (upstream verify.py and the page read a missing state as verified)");
+// that upstream behaviour, so the rule is not idle: the vendored verify.py and template default a missing state to verified
+{ const vp = readFileSync(join(dir, "scripts/verify.py"), "utf8"), tpl = readFileSync(join(dir, "templates/packet.html"), "utf8");
+  ok(/pr\.get\("state", "verified"\)/.test(vp) && /p\.state\|\|'verified'/.test(tpl), "upstream still reads a proof chip with no state as verified (drop the adapter rule when it stops)"); }
+// each version names the built-in's upstream commit by its hashes, the shipped pins only
+ok(batonUpstreamOf(BATON_PIN) === BATON_PIN.upstream.commit
+  && batonUpstreamOf({ id: "studio-baton", sha256: "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1", filesSha256: "7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9" }) === "c382464ab02a14ad3dda364143c74bff58ddbcfc"
+  && batonUpstreamOf({ id: "studio-baton", sha256: BATON_PIN.sha256, filesSha256: "0".repeat(64) }) === null && batonUpstreamOf({ id: "baton", sha256: BATON_PIN.sha256, filesSha256: BATON_PIN.filesSha256 }) === null,
+  "the upstream commit of a built-in version, by both hashes: the current pin and c382464; a changed file or another skill has none");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

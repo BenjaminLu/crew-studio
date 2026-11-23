@@ -447,7 +447,11 @@ Quality first: a skill's run is not one model round.
   explainer's parts, never the whole room. A run left running by a Studio that stopped is marked interrupted when the room is
   next read, and its workspace removed.
 - **Versions.** Every generation is a new version (`v1`, `v2`, …: the output's files, its working notes and dotfiles left
-  out, regular files only, never changed once written), listed with its summary and where it came from in the version menu
+  out, regular files only, never changed once written), listed with its summary and where it came from in the version menu,
+  and what made it: the built-in baton by its upstream commit (`baton e74aeed`, known by its two hashes for every pin Studio
+  shipped, the same on every machine, so an older packet keeps naming its own after an upgrade), any other skill or a
+  changed built-in by its library version (`skill v2`). Only in the menu: the button keeps the version's own number (it
+  counts the room's outputs, not the skill's) and names what made the shown one in its title
   (`[data-explain-versions]`, the shown version's name on the output's one-line bar, no column of its own: the output gets
   the room's width); an older one is shown again with a click, or the arrow keys and Enter (Esc, a click elsewhere or Tab out
   closes the menu; the focus goes back to its button or on). A question never makes a version. Each version says what it was

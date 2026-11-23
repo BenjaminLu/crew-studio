@@ -31,9 +31,9 @@ const publicAttribution = new Map<string,string>([
  ["skins/captain/LICENSE.txt:3","0b744944c7f97122742417ed9293aa005079a2392d189913eab704590c476760"],
  // the vendored baton, the review room's built-in default skill (packs/core/skills/studio-baton/NOTICE.md, its pin in src/domain/review-baton.ts)
  ["THIRD_PARTY_NOTICES.md:12","05f7cb99f32d4f77f76be79d233ceb70cf0b92fc526b8a2da58718d982891383"],
- ["packs/core/skills/studio-baton/NOTICE.md:5","862c401d3a519ef5fe127c832f18f1330dedbbc56896acd2ec757cc339d0f107"],
- ["packs/core/skills/studio-baton/NOTICE.md:23","765b91112284b6626e5743d21b152bef37ab40e749aad16cac3cdbfd33d71639"],
- ["src/domain/review-baton.ts:18","9e2950801105c865fd43a3a57f653a5a59617cc195a9eb8b0e93570cb2b15a98"],
+ ["packs/core/skills/studio-baton/NOTICE.md:5","4b14213f5c2d6129c464cfef0dc58c908de53b1aaf95cdece22abb5049bf4cf9"],
+ ["packs/core/skills/studio-baton/NOTICE.md:24","765b91112284b6626e5743d21b152bef37ab40e749aad16cac3cdbfd33d71639"],
+ ["src/domain/review-baton.ts:18","2f2060b1a678d7951da0d0c0cd55228aa687076172bed8f76844a2444cd04cc2"],
 ]);
 const publicLine=(f:string,n:number,line:string)=>publicAttribution.get(`${f}:${n}`)===createHash("sha256").update(line).digest("hex");
 function violations(f:string,n:number,line:string,checks:Rule[]=rules){return checks.filter(([,re,kind])=>re.test(line)&&!(kind==="local-user"&&publicLine(f,n,line))).map(([what])=>`${f}:${n} ${what}`);}
