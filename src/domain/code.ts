@@ -182,7 +182,9 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   /** test-only seams; production never sets them. afterBuildExit: called once the app build has exited and before its output is read (it models a writer still holding the build's folder) */
   seams?: { afterBuildExit?: (rawDir: string, side: "before" | "after") => void | Promise<void>;
     /** reviewTree: called as a review attempt prepares its checkout ("prepare") and as its end drops it ("drop"); a throw models a file-system error there */
-    reviewTree?: (x: X, at: "prepare" | "drop") => void };
+    reviewTree?: (x: X, at: "prepare" | "drop") => void;
+    /** roundEnd: called as a code round's end starts, before the lock is released; a throw models the end failing */
+    roundEnd?: (x: X) => void };
   /** the Library (Studio's artifact store): where an ended or saved review room's pages are kept read-only */
   artifacts?: import("../artifacts").ArtifactStore;
   /** the cloud hand-off's provider (tests: a loopback stub) and its GitHub polling interval */
@@ -1310,7 +1312,7 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
   };
   const endRound = (x: X, how: string) => {
     if (!x.ctx.wt) return; const k = wkey(x);
-    try { if (how !== "done" && how !== "timeout") { const kept = W.endRound(k.project, k.task, `${x.node.id} round ${x.visit} ${how}`); if (kept) x.log(`round ${x.visit} ${how}: its work kept on ${kept}`); } }
+    try { o.seams?.roundEnd?.(x); if (how !== "done" && how !== "timeout") { const kept = W.endRound(k.project, k.task, `${x.node.id} round ${x.visit} ${how}`); if (kept) x.log(`round ${x.visit} ${how}: its work kept on ${kept}`); } }
     finally { held.get(holder(x))?.(); held.delete(holder(x)); }
   };
   const roundHooks = (write: boolean, skipInstall = false) => ({ begin: beginRound(write, skipInstall), end: endRound });
@@ -1680,7 +1682,10 @@ export function installCode(engine: Engine, o: { dataDir: string; projects: Proj
     // A kept lock refuses the node's retry (same visit, same holder) and every later round of the Task
     begin: async (x) => { await reviewHooks.begin?.(x);
       try { await prepareReview(x); }
-      catch (e) { try { dropReviewTree(x); } catch (d: any) { x.log(`review checkout drop: ${d?.message ?? d}`); } finally { await reviewHooks.end?.(x, "failed"); } throw e; } },
+      catch (e) { // the preparation's error is the one reported: a drop or an end that also throws is only logged
+        try { dropReviewTree(x); } catch (d: any) { x.log(`review checkout drop: ${d?.message ?? d}`); }
+        try { await reviewHooks.end?.(x, "failed"); } catch (d: any) { x.log(`review round end: ${d?.message ?? d}`); }
+        throw e; } },
     end: async (x, how) => { try { o.seams?.reviewTree?.(x, "drop"); dropReviewTree(x); } finally { await reviewHooks.end?.(x, how); } },
     sandbox: (x) => { const wt = x.ctx.worktree; const t = x.rn.data.tree; return wt && existsSync(wt) ? { writes: [], reads: [t ?? wt], cwd: t ?? wt } : null; }, // reads the checkout, writes nothing of it
     tools: (x) => { const tree = x.rn.data.tree ?? shellOk(x); const cfg = cfgOf(x); const mode = reviewMode(x); let runs = 0, attempts = 0, cmds = 0;

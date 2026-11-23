@@ -20,12 +20,17 @@ const locks = (data: string) => { const out: string[] = []; const walk = (d: str
   for (const e of es) { const p = join(d, e.name); if (e.isDirectory() && e.name !== ".tmp" && !/^R-\d+$/.test(e.name)) walk(p); else if (e.isFile() && e.name.endsWith(".lock")) out.push(p); } };
   walk(join(data, "work", "wt")); return out; };
 
-for (const step of ["prepare", "drop"] as const) {
+// "prepare+end": the preparation throws, and so does the round's end that gives the lock back: the preparation's error is
+// the one the retry reports, and the lock is still released (the end releases it in its own finally)
+for (const step of ["prepare", "drop", "prepare+end"] as const) {
+  const at0 = step === "drop" ? "drop" : "prepare";
   const data = checkedTempDir("crew-revrelease-"); prepareSandbox(data); registerSandbox(data);
-  let fired = 0;
+  let fired = 0, endFired = 0;
   const H = await harness([WF], { data, checkRoots: [] });
   // the first review attempt's preparation (or the drop at its end) throws once, as a transient file-system error would
-  installCode(H.engine, { dataDir: data, projects: new Projects(data), seams: { reviewTree: (_x: any, at: "prepare" | "drop") => { if (at === step && !fired) { fired++; throw new Error(`injected ${step} failure`); } } } });
+  installCode(H.engine, { dataDir: data, projects: new Projects(data), seams: {
+    reviewTree: (_x: any, at: "prepare" | "drop") => { if (at === at0 && !fired) { fired++; throw new Error(`injected ${at0} failure`); } },
+    roundEnd: (x: any) => { if (step === "prepare+end" && x.node.id === "review" && !endFired) { endFired++; throw new Error("injected end failure"); } } } });
   const E = H.engine;
   const r = E.start({ workflow: "code-firstmate", params: {}, text: intent });
   const settled = () => ["succeeded", "failed", "cancelled"].includes(E.get(r.id)!.status);
@@ -34,7 +39,9 @@ for (const step of ["prepare", "drop"] as const) {
   await until(() => settled() || E.cards.list({ run: r.id, open: true }).some((c: any) => c.kind === "merge"), 180000);
   const run = E.get(r.id)!, tl = E.timeline(r.id);
   const taken = tl.filter((e: any) => /is taken by/.test(JSON.stringify(e)));
-  ok(fired === 1, `${step}: the injected failure fired once`, String(fired));
+  ok(fired === 1 && endFired === (step === "prepare+end" ? 1 : 0), `${step}: the injected failure fired once`, JSON.stringify([fired, endFired]));
+  if (at0 === "prepare") { const retry = tl.find((e: any) => e.type === "retry" && e.node === "review");
+    ok(/injected prepare failure/.test(retry?.error ?? "") && !/injected end failure/.test(retry?.error ?? ""), `${step}: the review's retry reports the preparation's error`, String(retry?.error ?? JSON.stringify(retry)).slice(0, 400)); }
   ok(!taken.length, `${step}: no round is refused because the review attempt kept the worktree`, JSON.stringify(taken.map((e: any) => e.error ?? e.summary ?? e)).slice(0, 600));
   ok(E.cards.list({ run: r.id, open: true }).some((c: any) => c.kind === "merge") && run.status !== "failed",
     `${step}: the Task still reaches its merge card`, JSON.stringify([run.status, run.nodes.review?.state, run.nodes.review?.cause]).slice(0, 400));

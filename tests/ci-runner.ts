@@ -1,7 +1,8 @@
 import "./lib/isolated-env.mjs";
-import { artifactName, commands, logTail, run, testEnv } from '../scripts/ci-tests.mjs';
+import { artifactName, commands, failureBlock, logTail, run, testEnv } from '../scripts/ci-tests.mjs';
 import { strict as assert } from 'node:assert';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { checkedTempDir } from './lib/git-hygiene.mjs';
 import { join } from 'node:path';
 const temp = checkedTempDir('crew-ci-runner-');
@@ -23,6 +24,25 @@ try {
     const tail = logTail(join(temp,'long.log'), 3).split('\n');
     assert.deepEqual(tail.slice(1), ['line 98', 'line 99', 'line 100']); assert.match(tail[0], /^… 97 earlier line\(s\) in /);
     assert.equal(logTail(join(temp,'failed.log')), 'fixture-output'); assert.match(logTail(join(temp,'missing.log')), /^\(no log at /); });
+  // GitHub runs `::` workflow commands it reads on a job's stdout: the tail sits between ::stop-commands::<token> and ::<token>::
+  const inert = (out: string, lines: string[]) => {
+    const all = out.split('\n'), g = all.findIndex(l => l.startsWith('::group::last lines of ')), stop = all.findIndex(l => /^::stop-commands::[A-Za-z0-9]{16,}$/.test(l));
+    const token = stop >= 0 ? all[stop].slice('::stop-commands::'.length) : '', resume = all.indexOf(`::${token}::`), endg = all.lastIndexOf('::endgroup::');
+    assert(g >= 0 && g < stop && stop < resume && resume < endg, `group, stop, resume, endgroup in that order: ${JSON.stringify([g, stop, resume, endg])}`);
+    for (const l of lines) { const at = all.indexOf(l); assert(at > stop && at < resume, `${l} printed between the stop markers`); }
+    assert.equal(all.filter(l => l === '::endgroup::').length, lines.includes('::endgroup::') ? 2 : 1);
+  };
+  writeFileSync(join(temp,'commands.log'), 'ok line\n::endgroup::\n::error::x\n::add-mask::y\n');
+  check('a failed command\'s tail is printed with workflow commands stopped', () => {
+    const a = failureBlock('bun t', join(temp,'commands.log')), b = failureBlock('bun t', join(temp,'commands.log'));
+    inert(a, ['::endgroup::', '::error::x', '::add-mask::y']); assert.notEqual(a.split('\n')[1], b.split('\n')[1], 'each block has its own token'); });
+  check('the runner prints that block under a failed command\'s FAIL line', () => {
+    const repo = join(temp, 'repo'); mkdirSync(repo);
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ scripts: { 'test:fixture': "printf 'before\\n::endgroup::\\n::error::x\\n'; exit 3" } }));
+    const r = spawnSync(process.execPath, [new URL('../scripts/ci-tests.mjs', import.meta.url).pathname, '--mode', 'test:fixture', '--output', join(repo, 'out')], { cwd: repo, encoding: 'utf8', env: testEnv(process.env), timeout: 30000 });
+    assert.equal(r.status, 1, r.stderr); assert.match(r.stdout, /^FAIL \(\d+s\) printf/m);
+    assert(r.stdout.indexOf('FAIL (') < r.stdout.indexOf('::group::last lines of printf'), 'the block follows the FAIL line');
+    inert(r.stdout, ['before', '::endgroup::', '::error::x']); });
   const timed = await run('sleep 20', join(temp,'timeout.log'), 50, env);
   check('hung command times out with a failing result', () => { assert(timed.timedOut); assert.notEqual(timed.code,0); assert(timed.durationMs < 5000); });
   const detachedLog = join(temp, 'detached.log');

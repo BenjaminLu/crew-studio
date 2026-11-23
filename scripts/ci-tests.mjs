@@ -1,5 +1,6 @@
 // Run the package's real commands independently: one red must not hide later failures.
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,11 @@ export function logTail(logPath, lines = 80) {
   let text = ''; try { text = readFileSync(logPath, 'utf8'); } catch { return `(no log at ${logPath})`; }
   const all = text.replace(/\n$/, '').split('\n');
   return (all.length > lines ? [`… ${all.length - lines} earlier line(s) in ${logPath}`] : []).concat(all.slice(-lines)).join('\n');
+}
+/** What a failed command prints: its log tail in a collapsed group, with GitHub's workflow commands stopped around the tail,
+ *  so a log line like "::endgroup::", "::error::" or "::add-mask::" is shown as text and never run by the runner. */
+export function failureBlock(command, logPath, token = randomUUID().replace(/-/g, '')) {
+  return `::group::last lines of ${command}\n::stop-commands::${token}\n${logTail(logPath)}\n::${token}::\n::endgroup::`;
 }
 export async function run(command, logPath, timeoutMs, env) {
   const log = createWriteStream(logPath);
@@ -72,7 +78,7 @@ async function main() {
     const result = await run(command, `${out}/${String(i + 1).padStart(3, '0')}.log`, timeoutMs, testEnv(process.env));
     results.push(result); save();
     console.log(`${result.code === 0 && !result.timedOut ? 'PASS' : 'FAIL'} (${Math.round(result.durationMs / 1000)}s) ${command}`);
-    if (result.code !== 0 || result.timedOut) console.log(`::group::last lines of ${command}\n${logTail(result.log)}\n::endgroup::`);
+    if (result.code !== 0 || result.timedOut) console.log(failureBlock(command, result.log));
   }
   const failures = results.filter(x => x.code !== 0 || x.timedOut);
   const summary = `${results.length - failures.length}/${results.length} commands passed (${mode}, shard ${shard}).\n` + failures.map(x => `- ${x.timedOut ? 'TIMEOUT' : 'FAIL'}: ${x.command}`).join('\n') + '\n';
