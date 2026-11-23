@@ -48,7 +48,7 @@ const fail = (text, code = 1) => { out({ type: "result", subtype: "error", is_er
 // CURSOR_CONVERSATION_ID and CURSOR_REQUEST_ID are its own chat's: Studio's children (--version included) never inherit them
 { const tied = Object.keys(process.env).filter((k) => /^(TMUX(_|$)|CURSOR_AGENT_|CURSOR_(CONVERSATION|REQUEST)_ID$)/.test(k)); if (tied.length) fail(`cursor-agent fixture: run inside a terminal's persistent session or another agent's chat (${tied.join(", ")})`, 2); }
 // --disable-auto-update is a hidden option of the real CLI's root program (index.js, since at least 2026.10.01): Studio passes
-// it where cursor-agent runs in the captain's own HOME (src/providers/no-self-update.ts)
+// it to the Cursor Agent terminal (src/providers/no-self-update.ts); Doctor's plain --version does not need it
 if (argv.filter((a) => a !== "--disable-auto-update").join(" ") === "--version") { console.log("2026.10.01-fixture"); process.exit(0); }
 // --resume <chat> / --continue (544.index.js J → index.js K, before the key is even looked at): a chat id shaped as a UUID (and
 // --continue's latest chat) is first checked against cursor-agent's persistent sessions, which mkdirs a claim lock under the

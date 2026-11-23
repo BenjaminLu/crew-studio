@@ -91,6 +91,11 @@ const openVersions = async (pg) => { if (!(await pg.$("[data-explain-vermenu]"))
 const pickVersion = async (pg, n) => { await openVersions(pg); await pg.click(`[data-explain-version="${n}"]`); };
 /** Generate again: the stage's own button while nothing is made yet, else the one in the version menu */
 const again = async (pg) => { if (!(await pg.$("[data-explain-empty] [data-explain-again]"))) await openVersions(pg); await pg.click("[data-explain-again]"); };
+/** the name a screen reader reads for the first match of sel: Chrome's own accessibility tree, through the DevTools protocol */
+const axName = async (pg, sel) => { const cdp = await pg.context().newCDPSession(pg);
+  try { const { root } = await cdp.send("DOM.getDocument", { depth: 0 }), { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: sel });
+    if (!nodeId) return null; const { nodes } = await cdp.send("Accessibility.getPartialAXTree", { nodeId, fetchRelatives: false });
+    return nodes[0]?.name?.value ?? null; } finally { await cdp.detach(); } };
 const versionsLoaded = (pg, n) => pg.waitForFunction((k) => document.querySelector("[data-explain-versions] .rx-vercount")?.textContent === String(k), n, { timeout: 15000 });
 
 try {
@@ -461,6 +466,9 @@ try {
   // ---------- a page that tries to navigate itself out of Studio ----------
   onSelect = (r) => { const b = JSON.parse(r.request().postData() || "{}"); X = { ...X, selected: b.skill ? { id: b.skill, v: 1 } : null }; answer(r, X); };
   await pickVersion(p, 4); await p.waitForSelector('[data-explain-frame="4"]'); await p.waitForTimeout(2000);
+  // the version button reads as one phrase, never its text run together ("v4" beside the count badge "4" read "v44")
+  { const n = await axName(p, "[data-explain-versions]"), badge = await p.$eval("[data-explain-versions] .rx-vercount", (e) => e.getAttribute("aria-label"));
+    ok(n === "walkthrough, version 4 of 4" && badge === null, "the version button's accessible name is \"walkthrough, version 4 of 4\" (no aria-label left on the badge span)", JSON.stringify({ n, badge })); }
   ok(!probeHits.length, "the output cannot carry anything out by navigating its frame: Studio's page refuses frames outside Studio", probeHits.join(","));
 
   // ---------- a run that ends while the captain is elsewhere: Studio says so ----------
@@ -468,6 +476,8 @@ try {
   // a new version being made while one is shown: the shown one stays, with one strip above it (who runs it and pays, Stop)
   { const g = await p.evaluate(() => ({ frame: !!document.querySelector("[data-explain-frame]") && !document.querySelector("[data-x-layer]").hidden, card: !!document.querySelector("[data-explain-progress]"),
       strip: document.querySelector("[data-explain-genstrip]")?.textContent || "", stop: !!document.querySelector("[data-explain-genstrip] [data-explain-stop]") }));
+    const n = await axName(p, "[data-explain-versions]");
+    ok(n === "walkthrough, generating, 4 versions", "while a version is made, the version button's accessible name is \"walkthrough, generating, 4 versions\"", JSON.stringify(n));
     ok(g.frame && !g.card && /claude · claude-opus-5/.test(g.strip) && /billed to the claude account/.test(g.strip) && /aaaaaaa/.test(g.strip) && g.stop, "a generation over a shown version keeps the version on the stage, the progress one strip above it (model, who pays, head, Stop)", JSON.stringify(g)); }
   await p.evaluate(() => { location.hash = "#/board"; }); await p.waitForFunction(() => S.route?.name === "board");
   X = { ...X, running: null, runs: [...X.runs.slice(0, -1), run(9, "generate", "done", { version: 4 })] };

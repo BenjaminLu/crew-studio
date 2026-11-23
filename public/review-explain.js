@@ -432,13 +432,17 @@ function focusIn(part) {
 /** the output's own line over the stage: the switch, the version menu (every version, a run in progress, Generate again) and
  *  what the shown version was made from; one line, so the output has the room's whole width */
 function bar(r, st) {
-  const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate";
+  const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate", count = st.versions.length;
+  // the button's whole name, read as one phrase: its text alone ("v2" next to the count badge "2") reads "v22"
+  const name = gen ? T(`${sk(run.skill)}, generating, ${count} version${count === 1 ? "" : "s"}`, `${sk(run.skill)}，產生中，共 ${count} 版`)
+    : cur ? T(`${skillName(st, cur.skill.id)}, version ${cur.n} of ${count}`, `${skillName(st, cur.skill.id)}，第 ${cur.n} 版，共 ${count} 版`)
+    : T(`Versions, ${count}`, `版本，共 ${count} 版`);
   return h("div", { class: "rx-line", "data-x-line": "" },
-    st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
+    count || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id), "aria-label": name,
         title: T("Every version of this room's output", "這間審查室產出的每一版") + (cur && !gen && skillTag(cur) ? ` (${T("shown", "顯示中")}: ${skillTag(cur)})` : ""), onclick: () => { X.verMenu = X.verMenu === id ? null : id; forget("vermenu"); refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
       // a long skill name is cut, never the version, the count or "generating"
       h("span", { class: "rx-vername" }, gen ? sk(run.skill) : cur ? skillName(st, cur.skill.id) : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
-      h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
+      h("span", { class: "rx-vercount" }, `${count}`), " ▾") : null,
     cur && !gen ? versionHead(r, st, cur) : h("span", { class: "rx-linefill" }),
     cur && !gen && runOf(st, cur) ? h("span", { class: "rx-vfacts faint", "data-explain-vfacts": cur.n, title: whoPays(runOf(st, cur)) },
       [runOf(st, cur).head ? `head ${short(runOf(st, cur).head)}` : null, money(runOf(st, cur).cost), runOf(st, cur).model || null].filter(Boolean).join(" · ")) : null,
