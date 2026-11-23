@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkedTempDir } from "./lib/git-hygiene.mjs";
 import { Skills } from "../src/skills";
-import { BATON_ADAPTER, BATON_PIN, isPinnedBaton } from "../src/domain/review-baton";
+import { BATON_ADAPTER, BATON_PIN, batonUpstreamOf, isPinnedBaton } from "../src/domain/review-baton";
 
 let pass = 0, fail = 0;
 const ok = (v: any, name: string, detail = "") => { console.log(`${v ? "  ok   " : "  FAIL "} ${name}${v ? "" : " " + detail}`); v ? pass++ : fail++; };
@@ -54,6 +54,17 @@ ok(/references\/boundary-review\.md/.test(BATON_ADAPTER) && /You never post\s+th
   "the adapter: the boundary review's PR comments stay in the context; nothing is posted");
 ok(/references\/components\.md/.test(BATON_ADAPTER) && /cannot fetch a library's source/.test(BATON_ADAPTER),
   "the adapter: the components reference, and a library fact the materials cannot show is unverified (no network)");
+
+ok(/Every proof chip sets its "state"/.test(BATON_ADAPTER) && /never left out/.test(BATON_ADAPTER),
+  "the adapter: every proof chip sets its state (upstream verify.py and the page read a missing state as verified)");
+// that upstream behaviour, so the rule is not idle: the vendored verify.py and template default a missing state to verified
+{ const vp = readFileSync(join(dir, "scripts/verify.py"), "utf8"), tpl = readFileSync(join(dir, "templates/packet.html"), "utf8");
+  ok(/pr\.get\("state", "verified"\)/.test(vp) && /p\.state\|\|'verified'/.test(tpl), "upstream still reads a proof chip with no state as verified (drop the adapter rule when it stops)"); }
+// each version names the built-in's upstream commit by its hashes, the shipped pins only
+ok(batonUpstreamOf(BATON_PIN) === BATON_PIN.upstream.commit
+  && batonUpstreamOf({ id: "studio-baton", sha256: "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1", filesSha256: "7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9" }) === "c382464ab02a14ad3dda364143c74bff58ddbcfc"
+  && batonUpstreamOf({ id: "studio-baton", sha256: BATON_PIN.sha256, filesSha256: "0".repeat(64) }) === null && batonUpstreamOf({ id: "baton", sha256: BATON_PIN.sha256, filesSha256: BATON_PIN.filesSha256 }) === null,
+  "the upstream commit of a built-in version, by both hashes: the current pin and c382464; a changed file or another skill has none");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

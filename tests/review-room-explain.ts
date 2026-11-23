@@ -336,7 +336,7 @@ delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
 }
 
 // ---------- baton, the default skill: opening the room starts its generation by itself, once per head ----------
-{ const { BATON_ADAPTER } = await import("../src/domain/review-baton");
+{ const { BATON_ADAPTER, BATON_PIN } = await import("../src/domain/review-baton");
   script.length = 0; X.select(id, lib.id);
   const n0 = X.view(id).runs.length;
   let w: any = await X.auto(id, "captain");
@@ -362,6 +362,7 @@ delete process.env.CREW_REVIEW_EXPLAIN_LIMIT_MIN; release?.();
   w = await X.auto(id, "captain", true); ok(w.running === n0 + 2, "Try again starts it once more, still without a paid confirmation", JSON.stringify(w.running));
   const f2 = await waitRun(n0 + 2), vb = X.view(id).versions.at(-1);
   ok(f2.status === "done" && f2.opened === true && vb?.skill.id === "studio-baton" && vb.entry === "index.html" && !vb.files.some((f: any) => f.path.startsWith(".baton")), "it made a version (its .baton/ workspace not kept in it)", JSON.stringify({ f2: f2.status, vb }));
+  ok(vb?.skill.v === 1 && vb.skill.upstream === BATON_PIN.upstream.commit.slice(0, 7), "the version names the skill version and the built-in's upstream commit it was made with", JSON.stringify(vb?.skill));
   w = await X.auto(id, "captain"); ok(w.runs.length === n0 + 2 && w.auto.why === "done", "reopening the room (a reload, a revisit) starts nothing more for this head");
   w = await X.auto(id, "captain", true); ok(w.runs.length === n0 + 2, "Try again after one that finished does nothing");
   const st = E.trusted(r.id).entries.filter((x: any) => x.record === "review-room-explain-start" && x.data?.explain === n0 + 2).at(-1)?.data as any;

@@ -33,6 +33,17 @@ export const isBaton = (id: string) => id === BATON_PIN.id || id === "baton";
 export const isPinnedBaton = (p: { id: string; sha256: string; filesSha256: string } | null | undefined) =>
   !!p && p.id === BATON_PIN.id && p.sha256 === BATON_PIN.sha256 && p.filesSha256 === BATON_PIN.filesSha256;
 
+/** every built-in baton Studio has shipped, by its two library hashes: the upstream commit it was copied from. A version made
+ *  by an older built-in keeps naming its own commit in the room's version menu after an upgrade. */
+const BATON_UPSTREAM: Record<string, string> = {
+  [`${BATON_PIN.sha256}:${BATON_PIN.filesSha256}`]: BATON_PIN.upstream.commit,
+  // c382464: the first built-in (PR 159)
+  "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1:7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9": "c382464ab02a14ad3dda364143c74bff58ddbcfc",
+};
+/** the upstream commit of a built-in baton version, by its hashes (null: not one Studio shipped, or not the built-in) */
+export const batonUpstreamOf = (p: { id?: string; sha256?: string; filesSha256?: string } | null | undefined): string | null =>
+  p && p.id === BATON_PIN.id && p.sha256 && p.filesSha256 ? BATON_UPSTREAM[`${p.sha256}:${p.filesSha256}`] ?? null : null;
+
 /** Studio's adapter for baton in a review room: pinned by its sha256 with the skill, sent after Studio's frame */
 export const BATON_ADAPTER = `# baton in Crew Studio's review room (Studio's adapter)
 
@@ -70,6 +81,8 @@ Review proof (a pull request)
 - You run no test here, on the base or on the head. Never say you ran one, and never mark a claim verified from a run you
   did not see in the record: a passing check in checks.md is ci verified; code you read and nothing ran is code-only; no
   evidence is absent.
+- Every proof chip sets its "state" ("verified", "code-only" or "absent"), on every chain, never left out: verify.py and the
+  page both read a chip with no state as verified, so a missing state shows a claim nobody checked as proven.
 
 Boundary review (the last section, every room)
 - Check platform and library behaviour against what the materials hold (head/<path>, the diff, a vendored copy, a

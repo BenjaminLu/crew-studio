@@ -41,7 +41,7 @@ import { skillTools, type SkillRunRecord } from "../skillpkg/run";
 import { sweepHolders } from "../runtime/checks";
 import { hostPython, resolveNode, type Runtime } from "../skillpkg/runtimes";
 import { signal } from "../retro-signals";
-import { BATON_ADAPTER, BATON_PIN, isBaton, isPinnedBaton } from "./review-baton";
+import { BATON_ADAPTER, BATON_PIN, batonUpstreamOf, isBaton, isPinnedBaton } from "./review-baton";
 
 const SKILL_ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
@@ -493,7 +493,9 @@ export function installExplainer(d: ExplainerDeps) {
     // the captain's own skills (imported from a folder, a skills home or git) first, then the ones Studio ships in its library
     const own = (s: any) => !!s.sourceKind && s.sourceKind !== "builtin";
     return { selected: selectedOf(st), tutor: !!st.tutor, auto: autoOf(k), skills: library().map((s) => ({ id: s.id, name: nameOf(s), description: clip(s.description, 300), v: s.current, source: s.sourceKind ?? null, own: own(s) })).sort((a, b) => Number(!a.own) - Number(!b.own)),
-      versions: st.versions, runs: st.runs.map((r) => ({ ...r, progress: r.progress.slice(-30) })), running: live ? live.run : null, consent: st.consent ?? null,
+      // each version names the skill version it was made with; a built-in baton's also its upstream commit (from the run's pin)
+      versions: st.versions.map((v) => { const pin = st.runs.find((r) => r.n === v.run)?.skill as any, up = batonUpstreamOf(pin);
+        return up ? { ...v, skill: { ...v.skill, upstream: up.slice(0, 7) } } : v; }), runs: st.runs.map((r) => ({ ...r, progress: r.progress.slice(-30) })), running: live ? live.run : null, consent: st.consent ?? null,
       // the live log of the round that runs now (its tool calls and what it said), as text
       log: job ? (job.log ?? []).slice(-40).map((l: any) => ({ ts: l.ts, kind: l.kind, text: clip(l.text, 300) })) : [], settings: settings() };
   };
