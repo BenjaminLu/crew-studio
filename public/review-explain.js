@@ -40,9 +40,9 @@ const sk = (s) => s?.id === BUILTIN ? T("baton (built in)", "baton（內建）")
 const shownSkill = (id) => { const st = state(id), v = shownVersion(id); return v ? { id: v.skill.id, name: sk(v.skill) } : st?.selected ? { id: st.selected.id, name: skillName(st, st.selected.id) } : null; };
 /** the run that made a version (its model, cost and head) */
 const runOf = (st, v) => st?.runs?.find((r) => r.n === v?.run) || null;
-/** the skill version a version was made with (a version's own number counts the room's outputs, not the skill's): "skill v2",
- *  and for the built-in baton its upstream commit, "skill v2 · e74aeed" */
-const skillTag = (v) => v?.skill?.v ? `${T("skill", "skill")} v${v.skill.v}${v.skill.upstream ? ` · ${v.skill.upstream}` : ""}` : "";
+/** which skill version made a version (its own number counts the room's outputs): the built-in baton by its upstream commit,
+ *  "baton e74aeed" (the library's counter differs by machine); any other skill, or a changed built-in, "skill vN" */
+const skillTag = (v) => v?.skill?.upstream ? `baton ${v.skill.upstream}` : v?.skill?.v ? `${T("skill", "skill")} v${v.skill.v}` : "";
 const short = (h) => String(h || "").slice(0, 7);
 /** who runs it and who pays, in a line: the run's provider and model, billed to that provider's account on this Mac */
 const whoPays = (run) => T(`On ${run.provider} · ${run.model || "default model"} · billed to the ${run.provider} account Studio runs it with on this Mac`,
@@ -435,10 +435,9 @@ function bar(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), gen = run && run.kind === "generate";
   return h("div", { class: "rx-line", "data-x-line": "" },
     st.versions.length || gen ? h("button", { type: "button", class: "rx-verbtn", "data-explain-versions": "", "aria-controls": "rx-vermenu", "aria-expanded": String(X.verMenu === id),
-        title: T("Every version of this room's output", "這間審查室產出的每一版"), onclick: () => { X.verMenu = X.verMenu === id ? null : id; forget("vermenu"); refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
+        title: T("Every version of this room's output", "這間審查室產出的每一版") + (cur && !gen && skillTag(cur) ? ` (${T("shown", "顯示中")}: ${skillTag(cur)})` : ""), onclick: () => { X.verMenu = X.verMenu === id ? null : id; forget("vermenu"); refresh(id); if (X.verMenu) focusLater("[data-explain-vermenu] [aria-current]"); } },
       // a long skill name is cut, never the version, the count or "generating"
       h("span", { class: "rx-vername" }, gen ? sk(run.skill) : cur ? skillName(st, cur.skill.id) : T("Versions", "版本")), gen ? " · " : " ", gen ? h("span", { class: "rx-vergen" }, T("generating…", "產生中…")) : cur ? `v${cur.n}` : null,
-      cur && !gen && skillTag(cur) ? h("span", { class: "rx-verskill", "data-explain-verskill": cur.n }, skillTag(cur)) : null,
       h("span", { class: "rx-vercount", "aria-label": T(`${st.versions.length} versions`, `${st.versions.length} 版`) }, `${st.versions.length}`), " ▾") : null,
     cur && !gen ? versionHead(r, st, cur) : h("span", { class: "rx-linefill" }),
     cur && !gen && runOf(st, cur) ? h("span", { class: "rx-vfacts faint", "data-explain-vfacts": cur.n, title: whoPays(runOf(st, cur)) },

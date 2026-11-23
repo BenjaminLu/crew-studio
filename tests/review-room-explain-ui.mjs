@@ -183,7 +183,7 @@ try {
       Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { getVoices: () => [], speak() {}, cancel() {} } }); window.SpeechRecognition = class { static async available() { return "unavailable"; } }; });
     await c9.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     const html = versions.filter((v) => v.kind === "html" && v.n !== 4);
-    let W = { skills: [], log: [], settings: { limitMin: 120 }, busy: false, selected: { id: "walkthrough", v: 1 }, versions: html, running: null, consent: null, runs: [run(1, "generate", "done", { version: 1 })] }; const sel = [];
+    let W = { skills: [], log: [], settings: { limitMin: 120 }, busy: false, selected: { id: "walkthrough", v: 1 }, versions: html.map((v) => v.n === 1 ? { ...v, skill: { ...v.skill, upstream: "e74aeed" } } : v), running: null, consent: null, runs: [run(1, "generate", "done", { version: 1 })] }; const sel = [];
     await c9.route(new RegExp(`/api/review-room/${ID}(\\?open=1)?$`), (r) => r.fulfill({ json: ROOM }));
     await c9.route(new RegExp(`/api/review-room/${ID}/arrive$`), (r) => r.fulfill({ json: {} }));
     await c9.route(new RegExp(`/api/review-room/${ID}/explain$`), (r) => r.fulfill({ json: W }));
@@ -207,8 +207,11 @@ try {
     const mb = await w.evaluate(() => { const m = document.querySelector("[data-explain-vermenu]").getBoundingClientRect(), at = document.elementFromPoint(m.left + 20, m.top + 40); return { over: !!at?.closest("[data-explain-vermenu]"), inView: m.right <= innerWidth && m.bottom <= innerHeight, m: [m.left, m.top, m.right, m.bottom], iw: innerWidth, ih: innerHeight }; });
     ok(mb.over && mb.inView, "the menu draws over the output's frame, inside the window", JSON.stringify(mb));
     // a version's number counts the room's outputs; each one also names the skill version it was made with
-    const sv = await w.evaluate(() => ({ btn: document.querySelector("[data-explain-verskill]")?.textContent ?? null, facts: [...document.querySelectorAll("[data-explain-verfacts]")].map((e) => e.textContent) }));
-    ok(/^skill v\d+$/.test(sv.btn ?? "") && sv.facts.length >= 2 && sv.facts.every((f) => /· skill v\d+/.test(f)), "the button and every item name the skill version a version was made with (skill vN), apart from the version's own number", JSON.stringify(sv));
+    // (the built-in baton by its upstream commit, the same on every machine; another skill by its library version), only in the
+    // menu: the button keeps one vN, its title names the shown one's
+    const sv = await w.evaluate(() => { const b = document.querySelector("[data-explain-versions]"); return { btn: b.textContent, title: b.title, facts: Object.fromEntries([...document.querySelectorAll("[data-explain-verfacts]")].map((e) => [e.dataset.explainVerfacts, e.textContent])) }; });
+    ok(/· baton e74aeed/.test(sv.facts[1] ?? "") && !/skill v/.test(sv.facts[1] ?? "") && /· skill v\d+/.test(sv.facts[2] ?? "") && !/skill v|e74aeed/.test(sv.btn) && (sv.btn.match(/\bv\d+/g) ?? []).length === 1 && /\(shown: skill v\d+\)/.test(sv.title),
+      "each menu item names what made it: the built-in baton by its upstream commit (baton e74aeed), another skill by its version (skill vN); the button shows only the output's own vN, the skill in its title", JSON.stringify(sv));
     await w.keyboard.press("ArrowDown"); ok(await w.evaluate(() => document.activeElement?.dataset.explainVersion === "1"), "↓ moves to the next version");
     await w.keyboard.press("Enter"); await w.waitForSelector('[data-explain-frame="1"]'); await w.waitForTimeout(100);
     ok(!(await w.$("[data-explain-vermenu]")) && /walkthrough v1/.test(await w.$eval("[data-explain-versions]", (e) => e.textContent)) && (await w.evaluate(() => document.activeElement?.hasAttribute("data-explain-versions"))), "Enter shows that version, closes the menu and gives the focus back to its button");
