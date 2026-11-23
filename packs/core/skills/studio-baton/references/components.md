@@ -61,6 +61,9 @@ Rules:
 - **Proof is not optional.** A claim with no proof is shown with `absent`
   chips — that is honest, and it is the reviewer's to-do list. Never mark
   `verified` without a run, a read source, or a log you can point at.
+- **Every chip states its `state`.** There is no default: `verify.py` fails a
+  chip without one, and the page draws it as "state not given", never as
+  `verified`.
 - A plain string in `sub` is a code term (mono); an i18n object is prose.
 
 ## boundary — the map that ends every packet

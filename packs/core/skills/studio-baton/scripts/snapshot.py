@@ -13,6 +13,12 @@ It does two things, in order:
    - no svg text wider than the box or label-mask it sits in (per language)
    - no CJK text below 12px
    - no '[object Object]' anywhere, no blank section
+   - at 320, 390, 865, 1024, 1280 and 1440 px wide: no horizontal page scroll (a wide table
+     scrolls in its own box) and no text squeezed to one or two characters
+     per line (a card cell or flex item that shrank to nothing), no node
+     name broken mid-word, and every boundary finding on its own row; in light
+     and dark: pins and tags are >= 4.5:1 against
+     what they sit on, and the page declares the matching color-scheme
    Failures print with figure/step indexes and the run exits 1 — fix the spec
    and re-run before spending any screenshots.
 
@@ -91,6 +97,91 @@ window.addEventListener('load',()=>{setTimeout(()=>{
 </script>"""
 
 
+# Run at a phone width with every step visible; reports the layout and theme
+# failures a screenshot at 1440 never shows.
+CRUSH_SEL = (".bfind .ttl,.cout,.cnode .nm,.cnode .sb,.callout,.carrow .hl,.kbox td,.kbox th,"
+             ".hstep b,.hstep p,.pchip,.kcard>h3,.kcard>.claim,.kcard>.cap")
+LAYOUT_JS = """<script>
+const CRUSH_SEL='""" + CRUSH_SEL + """';
+window.addEventListener('load',()=>{setTimeout(()=>{
+  const out={width:innerWidth,hscroll:null,offenders:[],contrast:[],scheme:[]};
+  const de=document.documentElement;
+  const lum=c=>{const v=(c.match(/[\\d.]+/g)||[]).slice(0,3).map(Number).map(x=>{x/=255;
+    return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4);});
+    return 0.2126*v[0]+0.7152*v[1]+0.0722*v[2];};
+  const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
+  const opaque=c=>c&&c!=='transparent'&&!/rgba\\([^)]*,\\s*0\\)$/.test(c);
+  const bgOf=el=>{for(;el;el=el.parentElement){const c=getComputedStyle(el).backgroundColor;if(opaque(c))return c;}
+    return getComputedStyle(document.body).backgroundColor;};
+  const W=de.clientWidth;
+  out.hscroll=de.scrollWidth>W?de.scrollWidth-W:0;
+  if(out.hscroll){
+    const clipped=e=>{for(let p=e.parentElement;p&&p!==document.body;p=p.parentElement){
+      if(/auto|scroll|hidden|clip/.test(getComputedStyle(p).overflowX))return true;}return false;};
+    out.offenders=[...document.querySelectorAll('body *')].filter(e=>{const r=e.getBoundingClientRect();
+      return r.width&&r.right>W+0.5&&!clipped(e);}).slice(0,5).map(e=>e.tagName.toLowerCase()+'.'+
+      [...e.classList].join('.')+' +'+Math.round(e.getBoundingClientRect().right-W)+'px');
+  }
+  // Text squeezed to a character or two per line: a flex or grid cell that
+  // shrank to nothing (findings side by side, an outcome split into flex items).
+  out.crushed=[];
+  document.querySelectorAll(CRUSH_SEL).forEach(e=>{
+    const chars=e.textContent.replace(/\\s/g,'').length; if(chars<6) return;
+    const rg=document.createRange(); rg.selectNodeContents(e);
+    const tops=new Set([...rg.getClientRects()].filter(r=>r.width>0).map(r=>Math.round(r.top)));
+    if(tops.size>=4 && chars/tops.size<3)
+      out.crushed.push({el:e.tagName.toLowerCase()+'.'+[...e.classList].join('.'),
+        text:e.textContent.trim().slice(0,30),lines:tops.size,w:Math.round(e.getBoundingClientRect().width)});
+  });
+  // Boundary findings are a list: one per row. Two on one row squeeze each
+  // title into half the card, which at phone width is a column of words.
+  out.sideBySide=[];
+  document.querySelectorAll('.bfind').forEach(b=>{
+    const rows=[...b.children].map(c=>c.getBoundingClientRect()).filter(r=>r.height>0);
+    for(let i=1;i<rows.length;i++) if(rows[i].top<rows[i-1].bottom-1){
+      out.sideBySide.push(rows.length); break; }
+  });
+  // A node name, sub or outcome may break at a space or at an inserted
+  // soft-break point (the <wbr>s softBreaks() adds, which split text nodes) —
+  // never between two letters inside a run that has no soft break.
+  out.midword=[];
+  document.querySelectorAll('.cnode .nm,.cnode .sb,.cout').forEach(n=>{
+    // Every text node under it: a <wbr> (or a tag) ends a text node, so a
+    // break at an inserted soft-break point is never inside one.
+    const tw=document.createTreeWalker(n,NodeFilter.SHOW_TEXT); const texts=[];
+    while(tw.nextNode()) texts.push(tw.currentNode);
+    for(const t of texts){
+      const s=t.textContent; let prev=null;
+      for(let i=0;i<s.length;i++){
+        const rg=document.createRange(); rg.setStart(t,i); rg.setEnd(t,i+1);
+        const r=rg.getClientRects()[0]; if(!r) continue;
+        if(prev!==null && r.top>prev+2 && /\\w/.test(s[i-1]) && /\\w/.test(s[i])){
+          out.midword.push({name:n.textContent.trim().slice(0,30),at:i,
+            where:(n.closest('.bmap')?'boundary map':'chain')+(n.classList.contains('cout')?' outcome':n.classList.contains('sb')?' sub':'')}); break; }
+        prev=r.top;
+      }
+    }
+  });
+  const prev=de.getAttribute('data-theme');
+  for(const t of ['light','dark']){
+    de.setAttribute('data-theme',t);
+    const cs=getComputedStyle(de).colorScheme;
+    if(cs.trim()!==t) out.scheme.push({theme:t,colorScheme:cs});
+    const seen=new Set();
+    document.querySelectorAll('.badge,.ktag').forEach(e=>{
+      const key=e.className; if(seen.has(key))return; seen.add(key);
+      const r=ratio(getComputedStyle(e).color,bgOf(e));
+      if(r<4.5) out.contrast.push({theme:t,el:key,text:e.textContent.trim().slice(0,20),ratio:+r.toFixed(2)});
+    });
+  }
+  if(prev)de.setAttribute('data-theme',prev);else de.removeAttribute('data-theme');
+  const pre=document.createElement('pre'); pre.id='baton-layout';
+  pre.textContent=JSON.stringify(out);
+  document.body.appendChild(pre);
+},250);});
+</script>"""
+
+
 def chrome():
     for c in CHROME_CANDIDATES:
         if c and Path(c).exists():
@@ -145,6 +236,49 @@ def main():
     for x in r["cjk"]:      problems.append(f"fig {x['fig']} [{x['lang']}]: CJK at {x['size']}px (<12): '{x['text'][:40]}'")
     for i in r["blank"]:    problems.append(f"step {i}: renders blank")
     if r["objectObject"]:   problems.append("'[object Object]' appears on the page")
+    # -- pass 1b: phone and desktop widths, both themes ---------------------
+    # Headless Chrome will not open a window narrower than 500px, so the
+    # page runs in a same-origin (srcdoc) iframe of the width under test —
+    # which is also how a host embeds it.
+    inner = variant(src, FREEZE_CSS + SHOW_ALL_CSS, LAYOUT_JS)
+    for width in (320, 390, 865, 1024, 1280, 1440):
+        lay = tmp / f"layout-{width}.html"
+        lay.write_text(
+            f'<!doctype html><body style="margin:0"><iframe id="f" style="width:{width}px;'
+            f'height:900px;border:0" srcdoc="{htmlmod.escape(inner, quote=True)}"></iframe>'
+            "<script>const t=setInterval(()=>{const d=document.getElementById('f').contentDocument;"
+            "const r=d&&d.getElementById('baton-layout');if(!r)return;clearInterval(t);"
+            "const p=document.createElement('pre');p.id='baton-layout';p.textContent=r.textContent;"
+            "document.body.appendChild(p);},50);</script></body>")
+        dom = subprocess.run([bin_, "--headless=new", "--disable-gpu",
+                              "--window-size=1500,1000",
+                              "--virtual-time-budget=5000", "--dump-dom",
+                              lay.resolve().as_uri()],
+                             capture_output=True, text=True, timeout=120).stdout
+        m = re.search(r'<pre id="baton-layout">(.*?)</pre>', dom, re.S)
+        if not m:
+            problems.append(f"{width}px: layout checker never ran")
+            continue
+        L = json.loads(htmlmod.unescape(m.group(1)))
+        if L["hscroll"]:
+            problems.append(f"{width}px: the page scrolls sideways by {L['hscroll']}px — "
+                            f"first overflowing: {', '.join(L['offenders']) or '?'}")
+        for n in L.get("sideBySide", []):
+            problems.append(f"{width}px: boundary findings ({n}) sit side by side — each finding "
+                            "takes its own row")
+        for x in L.get("midword", []):
+            problems.append(f"{width}px: {x['where']} '{x['name']}' breaks mid-word "
+                            f"at character {x['at']}")
+        for x in L.get("crushed", []):
+            problems.append(f"{width}px: {x['el']} '{x['text']}' wraps to {x['lines']} lines "
+                            f"in {x['w']}px — about one character per line")
+        if width == 320:   # theme checks do not depend on width
+            for x in L["contrast"]:
+                problems.append(f"[{x['theme']}] {x['el']} '{x['text']}' is {x['ratio']}:1 "
+                                "against its background (< 4.5:1)")
+            for x in L["scheme"]:
+                problems.append(f"[{x['theme']}] root color-scheme is '{x['colorScheme']}' — "
+                                "scrollbars and controls will not follow the theme")
     steps = r.get("steps", 0)
     fig_steps = r.get("figSteps", [])
 

@@ -7,7 +7,7 @@ extract.py for that.
 
 Usage: render.py packet.json [-o out.html]
 """
-import argparse, html, json, sys
+import argparse, html, json, re, sys
 from pathlib import Path
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "packet.html"
@@ -38,6 +38,28 @@ def derive_hans(node, cc, filled, missing, path="$"):
     elif isinstance(node, list):
         for i, v in enumerate(node):
             derive_hans(v, cc, filled, missing, f"{path}[{i}]")
+
+
+def embed_json(spec):
+    """The packet as JSON inside <script type="application/json">.
+
+    Every "<" becomes \\u003c, which JSON reads back as the same character, so
+    no tag, "</script" in any case, or "<!--" that would put the script parser
+    in its escaped state can appear in the element at all.
+    """
+    return json.dumps(spec, ensure_ascii=False).replace("<", "\\u003c")
+
+
+def embed_text(ctx):
+    """The context, verbatim text inside <script type="text/markdown">.
+
+    Plain text cannot be re-encoded losslessly, so only the two sequences the
+    HTML script parser reacts to are broken, case-insensitively: "</script"
+    (ends the element) and "<!--" (enters the escaped state, where a later
+    "<script" swallows the rest of the page). Both become "<\\…"; the page
+    removes that backslash when it reads the context back.
+    """
+    return re.sub(r"<(?=/script|!--)", r"<\\", ctx, flags=re.I)
 
 
 def check(spec, ctx):
@@ -109,14 +131,13 @@ def main():
     # Diagrams arrive as inline SVG from the diagram-design skill — static
     # markup, no runtime library. Theming and language switching are page
     # behaviour, so nothing is vendored in here.
-    page = page.replace("{{TITLE}}", html.escape(
+    title = html.escape(
         spec.get("title", {}).get("en", "baton packet") if
-        isinstance(spec.get("title"), dict) else str(spec.get("title", "baton packet"))))
-    # Both payloads sit inside <script> elements: the only sequence that can
-    # break out is a literal closing tag.
-    page = page.replace("{{DATA}}", json.dumps(spec, ensure_ascii=False)
-                        .replace("</", "<\\/"))
-    page = page.replace("{{CONTEXT}}", ctx.replace("</script", "<\\/script"))
+        isinstance(spec.get("title"), dict) else str(spec.get("title", "baton packet")))
+    # One pass over the placeholders, so a payload that happens to contain
+    # "{{CONTEXT}}" is never filled in a second time.
+    slots = {"TITLE": title, "DATA": embed_json(spec), "CONTEXT": embed_text(ctx)}
+    page = re.sub(r"\{\{(TITLE|DATA|CONTEXT)\}\}", lambda m: slots[m.group(1)], page)
     out.write_text(page)
 
     kb = len(page.encode()) / 1024

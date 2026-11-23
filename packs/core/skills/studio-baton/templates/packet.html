@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{{TITLE}}</title>
 <style>
 :root{
@@ -23,6 +24,13 @@
   --amber:#b8915a;         /* mustard, from the series scale */
   --seal:#9c6b50;          /* rust-brown */
   --ok:#7c8f6f;            /* sage */
+  /* Tone colours for small text and the fills behind it. The series tones
+     above are for strokes; as text, or as a fill under white text, they fall
+     below 4.5:1, so pins and tags use these instead. */
+  --warn-ink:#7d5e34;--risk-ink:#a3432a;--ok-ink:#56684c;--on-ink:#ffffff;
+  /* Native controls and scrollbars follow the theme: the OS one by default,
+     the one a host stamps in data-theme when it sets one. */
+  color-scheme:light dark;
   --shadow:0 1px 2px rgba(45,49,66,.06),0 10px 28px rgba(45,49,66,.06);
 
   /* A display serif, a text sans and a data mono — all from the system, so
@@ -36,17 +44,20 @@
     --soft:#8e98ac;--rule:rgba(245,245,245,.12);--rule-strong:rgba(191,192,192,.25);
     --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#6a95d8;
     --amber:#d3ad7a;--seal:#b88670;--ok:#9caf8f;
+    --warn-ink:#d3ad7a;--risk-ink:#f39b84;--ok-ink:#a9bd9c;--on-ink:#2d3142;
     --shadow:0 1px 2px rgba(0,0,0,.45),0 12px 32px rgba(0,0,0,.4)}
 }
-:root[data-theme=dark]{--bg:#2d3142;--card:#393e53;--card-2:#333849;--fg:#f5f5f5;--muted:#bfc0c0;
+:root[data-theme=dark]{color-scheme:dark;--bg:#2d3142;--card:#393e53;--card-2:#333849;--fg:#f5f5f5;--muted:#bfc0c0;
     --soft:#8e98ac;--rule:rgba(245,245,245,.12);--rule-strong:rgba(191,192,192,.25);
     --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#6a95d8;
     --amber:#d3ad7a;--seal:#b88670;--ok:#9caf8f;
+    --warn-ink:#d3ad7a;--risk-ink:#f39b84;--ok-ink:#a9bd9c;--on-ink:#2d3142;
     --shadow:0 1px 2px rgba(0,0,0,.45),0 12px 32px rgba(0,0,0,.4)}
-:root[data-theme=light]{--bg:#f5f5f5;--card:#ffffff;--card-2:#ececec;--fg:#2d3142;--muted:#4f5d75;
+:root[data-theme=light]{color-scheme:light;--bg:#f5f5f5;--card:#ffffff;--card-2:#ececec;--fg:#2d3142;--muted:#4f5d75;
   --soft:#7a8399;--rule:rgba(45,49,66,.12);--rule-strong:#bfc0c0;
   --accent:#eb6c36;--accent-tint:rgba(235,108,54,.08);--link:#2e5aa8;
   --amber:#b8915a;--seal:#9c6b50;--ok:#7c8f6f;
+  --warn-ink:#7d5e34;--risk-ink:#a3432a;--ok-ink:#56684c;--on-ink:#ffffff;
   --shadow:0 1px 2px rgba(45,49,66,.06),0 10px 28px rgba(45,49,66,.06)}
 
 /* One line scales the whole composition, so a 4K screen shows the same
@@ -335,7 +346,7 @@ button.act:disabled{opacity:.4;cursor:default}
 .handoff .cap{font-family:var(--mono);font-size:.64rem;letter-spacing:.11em;
   text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:.35rem}
 .handoff p{margin:0;font-size:.9rem;color:var(--muted);line-height:1.55}
-.handoff .row{display:flex;gap:.4rem;flex-wrap:wrap;flex:0 0 auto}
+.handoff .row{display:flex;gap:.4rem;flex-wrap:wrap;flex:0 1 auto;min-width:0}
 
 /* ---- Components (v2): every label is HTML in rem, never text inside a scaled SVG ---- */
 .kcard{background:var(--card);border:1px solid var(--rule);border-radius:6px;box-shadow:var(--shadow);
@@ -344,11 +355,14 @@ button.act:disabled{opacity:.4;cursor:default}
 .kcard>.cap{font-size:.95rem;color:var(--muted);line-height:1.55;margin:0 0 1rem}
 .kcard>.claim{font-size:1.02rem;line-height:1.55;margin:.35rem 0 1rem}
 .kcard>.claim b{color:var(--accent)}
-.ktag{display:inline-block;font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
-  padding:.18rem .5rem;border-radius:3px;font-weight:700;color:#fff;background:var(--rule-strong);margin-right:.4rem}
-.ktag.risk{background:var(--seal)} .ktag.warn{background:var(--amber)} .ktag.ok{background:var(--ok)}
+/* A tag is a label, not a control: tone-coloured text with a small mark, no
+   fill and no box, so it never reads as a button next to one. */
+.ktag{display:inline-flex;align-items:center;gap:.35rem;font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;
+  text-transform:uppercase;font-weight:700;color:var(--muted);margin-right:.6rem;cursor:default;user-select:text}
+.ktag::before{content:"";width:.5rem;height:.5rem;border-radius:1px;background:currentColor;flex:0 0 auto}
+.ktag.risk{color:var(--risk-ink)} .ktag.warn{color:var(--warn-ink)} .ktag.ok{color:var(--ok-ink)}
 /* chain: the same component chain twice, broken hop vs changed hop */
-.chain{display:grid;gap:.9rem}
+.chain{display:grid;gap:.9rem;grid-template-columns:minmax(0,1fr)}
 .lane{border:1px solid var(--rule);border-left:4px solid var(--amber);border-radius:6px;
   background:var(--card);padding:.85rem 1rem 1rem}
 .lane.seal{border-left-color:var(--seal)} .lane.after{border-left-color:var(--ok)}
@@ -357,7 +371,29 @@ button.act:disabled{opacity:.4;cursor:default}
 .cgrid{display:grid;align-items:stretch;row-gap:.6rem}
 .cnode{border:1.5px solid var(--rule-strong);border-radius:8px;padding:.6rem .65rem;background:var(--card-2);
   min-height:4.4rem;display:flex;flex-direction:column;justify-content:center;text-align:center;min-width:0}
-.cnode .nm{font-weight:650;font-size:.98rem;line-height:1.3}
+/* break-word, not anywhere: the column's min-content then stops at the <wbr>
+   points (after / _ .), so a name breaks there and not mid-word; a single
+   segment wider than its box still breaks as the last resort. */
+.cnode .nm{font-weight:650;font-size:.98rem;line-height:1.3;overflow-wrap:break-word}
+/* Six or more boxes side by side: tighter boxes, a smaller name, and hop
+   labels never under 12px. Side by side only; stacked boxes are full width. */
+@media (min-width:56.01rem){
+  .cgrid.dense .cnode{padding:.55rem .3rem} .cgrid.dense .cnode .nm{font-size:.78rem}
+  .cgrid.dense .carrow .hl{font-size:max(12px,.62rem)}
+  .cgrid.dense .cnode .sb{font-size:max(12px,.68rem)} .cgrid.dense .cnode .sb.tx{font-size:.72rem}
+}
+/* A narrow desktop (about 900–1280px) gives every side-by-side lane the
+   same tighter step, so names keep their / _ . break points there too. */
+@media (min-width:56.01rem) and (max-width:80rem){
+  .cgrid .cnode{padding:.55rem .3rem} .cgrid .cnode .nm{font-size:.78rem}
+  .cgrid .carrow .hl{font-size:max(12px,.62rem)}
+  .cgrid .cnode .sb{font-size:max(12px,.68rem)} .cgrid .cnode .sb.tx{font-size:.72rem}
+}
+/* Code inside a box breaks at its <wbr> points like the text around it; the
+   global word-break:break-word would let it split anywhere and shrink the
+   column's min-content to one letter. */
+.cnode code,.cout code{word-break:normal;overflow-wrap:break-word}
+.cout>span{min-width:0;max-width:100%}
 .cnode .sb{font-family:var(--mono);font-size:.76rem;color:var(--muted);margin-top:.3rem;line-height:1.4;overflow-wrap:break-word}
 .cnode .sb.tx{font-family:var(--sans);font-size:.86rem}
 .cnode.k-client{border-style:dashed}
@@ -366,18 +402,19 @@ button.act:disabled{opacity:.4;cursor:default}
 .cnode.bad{border:2px solid var(--amber);background:var(--card)} .lane.seal .cnode.bad{border-color:var(--seal)}
 .cnode.good{border:2px solid var(--accent);background:var(--accent-tint)}
 .cnode.bad .nm::before{content:"✕ ";color:var(--amber)} .cnode.good .nm::before{content:"● ";color:var(--accent)}
-.carrow{align-self:center;display:flex;flex-direction:column;align-items:center;padding:0 .25rem;min-width:0}
-.carrow .hl{font-family:var(--mono);font-size:.68rem;color:var(--muted);text-align:center;line-height:1.25;
+.carrow{--ac:var(--rule-strong);align-self:center;display:flex;flex-direction:column;align-items:center;padding:0 .25rem;min-width:0}
+/* One colour per arrow, read by the line and its head alike, so a head can
+   never come out two-tone. */
+.carrow.bad,.carrow.end{--ac:var(--amber)} .carrow.good{--ac:var(--accent)}
+.lane.after .carrow.end{--ac:var(--ok)} .carrow.okl{--ac:var(--ok)}
+.carrow .hl{font-family:var(--mono);font-size:max(12px,.68rem);color:var(--muted);text-align:center;line-height:1.25;
   margin-bottom:.2rem;word-break:keep-all;overflow-wrap:break-word;max-width:100%}
-.carrow .ln{width:100%;min-width:1.6rem;height:0;border-top:2px solid var(--rule-strong);position:relative}
+.carrow .ln{width:100%;min-width:1.6rem;height:0;border-top:2px solid var(--ac);position:relative}
 .carrow .ln::after{content:"";position:absolute;right:-2px;top:-7px;border:6px solid transparent;
-  border-left:9px solid var(--rule-strong);border-right:0}
-.carrow.bad .ln{border-top-color:var(--amber)} .carrow.bad .ln::after{border-left-color:var(--amber)}
-.carrow.good .ln{border-top-color:var(--accent)} .carrow.good .ln::after{border-left-color:var(--accent)}
-.carrow.end .ln{border-top-color:var(--amber)} .carrow.end .ln::after{border-left-color:var(--amber)}
-.lane.after .carrow.end .ln{border-top-color:var(--ok)} .lane.after .carrow.end .ln::after{border-left-color:var(--ok)}
+  border-left:9px solid var(--ac);border-right:0}
 .cout{border:2px solid var(--amber);border-radius:8px;padding:.6rem .75rem;font-weight:700;font-size:1rem;
-  line-height:1.35;display:flex;align-items:center;justify-content:center;text-align:center;min-height:4.4rem}
+  line-height:1.35;display:flex;align-items:center;justify-content:center;text-align:center;min-height:4.4rem;
+  min-width:0;overflow-wrap:break-word}
 .lane.seal .cout{border-color:var(--seal)} .lane.after .cout{border-color:var(--ok)}
 .callout{position:relative;border:1px solid var(--amber);border-radius:6px;background:var(--card-2);
   padding:.55rem .75rem;font-size:.92rem;line-height:1.55;margin-top:.35rem}
@@ -396,24 +433,33 @@ button.act:disabled{opacity:.4;cursor:default}
 .pchip i{width:.55rem;height:.55rem;border-radius:50%;background:var(--rule-strong);flex:0 0 auto}
 .pchip.verified i{background:var(--ok)} .pchip.code-only i{background:var(--amber)} .pchip.absent i{background:var(--seal)}
 .pchip.absent{border-style:dashed}
+.pchip.unknown{border-style:dotted} .pchip.unknown i{background:none;border:1.5px solid var(--muted)}
+.pchip .ps{font-family:var(--mono);font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;
+  border-left:1px solid var(--rule-strong);padding-left:.4rem}
 .pchip .pt{font-family:var(--mono);font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 /* boundary map */
 .bmap .cnode{position:relative}
-.badge{position:absolute;top:-.6rem;right:-.6rem;width:1.5rem;height:1.5rem;border-radius:50%;background:var(--amber);
-  color:#fff;font:700 .8rem/1.5rem var(--mono);text-align:center;box-shadow:0 0 0 2px var(--card)}
-.badge.risk{background:var(--seal)}
+.badge{position:absolute;top:-.6rem;right:-.6rem;width:1.5rem;height:1.5rem;border-radius:50%;background:var(--warn-ink);
+  color:var(--on-ink);font:700 .8rem/1.5rem var(--mono);text-align:center;box-shadow:0 0 0 2px var(--card);flex:0 0 auto}
+.badge.risk{background:var(--risk-ink)}
 .carrow .badge{position:static;display:inline-block;margin-bottom:.2rem}
-.carrow.okl .ln{border-top-color:var(--ok)} .carrow.okl .ln::after{border-left-color:var(--ok)}
-.carrow.okl .hl::after{content:" ✓";color:var(--ok)}
-.bfind{display:grid;grid-template-columns:auto auto 1fr auto;gap:.55rem .7rem;align-items:center;margin-top:1rem}
+.carrow.okl .hl::after{content:" ✓";color:var(--ok-ink)}
+.bfind{display:grid;gap:.6rem;margin-top:1rem}
+.bfind .bf{display:flex;flex-wrap:wrap;align-items:center;gap:.45rem .7rem}
 .bfind .badge{position:static}
-.bfind .ttl{line-height:1.5}
+.bfind .ktag{margin-right:0}
+.bfind .ttl{line-height:1.5;flex:1 1 16rem;min-width:0}
 .bfind button{font:inherit;font-size:.8rem;border:1px solid var(--rule-strong);background:var(--card-2);color:var(--fg);
   border-radius:4px;padding:.25rem .6rem;cursor:pointer;white-space:nowrap}
 .bok{margin-top:1rem;border:1px solid var(--ok);border-left:4px solid var(--ok);border-radius:6px;padding:.7rem .9rem;
   line-height:1.55}
 .bok::before{content:"✓ ";color:var(--ok);font-weight:700}
 /* compare (from → to) */
+/* A table wider than its card scrolls inside this box, never the page. */
+.tscroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
+.tscroll:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+.tscroll>table{min-width:100%}
+table.mtx td:first-child{min-width:8.5rem}
 table.cmp,table.mtx{width:100%;border-collapse:separate;border-spacing:0;font-size:.95rem}
 table.cmp th,table.mtx th{font-size:.8rem;font-weight:600;color:var(--muted);text-align:left;padding:.45rem .6rem;
   border-bottom:1px solid var(--rule-strong)}
@@ -468,17 +514,16 @@ details.ctable td,details.ctable th{font-variant-numeric:tabular-nums}
 .spark{display:block;margin-top:.35rem}
 @media (max-width:56rem){
   .cgrid{display:flex!important;flex-direction:column}
-  .carrow{flex-direction:row;gap:.5rem;justify-content:center;min-height:1.8rem}
-  .carrow .ln{width:0;min-width:0;height:1.4rem;border-top:0;border-left:2px solid var(--rule-strong)}
-  .carrow .ln::after{right:auto;left:-7px;top:auto;bottom:-3px;border:6px solid transparent;border-top:9px solid var(--rule-strong);border-bottom:0}
-  .carrow.bad .ln,.carrow.end .ln{border-left-color:var(--amber)} .carrow.good .ln{border-left-color:var(--accent)}
-  .carrow.bad .ln::after,.carrow.end .ln::after{border-top-color:var(--amber);border-left-color:transparent}
-  .carrow.good .ln::after{border-top-color:var(--accent);border-left-color:transparent}
-  .lane.after .carrow.end .ln{border-left-color:var(--ok)} .lane.after .carrow.end .ln::after{border-top-color:var(--ok);border-left-color:transparent}
+  /* Stacked: the line runs down the middle under the node above it; the hop
+     label sits right of it and any pin left of it, both centred on the line. */
+  .carrow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;column-gap:.6rem;min-height:1.8rem;padding:0}
+  .carrow .ln{grid-column:2;grid-row:1;width:0;min-width:0;height:1.4rem;border-top:0;border-left:2px solid var(--ac)}
+  .carrow .ln::after{right:auto;left:-7px;top:auto;bottom:-3px;border:6px solid transparent;border-top:9px solid var(--ac);border-bottom:0}
+  .carrow .hl{grid-column:3;grid-row:1;justify-self:start;text-align:left;margin:0}
+  .carrow .badge{grid-column:1;grid-row:1;justify-self:end;margin:0}
   .callout::before{left:2rem!important;right:auto!important}
   .hflow{grid-auto-flow:row}
   .hstep + .hstep::before{content:"↓";left:50%;top:-1.35rem;transform:translateX(-50%)}
-  .bfind{grid-template-columns:auto 1fr}
 }
 /* Print / Save-as-PDF: same palette (exact colours), every step visible, chrome off. */
 @media print{
@@ -589,7 +634,8 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
 <script>
 (function(){
   const D = JSON.parse(document.getElementById('baton-data').textContent);
-  const CTX = document.getElementById('baton-context').textContent;
+  // render.py breaks "</script" and "<!--" as "<\/script" and "<\!--"; undo it.
+  const CTX = document.getElementById('baton-context').textContent.replace(/<\\(?=\/script|!--)/gi,'<');
   const T = {
     en:{outline:'Contents',prev:'← Back',next:'Next →',of:(a,b)=>a+' of '+b,smapHint:'Click a state to see the database write behind it.',smapEmpty:'Click a state above.',
         hocap:'Hand off',
@@ -621,10 +667,75 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
   let idx = 0;
   const secs = D.sections || [];
 
-  const E = x => String(x==null?'':x).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  // Escapes for text and for quoted attribute values alike: packet strings
+  // (a node kind, a tone, a heading used as aria-label) land in attributes.
+  const E = x => String(x==null?'':x).replace(/[<>&"']/g,
+    c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
   // A transaction: the envelope of writes that commit together, then the
   // writes that do not. Rendered from data, never free-form, so the register
   // check and the reader both see the same field names the code uses.
+  // A diagram's SVG comes from the packet, which a model writes from untrusted
+  // PR text, so it is never inserted as markup. It is parsed in an inert
+  // document (no scripts run, nothing loads), walked against an allow-list,
+  // and only then imported. verify.py's check_svg applies the same lists.
+  const SVG_NS='http://www.w3.org/2000/svg', XLINK_NS='http://www.w3.org/1999/xlink';
+  const SVG_OK=new Set(['svg','g','path','rect','circle','ellipse','line','polyline','polygon','text','tspan',
+    'defs','marker','title','desc','lineargradient','radialgradient','stop','clippath','mask','pattern','use']);
+  // CSS functions are allow-listed, not filtered: image-set(), element(),
+  // paint() and the like fetch or paint without ever spelling url(. Any other
+  // function name, url() that is not url(#id), or a quoted string holding a
+  // URL (":" or "//") drops the whole attribute.
+  const CSS_FN=new Set(['url','var','calc','rgb','rgba','hsl','hsla','translate','translatex','translatey',
+    'rotate','scale','scalex','scaley','matrix','skewx','skewy']);
+  const urlOK=v=>!/url\s*\(/i.test(v.replace(/url\(\s*['"]?#[\w.:-]+['"]?\s*\)/gi,''));
+  const cssOK=v=>urlOK(v) && [...v.matchAll(/(-?[a-z_][\w-]*)\s*\(/gi)].every(m=>CSS_FN.has(m[1].toLowerCase())) &&
+    !/(["'])[^"']*(:|\/\/)[^"']*\1/.test(v);
+  const styleOK=v=>cssOK(v) && !/expression\s*\(|@import|javascript:|behavior\s*:|-moz-binding/i.test(v);
+  // Text-only attributes; every other value may be read as CSS, where a
+  // backslash escape ("\75 rl(", "u\rl(") spells url( past the filter.
+  const textAttr=n=>/^(data-|aria-)/.test(n) && n!=='aria-labelledby' && n!=='aria-describedby';
+  let svgSeq=0;
+  function cleanSVG(node){
+    for(const c of [...node.childNodes]){
+      if(c.nodeType===3) continue;
+      if(c.nodeType!==1 || c.namespaceURI!==SVG_NS || !SVG_OK.has(c.localName.toLowerCase())){ c.remove(); continue; }
+      for(const a of [...c.attributes]){
+        const n=a.name.toLowerCase(), v=a.value;
+        const isHref=n==='href'||n==='xlink:href'||a.localName==='href';
+        if(n.startsWith('on') || (isHref && !/^#[\w.:-]+$/.test(v)) || (!textAttr(n) && v.includes('\\')) ||
+           (n==='style' ? !styleOK(v) : !textAttr(n) && !cssOK(v))) c.removeAttributeNode(a);
+      }
+      if(c.localName==='use' && !/^#/.test(c.getAttribute('href')||c.getAttributeNS(XLINK_NS,'href')||'')){ c.remove(); continue; }
+      cleanSVG(c);
+    }
+  }
+  // Every id in a diagram gets a per-figure prefix, and every reference to an
+  // id (url(#…), href="#…", aria-labelledby/-describedby) is rewritten to
+  // match, so a diagram can neither shadow a page id (getElementById('foot'))
+  // nor point at one.
+  function scopeIds(root, pre){
+    const ref=v=>v.replace(/url\(\s*(['"]?)#([\w.:-]+)\1\s*\)/gi,(m,q,id)=>'url(#'+pre+id+')');
+    root.querySelectorAll('*').forEach(e=>{
+      for(const a of [...e.attributes]){
+        const n=a.name.toLowerCase();
+        if(n==='id') a.value=pre+a.value;
+        else if(n==='href'||n==='xlink:href'||a.localName==='href') a.value='#'+pre+a.value.slice(1);
+        else if(n==='aria-labelledby'||n==='aria-describedby') a.value=a.value.trim().split(/\s+/).map(x=>pre+x).join(' ');
+        else if(/url\(/i.test(a.value)) a.value=ref(a.value);
+      }
+    });
+  }
+  function safeSVG(str){
+    const frag=document.createDocumentFragment();
+    if(!str) return frag;
+    const doc=new DOMParser().parseFromString('<body>'+String(str),'text/html');   // inert
+    const holder=doc.createElement('div');
+    for(const n of [...doc.body.childNodes]) if(n.nodeType===1 && n.namespaceURI===SVG_NS && n.localName==='svg') holder.appendChild(n);
+    cleanSVG(holder);
+    scopeIds(holder, 'bsvg'+(++svgSeq)+'-');
+    for(const n of [...holder.childNodes]) frag.appendChild(document.importNode(n,true));
+    return frag;
+  }
   function vulnHTML(s, lang){
     const P=v=>rich(pick(v,lang));   // problem/fix carry `code` and **bold**
     const sev=(s.severity||'p1').toLowerCase();
@@ -654,7 +765,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       (t.fields||[]).forEach(f=>{
         h+='<tr><td class="k">'+E(f.k)+'</td><td class="v">';
         if(f.was!=null) h+='<span class="was">'+E(f.was)+'</span>';
-        h+='<span class="now '+(f.tone||'')+'">'+E(f.now)+'</span>';
+        h+='<span class="now '+E(f.tone||'')+'">'+E(f.now)+'</span>';
         if(f.why) h+='<span style="display:block;font-family:var(--sans);font-size:.8rem;color:var(--muted);margin-top:.1rem">'+P(f.why)+'</span>';
         h+='</td></tr>';
       });
@@ -678,27 +789,47 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     before:W3('Before','改動前','改动前'), after:W3('After','改動後','改动后'),
     why:W3('why','為什麼','为什么'), fix:W3('why this fixes it','為什麼這樣就好','为什么这样就好'),
     proof:W3('Proof','證據','证据'), see:W3('see card','看卡片','看卡片'),
-    verified:W3('verified','已驗證','已验证'), 'code-only':W3('code only','只有程式碼','只有代码'),
+    verified:W3('verified','已驗證','已验证'), unknown:W3('state not given','未標示狀態','未标示状态'), 'code-only':W3('code only','只有程式碼','只有代码'),
     absent:W3('absent','沒有證據','没有证据')
   };
   const sub=(v,lang)=>{
     if(v==null) return '';
-    if(typeof v==='string') return '<div class="sb">'+rich(v)+'</div>';   // plain string = code term
-    return '<div class="sb tx">'+rich(pick(v,lang))+'</div>';
+    if(typeof v==='string') return '<div class="sb">'+softBreaks(rich(v))+'</div>';   // plain string = code term
+    return '<div class="sb tx">'+softBreaks(rich(pick(v,lang)))+'</div>';
   };
+  // Where a long name may break: after / _ . and, inside a run of 16+ letters
+  // or digits, at camelCase and letter/digit seams; a run with no seam (ALLCAPS,
+  // lowercase, a hex hash) every 14 characters. Each break is a <wbr>, so a
+  // column's min-content never exceeds ~14 characters and a name breaks at a
+  // seam, never mid-word. Text only: tags are passed through untouched.
+  const SOFT_RUN=14;
+  const chunk=w=>w.length<=SOFT_RUN?w:w.match(new RegExp('.{1,'+SOFT_RUN+'}','g')).join('<wbr>');
+  const softRun=w=>{
+    if(/^[0-9a-f]+$/i.test(w) && /\d/.test(w)) return chunk(w);   // a hash: seams mean nothing
+    return w.replace(/([a-z])(?=[A-Z])|([A-Z])(?=[A-Z][a-z])|([A-Za-z])(?=\d)|(\d)(?=[A-Za-z])/g,'$&\u0000')
+      .split('\u0000').map(chunk).join('<wbr>');
+  };
+  const softBreaks=h=>h.split(/(<[^>]*>)/).map((t,i)=>i%2?t:
+    t.replace(/[\/_.]/g,'$&<wbr>').replace(/[A-Za-z0-9]{16,}/g,softRun)).join('');
   // One lane = the component chain once. Grid columns: node, arrow, node, …, arrow, outcome.
   function laneHTML(nodes, row, key, lang, opts){
     opts=opts||{};
     const hot=new Set(row.hot||[]); const n=nodes.length; const after=key==='after';
-    const cols=[]; for(let i=0;i<n;i++){ cols.push('minmax(0,1fr)'); if(i<n-1||row.outcome!=null) cols.push('minmax(4.2rem,.5fr)'); }
-    if(row.outcome!=null) cols.push('minmax(0,1.05fr)');
-    let h='<div class="cgrid" style="grid-template-columns:'+cols.join(' ')+'">';
+    // Six or more boxes: narrower arrows and a smaller name, so the boxes keep
+    // room for their names instead of the arrows taking it.
+    const dense=n+(row.outcome!=null?1:0)>=6;
+    // min-content: an arrow is never narrower than its longest hop-label word.
+    const arrow=dense?'minmax(min-content,.35fr)':'minmax(min-content,.5fr)';
+    // A box is never narrower than the longest unbreakable piece of its name.
+    const cols=[]; for(let i=0;i<n;i++){ cols.push('minmax(min-content,1fr)'); if(i<n-1||row.outcome!=null) cols.push(arrow); }
+    if(row.outcome!=null) cols.push('minmax(min-content,1.05fr)');
+    let h='<div class="cgrid'+(dense?' dense':'')+'" style="grid-template-columns:'+cols.join(' ')+'">';
     const whyAt=row.why&&row.why.at;
     nodes.forEach((nd,i)=>{
       const st=hot.has(nd.id)?(after?'good':'bad'):'';
       const badge=(opts.badges||{})[nd.id];
       h+='<div class="cnode k-'+E(nd.kind||'service')+' '+st+'" style="grid-column:'+(2*i+1)+';grid-row:1">'+
-         (badge?badge:'')+'<div class="nm">'+rich(pick(nd.name,lang))+'</div>'+sub((row.sub||{})[nd.id],lang)+'</div>';
+         (badge?badge:'')+'<div class="nm">'+softBreaks(rich(pick(nd.name,lang)))+'</div>'+sub((row.sub||{})[nd.id],lang)+'</div>';
       if(whyAt===nd.id && row.why.text){
         const left=i<n/2; const span=Math.min(3,2*n+1-(2*i));
         const gc=left?((2*i+1)+' / span '+Math.max(1,span)):(Math.max(1,2*i-1)+' / '+(2*i+2));
@@ -712,16 +843,22 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       if(hb) ac='bad'; else if(opts.okLinks && i<n-1) ac='okl';
       const hl=(row.hops||{})[i];
       h+='<div class="carrow '+ac+'" style="grid-column:'+(2*i+2)+';grid-row:1">'+(hb?hb:'')+
-         (hl!=null?'<div class="hl">'+E(typeof hl==='string'?hl:pick(hl,lang))+'</div>':'')+'<div class="ln"></div></div>';
+         (hl!=null?'<div class="hl">'+softBreaks(E(typeof hl==='string'?hl:pick(hl,lang)))+'</div>':'')+'<div class="ln"></div></div>';
     });
-    if(row.outcome!=null) h+='<div class="cout" style="grid-column:'+(2*n+1)+';grid-row:1">'+rich(pick(row.outcome,lang))+'</div>';
+    // One span: as bare flex children, text and <code> would each shrink to a column.
+    if(row.outcome!=null) h+='<div class="cout" style="grid-column:'+(2*n+1)+';grid-row:1"><span>'+softBreaks(rich(pick(row.outcome,lang)))+'</span></div>';
     return h+'</div>';
   }
+  // A chip says verified only when its author said so. A missing or unknown
+  // state renders as "state not given", which verify.py also rejects.
+  const PROOF_STATES=['verified','code-only','absent'];
+  const chipState=p=>PROOF_STATES.includes(p&&p.state)?p.state:'unknown';
   function proofHTML(list, lang){
     if(!list||!list.length) return '';
     return '<div class="proof"><span class="pl">'+pick(KL.proof,lang)+'</span>'+list.map(p=>
-      '<span class="pchip '+E(p.state||'verified')+'" title="'+E(pick(KL[p.state||'verified'],lang))+'"><i></i>'+
-      (p.type?'<span class="pt">'+E(p.type)+'</span>':'')+rich(pick(p.label,lang))+'</span>').join('')+'</div>';
+      '<span class="pchip '+E(chipState(p))+'" title="'+E(pick(KL[chipState(p)],lang))+'"><i></i>'+
+      (p.type?'<span class="pt">'+E(p.type)+'</span>':'')+rich(pick(p.label,lang))+
+      (chipState(p)==='unknown'?'<span class="ps">'+E(pick(KL.unknown,lang))+'</span>':'')+'</span>').join('')+'</div>';
   }
   function chainHTML(s, lang){
     const seal=(s.tone==='risk')?' seal':'';
@@ -744,9 +881,9 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     if(F.length){
       h+='<div class="bfind">'+F.map(f=>{
         const target=secs.findIndex(x=>x.kind==='chain' && f.card && pick(x.heading,'en')===f.card);
-        return '<span class="badge '+E(f.tone||'warn')+'">'+E(f.n)+'</span><span class="ktag '+E(f.tone||'warn')+'">'+E(f.lens)+'</span>'+
+        return '<div class="bf"><span class="badge '+E(f.tone||'warn')+'">'+E(f.n)+'</span><span class="ktag '+E(f.tone||'warn')+'">'+E(f.lens)+'</span>'+
           '<span class="ttl">'+rich(pick(f.title,lang))+'</span>'+
-          (target>=0?'<button type="button" data-go="'+target+'">'+pick(KL.see,lang)+' '+(target+1)+' →</button>':'<span></span>');
+          (target>=0?'<button type="button" data-go="'+target+'">'+pick(KL.see,lang)+' '+(target+1)+' →</button>':'')+'</div>';
       }).join('')+'</div>';
     } else {
       h+='<div class="bok">'+rich(pick(s.ok,lang))+'</div>';
@@ -755,17 +892,21 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
   }
   function compareHTML(s, lang){
     const c=s.cols||[];
-    let h='<table class="cmp"><thead><tr><th>'+E(pick(c[0],lang))+'</th><th>'+E(pick(c[1],lang))+'</th><th></th><th>'+E(pick(c[2],lang))+'</th></tr></thead><tbody>';
+    let h=tscroll(s.heading,lang)+'<table class="cmp"><thead><tr><th>'+E(pick(c[0],lang))+'</th><th>'+E(pick(c[1],lang))+'</th><th></th><th>'+E(pick(c[2],lang))+'</th></tr></thead><tbody>';
     (s.rows||[]).forEach(r=>{ h+='<tr><td class="dim">'+rich(pick(r[0],lang))+'</td><td class="from">'+rich(pick(r[1],lang))+
       '</td><td class="arr">→</td><td class="to">'+rich(pick(r[2],lang))+'</td></tr>'; });
-    return h+'</tbody></table>';
+    return h+'</tbody></table></div>';
   }
+  // A table that may scroll sideways: a named, focusable region, so a keyboard
+  // user can tab to it and scroll it with the arrow keys.
+  const tscroll=(name,lang)=>'<div class="tscroll" role="region" tabindex="0" aria-label="'+
+    E(pick(name,lang)||pick(CL.table,lang))+'">';
   const MK={have:'✓',part:'~',gap:'✕',plan:'○',na:'—'};
   function matrixHTML(s, lang){
-    let h='<table class="mtx"><thead><tr><th></th>'+(s.cols||[]).map(c=>'<th class="c">'+E(pick(c,lang))+'</th>').join('')+'</tr></thead><tbody>';
+    let h=tscroll(s.heading,lang)+'<table class="mtx"><thead><tr><th></th>'+(s.cols||[]).map(c=>'<th class="c">'+E(pick(c,lang))+'</th>').join('')+'</tr></thead><tbody>';
     (s.rows||[]).forEach(r=>{ h+='<tr><td>'+rich(pick(r.k,lang))+'</td>'+(r.v||[]).map(v=>
       '<td class="c"><span class="mk '+E(v)+'">'+(MK[v]||'')+'</span></td>').join('')+'</tr>'; });
-    h+='</tbody></table>';
+    h+='</tbody></table></div>';
     if(s.legend) h+='<div class="mlegend">'+Object.keys(s.legend).map(k=>
       '<span><span class="mk '+E(k)+'">'+(MK[k]||'')+'</span>'+E(pick(s.legend[k],lang))+'</span>').join('')+'</div>';
     return h;
@@ -796,10 +937,10 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     h+='<div class="plot"></div><div class="tip" role="status"></div></div>';
     // table view: every value reachable without hover (contrast relief + a11y)
     const xs=(s.x||[]).map(v=>typeof v==='object'?pick(v,lang):v);
-    h+='<details class="ctable"><summary>'+pick(CL.table,lang)+'</summary><table class="mtx"><thead><tr><th></th>'+
+    h+='<details class="ctable"><summary>'+pick(CL.table,lang)+'</summary>'+tscroll(CL.table,lang)+'<table class="mtx"><thead><tr><th></th>'+
       ser.map(x=>'<th class="c">'+E(pick(x.name,lang))+'</th>').join('')+'</tr></thead><tbody>'+
       xs.map((x,j)=>'<tr><td>'+E(x)+'</td>'+ser.map(se=>'<td class="c">'+E(fmt(se.values[j],s.unit))+'</td>').join('')+'</tr>').join('')+
-      '</tbody></table></details>';
+      '</tbody></table></div></details>';
     if(s.source) h+='<div class="csrc"><b>'+pick(CL.src,lang)+'</b>'+rich(pick(s.source,lang))+'</div>';
     return h;
   }
@@ -927,7 +1068,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       const sub=document.createElement('p'); sub.className='sub'; sub.dataset.i='caption';
       sub.style.margin='0'; head.appendChild(sub);
       const body=document.createElement('div'); body.className='figbody';
-      body.innerHTML = s.svg || '';
+      body.append(safeSVG(s.svg));
       const lg=document.createElement('div'); lg.className='legend';
       f.append(head,body,lg); el.appendChild(f);
     } else if (s.kind==='statemap'){
@@ -939,7 +1080,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       const sub=document.createElement('p'); sub.className='sub'; sub.dataset.i='caption';
       sub.style.margin='0'; head.appendChild(sub);
       const body=document.createElement('div'); body.className='figbody';
-      body.innerHTML = s.svg || '';
+      body.append(safeSVG(s.svg));
       const stages=document.createElement('div'); stages.className='smap-stages';
       ['expand','backfill','cutover','contract'].forEach(k=>{
         const d=document.createElement('button'); d.type='button';
@@ -983,7 +1124,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       el.appendChild(chip);
       if (s.svg){
         const fig=document.createElement('div'); fig.className='figbody';
-        fig.style.margin='.6rem 0 .2rem'; fig.innerHTML=s.svg; el.appendChild(fig);
+        fig.style.margin='.6rem 0 .2rem'; fig.append(safeSVG(s.svg)); el.appendChild(fig);
         const lg=document.createElement('div'); lg.className='legend'; el.appendChild(lg);
       }
       const box=document.createElement('div'); box.className='vulnbox';
@@ -1073,16 +1214,33 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     return h;
   }
 
-  // Escape first, then honour exactly three marks: [label](https://url),
-  // `code`, **lead-in**. The link URL must be absolute http(s) — anything
-  // else stays literal text, so a packet cannot smuggle javascript: or markup.
+  // Honour exactly three marks: [label](url), `code`, **lead-in**.
+  // Packet text comes from untrusted sources (a PR body, a review comment).
+  // A link's URL is taken from the raw text, checked against an allow-list and
+  // attribute-escaped; a refused link stays as plain text. verify.py applies
+  // the same rule (LINK / safe_href) and fails a packet that carries one.
+  const LINK=/\[([^\]\n]+)\]\(([^)\t\n\x0b\f\r ]+)\)/g;   // same class as verify.py
+  // Default-deny: only http(s):// and mailto: become links. Any control
+  // character or space anywhere refuses the URL, because browsers strip
+  // leading C0 controls and tabs/newlines inside, so "\u0001javascript:"
+  // would otherwise run as javascript:.
+  function safeHref(u){
+    if(/[\x00-\x20\x7f]/.test(u)) return null;
+    return /^(https?:\/\/|mailto:)/i.test(u) ? u : null;
+  }
+  function inline(t){
+    return E(t).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  }
   function rich(v){
-    return String(v)
-      .replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      .replace(/`([^`]+)`/g,'<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+    const s=String(v==null?'':v); let out='', at=0, m;
+    LINK.lastIndex=0;
+    while((m=LINK.exec(s))){
+      const href=safeHref(m[2]); if(href==null) continue;
+      out+=inline(s.slice(at,m.index))+'<a href="'+E(href)+'" target="_blank" rel="noopener noreferrer">'+
+        inline(m[1])+'</a>';
+      at=m.index+m[0].length;
+    }
+    return out+inline(s.slice(at));
   }
 
   function paint(){
@@ -1167,8 +1325,8 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     document.getElementById('prev').disabled=idx===0;
     document.getElementById('next').disabled=idx===secs.length-1;
     document.getElementById('foot').innerHTML =
-      'baton · format '+D.format_version+' · <span class="layer">'+D.layer+'</span>'+
-      (D.layer_note?' · '+String(pick(D.layer_note,lang)).replace(/`/g,''):'');
+      'baton · format '+E(D.format_version)+' · <span class="layer">'+E(D.layer)+'</span>'+
+      (D.layer_note?' · '+E(String(pick(D.layer_note,lang)).replace(/`/g,'')):'');
   }
 
   let rsT=0; window.addEventListener('resize',()=>{ clearTimeout(rsT); rsT=setTimeout(()=>{
@@ -1204,6 +1362,8 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
   document.getElementById('next').addEventListener('click',()=>go(idx+1));
   addEventListener('keydown',e=>{
     if(e.target.tagName==='TEXTAREA') return;
+    // Arrow keys on a sideways-scrolling table scroll the table, not the page.
+    if(e.target.closest&&e.target.closest('.tscroll')) return;
     if(e.key==='ArrowRight'||e.key==='j') go(idx+1);
     if(e.key==='ArrowLeft'||e.key==='k') go(idx-1);
   });
