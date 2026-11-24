@@ -65,6 +65,12 @@ const SCANNED = Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Page >>\nendobj\n%%EOF
     "an HTML page that is not baton's (or whose packet is not JSON) is read as its visible text");
   const html = readDocument({ name: "page.html", base64: b64("<h1>Plan</h1><p>Visible</p><p hidden>HIDDEN-TEXT</p><script>stealCookies()</script>") });
   ok(!/HIDDEN-TEXT|stealCookies/.test(html.text) && html.type === "html", "a plain HTML page's text drops its scripts and hidden parts", html.text);
+  { const cls = readDocument({ name: "c.html", base64: b64('<div class="col hidden md:block">Visible A</div><p>Visible B</p><p style="display:none">Gone</p>') }).text,
+      li = readDocument({ name: "l.html", base64: b64('<p>Intro</p><ul><li hidden>secret<li>Visible C<li>Visible D</ul><p>Visible E</p>') }).text,
+      open = readDocument({ name: "o.html", base64: b64('<p>Before</p><div hidden><p>Never closed, still shown') }).text,
+      attr = readDocument({ name: "a.html", base64: b64('<p data-x="1 > 2">after</p>') }).text;
+    ok(/Visible A/.test(cls) && /Visible B/.test(cls) && !/Gone/.test(cls) && /Visible C/.test(li) && /Visible D/.test(li) && /Visible E/.test(li) && !/secret/.test(li) && /Never closed, still shown/.test(open) && attr === "after",
+      "visible text is never dropped: a class that says hidden is not hiding, a hidden <li> ends at the next <li>, a hidden element never closed hides nothing, a > in a quoted value stays in the tag", JSON.stringify({ cls, li, open, attr })); }
   const pdf = readDocument({ name: "Reading list.pdf", base64: b64(PDF) });
   ok(pdf.type === "pdf" && /Reading list proposal/.test(pdf.text) && pdf.original.equals(PDF), "a PDF with text is read with Studio's own PDF reader, its bytes kept as they are", pdf.text);
   const codes = await Promise.all([

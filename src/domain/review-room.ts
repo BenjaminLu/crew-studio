@@ -593,18 +593,18 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  without its extension) sent again with other bytes is a new version of the same room, its head that version's sha256; the
    *  same bytes again open the room as it is. Nothing is fetched and nothing is rendered. */
   const docOpening = new Map<string, Promise<string>>();
-  /** what the last upload of a room did: the version it is, of how many, whether the room was there before and the version too */
-  const added = new Map<string, { n: number; of: number; existing: boolean; again: boolean }>();
-  async function readDoc(input: any, by: string): Promise<string> {
+  /** returns the room and what this upload did: the version it is, of how many, whether the room (and the version) was there before */
+  type Added = { n: number; of: number; existing: boolean; again: boolean } | null;
+  async function readDoc(input: any, by: string): Promise<{ id: string; added: Added }> {
     const d = readDocument(input), id = docRoomId(d.name), k = docKeyOf(id);
     // one upload of a document at a time: a second waits for the first, then reads what it kept
-    const job = (docOpening.get(id) ?? Promise.resolve("")).catch(() => "").then(async () => {
+    const job = (docOpening.get(id) ?? Promise.resolve(null)).catch(() => null).then(async (): Promise<{ id: string; added: Added }> => {
       const prior = load(k), now = new Date().toISOString();
       const ext = (/\.[A-Za-z0-9]{1,10}$/.exec(d.name)?.[0] ?? "").toLowerCase(), dir = docHeadDir(id, d.sha256), tmp = `${dir}.tmp-${process.pid}-${Date.now()}`;
       // the version's files: the original byte for byte, the text a run reads, and a baton page's packet and context
       const files: { path: string; data: Buffer }[] = [{ path: `original${ext}`, data: d.original }, { path: "text.md", data: Buffer.from(d.text, "utf8") }, ...d.extra];
       const kept = (f: { path: string; data: Buffer }) => { try { return sha(readFileSync(join(dir, f.path)) as any) === sha(f.data as any); } catch { return false; } };
-      if (prior?.doc?.sha256 === d.sha256 && files.every(kept)) return id;
+      if (prior?.doc?.sha256 === d.sha256 && files.every(kept)) { const vs = prior.docs ?? [prior.doc]; return { id, added: { n: vs.findIndex((x) => x.sha256 === d.sha256) + 1, of: vs.length, existing: true, again: true } }; }
       // written aside and moved in whole; a version already kept exactly as it is stays untouched (a run may be reading it)
       if (!files.every(kept)) { rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true, mode: 0o700 });
         for (const f of files) writeFileSync(join(tmp, f.path), f.data, { mode: 0o600 });
@@ -621,7 +621,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       room.docs = docs.slice(-50); room.doc = snap; room.head = d.sha256; room.base = d.sha256;
       room.subject = { ...(room.subject ?? { kind: "doc", room: id }), name: snap.name } as Subject;
       if (!(room.heads ?? []).some((h) => h.head === d.sha256)) room.heads = [...(room.heads ?? []), { head: d.sha256, base: d.sha256, at: now }];
-      save(k, room); notify(k); added.set(id, { n: room.docs.findIndex((x) => x.sha256 === d.sha256) + 1, of: room.docs.length, existing: !!prior, again: had >= 0 }); return id;
+      save(k, room); notify(k); return { id, added: { n: room.docs.findIndex((x) => x.sha256 === d.sha256) + 1, of: room.docs.length, existing: !!prior, again: had >= 0 } };
     });
     docOpening.set(id, job); try { return await job; } finally { if (docOpening.get(id) === job) docOpening.delete(id); }
   }
@@ -835,7 +835,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     async openDir(url: unknown) { const id = await readDir(String(url ?? "").slice(0, 800)); return { id, href: `#/room/${id}`, room: this.view(id) }; },
     /** Upload or paste a document (a proposal: Markdown, text, HTML, a baton page, a PDF with text): Studio keeps it byte for byte
      *  by its sha256 and opens its room; the same document with other bytes is the room's next version */
-    async openDoc(input: unknown, by: string) { const id = await readDoc(input, by); return { id, href: `#/room/${id}`, added: added.get(id) ?? null, room: this.view(id) }; },
+    async openDoc(input: unknown, by: string) { const { id, added } = await readDoc(input, by); return { id, href: `#/room/${id}`, added, room: this.view(id) }; },
     /** A room's record exactly as kept (an old room's whiteboard: its turns, scenes and drawings), for the captain to download.
      *  Read only; nothing in the file is changed or removed. */
     exportRoom(id: string) { const k = keyOf(id), r = load(k); if (!r) throw refuse("No such review room", "not_found");

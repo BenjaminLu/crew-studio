@@ -122,24 +122,51 @@ function inner(raw: string, low: string, name: string): string | null {
 }
 const SKIP = new Set(["script", "style", "template", "noscript", "svg", "head"]), VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
 const BLOCK = new Set(["p", "div", "li", "tr", "section", "article", "table", "ul", "ol", "br", "blockquote", "pre", "dd", "dt"]);
-const hiddenTag = (tag: string) => /(?:^|\s)hidden(?=[\s=/]|$)/.test(tag) || /display\s*:\s*none|visibility\s*:\s*hidden/.test(tag);
-/** An HTML document's visible text, in one pass: no script, style, template, noscript or head; an element hidden by its hidden
- *  attribute or an inline display:none / visibility:hidden dropped with what it holds; a figure a mark; headings as Markdown */
+/** elements whose end tag HTML lets an author leave out: the next one of the same name (or the parent's end) closes them */
+const OPEN_ENDED = new Set(["li", "p", "dt", "dd", "tr", "td", "th", "option"]);
+/** hidden: the hidden attribute (a name outside any quoted value), or display:none / visibility:hidden in the style attribute's
+ *  own value; a class that merely says "hidden" is not read (Studio does not read stylesheets) */
+const hiddenTag = (tag: string) => {
+  if (/(?:^|\s)hidden(?=[\s=/]|$)/.test(tag.replace(/"[^"]*"|'[^']*'/g, '""'))) return true;
+  const st = /(?:^|\s)style\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/.exec(tag), css = st ? st[1] ?? st[2] ?? st[3] ?? "" : "";
+  return /display\s*:\s*none|visibility\s*:\s*hidden/.test(css); };
+/** the end of the tag that starts at lt: the first ">" outside a quoted value (-1: the tag never ends) */
+const tagEnd = (raw: string, lt: number) => { let q = ""; for (let j = lt + 1; j < raw.length; j++) { const c = raw[j]; if (q) { if (c === q) q = ""; } else if (c === '"' || c === "'") q = c; else if (c === ">") return j; } return -1; };
+/** An HTML document's visible text, in linear time: no script, style, template, noscript or head; an element hidden by its
+ *  hidden attribute or an inline display:none / visibility:hidden dropped with what it holds; a figure a mark; headings as
+ *  Markdown. A hidden element that never closes (an end tag left out) hides nothing: that part is read once more, unhidden. */
 export function htmlText(raw: string): string {
-  const low = raw.toLowerCase(), n = raw.length, out: string[] = []; let i = 0, hidden: { name: string; depth: number } | null = null;
-  while (i < n) {
-    const lt = raw.indexOf("<", i); if (lt < 0) { if (!hidden) out.push(raw.slice(i)); break; }
-    if (!hidden) out.push(raw.slice(i, lt));
-    if (raw.startsWith("<!--", lt)) { const e = raw.indexOf("-->", lt + 4); if (e < 0) break; i = e + 3; continue; }
-    const gt = raw.indexOf(">", lt + 1); if (gt < 0) break;
-    const tag = low.slice(lt + 1, gt), m = /^(\/?)([a-z][a-z0-9:-]{0,40})/.exec(tag); i = gt + 1;
-    if (!m) { if (!hidden) out.push(" "); continue; }
-    const close = m[1] === "/", name = m[2];
-    if (!close && SKIP.has(name)) { if (name === "svg" && !hidden) out.push(" [figure] "); const e = low.indexOf(`</${name}`, i); if (e < 0) break; const g = low.indexOf(">", e); i = g < 0 ? n : g + 1; continue; }
-    if (hidden) { if (name === hidden.name && !VOID.has(name)) { hidden.depth += close ? -1 : 1; if (!hidden.depth) hidden = null; } continue; }
-    if (!close && !VOID.has(name) && hiddenTag(tag)) { hidden = { name, depth: 1 }; continue; }
-    out.push(/^h[1-6]$/.test(name) ? (close ? "\n" : "\n\n## ") : BLOCK.has(name) ? "\n" : " ");
-  }
-  return out.join("").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")
+  const low = raw.toLowerCase(), n = raw.length;
+  const pass = (from: number, hide: boolean): { out: string[]; reopen: number | null } => {
+    const out: string[] = []; let i = from, hidden: { name: string; depth: number; at: number; mark: number } | null = null;
+    while (i < n) {
+      const lt = raw.indexOf("<", i); if (lt < 0) { if (!hidden) out.push(raw.slice(i)); break; }
+      if (!hidden) out.push(raw.slice(i, lt));
+      if (raw.startsWith("<!--", lt)) { const e = raw.indexOf("-->", lt + 4); if (e < 0) break; i = e + 3; continue; }
+      // a tag that never ends (an unclosed quote, a stray "<") ends the reading: never scanned again from each "<" after it
+      const gt = tagEnd(raw, lt); if (gt < 0) { if (!hidden) out.push(raw.slice(lt)); break; }
+      const tag = low.slice(lt + 1, gt), m = /^(\/?)([a-z][a-z0-9:-]{0,40})/.exec(tag);
+      if (!m) { i = gt + 1; if (!hidden) out.push(" "); continue; }
+      const close = m[1] === "/", name = m[2];
+      if (!close && SKIP.has(name)) { i = gt + 1; if (name === "svg" && !hidden) out.push(" [figure] "); const e = low.indexOf(`</${name}`, i); if (e < 0) break; const g = low.indexOf(">", e); i = g < 0 ? n : g + 1; continue; }
+      if (hidden) {
+        if (VOID.has(name)) { i = gt + 1; continue; }
+        if (name === hidden.name) {
+          // a second <li> (or <p>, <tr> …) at the same depth ends an open-ended hidden one; this tag is then read as usual
+          if (!close && hidden.depth === 1 && OPEN_ENDED.has(name)) { hidden = null; i = lt; continue; }
+          hidden.depth += close ? -1 : 1; i = gt + 1; if (!hidden.depth) hidden = null; continue; }
+        // the parent's end closes an open-ended hidden element; it is then read as usual
+        if (close && hidden.depth === 1 && OPEN_ENDED.has(hidden.name)) { hidden = null; i = lt; continue; }
+        i = gt + 1; continue; }
+      i = gt + 1;
+      if (hide && !close && !VOID.has(name) && hiddenTag(tag)) { hidden = { name, depth: 1, at: lt, mark: out.length }; continue; }
+      out.push(/^h[1-6]$/.test(name) ? (close ? "\n" : "\n\n## ") : BLOCK.has(name) ? "\n" : " ");
+    }
+    return { out, reopen: hidden ? hidden.at : null };
+  };
+  const first = pass(0, true), parts = first.out;
+  // a hidden element still open at the end hid the rest by mistake: read from it again without hiding (once: linear)
+  if (first.reopen !== null) parts.push(...pass(first.reopen, false).out);
+  return parts.join("").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")
     .replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
