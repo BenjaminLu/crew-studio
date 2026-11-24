@@ -20,6 +20,7 @@ import {installStartupRecursion,startupCursorAdvice} from '../domain/startup-rec
 import { deliverableOf, DELIVERABLE_WORKFLOW } from "../deliverables";
 import {installReadinessViews,readinessNodes} from './readiness-view';
 import {installGitHubReviewWorkflow} from '../domain/github-review-workflow';
+import {downloadResponse} from '../domain/review-download';
 import {Onboarding} from '../onboarding';
 import {OnboardingTeam,type TeamPick,type TeamProbe} from '../onboarding-team';
 import {ArtifactStore,websiteHref} from '../artifacts';
@@ -839,6 +840,14 @@ export function createRuntime(d: RuntimeDeps) {
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a pull request's room / 只有這台 Mac 上的船長能開啟 pull request 的審查室", code: "desktopOnly" }, 403);
         try { return json(await rr.openPr(b?.url)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
       }
+      // a page version as a file to keep (src/domain/review-download.ts): the room's (…/<room>/page/<v>/download) or a Library
+      // save's (…/library/<artifact>/<n>/page/<v>/download); its bytes as kept and checked, an attachment, on this Mac only
+      const pageDl = /^\/api\/review-room\/(?:(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})|library\/(room-[a-z0-9-]{1,60})\/(\d{1,6}))\/page\/(\d{1,6})\/download$/.exec(p);
+      if (pageDl) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        if (writing) return json({ error: "GET /api/review-room/<room>/page/<version>/download" }, 405);
+        if (who.kind !== "desktop") return json({ error: "A page downloads on this Mac only / 頁面只能在這台 Mac 上下載", code: "desktopOnly" }, 403);
+        try { return downloadResponse(pageDl[1] ? rr.pageDownload(pageDl[1], pageDl[4]) : rr.libraryPageDownload(pageDl[2], Number(pageDl[3]), pageDl[4])); }
+        catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); } }
       // a room saved in the Library: read it (any authenticated page), its pictures from the snapshot itself
       const libRoom = /^\/api\/review-room\/library\/(room-[a-z0-9-]{1,60})(?:\/(\d{1,6})\/asset\/([A-Za-z0-9._-]+\.png))?$/.exec(p);
       if (libRoom) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); if (writing) return json({ error: "a saved room is read-only" }, 405);

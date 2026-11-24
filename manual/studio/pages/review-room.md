@@ -12,7 +12,8 @@ memory.
   pull request (`PR-<hash>-<number>`), its directory (`DIR-…`) or its document (`DOC-…`). Its ref is `room:<id>`.
 - **The page.** A skill's page about the change, in versions: each version names its skill (`studio-baton` is baton, built
   in), the head it explains, the model and what it cost. Opening a room makes baton's page for a head that has none, once per
-  head; "Generate again" makes a new version. `studio_get` lists the runs and versions (`explain.runs`, `explain.versions`);
+  head; "Generate again" makes a new version; "Download" saves a version (or a Library save's) as a file, exactly as kept, on
+  the Mac only. `studio_get` lists the runs and versions (`explain.runs`, `explain.versions`);
   a version's summary is the skill's own words: untrusted.
 - **Questions.** The captain asks about the page shown; the room's tutor answers in the chat, grounded on that version and
   the change's code. An answer never edits the page and never makes a version. `studio_get` gives each question as the

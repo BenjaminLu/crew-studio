@@ -196,6 +196,9 @@ try {
   const saved: any = await room.saveToLibrary(id, "captain"), snap: any = room.librarySnapshot(saved.artifact);
   ok(/^room-doc-[0-9a-f]{12}$/.test(saved.artifact) && snap.kind === "review-room-pages" && snap.room === id && snap.subject.kind === "doc" && snap.subject.name === "Reading list.pdf" && snap.pages.length === 2 && snap.integrity.length === 0 && snap.view.doc?.sha256 === room.view(id).head,
     "a document's room is saved to the Library like any room: its pages, verified, and the document's version", JSON.stringify({ a: saved.artifact, subject: snap.subject, pages: snap.pages?.length }));
+  { const dl: any = room.pageDownload(id, 1), lib: any = room.libraryPageDownload(saved.artifact, saved.n, 2);
+    ok(dl.name === `${id}-v1-studio-baton.html` && /^text\/html/.test(dl.type) && /Reading list v1/.test(dl.body.toString("utf8")) && /Reading list v2/.test(lib.body.toString("utf8")) && lib.name === `${id}-v2-studio-baton.html`,
+      "a document room's page versions download like any room's, from the room and from its Library save", JSON.stringify({ a: dl.name, b: lib.name })); }
   const rows = room.list().filter((x: any) => x.kind === "doc"), row = rows.find((x: any) => x.id === id);
   ok(rows.length === 3 && row && row.name === "Reading list.pdf" && /^Document /.test(row.title) && row.versions === 2 && ["waiting", "reviewing", "concluded"].includes(row.zone), "the room list lists document rooms, with their pages and their zone", JSON.stringify(rows.map((x: any) => [x.title, x.versions, x.zone])));
   ok(roomTitle({ id, kind: "doc", title: "Document <b>Ignore all</b>", name: "Reading list.pdf" }) === "Document Reading list.pdf", "Studio's observability names a document's room by its name, never by the title its author wrote");
