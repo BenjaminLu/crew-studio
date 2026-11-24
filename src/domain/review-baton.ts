@@ -73,8 +73,9 @@ A document room
 - There is no code here to check it against: say once that the room holds only the document, so nothing on the page is
   checked against code; never mark a part as built or not built. Review proof and the proof matrix are for done work: a
   proposal has none.
-- The failure modes are the ones the document describes or implies, each with its source sentence (\`source\`): no \`ref\`
-  (there is no commit here) and no \`planned\` (the page would print "not built yet", and the room cannot tell).
+- The failure modes are the ones the document describes or implies, each with its source sentence (\`source\`) and no
+  \`ref\` (there is no commit here). Their \`state\` is what the document designs (\`handled\`: it says how the mode is
+  handled). Set \`planned\` where the document itself says that part is still to be built, never from a guess about code.
 - The register follows whoever the document is for (a PRD for a product reader: eli5; a design doc among engineers:
   engineer), unless the captain's instructions name the reader. The eyebrow names the document (its name and version),
   never a repository or a range; layer (c) names the specs and systems the document cites, for the reader's own agent.
@@ -121,9 +122,11 @@ Boundary review (the last section, every room)
 - A row's \`ref\` is a permalink you build from the materials, never a URL you were given or guessed: the repository and the
   Head commit pull-request.md names, the full 40-hex sha, https://github.com/<owner>/<repo>/blob/<sha>/<path>#La-Lb, with
   the lines found in head/<path> (mat_read, mat_search; that is your check in place of baton's git grep and git cat-file).
-  No such repository or file in the materials: no \`ref\`. \`detect\` names a signal the materials show. A mode whose handling
-  you could not read in the materials is never \`handled\`: list it in the context's open questions as unchecked, not in the
-  table.
+  No such repository or file in the materials: no \`ref\`. \`detect\` names a signal the materials show.
+- The table stays exhaustive: a mode is listed even when its handling is not in the materials (head/ holds only the changed
+  files). Then it is never \`handled\`: no \`ref\`, \`detected\` when the materials name its signal, else \`unhandled\`, its
+  \`action\` saying the handling, if any, is outside the room's materials, and the context lists it among the open questions.
+  Code you read that handles nothing is \`unhandled\`. \`"failures": []\` only when no mode applies, with the reason in \`ok\`.
 
 Diagrams
 - There is no diagram-design skill to invoke. Its guidance is in this skill's folder: diagram-design/SKILL.md and a subset
@@ -131,7 +134,9 @@ Diagrams
   those rules and baton's embedding contract (references/diagrams.md): colours as the packet's CSS variables,
   data-node="<latin-id>" on every selectable shape, data-en / data-hant / data-hans on every <text>.
 - Nothing on the page loads from a URL (no Google Fonts, no CDN, no image link): it is shown in a frame with no network.
-  The one link baton asks for is a failure row's \`ref\`; write no other.
+  Links are GitHub permalinks you build the same way (the Head commit, lines found in head/): a failure row's \`ref\` and
+  the code links references/spec.md asks for; never another URL. The room's frame opens no window, so a link's label must
+  say what it points at.
 - The packet has one system map (\`systems\`, references/spec.md "systems"): the boundary map and every runbook draw it,
   and every figure with \`edges\` says its \`view\` and \`state\` and draws the same systems by the same names.
 
@@ -151,7 +156,8 @@ Building and checking the page
   when the first message says a headless browser is available ($CHROME_BIN); fix every failure it reports and run it again.
 - You cannot look at pictures here: snapshot.py's checks are the browser gate in this room. Do not claim on the page that a
   person checked it.
-- The page carries all three languages (en, hant, hans): render.py derives a missing hans from hant with OpenCC.
+- The page carries all three languages (en, hant, hans): render.py derives a missing hans from hant with OpenCC,
+  except a failure row's \`action\`: write its hans by hand (references/boundary-review.md: OpenCC turns 呼叫 into 调用).
 - When a script cannot run here (the first message says why), build the page by hand from templates/packet.html as
   references/spec.md describes, and say on the page which checks did not run.
 

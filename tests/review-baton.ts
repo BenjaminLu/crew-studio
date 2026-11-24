@@ -81,15 +81,19 @@ ok(/failure-mode table/.test(BATON_ADAPTER) && /It is required: on the engineer 
 ok(/Head commit pull-request\.md names, the full 40-hex sha/.test(BATON_ADAPTER) && /blob\/<sha>\/<path>#La-Lb/.test(BATON_ADAPTER) && /lines found in head\/<path>/.test(BATON_ADAPTER)
   && /in place of baton's git grep and git cat-file/.test(BATON_ADAPTER) && /never a URL you were given or guessed/.test(BATON_ADAPTER),
   "the adapter: a row's ref is a permalink at the room's head commit, its lines found in head/ (in place of git grep and git cat-file)");
-ok(/could not read in the materials is never `handled`/.test(BATON_ADAPTER) && /open questions as unchecked/.test(BATON_ADAPTER) && /`detect` names a signal the materials show/.test(BATON_ADAPTER),
-  "the adapter: never handled from code it did not read, never a signal the materials do not show");
-ok(/no `ref`\s+\(there is no commit here\) and no `planned`/.test(BATON_ADAPTER) && /each with its source sentence \(`source`\)/.test(BATON_ADAPTER),
-  "the adapter: a document room's failure modes cite the document's sentence, with no ref and no planned (the room cannot tell what is built)");
+ok(/The table stays exhaustive: a mode is listed even when its handling is not in the materials/.test(BATON_ADAPTER) && /Then it is never `handled`: no `ref`/.test(BATON_ADAPTER)
+  && /among the open questions/.test(BATON_ADAPTER) && /`detect` names a signal the materials show/.test(BATON_ADAPTER) && /`"failures": \[\]` only when no mode applies/.test(BATON_ADAPTER),
+  "the adapter: the table stays exhaustive (upstream's rule), but a mode whose handling is outside the materials is never handled and is an open question");
+ok(/each with its source sentence \(`source`\) and no\s+`ref` \(there is no commit here\)/.test(BATON_ADAPTER) && /Set `planned` where the document itself says that part is still to be built/.test(BATON_ADAPTER),
+  "the adapter: a document room's failure modes cite the document's sentence, no ref; planned only where the document says it is to be built");
 ok(/one system map \(`systems`/.test(BATON_ADAPTER) && /says its `view` and `state`/.test(BATON_ADAPTER),
   "the adapter: one system map, and every figure with edges says its view and state");
 // the old blanket rule is gone: upstream now asks for one link (a row's evidence); nothing on the page may load from a URL
-ok(!/No external URL anywhere on the page/.test(BATON_ADAPTER) && /Nothing on the page loads from a URL/.test(BATON_ADAPTER) && /The one link baton asks for is a failure row's `ref`; write no other/.test(BATON_ADAPTER),
-  "the adapter: nothing loads from a URL; the one link is a failure row's ref (the old \"no external URL anywhere\" would forbid it)");
+ok(!/No external URL anywhere on the page/.test(BATON_ADAPTER) && /Nothing on the page loads from a URL/.test(BATON_ADAPTER) && /a failure row's `ref` and\s+the code links references\/spec\.md asks for; never another URL/.test(BATON_ADAPTER)
+  && /Code links — clickable/.test(readFileSync(join(dir, "references/spec.md"), "utf8")),
+  "the adapter: nothing loads from a URL; links are head-commit permalinks (a row's ref, spec.md's code links), never another URL");
+ok(/except a failure row's `action`: write its hans by hand/.test(BATON_ADAPTER) && /Write `hans` for `action` by hand/.test(readFileSync(join(dir, "references/boundary-review.md"), "utf8")),
+  "the adapter: a failure row's action carries its own hans (upstream: OpenCC mistranslates on-call paging)");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

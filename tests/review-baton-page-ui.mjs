@@ -14,7 +14,7 @@ import "./lib/isolated-env.mjs"; // first: tests never read the operator's .env
 //        node tests/review-baton-page-ui.mjs
 //   BATON_EXTRA_PAGES=<dir>  also serve every *.html in <dir> as a further version and check it renders in the frame
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +30,9 @@ const shots = process.env.ROOM_SHOTS || join(root, "tests/out/review-baton-page"
 
 // ---------- the vendored scripts: the adapter-shaped packet builds and passes; each rule the adapter names has teeth ----------
 // python3 -B: no __pycache__ in the vendored folder, which would change the pinned files hash (tests/review-baton.ts)
+if (spawnSync("python3", ["--version"]).status !== 0) { console.log("  FAIL  python3 is needed: the vendored render.py and verify.py run here"); process.exit(1); }
 const work = mkdtempSync(join(tmpdir(), "crew-baton-page-"));
+process.on("exit", () => rmSync(work, { recursive: true, force: true }));
 const build = (name, spec) => { const j = join(work, `${name}.json`), h = join(work, `${name}.html`); writeFileSync(j, JSON.stringify(spec));
   execFileSync("python3", ["-B", join(skill, "scripts/render.py"), j, "-o", h], { stdio: "pipe" });
   const v = spawnSync("python3", ["-B", join(skill, "scripts/verify.py"), h, "--register", "engineer"], { encoding: "utf8" });
@@ -43,6 +45,11 @@ ok(good.code === 0 && /^ok — .*failure modes/.test(good.out) && !/warning/.tes
   ok(r.code === 1 && /not pinned to a commit/.test(r.out), "a row whose evidence names a branch, not the head commit, fails verify.py", r.out.slice(0, 300)); }
 { const p = packet(); const { ref: _, ...row } = p.sections[1].rows[0]; p.sections[1].rows[0] = row; const r = build("handled-no-ref", p);
   ok(r.code === 1 && /`handled` needs `ref`/.test(r.out), "a handled row with no evidence fails verify.py (the adapter: never handled from code not read)", r.out.slice(0, 300)); }
+// a document room (the adapter's document route): layer proposal, rows cite the document's sentence, no ref, planned where it says so
+{ const p = packet(); p.layer = "proposal"; delete p.range; p.repo = "Checkout retries, a proposal (v2)";
+  p.sections[1].rows = p.sections[1].rows.map(({ ref, ...row }, i) => ({ ...row, source: `doc:Failure handling, item ${i + 1}`, ...(i === 3 ? { planned: true } : {}) }));
+  const r = build("document", p);
+  ok(r.code === 0 && /<span class="fplan">/.test(r.html), "a document room's rows (source, no ref, planned where the document says so) pass verify.py; the page says not built yet", r.out.slice(0, 400)); }
 
 // ---------- the page in the room's frame ----------
 const files = { 1: { skill: { id: "studio-baton", v: 1, name: "baton", upstream: "2d7f9b9" }, files: { "index.html": good.html }, summary: "Add percent, handed on" } };

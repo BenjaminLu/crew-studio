@@ -290,9 +290,10 @@ Quality first: a skill's run is not one model round.
   its render, verify and snapshot scripts run through `skill_run`. baton's failure-mode table (its runbook, under the boundary
   map) is required, as upstream's `verify.py` requires it on the engineer register: a row's evidence is a permalink at the
   room's head commit (`/blob/<sha>/<path>#La-Lb`, the lines found in `head/`, in place of upstream's `git grep`), a mode whose
-  handling the materials do not show is an open question, never `handled`, and a document room cites the document's sentence
-  instead. That evidence link is the one link the page carries; in the room's frame (no `allow-popups`) it does not open a
-  window, so it is read there by its label and opens from the downloaded page. The page's own search (`/`), its `#q=<code>`
+  handling the materials do not show stays in the table but is never `handled` and is an open question, and a document room
+  cites the document's sentence instead (`planned` only where the document says so). Such head-commit permalinks (a row's
+  evidence, upstream's code links) are the only links the page carries; in the room's frame (no `allow-popups`) they open no
+  window, so they are read there by their label and open from the downloaded page. The page's own search (`/`), its `#q=<code>`
   deep link and its row-to-map links work inside the frame.
 - **Opening a room starts it** (the captain's decision): when `autoRun` is on (default) and the room is explained with the
   default skill, opening it (`POST …/explain/auto`, sent once per room and head by the page; never from a paired phone)
