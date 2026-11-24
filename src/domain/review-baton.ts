@@ -71,8 +71,8 @@ A document room
   carries the document whole, never from the rendered page; the old packet is one earlier reading to improve on, not a
   source of facts. Carry the document whole in your context, as baton says.
 - There is no code here to check it against: say once that the room holds only the document, so nothing on the page is
-  checked against code; never mark a part as built or not built. Review proof and the proof matrix are for done work: a
-  proposal has none.
+  checked against code; never call a part built or not built from a guess about code (\`planned\` only where the document
+  says so). Review proof and the proof matrix are for done work: a proposal has none.
 - The failure modes are the ones the document describes or implies, each with its source sentence (\`source\`) and no
   \`ref\` (there is no commit here). Their \`state\` is what the document designs (\`handled\`: it says how the mode is
   handled). Set \`planned\` where the document itself says that part is still to be built, never from a guess about code.

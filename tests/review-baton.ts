@@ -88,7 +88,7 @@ ok(/each with its source sentence \(`source`\) and no\s+`ref` \(there is no comm
   "the adapter: a document room's failure modes cite the document's sentence, no ref; planned only where the document says it is to be built");
 ok(/one system map \(`systems`/.test(BATON_ADAPTER) && /says its `view` and `state`/.test(BATON_ADAPTER),
   "the adapter: one system map, and every figure with edges says its view and state");
-// the old blanket rule is gone: upstream now asks for one link (a row's evidence); nothing on the page may load from a URL
+// the old blanket rule is gone: upstream now asks for links (a row's evidence, spec.md's code links), all head-commit permalinks; nothing on the page may load from a URL
 ok(!/No external URL anywhere on the page/.test(BATON_ADAPTER) && /Nothing on the page loads from a URL/.test(BATON_ADAPTER) && /a failure row's `ref` and\s+the code links references\/spec\.md asks for; never another URL/.test(BATON_ADAPTER)
   && /Code links — clickable/.test(readFileSync(join(dir, "references/spec.md"), "utf8")),
   "the adapter: nothing loads from a URL; links are head-commit permalinks (a row's ref, spec.md's code links), never another URL");
