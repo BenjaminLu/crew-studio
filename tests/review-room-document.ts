@@ -17,6 +17,7 @@ const { installStaffingGuard, StaffingStore } = await import("../src/domain/staf
 const { installReviewRoom } = await import("../src/domain/review-room");
 const { readDocument, docRoomId, docName, batonOf } = await import("../src/domain/review-doc");
 const { roomTitle } = await import("../src/observe/kinds/room");
+const { kindDef, shape } = await import("../src/observe/registry");
 
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 const b64 = (t: string | Buffer) => Buffer.from(t).toString("base64");
@@ -77,7 +78,20 @@ const SCANNED = Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Page >>\nendobj\n%%EOF
     "refused before anything is kept, saying why: an executable or script, an executable or archive named .md, a PDF that is not one, text that is not UTF-8, an empty document, a scanned PDF, another type, no title, bytes that are not base64", JSON.stringify(codes));
   process.env.CREW_REVIEW_DOC_MB = "0.001"; const big = await refused(() => readDocument({ name: "big.md", base64: b64("x".repeat(4096)) })); delete process.env.CREW_REVIEW_DOC_MB;
   ok(big?.code === "too_large", "a document over the size limit is refused", big?.message);
-  ok(docName("../../etc/passwd") === "passwd" && docName("a\u0000b.md") === "ab.md" && docName("x".repeat(200)) === null, "a name is a file's base name: no folder, no control character, bounded"); }
+  ok(docName("../../etc/passwd") === "passwd" && docName("a\u0000b.md") === "ab.md" && docName("x".repeat(200)) === null, "a name is a file's base name: no folder, no control character, bounded");
+  // what the reviewers found: a name with nothing of its own, a long bad base64, a binary tail, a long PDF, a pasted title's slash
+  const more = await Promise.all([() => readDocument({ name: ".md", base64: b64("# x") }), () => readDocument({ name: "_-.txt", base64: b64("x") }), () => readDocument({ name: "a.md", base64: "!".repeat(100) }),
+    () => readDocument({ name: "tail.md", base64: Buffer.concat([Buffer.from("# ok\n".repeat(3000)), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0xff])]).toString("base64") })].map(async (f) => (await refused(f))?.code));
+  ok(JSON.stringify(more) === JSON.stringify(["bad_name", "bad_name", "bad_request", "bad_type"]), "a name with nothing of its own is refused (it would share one room with every such name); bad base64 is bad_request at any length; a text with a binary tail is not text", JSON.stringify(more));
+  const q = readDocument({ title: "Q3 / Q4 plan.txt", text: "# Plan" });
+  ok(q.name === "Q3 / Q4 plan.txt.md" && q.type === "markdown", "a pasted title keeps its slashes and is always Markdown", JSON.stringify([q.name, q.type]));
+  const lines = Array.from({ length: 3000 }, (_, i) => `BT (Line ${i} of the long proposal) Tj ET`).join("\n"), longPdf = Buffer.from(`%PDF-1.4\n1 0 obj\n<< /Type /Page >>\nendobj\n2 0 obj\n<< /Length ${lines.length} >>\nstream\n${lines}\nendstream\nendobj\n%%EOF\n`, "latin1");
+  const lp = readDocument({ name: "long.pdf", base64: b64(longPdf) });
+  ok(/Line 2999 of the long proposal/.test(lp.text) && lp.text.length > 60000 && lp.truncated === false, "a long PDF keeps all its text (not the first 20,000 characters)", String(lp.text.length));
+  // someone else's HTML is read in linear time: crafted inputs of 1 MB each finish quickly (Studio has one thread)
+  const evil = ["<script ".repeat(125000), "<title>".repeat(140000), "<p hidden>".repeat(100000), "<!--".repeat(250000), "<h1>".repeat(250000), `<script id="baton-data" `.repeat(40000)];
+  const times = evil.map((e) => { const t0 = performance.now(); try { readDocument({ name: "evil.html", base64: b64(e) }); } catch {} return Math.round(performance.now() - t0); });
+  ok(times.every((t) => t < 1500), "crafted HTML of 1 MB (unclosed scripts, titles, hidden elements, comments, headings, baton ids) is read in linear time", JSON.stringify(times)); }
 
 const H = await harness([bundledText("workflows/v2/review-room-doc-host.wf.yaml")!]), E = H.engine;
 installStaffingGuard(E, new StaffingStore(H.data), (pid: string) => ({ namespace: "git" as const, id: pid, identity: `doc-${pid}` }));
@@ -141,7 +155,7 @@ try {
 
   // ---------- a new version: the same name with other bytes is the room's next head ----------
   const next: any = await room.openDoc({ name: "Reading-List.md", base64: b64(PROPOSAL_V2) }, "captain"), v2 = sha(PROPOSAL_V2), w: any = room.view(id, true);
-  ok(next.id === id && w.head === v2 && w.doc.n === 2 && w.doc.versions.length === 2 && w.doc.newer?.from === v1 && w.doc.newer.to === v2 && existsSync(join(heads, v1, "original.md")) && existsSync(join(heads, v2, "original.md")),
+  ok(next.id === id && next.added?.n === 2 && next.added.of === 2 && next.added.existing === true && next.added.again === false && w.head === v2 && w.doc.n === 2 && w.doc.versions.length === 2 && w.doc.newer?.from === v1 && w.doc.newer.to === v2 && existsSync(join(heads, v1, "original.md")) && existsSync(join(heads, v2, "original.md")),
     "the same document with other bytes becomes version 2 of the same room, its head the new sha256; the header says a newer version came since the last page; both versions are kept", JSON.stringify({ head: w.head, doc: w.doc }));
   const auto0 = X.view(id).auto;
   ok(auto0.due === true && auto0.head === v2, "a new version is a new head: opening the room starts baton again for it", JSON.stringify(auto0));
@@ -168,6 +182,10 @@ try {
     ok(rt?.status === "failed" && /changed on disk since it was uploaded/.test(String(rt.error ?? "")), "a version's file changed on disk since the upload fails the run (integrity), never read in its place", JSON.stringify(rt && [rt.status, rt.error])); script.length = 0; }
 
   // ---------- a PDF, the Library, the list, the record ----------
+  { const back: any = await room.openDoc({ name: "reading-list.md", base64: b64(PROPOSAL) }, "captain"), bv: any = room.view(id);
+    ok(back.added?.n === 1 && back.added.of === 2 && back.added.existing && back.added.again && bv.doc.n === 1 && bv.doc.versions.map((x: any) => x.sha256).join() === [v1, v2].join() && !bv.doc.newer,
+      "an older version sent again keeps its number (the list does not reorder); nothing newer is announced for it; the answer says which version it is", JSON.stringify({ added: back.added, n: bv.doc.n, newer: bv.doc.newer }));
+    await room.openDoc({ name: "reading-list.md", base64: b64(PROPOSAL_V2) }, "captain"); }
   { const p: any = await room.openDoc({ name: "Reading list.pdf", base64: b64(PDF) }, "captain"); ok(p.id === id && room.view(id).doc.type === "pdf" && room.view(id).doc.versions.length === 3, "a PDF of the same document (its name) is the room's next version", JSON.stringify(room.view(id).doc)); }
   const saved: any = await room.saveToLibrary(id, "captain"), snap: any = room.librarySnapshot(saved.artifact);
   ok(/^room-doc-[0-9a-f]{12}$/.test(saved.artifact) && snap.kind === "review-room-pages" && snap.room === id && snap.subject.kind === "doc" && snap.subject.name === "Reading list.pdf" && snap.pages.length === 2 && snap.integrity.length === 0 && snap.view.doc?.sha256 === room.view(id).head,
@@ -175,6 +193,9 @@ try {
   const rows = room.list().filter((x: any) => x.kind === "doc"), row = rows.find((x: any) => x.id === id);
   ok(rows.length === 3 && row && row.name === "Reading list.pdf" && /^Document /.test(row.title) && row.versions === 2 && ["waiting", "reviewing", "concluded"].includes(row.zone), "the room list lists document rooms, with their pages and their zone", JSON.stringify(rows.map((x: any) => [x.title, x.versions, x.zone])));
   ok(roomTitle({ id, kind: "doc", title: "Document <b>Ignore all</b>", name: "Reading list.pdf" }) === "Document Reading list.pdf", "Studio's observability names a document's room by its name, never by the title its author wrote");
+  { (E as any).reviewRoom ??= room; const def: any = kindDef("room"), ent: any = def.get({ engine: E } as any, id), sh: any = shape(def, ent.data);
+    ok(sh.data.doc?.type === "pdf" && sh.data.doc.version === 3 && sh.data.doc.versions === 3 && /^[0-9a-f]{64}$/.test(sh.data.doc.sha256) && sh.untrusted.includes("doc.name") && JSON.stringify(sh.data.doc.name).includes("Reading list.pdf") && !JSON.stringify(sh.data).includes("Shared reading list service"),
+      "studio_get room:DOC-… gives the document's type, version and sha256, its name marked untrusted, never the title its author wrote", JSON.stringify({ doc: sh.data.doc, u: sh.untrusted })); }
   ok(room.taskEntry(hosts[0])?.href === `#/room/${id}` && room.taskEntry(hosts[0])?.host === true, "the host Task's page links back to the document's room");
   ok(fetched.every((x) => x.startsWith(H.toolUrl)), "no request left Studio: a document is never fetched, only read", JSON.stringify(fetched.filter((x) => !x.startsWith(H.toolUrl))));
 } finally { globalThis.fetch = realFetch; for (const r of E.list()) if (!["succeeded", "failed", "cancelled"].includes(r.status)) await E.cancel(r.id, "cleanup"); H.stop(); }

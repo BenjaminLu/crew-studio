@@ -83,7 +83,7 @@ function textOps(t: string): string[] {
   }
   return parts;
 }
-export function pdfText(b: Buffer, pageCap = PDF_PAGE_CAP): { pages: number; text: string; skipped: number } {
+export function pdfText(b: Buffer, pageCap = PDF_PAGE_CAP, maxChars = 20000): { pages: number; text: string; skipped: number } {
   // linear and bounded on any input: at most PDF_STREAM_SCAN_CAP stream keywords looked at, each dictionary within 4 KB
   // before its keyword, no backtracking pattern over the file (a crafted PDF cannot stall the event loop)
   const s = b.toString("latin1"); const pages = (s.match(/\/Type\s*\/Page(?!s)/g) ?? []).length; const out: string[] = []; let streams = 0, inflated = 0, skipped = 0, scanned = 0;
@@ -101,7 +101,7 @@ export function pdfText(b: Buffer, pageCap = PDF_PAGE_CAP): { pages: number; tex
     const parts = textOps(t);
     if (parts.length) out.push(parts.join(""));
   }
-  return { pages, text: out.join("\n").slice(0, 20000), skipped };
+  return { pages, text: out.join("\n").slice(0, maxChars), skipped };
 }
 /** Page 1 of a PDF as a PNG, by macOS Quick Look (qlmanage, built in), off the event loop; null where it is not there. */
 export async function pdfPage1(file: string): Promise<Buffer | null> {

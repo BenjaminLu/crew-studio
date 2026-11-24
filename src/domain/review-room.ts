@@ -593,6 +593,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  without its extension) sent again with other bytes is a new version of the same room, its head that version's sha256; the
    *  same bytes again open the room as it is. Nothing is fetched and nothing is rendered. */
   const docOpening = new Map<string, Promise<string>>();
+  /** what the last upload of a room did: the version it is, of how many, whether the room was there before and the version too */
+  const added = new Map<string, { n: number; of: number; existing: boolean; again: boolean }>();
   async function readDoc(input: any, by: string): Promise<string> {
     const d = readDocument(input), id = docRoomId(d.name), k = docKeyOf(id);
     // one upload of a document at a time: a second waits for the first, then reads what it kept
@@ -612,10 +614,14 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       const room: Room = prior ?? { schema: 1, run: "", card: id, node: "", head: d.sha256, base: d.sha256, turns: [], board: [], sources: [], check: { questions: [] },
         subject: { kind: "doc", room: id, url: null, name: snap.name, project: null, task: null }, seen: { head: d.sha256, at: now }, heads: [] };
       // a version sent before comes back as the current one (its files written again), never as a second entry
-      room.docs = [...(room.docs ?? []).filter((x) => x.sha256 !== d.sha256), snap].slice(-50); room.doc = snap; room.head = d.sha256; room.base = d.sha256;
+      // a version sent before keeps its number (its place in the list); a new one is added last; past 50, the oldest go with their files
+      const had = (room.docs ?? []).findIndex((x) => x.sha256 === d.sha256);
+      const docs = had >= 0 ? (room.docs ?? []).map((x, i) => (i === had ? snap : x)) : [...(room.docs ?? []), snap];
+      for (const gone of docs.slice(0, Math.max(0, docs.length - 50))) if (gone.sha256 !== d.sha256) rmSync(docHeadDir(id, gone.sha256), { recursive: true, force: true });
+      room.docs = docs.slice(-50); room.doc = snap; room.head = d.sha256; room.base = d.sha256;
       room.subject = { ...(room.subject ?? { kind: "doc", room: id }), name: snap.name } as Subject;
       if (!(room.heads ?? []).some((h) => h.head === d.sha256)) room.heads = [...(room.heads ?? []), { head: d.sha256, base: d.sha256, at: now }];
-      save(k, room); notify(k); return id;
+      save(k, room); notify(k); added.set(id, { n: room.docs.findIndex((x) => x.sha256 === d.sha256) + 1, of: room.docs.length, existing: !!prior, again: had >= 0 }); return id;
     });
     docOpening.set(id, job); try { return await job; } finally { if (docOpening.get(id) === job) docOpening.delete(id); }
   }
@@ -802,7 +808,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
         dir: k.kind === "dir" && r?.dir ? { repository: r.dir.repository, ref: r.dir.ref, refKind: r.dir.refKind, sha: r.dir.sha, path: r.dir.path, private: r.dir.private, files: r.dir.files, bytes: r.dir.bytes, parts: r.dir.parts, truncated: r.dir.truncated, fetchedAt: r.dir.fetchedAt, url: r.subject?.url ?? null, readme: !!r.dir.readme } : null,
         // a document room: its current version (the head), every version kept, and whether a newer one came since the last page
         doc: k.kind === "doc" && r?.doc ? { ...docView(r.doc), versions: (r.docs ?? [r.doc]).map(docView), n: Math.max(1, (r.docs ?? []).findIndex((x) => x.sha256 === r.doc!.sha256) + 1),
-          newer: r.seen?.head && r.seen.head !== r.doc.sha256 && explainer.brief(k.id)?.heads?.includes(r.seen.head) ? { from: r.seen.head, to: r.doc.sha256 } : null } : null };
+          newer: (() => { const vs = r.docs ?? [r.doc], from = vs.findIndex((x) => x.sha256 === r.seen?.head), to = vs.findIndex((x) => x.sha256 === r.doc!.sha256);
+            return r.seen?.head && from >= 0 && to > from && explainer.brief(k.id)?.heads?.includes(r.seen.head) ? { from: r.seen.head, to: r.doc!.sha256 } : null; })() } : null };
     },
     /** every review room on this machine (merge cards, branches, pull requests, directories), each with its zone, open ones first,
      *  then the most recent: all of them, since the page searches this list. A room's time is its latest page's or run's */
@@ -828,7 +835,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     async openDir(url: unknown) { const id = await readDir(String(url ?? "").slice(0, 800)); return { id, href: `#/room/${id}`, room: this.view(id) }; },
     /** Upload or paste a document (a proposal: Markdown, text, HTML, a baton page, a PDF with text): Studio keeps it byte for byte
      *  by its sha256 and opens its room; the same document with other bytes is the room's next version */
-    async openDoc(input: unknown, by: string) { const id = await readDoc(input, by); return { id, href: `#/room/${id}`, room: this.view(id) }; },
+    async openDoc(input: unknown, by: string) { const id = await readDoc(input, by); return { id, href: `#/room/${id}`, added: added.get(id) ?? null, room: this.view(id) }; },
     /** A room's record exactly as kept (an old room's whiteboard: its turns, scenes and drawings), for the captain to download.
      *  Read only; nothing in the file is changed or removed. */
     exportRoom(id: string) { const k = keyOf(id), r = load(k); if (!r) throw refuse("No such review room", "not_found");

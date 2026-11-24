@@ -52,7 +52,11 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-prlabel { display: grid; gap: 4px; }
 .rr-prbox .input { width: 100%; min-width: 0; }
 .rr-prbox .btn { justify-self: start; }
-.rr-docbox { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.rr-docbox h2 { margin: 0; }
+.rr-docbox > .faint { margin: 0; }
+.rr-docpick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rr-docpick > .faint { min-width: 0; overflow-wrap: anywhere; }
+.rr-docpick > p.faint { flex-basis: 100%; margin: 0; }
 .rr-docbox .rr-docmode { justify-self: start; }
 .rr-docbox textarea.input { min-height: 140px; resize: vertical; font: inherit; }
 @media (max-width: 560px) { .rr-prbox .btn, .rr-docbox .rr-docmode button { min-height: 44px; } }

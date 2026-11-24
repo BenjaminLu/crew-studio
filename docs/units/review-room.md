@@ -129,31 +129,39 @@ its line counts. Its header says where it is pinned (`[data-dir-pin]`) and opens
 in a directory room are the directory's own files at the pinned commit (`head/`), and `pull-request.md` says it is a
 directory with no diff.
 
-**A document.** On the Review Room's home, "Learn a proposal document" takes a file (Upload a file) or pasted text and a title
-(Paste its text); a paired phone does not show it. What it accepts (`src/domain/review-doc.ts` `readDocument`): Markdown
+**A document.** On the Review Room's home, "Learn a proposal document" (a card of its own) takes a file (Upload a file: Studio's
+own Choose button, the chosen file named beside it) or pasted text and a title (Paste its text); a paired phone does not show
+it. Open with nothing chosen, or a file over the limit, says why and sends nothing. What it accepts (`src/domain/review-doc.ts` `readDocument`): Markdown
 (`.md`, `.markdown`), plain text (`.txt`, `.text`), HTML (`.html`, `.htm`) and PDF, at most 4 MB (`CREW_REVIEW_DOC_MB`; the
-route reads no more of the body than that needs, 413 `too_large` past it). Pasted text is Markdown, named by its title. Its
+route reads no more of the body than that needs, 413 `too_large` past it). Pasted text is always Markdown, named by its title (its slashes kept). Its
 bytes must be what its name says: a PDF starts `%PDF-`, anything else is UTF-8 text; an executable, an archive, a picture, any
-other extension (a script, `.svg`, `.docx`), an empty document or one with no name is refused, saying why (`bad_type`,
-`empty`, `bad_name`, `bad_request`), before anything is kept. Its text is read once, at the upload: Markdown and text as they
-are; an HTML page as its visible text (no script, no hidden part); a PDF by Studio's own reader (`pdfText`: a PDF with no text,
-a scanned one, is refused `no_text`); a **page baton made before** (an HTML page carrying `<script id="baton-data">` and
+other extension (a script, `.svg`, `.docx`), an empty document, one with no name or a name with nothing of its own (`.md`,
+`_.txt`), or bytes that are not base64 is refused, saying why (`bad_type`, `empty`, `bad_name`, `bad_request`), before
+anything is kept. A text must be UTF-8 from its first byte to its last, with no NUL anywhere. Its text is read once, at the upload: Markdown and text as they
+are; an HTML page as its visible text (no script, no hidden part; read with linear scans only, so crafted HTML cannot hold
+Studio's one thread); a PDF by Studio's own reader (`pdfText`, up to 1.5 million characters: a PDF with no text, a scanned one,
+is refused `no_text`); a **page baton made before** (an HTML page carrying `<script id="baton-data">` and
 `baton-context`) as its packet and its context (render.py's `<\/script` escapes undone), so baton rebuilds from the context,
 which carries the document whole, never from the rendered page. The room's identity is the document's name without its
 extension, letter case folded and spaces, hyphens and underscores alike (`docRoomId`): sent again with other bytes, the same
-document is the room's **next version**, its head that version's sha256; the same bytes again open the room as it is.
+document is the room's **next version**, its head that version's sha256; the same bytes again open the room as it is, and a
+version sent before becomes the current one again, keeping its number. The answer says which version it is (`added: {n, of,
+existing, again}`) and the room says so once when the upload went into a room already there ("Added as version 2 of 2 …";
+rename the file for a room of its own). At most 50 versions are kept; an older one goes with its files.
 Every version is kept byte for byte (`data/review-room/doc/<id>-heads/<sha256>/`: `original.<ext>`, `text.md`, and a baton
 page's `baton-data.json` and `baton-context.md`, each by its sha256 in the room's file); a run reads them checked against
 those hashes, and a file changed on disk since the upload fails the run (`integrity`) rather than being read in its place.
 Studio never shows the document itself (the explainer's isolated frame shows only what a skill made) and never fetches
 anything for it. A skill's materials in a document room are `document.md` (Studio's header: the name, the type, the version,
-the head; then the document's whole text, fenced as untrusted), `document/` (the original when it is text, a baton page's
-packet and context), `versions.md` (every version kept) and `previous/document.md` (the version before, when there is one):
+the head; then, fenced as untrusted, the title the document gives itself and its whole text), `document/` (the original when it is text, a baton page's
+packet and context), `versions.md` (every version kept) and `previous/document.md` (the version before, when there is one;
+one changed on disk is withheld, and README.md says so):
 never a diff, a commit or a review. Studio's frame, the question frame and baton's adapter say what a document room is:
 baton takes its document route (layer proposal, the shapes the document's kind wants, nothing claimed as built, what changed
 since the version before), and the tutor grounds on the document as it would on the code. Its header shows the version
 (`[data-doc-version]`: "Version n of m", its type, its size; its sha256 in the title) and, when a version came after the last
-page, "A new version of the document since the last page" (`[data-doc-newer]`). What only a change has is not there.
+page, "Version n is newer than the last page" (`[data-doc-newer]`, the two hashes in its title); its subtitle is the
+document's name and sha256. What only a change has is not there.
 
 **Who hosts a room's paid runs.** A merge card's runs belong to the merge card's live node. A branch's or a pull request's
 run on the reviewer seat of the Task that made it (a pull request: the newest Task whose recorded pull request is that URL):
@@ -692,8 +700,8 @@ Studio's observability reads rooms the way the page does, never marking a room o
 (`src/observe/kinds/room.ts`, kind `room`, desktop viewer): `studio_get room:<id>` gives the subject, open or closed, running,
 archived, the pull request's state and verdicts, the questions and pages with their runs (skill, status, provider, model,
 rounds, cost, why, decision, prepare, version) and versions, the old board, the cost, recent errors and the reviewers' notes
-(their words marked untrusted), and a document's version (its name, type, sha256 and how many versions; never the title its
-author wrote: the room is named by the document's name); `studio_logs room:<id>` is each run oldest first with its status, cost and why, and the room's
+(their words marked untrusted), and a document's version (`doc`: its type, sha256, size, version and how many versions, its
+name marked untrusted; never the title its author wrote: the room is named by the document's name); `studio_logs room:<id>` is each run oldest first with its status, cost and why, and the room's
 events. A room of a Task whose text is withheld from Firstmate is withheld too. `src/observe/now.ts` lists rooms with a new page
 or a run in the last hour.
 

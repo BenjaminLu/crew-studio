@@ -4,7 +4,7 @@
 // generation by itself on opening, per the captain's decision; a question confirmed once). Model text only ever goes into text
 // nodes. A room from before keeps its whiteboard on disk: the page says so and offers it as a JSON file; Studio no longer draws it.
 (() => {
-const RR = { tutorMenu: null, rooms: new Map(), loading: new Set(), posting: new Set(), err: new Map(), poll: null, list: null, other: new Map() };
+const RR = { tutorMenu: null, rooms: new Map(), loading: new Set(), posting: new Set(), err: new Map(), poll: null, list: null, other: new Map(), note: new Map() };
 const api = async (u) => { const r = await fetch(u); let j = {}; try { j = await r.json(); } catch {} if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code }); return j; };
 const postJ = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b ?? {}) }); let j = {}; try { j = await r.json(); } catch {} if (!r.ok || j.error) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { code: j.code, offer: j.offer }); return j; };
 const uiLang = () => (["zh-TW", "zh-CN"].includes(document.documentElement.lang) ? document.documentElement.lang : "en");
@@ -131,38 +131,51 @@ const rerenderAny = () => { if (S.route?.name === "room" || S.route?.name === "p
 // ---------- a document by its file or its text: a proposal the captain uploads or pastes (Studio keeps it byte for byte) ----------
 const DOC = { file: null, title: "", text: "", paste: false, busy: false, err: null };
 const DOC_ACCEPT = ".md,.markdown,.txt,.text,.html,.htm,.pdf", DOC_MAX = 4 * 1024 * 1024;
-const docSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
-const DOC_TYPE = { markdown: ["Markdown", "Markdown"], text: ["Text", "純文字"], html: ["HTML page", "HTML 頁面"], baton: ["baton page (rebuilt from its context)", "baton 頁面（從它的脈絡重建）"], pdf: ["PDF", "PDF"] };
+const docSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+const DOC_TYPE = { markdown: ["Markdown", "Markdown"], text: ["Text", "純文字"], html: ["HTML page", "HTML 頁面"], baton: ["baton page", "baton 頁面"], pdf: ["PDF", "PDF"] };
 const docType = (t) => T(...(DOC_TYPE[t] || [t, t]));
+const docTooBig = (f) => f && f.size > DOC_MAX ? T(`The document is larger than ${docSize(DOC_MAX)}.`, `文件超過 ${docSize(DOC_MAX)}。`) : null;
 /** the file's bytes as base64 (FileReader: the page never reads it as a page, and never shows it) */
 const base64Of = (file) => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).replace(/^data:[^,]*,/, "")); fr.onerror = () => no(fr.error || new Error("read failed")); fr.readAsDataURL(file); });
+/** after a redraw, the focus goes back where the captain was (an error leaves it on the field to fix) */
+const docFocus = () => requestAnimationFrame(() => document.querySelector(DOC.paste ? (DOC.title.trim() ? "[data-doc-text]" : "[data-doc-title]") : "[data-doc-pick]")?.focus({ preventScroll: true }));
 function docBox() {
-  const busy = DOC.busy, f = DOC.file, pasteReady = DOC.title.trim() && DOC.text.trim(), ready = DOC.paste ? pasteReady : !!f;
-  const go = async () => { const f = DOC.file; if (DOC.busy || !(DOC.paste ? DOC.title.trim() && DOC.text.trim() : f)) return; DOC.err = null;
-    if (!DOC.paste && f.size > DOC_MAX) { DOC.err = T(`The document is larger than ${docSize(DOC_MAX)}.`, `文件超過 ${docSize(DOC_MAX)}。`); return rerenderAny(); }
+  const busy = DOC.busy, f = DOC.file;
+  const go = async () => { if (DOC.busy) return; const f = DOC.file; DOC.err = null;
+    if (DOC.paste ? !DOC.title.trim() || !DOC.text.trim() : !f) DOC.err = DOC.paste ? T("Give the text a title and paste the document first.", "請先填標題並貼上文件內容。") : T("Choose a file first.", "請先選一個檔案。");
+    else DOC.err = docTooBig(DOC.paste ? new Blob([DOC.text]) : f);
+    if (DOC.err) { rerenderAny(); return docFocus(); }
     DOC.busy = true; rerenderAny();
     try { const body = DOC.paste ? { title: DOC.title.trim(), text: DOC.text } : { name: f.name, base64: await base64Of(f) };
       const out = await postJ("/api/review-room/open-doc", body); RR.rooms.set(out.id, out.room);
+      // an upload that went into a room already there says so once (the same name is the same document)
+      const a = out.added; if (a?.existing) RR.note.set(out.id, a.again ? T(`This is version ${a.n} of ${a.of} of this document, uploaded before: the room shows it again.`, `這是這份文件之前上傳過的第 ${a.n} 版（共 ${a.of} 版）：審查室再顯示一次。`)
+        : T(`Added as version ${a.n} of ${a.of}: a document with the same name already had this room. Rename the file to start a room of its own.`, `已加為第 ${a.n} 版（共 ${a.of} 版）：同名的文件已經有這間審查室。想另開一間，請改檔名。`));
       Object.assign(DOC, { file: null, title: "", text: "", err: null }); location.hash = out.href; }
-    catch (e) { DOC.err = e.message; } finally { DOC.busy = false; rerenderAny(); } };
+    catch (e) { DOC.err = e.message; } finally { DOC.busy = false; rerenderAny(); if (DOC.err) docFocus(); } };
   const tab = (paste, en, zh) => h("button", { type: "button", "aria-pressed": String(DOC.paste === paste), "data-doc-mode": paste ? "paste" : "file", disabled: busy, onclick: () => { DOC.paste = paste; DOC.err = null; rerenderAny(); } }, T(en, zh));
-  return h("form", { class: "rr-prbox rr-docbox", "data-doc-box": "", onsubmit: (e) => { e.preventDefault(); go(); } },
-    h("span", { class: "rr-prlabel" }, h("span", {}, T("Learn a proposal document: a design doc, a PRD, a spec", "學習一份提案文件：設計文件、PRD、規格"))),
+  // the file control: Studio's own button over a hidden native input (a redraw never shows "No file chosen" beside a chosen file)
+  const input = h("input", { type: "file", accept: DOC_ACCEPT, hidden: true, "data-doc-file": "", tabindex: "-1", onchange: (e) => { DOC.file = e.target.files?.[0] || null; DOC.err = docTooBig(DOC.file); rerenderAny(); docFocus(); } });
+  return h("section", { class: "card x-pad", "data-doc-section": "" }, h("form", { class: "rr-prbox rr-docbox", "data-doc-box": "", "aria-labelledby": "rrDocH", onsubmit: (e) => { e.preventDefault(); go(); } },
+    h("h2", { id: "rrDocH" }, T("Learn a proposal document", "學習一份提案文件")),
+    h("p", { class: "faint" }, T("A design doc, a PRD or a spec: baton makes a page about it, and you ask the room's tutor about it.", "設計文件、PRD 或規格：baton 會做一頁說明，你可以在審查室裡追問導師。")),
     h("div", { class: "seg rr-docmode", role: "group", "aria-label": T("How to give the document", "文件從哪裡來") }, tab(false, "Upload a file", "上傳檔案"), tab(true, "Paste its text", "貼上文字")),
     DOC.paste ? [
-      h("label", { class: "rr-prlabel" }, h("span", {}, T("Title (it names the document: the same title again adds a version)", "標題（文件的名字：同一個標題再貼一次會成為新版本）")),
-        h("input", { class: "input", "data-doc-title": "", maxlength: 160, disabled: busy, value: DOC.title, oninput: (e) => { DOC.title = e.target.value; const b = document.querySelector("[data-doc-open]"); if (b) b.disabled = busy || !(DOC.title.trim() && DOC.text.trim()); } })),
+      h("label", { class: "rr-prlabel" }, h("span", {}, T("Title", "標題")),
+        h("input", { class: "input", "data-doc-title": "", maxlength: 160, disabled: busy, value: DOC.title, "aria-describedby": "rrDocHint", oninput: (e) => { DOC.title = e.target.value; } })),
       h("label", { class: "rr-prlabel" }, h("span", {}, T("The document's text (Markdown or plain text)", "文件內容（Markdown 或純文字）")),
-        h("textarea", { class: "input", "data-doc-text": "", rows: 8, disabled: busy, oninput: (e) => { DOC.text = e.target.value; const b = document.querySelector("[data-doc-open]"); if (b) b.disabled = busy || !(DOC.title.trim() && DOC.text.trim()); } }, DOC.text))]
-    : h("label", { class: "rr-prlabel" }, h("span", {}, T("The document's file", "文件檔案")),
-        h("input", { class: "input", type: "file", accept: DOC_ACCEPT, "data-doc-file": "", disabled: busy, onchange: (e) => { DOC.file = e.target.files?.[0] || null; DOC.err = null; rerenderAny(); } }),
-        f ? h("span", { class: "faint", "data-doc-chosen": "" }, T(`Chosen: ${f.name} · ${docSize(f.size)}`, `已選：${f.name} · ${docSize(f.size)}`)) : null),
-    h("p", { class: "rr-paste-offer", "data-paste-offer": "doc" }, T("Opening the room starts baton by itself: one paid run on the room's tutor model, once per version of the document. Then ask the tutor about it in the room.",
-      "打開審查室就會自動用 baton 產生說明：用審查室導師的模型付費跑一次，文件的每個版本只一次。之後可以在審查室裡追問導師。")),
-    h("button", { type: "submit", class: "btn primary", "data-doc-open": "", disabled: busy || !ready }, busy ? T("Reading the document…", "正在讀取文件…") : T("Open its review room", "開啟它的審查室")),
-    h("p", { class: "faint" }, T(`Markdown, text, HTML (a page baton made before too: baton rebuilds from the context it carries) or a PDF with text, up to ${docSize(DOC_MAX)}. Studio keeps a copy byte for byte on this Mac and never shows the file itself; the document is data the tutor reads, never instructions. Upload the same document (the same name) again after it changed and it becomes the room's next version.`,
-      `Markdown、純文字、HTML（也可以是 baton 之前做的頁面：baton 會從它帶的脈絡重建）或有文字的 PDF，最大 ${docSize(DOC_MAX)}。Studio 在這台 Mac 上保留一份逐位元組相同的副本，不會直接顯示這個檔案；文件只是導師讀的資料，不是指令。文件改過之後再上傳同一份（同一個檔名），就會成為審查室的下一個版本。`)),
-    DOC.err ? h("p", { class: "rr-err", role: "alert", "data-doc-error": "" }, DOC.err) : null);
+        h("textarea", { class: "input", "data-doc-text": "", rows: 8, disabled: busy, oninput: (e) => { DOC.text = e.target.value; } }, DOC.text)),
+      h("p", { class: "faint", id: "rrDocHint" }, T("Paste again under the same title to add a new version.", "用同一個標題再貼一次，就會成為新版本。"))]
+    : h("div", { class: "rr-docpick" }, input,
+        h("button", { type: "button", class: "btn", "data-doc-pick": "", disabled: busy, "aria-describedby": "rrDocChosen rrDocHint", onclick: () => input.click() }, T("Choose a file…", "選擇檔案…")),
+        h("span", { class: "faint", id: "rrDocChosen", "data-doc-chosen": f ? "" : null }, f ? `${f.name} · ${docSize(f.size)}` : T("No file chosen", "還沒選檔案")),
+        h("p", { class: "faint", id: "rrDocHint" }, T("Upload a changed file under the same name to add a new version.", "改過的檔案用同一個檔名再上傳，就會成為新版本。"))),
+    h("p", { class: "rr-paste-offer", "data-paste-offer": "doc" }, T("Opening the room starts baton by itself: one paid run on the room's tutor model. A new version runs it again; earlier versions and their pages stay in the room.",
+      "打開審查室就會自動用 baton 產生說明：用審查室導師的模型付費跑一次。上傳新版本會再跑一次；之前的版本和它們的頁面都會留在審查室裡。")),
+    h("button", { type: "submit", class: "btn primary", "data-doc-open": "", disabled: busy || null, "aria-busy": busy ? "true" : null }, busy ? T("Reading the document…", "正在讀取文件…") : T("Open the document's room", "開啟文件的審查室")),
+    h("p", { class: "faint" }, T(`Markdown, text, HTML (including a page baton made) or a PDF with text, up to ${docSize(DOC_MAX)}. Studio keeps a copy on this Mac and never opens the file as a page.`,
+      `Markdown、純文字、HTML（包括 baton 做的頁面）或有文字的 PDF，最大 ${docSize(DOC_MAX)}。Studio 在這台 Mac 上保留一份副本，不會把檔案當網頁打開。`)),
+    DOC.err ? h("p", { class: "rr-err", role: "alert", "data-doc-error": "" }, DOC.err) : null));
 }
 window.crewReviewRoomPrBox = (project, repository) => h("section", { class: "card x-pad", "data-project-review-room": project }, prBox(`project:${project}`, repository));
 async function checkNow(id) {
@@ -176,7 +189,7 @@ function header(r) {
   const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
   const sub = kind === "merge" ? T(`${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room never answers the merge card.`, `${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不會回覆合併卡。`)
     : kind === "branch" ? T(`${r.task?.title || r.card.id} · its branch · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room changes nothing about the Task.`, `${r.task?.title || r.card.id} · 它的分支 · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不改變任務的任何事。`)
-    : kind === "doc" ? T(`${r.doc?.name || r.subject?.name || ""} · version ${r.doc?.n || 1} of ${r.doc?.versions?.length || 1} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the document stays on this Mac.`, `${r.doc?.name || r.subject?.name || ""} · 第 ${r.doc?.n || 1} 版，共 ${r.doc?.versions?.length || 1} 版 · head ${String(r.head || "").slice(0, 8)}。導師只讀；文件留在這台 Mac 上。`)
+    : kind === "doc" ? T(`${r.doc?.name || r.subject?.name || ""} · sha256 ${String(r.head || "").slice(0, 8)}. The tutor reads only; the document stays on this Mac.`, `${r.doc?.name || r.subject?.name || ""} · sha256 ${String(r.head || "").slice(0, 8)}。導師只讀；文件留在這台 Mac 上。`)
     : kind === "dir" ? T(`${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · pinned at ${String(r.dir?.sha || "").slice(0, 8)}. The tutor reads only; nothing is written to GitHub.`, `${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · 固定在 ${String(r.dir?.sha || "").slice(0, 8)}。導師只讀；不寫任何東西到 GitHub。`)
     : T(`${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}. Studio only reads GitHub; the room never comments, reviews or merges.`, `${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}。Studio 只讀 GitHub；審查室不留言、不審查、不合併。`);
   const verdicts = ps?.verdicts?.length ? ps.verdicts.map((v) => `${v.author}: ${v.state === "APPROVED" ? T("approved", "核准") : v.state === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : T("dismissed", "撤銷")}${v.current ? "" : T(" (an older head)", "（較舊的 head）")}`).join(" · ") : null;
@@ -197,8 +210,8 @@ function header(r) {
       kind === "dir" && r.dir ? pill({ "data-dir-pin": r.dir.sha, title: T(`Read at ${r.dir.ref}, pinned at commit ${r.dir.sha}`, `讀的是 ${r.dir.ref}，固定在 commit ${r.dir.sha}`) }, T(`Pinned at ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} files`, `固定在 ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} 個檔案`), r.dir.private ? T(" · private", " · 私人") : "") : null,
       // a document: its version (the head is its sha256), what it is and its size; a newer version since the last page
       kind === "doc" && r.doc ? pill({ "data-doc-version": r.doc.n, title: T(`sha256 ${r.doc.sha256} · uploaded ${String(r.doc.at || "").slice(0, 16).replace("T", " ")}`, `sha256 ${r.doc.sha256} · 上傳於 ${String(r.doc.at || "").slice(0, 16).replace("T", " ")}`) },
-        T(`Version ${r.doc.n} of ${r.doc.versions?.length || 1} · ${docType(r.doc.type)} · ${docSize(r.doc.bytes)}`, `第 ${r.doc.n} 版／共 ${r.doc.versions?.length || 1} 版 · ${docType(r.doc.type)} · ${docSize(r.doc.bytes)}`), r.doc.pages ? T(` · ${r.doc.pages} pages`, ` · ${r.doc.pages} 頁`) : "") : null,
-      kind === "doc" && r.doc?.newer ? pill({ class: "warn", role: "status", "data-doc-newer": "" }, T(`A new version of the document since the last page (${r.doc.newer.from.slice(0, 8)} → ${r.doc.newer.to.slice(0, 8)}).`, `上一頁之後文件有新版本（${r.doc.newer.from.slice(0, 8)} → ${r.doc.newer.to.slice(0, 8)}）。`)) : null,
+        T(`Version ${r.doc.n} of ${r.doc.versions?.length || 1} · ${docType(r.doc.type)} · ${docSize(r.doc.bytes)}`, `第 ${r.doc.n} 版，共 ${r.doc.versions?.length || 1} 版 · ${docType(r.doc.type)} · ${docSize(r.doc.bytes)}`), r.doc.pages ? T(` · ${r.doc.pages} pages`, ` · ${r.doc.pages} 頁`) : "") : null,
+      kind === "doc" && r.doc?.newer ? pill({ class: "warn", "data-doc-newer": "", title: `sha256 ${r.doc.newer.from.slice(0, 12)} → ${r.doc.newer.to.slice(0, 12)}` }, T(`Version ${r.doc.n} is newer than the last page`, `第 ${r.doc.n} 版比上一頁新`)) : null,
       ds ? pill({ "data-room-diffstat": "" }, h("b", { class: "add" }, `+${ds.added}`), " ", h("b", { class: "del" }, `−${ds.removed}`), T(` · ${ds.files} file${ds.files === 1 ? "" : "s"}`, ` · ${ds.files} 個檔案`)) : null,
       // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
       // a room that takes turns: the pill is the tutor picker (this room's pick, Studio's default, or Automatic)
@@ -310,7 +323,7 @@ routes.room = (arg) => {
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
         RR.list.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : rooms.length ? [
           RR.list.err ? h("p", { class: "rr-err", role: "alert", "data-room-list-err": "" }, RR.list.err) : null, roomsList(rooms)] : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
-      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null), readOnly() ? null : docBox(), tutorDefault())); }
+      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null), tutorDefault()), readOnly() ? null : docBox()); }
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));
@@ -318,7 +331,9 @@ routes.room = (arg) => {
   // a saved snapshot: read only, its pages listed (or an old board offered as its file)
   if (r.snapshot) return h("div", { class: "rr-room rx-room", "data-review-room": r.card.id }, header(r), savedPages(r), oldBoard(r));
   XP?.ensure(arg);
+  const note = RR.note.get(arg);
   return h("div", { class: "rr-room rx-room", "data-review-room": r.card.id }, header(r), oldBoard(r),
+    note ? h("p", { class: "rr-paste-offer", role: "status", "data-doc-added": "" }, note, " ", h("button", { type: "button", class: "btn sm", onclick: () => { RR.note.delete(arg); rerender(); } }, T("OK", "知道了"))) : null,
     err ? h("p", { class: "rr-err", role: "alert", "data-room-err": "" }, err) : null,
     XP ? XP.view(r) : h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…")));
 };

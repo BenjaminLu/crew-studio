@@ -26,7 +26,7 @@ function roomData(s: Sources, id: string, full: boolean): Record<string, unknown
   // what the room cost: its runs, and an old whiteboard's turns as their records kept (oldBoard.usd)
   const cost = round(runs.reduce((n: number, r: any) => n + usd(r.cost), 0) + (typeof v.oldBoard?.usd === "number" ? v.oldBoard.usd : 0));
   return {
-    id, kind: v.subject?.kind ?? null, subject: { kind: v.subject?.kind ?? null, url: v.subject?.url ?? null, repository: v.subject?.repository ?? null, number: v.subject?.number ?? null, branch: v.subject?.branch ?? null, task: v.subject?.task ?? null, ...(v.subject?.kind === "doc" ? { name: v.subject?.name ?? null } : {}) },
+    id, kind: v.subject?.kind ?? null, subject: { kind: v.subject?.kind ?? null, url: v.subject?.url ?? null, repository: v.subject?.repository ?? null, number: v.subject?.number ?? null, branch: v.subject?.branch ?? null, task: v.subject?.task ?? null },
     // a document room: its current version (the head is its sha256) and how many versions Studio kept (never its own title: its author's words)
     doc: v.doc ? { name: v.doc.name, type: v.doc.type, sha256: v.doc.sha256, bytes: v.doc.bytes, at: v.doc.at, version: v.doc.n, versions: (v.doc.versions ?? []).length } : null,
     task: v.task ? { id: v.task.id } : null, open: !!v.open, closed: v.closed ?? null, running: x?.running != null ? { run: x.running, kind: (x.runs ?? []).find((r: any) => r.n === x.running)?.kind ?? null } : null, archived: !!v.archived,
@@ -96,6 +96,8 @@ registerKind({
       "explain.versions[].n", "explain.versions[].run", "explain.versions[].skill", "explain.versions[].at", "explain.versions[].kind", "explain.versions[].entry", "explain.versions[].head", "explain.versions[].provider", "explain.versions[].model", "explain.versions[].cost",
       "notes.items[].kind", "notes.items[].author", "notes.items[].at", "notes.items[].state", "notes.items[].path", "withheld", "versions", "repository", "zone"].map((path) => ({ path, trust: "studio" as const })),
     ...["explain.runs[].question", "explain.runs[].prompt", "explain.versions[].prompt", "explain.versions[].question"].map((path) => ({ path, trust: "captain" as const })),
+    ...["doc.type", "doc.sha256", "doc.bytes", "doc.at", "doc.version", "doc.versions"].map((path) => ({ path, trust: "studio" as const })),
+    { path: "doc.name", trust: "untrusted", source: "the document's file name (as uploaded or titled)" },
     { path: "pr.title", trust: "untrusted", source: "the pull request's title (GitHub)" },
     { path: "errors[].error", trust: "untrusted", source: "the run's error output" },
     { path: "explain.runs[].error", trust: "untrusted", source: "the explainer run's error output" },
