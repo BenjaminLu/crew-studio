@@ -42,14 +42,14 @@
 @media (prefers-color-scheme:dark){
   :root{--bg:#2d3142;--card:#393e53;--card-2:#333849;--fg:#f5f5f5;--muted:#bfc0c0;
     --soft:#8e98ac;--rule:rgba(245,245,245,.12);--rule-strong:rgba(191,192,192,.25);
-    --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#6a95d8;
+    --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#93b4ea;
     --amber:#d3ad7a;--seal:#b88670;--ok:#9caf8f;
     --warn-ink:#d3ad7a;--risk-ink:#f39b84;--ok-ink:#a9bd9c;--on-ink:#2d3142;
     --shadow:0 1px 2px rgba(0,0,0,.45),0 12px 32px rgba(0,0,0,.4)}
 }
 :root[data-theme=dark]{color-scheme:dark;--bg:#2d3142;--card:#393e53;--card-2:#333849;--fg:#f5f5f5;--muted:#bfc0c0;
     --soft:#8e98ac;--rule:rgba(245,245,245,.12);--rule-strong:rgba(191,192,192,.25);
-    --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#6a95d8;
+    --accent:#f08a59;--accent-tint:rgba(240,138,89,.10);--link:#93b4ea;
     --amber:#d3ad7a;--seal:#b88670;--ok:#9caf8f;
     --warn-ink:#d3ad7a;--risk-ink:#f39b84;--ok-ink:#a9bd9c;--on-ink:#2d3142;
     --shadow:0 1px 2px rgba(0,0,0,.45),0 12px 32px rgba(0,0,0,.4)}
@@ -77,6 +77,28 @@ h1{font-family:var(--serif);font-size:clamp(1.6rem,3.4vw,2.4rem);font-weight:600
   line-height:1.24;margin:0 0 .55rem;text-wrap:balance;letter-spacing:-.005em}
 .lede{font-size:1.06rem;color:var(--muted);max-width:42rem;margin:0}
 .lede strong{color:var(--fg);font-weight:600}
+/* Full-text search: an error code or a symptom typed here lands on the
+   runbook row that handles it, with its place on the system map marked. */
+.tools{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.qbox{position:relative}
+.qbox input{font:inherit;font-size:.85rem;width:17rem;max-width:70vw;padding:.36rem 2rem .36rem .7rem;border-radius:4px;
+  border:1px solid var(--rule-strong);background:var(--card);color:var(--fg)}
+.qbox input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.qbox kbd{position:absolute;right:.5rem;top:50%;transform:translateY(-50%);font:600 .66rem var(--mono);color:var(--soft);
+  border:1px solid var(--rule-strong);border-radius:3px;padding:0 .3rem;pointer-events:none}
+#qres{position:absolute;left:0;top:calc(100% + .35rem);width:min(34rem,92vw);max-height:70vh;overflow:auto;z-index:60;
+  background:var(--card);border:1px solid var(--rule-strong);border-radius:6px;box-shadow:var(--shadow);padding:.3rem}
+#qres button{display:block;width:100%;text-align:left;font:inherit;border:0;background:none;color:var(--fg);cursor:pointer;
+  padding:.5rem .6rem;border-radius:4px;line-height:1.45}
+#qres button[aria-selected=true],#qres button:hover{background:var(--card-2)}
+#qres .qs{display:flex;gap:.5rem;align-items:baseline;font-family:var(--mono);font-size:.68rem;color:var(--muted);margin-bottom:.15rem}
+#qres .qs b{color:var(--accent);font-weight:700}
+#qres .qt{font-size:.86rem}
+#qres mark,.qhit mark{background:var(--accent-tint);color:var(--accent);font-weight:650;padding:0 .05em;border-radius:2px}
+#qres .qnone{padding:.6rem;color:var(--muted);font-size:.85rem}
+.qhit{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px;transition:outline-color .6s}
+tr.qhit td{background:var(--accent-tint)!important}
+@media (max-width:56rem){.qbox input{width:100%}.qbox{flex:1 1 100%}}
 .langs{display:flex;border:1px solid var(--rule);border-radius:4px;overflow:hidden;flex:none}
 .langs button{border:0;background:transparent;color:var(--muted);cursor:pointer;
   padding:.34rem .68rem;font:inherit;font-family:var(--mono);font-size:.72rem;
@@ -454,6 +476,103 @@ button.act:disabled{opacity:.4;cursor:default}
 .bok{margin-top:1rem;border:1px solid var(--ok);border-left:4px solid var(--ok);border-radius:6px;padding:.7rem .9rem;
   line-height:1.55}
 .bok::before{content:"✓ ";color:var(--ok);font-weight:700}
+/* failure modes under the map: one compact table per boundary — the runbook */
+.fmodes{margin-top:1.4rem;border-top:1px solid var(--rule);padding-top:1rem}
+.fmodes>h4{font-family:var(--serif);font-size:1.12rem;font-weight:600;margin:0 0 .2rem}
+.fmodes>.fcap{margin:0 0 .9rem;font-size:.9rem;color:var(--muted);line-height:1.5}
+table.fmt tr.fgh th{text-align:left;padding:1rem .5rem .35rem;border-bottom:1px solid var(--rule-strong);
+  font-size:.95rem;font-weight:650;color:var(--fg)}
+table.fmt tr.fgh .fct{font-family:var(--mono);font-size:.7rem;color:var(--muted);font-weight:400;margin-left:.8rem;white-space:normal;overflow-wrap:anywhere}
+table.fmt tbody.fgroup.on td,table.fmt tbody.fgroup.on th{background:var(--accent-tint)}
+table.fmt tbody.fgroup.on tr.fgh th{box-shadow:inset 0 -2px 0 var(--accent);color:var(--accent)}
+/* A stripe per row in its state's colour, so "what is still unhandled" is
+   found by eye down the left edge, without reading to the last column. */
+table.fmt tr[data-st] td:first-child{box-shadow:inset 3px 0 0 var(--rule-strong);padding-left:.75rem}
+table.fmt tr[data-st=handled] td:first-child{box-shadow:inset 3px 0 0 var(--ok-ink)}
+table.fmt tr[data-st=detected] td:first-child{box-shadow:inset 3px 0 0 var(--warn-ink)}
+table.fmt tr[data-st=unhandled] td:first-child{box-shadow:inset 5px 0 0 var(--risk-ink)}
+table.fmt{width:100%;min-width:0;border-collapse:separate;border-spacing:0;font-size:.88rem}
+table.fmt th{font-size:.74rem;font-weight:600;color:var(--muted);text-align:left;padding:.4rem .5rem;
+  border-bottom:1px solid var(--rule-strong);vertical-align:bottom}
+table.fmt td{padding:.55rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.45;overflow-wrap:break-word}
+table.fmt td.mode{font-weight:600;width:15%} table.fmt td.ev{width:12rem} table.fmt td.st{width:7rem}
+@media (min-width:72rem){table.fmt td.det{min-width:10.5rem} table.fmt td.st{min-width:7.5rem} table.fmt td.st .ktag{white-space:nowrap;margin-right:0}}
+html:not(:lang(en)) table.fmt thead th{word-break:keep-all}
+table.fmt td code{word-break:normal;overflow-wrap:anywhere}
+table.fmt .ktag{margin-right:0;white-space:normal}
+table.fmt .badge{position:static;display:inline-block;margin-left:.35rem;vertical-align:middle;width:1.3rem;height:1.3rem;
+  line-height:1.3rem;font-size:.72rem}
+.nosig{color:var(--risk-ink);font-weight:650} .nosig::before{content:"⚠ "}
+.noref{color:var(--muted);font-style:italic;font-size:.82rem}
+.fplan{display:inline-block;white-space:nowrap;margin-left:.35rem;font-family:var(--mono);font-size:.66rem;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted);border:1px dashed var(--rule-strong);border-radius:3px;padding:0 .3rem;font-weight:400}
+.fsrc{display:block;margin-top:.3rem;font-size:.8rem;color:var(--muted);font-style:italic}
+/* Break at the <wbr> points first; a single run longer than the column still
+   breaks anywhere rather than push the table or the page sideways. */
+a.fref{font-family:var(--mono);font-size:.8rem;overflow-wrap:anywhere}
+a.fref::after{content:"\00a0↗";font-family:var(--sans)}
+.bmap .fm{cursor:pointer}
+.bmap .cnode.fm:hover,.bmap .cnode.fm.on{border-color:var(--accent);background:var(--accent-tint)}
+.bmap .fm .fn-c{color:var(--link)}
+.bmap .carrow.fm:hover .hl,.bmap .carrow.fm.on .hl{color:var(--accent)}
+.bmap .carrow.fm.on{--ac:var(--accent);background:var(--accent-tint);border-radius:6px}
+.bmap .fm.on .fn-c{color:var(--accent);font-weight:600}
+.bmap .fm:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.fno{display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;padding:0 .22rem;
+  border-radius:999px;border:1.5px solid var(--rule-strong);font:700 max(11px,.66rem)/1 var(--mono);color:var(--fg);
+  background:var(--card);margin:0 .4rem .1rem 0;vertical-align:middle;font-variant-numeric:tabular-nums}
+.fno.risk{border-color:var(--risk-ink);color:var(--risk-ink)} .fno.warn{border-color:var(--warn-ink);color:var(--warn-ink)}
+.fno.ok{border-color:var(--ok-ink);color:var(--ok-ink)}
+.bmap .fn-c .fno{margin:.1rem .08rem 0}
+/* A row's number is a link back to its place on the map. #steps a would
+   otherwise recolour it and underline it like prose links. */
+#steps a.fno{text-decoration:none;color:var(--fg);cursor:pointer}
+#steps a.fno.risk{color:var(--risk-ink)} #steps a.fno.warn{color:var(--warn-ink)} #steps a.fno.ok{color:var(--ok-ink)}
+#steps a.fno:hover{background:var(--accent-tint)}
+#steps a.fno:focus-visible{outline:2px solid var(--link);outline-offset:1px}
+/* The place a row's number led to: a ring for 1.6 s, so the eye finds it. */
+.bmap .fm.flash{outline:2px solid var(--accent);outline-offset:3px} .bmap .carrow.fm.flash{border-radius:6px}
+.ftoday{margin-top:.35rem;font-size:.8rem;color:var(--muted);line-height:1.45}
+.ftoday>span{font-family:var(--mono);font-size:.64rem;letter-spacing:.06em;text-transform:uppercase;margin-right:.4rem;font-weight:700}
+.bmap .fn-c{display:block;font-family:var(--mono);font-size:max(12px,.62rem);color:var(--muted);margin-top:.2rem;font-weight:400;
+  white-space:normal;text-align:center;line-height:1.5}
+/* Below a wide desktop there is no room for six columns: each mode becomes a
+   short card whose cells carry their own label, so nothing scrolls sideways
+   and no column is squeezed to a word per line. */
+@media (max-width:72rem){
+  .fmodes .tscroll{overflow-x:visible}
+  table.fmt{min-width:0}
+  table.fmt thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  table.fmt,table.fmt tbody,table.fmt tr,table.fmt td,table.fmt th{display:block;width:auto}
+  table.fmt tr.fgh{border:0;padding:0;margin:0;background:none}
+  table.fmt tr.fgh th{padding:.9rem 0 .4rem;border:0}
+  table.fmt tr.fgh .fct{display:block;margin:.15rem 0 0}
+  table.fmt tbody.fgroup.on{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;background:var(--accent-tint)}
+  table.fmt tbody.fgroup.on td,table.fmt tbody.fgroup.on th,
+  table.fmt tbody.fgroup.on td:first-child,table.fmt tbody.fgroup.on tr.fgh th{box-shadow:none;background:none}
+  table.fmt tbody.fgroup.on tr.fgh th{padding-left:.5rem}
+  table.fmt tbody.fgroup.on tr:not(.fgh){margin:0 .4rem .55rem}
+  table.fmt tr{border:1px solid var(--rule);border-radius:6px;padding:.4rem .6rem;margin-bottom:.55rem;background:var(--card);
+    position:relative;border-left-width:4px}
+  table.fmt tr[data-st] td:first-child{box-shadow:none;padding-left:0}
+  table.fmt tr[data-st=handled]{border-left-color:var(--ok-ink)} table.fmt tr[data-st=detected]{border-left-color:var(--warn-ink)}
+  table.fmt tr[data-st=unhandled]{border-left-color:var(--risk-ink)}
+  table.fmt td.mode{padding-right:7.5rem}
+  table.fmt td.st{position:absolute;top:.55rem;right:.6rem;max-width:7rem;text-align:right}
+  table.fmt td{border:0;padding:.2rem 0}
+  table.fmt td.mode{width:auto;font-size:.95rem} table.fmt td.ev,table.fmt td.st{width:auto} table.fmt td.det{min-width:0}
+  table.fmt td:not(.mode)::before{content:attr(data-l);display:block;font-family:var(--mono);font-size:.66rem;
+    letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  table.fmt td.st::before{display:none!important}
+}
+html:not(:lang(en)) table.fmt td::before{text-transform:none!important;letter-spacing:.02em}
+/* The narrowest phones: the state tag takes its own line above the title,
+   so the title keeps the full card width. */
+@media (max-width:30rem){
+  table.fmt tr:not(.fgh){display:flex;flex-direction:column}
+  table.fmt td.st{position:static;order:-1;max-width:none;text-align:left;padding:0 0 .1rem!important}
+  table.fmt td.mode{padding-right:0}
+}
 /* compare (from → to) */
 /* A table wider than its card scrolls inside this box, never the page. */
 .tscroll{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
@@ -527,7 +646,7 @@ details.ctable td,details.ctable th{font-variant-numeric:tabular-nums}
 }
 /* Print / Save-as-PDF: same palette (exact colours), every step visible, chrome off. */
 @media print{
-  .rail,.langs,.nav,.handoff,.foot button,#theme{display:none!important}
+  .rail,.langs,.qbox,.nav,.handoff,.foot button,#theme{display:none!important}
   .step{display:block!important;page-break-after:always;break-after:page;animation:none!important}
   .step:last-of-type{page-break-after:auto;break-after:auto}
   .figbody svg path[data-edge]{stroke-dasharray:none!important;stroke-dashoffset:0!important;animation:none!important}
@@ -572,10 +691,17 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       <h1 id="title"></h1>
       <p class="lede" id="sub"></p>
     </div>
+    <div class="tools">
+    <div class="qbox" role="search">
+      <input type="search" id="q" autocomplete="off" spellcheck="false" aria-controls="qres" aria-expanded="false">
+      <kbd>/</kbd>
+      <div id="qres" role="listbox" hidden></div>
+    </div>
     <div class="langs" role="group">
       <button data-lang="en">EN</button>
       <button data-lang="hant">繁</button>
       <button data-lang="hans">简</button>
+    </div>
     </div>
   </header>
 
@@ -666,6 +792,12 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       : 'en');
   let idx = 0;
   const secs = D.sections || [];
+  // One system map for the whole packet (spec.md § systems): the boundary
+  // map and every runbook draw it, so the same box is the same component on
+  // every page. A section's own `systems` is accepted only when it equals it
+  // (verify.py), so falling back here never changes what is drawn.
+  const MAP=(D.systems&&Array.isArray(D.systems.systems))?D.systems:null;
+  const mapOf=s=>(Array.isArray(s.systems)&&s.systems.length)?s:(MAP||{systems:[]});
 
   // Escapes for text and for quoted attribute values alike: packet strings
   // (a node kind, a tone, a heading used as aria-label) land in attributes.
@@ -790,7 +922,26 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     why:W3('why','為什麼','为什么'), fix:W3('why this fixes it','為什麼這樣就好','为什么这样就好'),
     proof:W3('Proof','證據','证据'), see:W3('see card','看卡片','看卡片'),
     verified:W3('verified','已驗證','已验证'), unknown:W3('state not given','未標示狀態','未标示状态'), 'code-only':W3('code only','只有程式碼','只有代码'),
-    absent:W3('absent','沒有證據','没有证据')
+    absent:W3('absent','沒有證據','没有证据'),
+    fmodes:W3('Failure modes — the runbook','失效模式與處置（runbook）','失效模式与处置（runbook）'),
+    fmcap:W3('Every way each boundary can fail: the signal that fires first, what the user sees, what on-call does. Select a system or link on the map to mark its rows; a row’s number leads back to its place on the map.',
+             '每個邊界會怎麼壞：最先響的訊號、使用者看到什麼、on-call 要做什麼。點選地圖上的系統或連線，標出它的那幾列；點一列的編號，就會回到它在地圖上的位置。',
+             '每个边界会怎么坏：最先响的信号、用户看到什么、on-call 要做什么。点击地图上的系统或连线，标出它的那几行；点一行的编号，就会回到它在地图上的位置。'),
+    fmode:W3('Failure mode','失效模式','失效模式'), fdetect:W3('Signal before a user notices','使用者發現前的訊號','用户发现前的信号'),
+    fimpact:W3('What the user sees','使用者看到什麼','用户看到什么'), faction:W3('Runbook','處置（runbook）','处置（runbook）'),
+    fref:W3('Evidence','證據','证据'), fstate:W3('State','狀態','状态'),
+    'fs-handled':W3('handled','已處理','已处理'), 'fs-detected':W3('detected, not handled','有偵測、未處理','有检测、未处理'),
+    'fs-unhandled':W3('unhandled','未處理','未处理'), 'fs-unknown':W3('state not given','未標示狀態','未标示状态'),
+    nosig:W3('no signal today','目前沒有訊號','目前没有信号'), noref:W3('no code reference','沒有程式碼出處','没有代码出处'),
+    refused:W3('link refused','連結被拒','链接被拒'), fplan:W3('not built yet','尚未實作','尚未实现'),
+    fsrc:W3('from the document','出自文件','出自文档'), fpin:W3('finding','發現','发现'),
+    q1:W3('“','「','“'), q2:W3('”','」','”'),
+    fmFor:W3('Failure modes of ','失效模式：','失效模式：'),
+    fmOne:W3('mode','種失效','种失效'), fmMany:W3('modes','種失效','种失效'),
+    ftoday:W3('Today','現在','现在'), fno:W3('row','列','行'), onmap:W3('show on the map','在地圖上看','在地图上看'),
+    rbcap:W3('Each row is numbered where it fails on the map above; the number leads back there. Select a system or link to mark its rows.',
+             '每一列的編號標在上面地圖它出錯的位置，點編號就回到那裡。點選系統或連線，標出它的那幾列。',
+             '每一行的编号标在上面地图它出错的位置，点编号就回到那里。点击系统或连线，标出它的那几行。')
   };
   const sub=(v,lang)=>{
     if(v==null) return '';
@@ -828,8 +979,10 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     nodes.forEach((nd,i)=>{
       const st=hot.has(nd.id)?(after?'good':'bad'):'';
       const badge=(opts.badges||{})[nd.id];
-      h+='<div class="cnode k-'+E(nd.kind||'service')+' '+st+'" style="grid-column:'+(2*i+1)+';grid-row:1">'+
-         (badge?badge:'')+'<div class="nm">'+softBreaks(rich(pick(nd.name,lang)))+'</div>'+sub((row.sub||{})[nd.id],lang)+'</div>';
+      const fa=opts.fm?opts.fm(nd.id):'';
+      h+='<div class="cnode k-'+E(nd.kind||'service')+' '+st+(fa?' fm':'')+'"'+fa+' style="grid-column:'+(2*i+1)+';grid-row:1">'+
+         (badge?badge:'')+'<div class="nm">'+softBreaks(rich(pick(nd.name,lang)))+'</div>'+sub((row.sub||{})[nd.id],lang)+
+         (fa?opts.fmCount(nd.id):'')+'</div>';
       if(whyAt===nd.id && row.why.text){
         const left=i<n/2; const span=Math.min(3,2*n+1-(2*i));
         const gc=left?((2*i+1)+' / span '+Math.max(1,span)):(Math.max(1,2*i-1)+' / '+(2*i+2));
@@ -842,8 +995,10 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       const hb=(opts.linkBadges||{})[i];
       if(hb) ac='bad'; else if(opts.okLinks && i<n-1) ac='okl';
       const hl=(row.hops||{})[i];
-      h+='<div class="carrow '+ac+'" style="grid-column:'+(2*i+2)+';grid-row:1">'+(hb?hb:'')+
-         (hl!=null?'<div class="hl">'+softBreaks(E(typeof hl==='string'?hl:pick(hl,lang)))+'</div>':'')+'<div class="ln"></div></div>';
+      const la=(opts.fm&&i<n-1)?opts.fm(nd.id+'>'+nodes[i+1].id):'';
+      h+='<div class="carrow '+ac+(la?' fm':'')+'"'+la+' style="grid-column:'+(2*i+2)+';grid-row:1">'+(hb?hb:'')+
+         (hl!=null?'<div class="hl">'+softBreaks(E(typeof hl==='string'?hl:pick(hl,lang)))+'</div>':'')+'<div class="ln"></div>'+
+         (la?opts.fmCount(nd.id+'>'+nodes[i+1].id):'')+'</div>';
     });
     // One span: as bare flex children, text and <code> would each shrink to a column.
     if(row.outcome!=null) h+='<div class="cout" style="grid-column:'+(2*n+1)+';grid-row:1"><span>'+softBreaks(rich(pick(row.outcome,lang)))+'</span></div>';
@@ -868,16 +1023,58 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     h+=proofHTML(s.proof,lang)+'</div>';
     return h;
   }
+  // Rows in map order (system, then the link after it), worst first inside
+  // a location, numbered 1…n down the table. The map prints those numbers at
+  // the place each row fails, so a row and its hop find each other.
+  function fmPlan(sys, FM){
+    const order=[]; sys.forEach((n,i)=>{ order.push(String(n.id)); if(i<sys.length-1) order.push(n.id+'>'+sys[i+1].id); });
+    const keys=[...new Set(FM.map(f=>String(f.at==null?'':f.at)))]
+      .sort((a,b)=>(order.indexOf(a)<0?1e9:order.indexOf(a))-(order.indexOf(b)<0?1e9:order.indexOf(b)));
+    const RANK=Object.assign(Object.create(null),{unhandled:0,detected:1,handled:2});
+    const rank=f=>(typeof f.state==='string'&&f.state in RANK)?RANK[f.state]:-1;
+    let n=0; const groups=[]; const at=Object.create(null);
+    keys.forEach(k=>{
+      const rows=FM.filter(f=>String(f.at==null?'':f.at)===k).map((f,i)=>[f,i])
+        .sort((a,b)=>rank(a[0])-rank(b[0])||a[1]-b[1]).map(x=>({f:x[0],n:++n}));
+      groups.push({k,rows}); at[k]=rows;
+    });
+    return {groups,at};
+  }
+  function mapHTML(M, FM, plan, lang, opts){
+    const nm=Object.create(null); (M.systems||[]).forEach(n=>nm[n.id]=pick(n.name,lang));
+    const fmName=k=>pick(KL.fmFor,lang)+String(k).split('>').map(x=>nm[x]!=null?nm[x]:x).join(' → ');
+    const chip=r=>{ const st=(typeof r.f.state==='string'&&FSTATE[r.f.state])?r.f.state:'unknown';
+      return '<b class="fno '+E(FSTATE[st]||'')+'">'+E(r.n)+'</b>'; };
+    return '<div class="bmap">'+laneHTML(M.systems||[], {sub:M.sub||{}, hops:M.hops||{}, hot:[]}, 'map', lang,
+      Object.assign({
+       fm:k=>plan.at[k]?' data-at="'+E(k)+'"'+(plan.pid&&plan.pid[k]?' id="'+E(plan.pid[k])+'"':'')+' role="button" tabindex="0" aria-label="'+E(fmName(k)+': '+
+          plan.at[k].map(r=>'#'+r.n).join(' '))+'"':'',
+       fmCount:k=>'<span class="fn-c">'+plan.at[k].map(chip).join('')+'</span>'}, opts||{}))+'</div>';
+  }
+  // The element id of each system and link the map draws, so a row's number
+  // can lead back to the place where it fails.
+  function placeIds(s, M){
+    const sys=M.systems||[]; const out=Object.create(null); const si=secs.indexOf(s);
+    const id=k=>'fp-'+si+'-'+[...k].map(c=>c.codePointAt(0).toString(36)).join('-');
+    // A key seen twice (a repeated system id) gets no id: the link would
+    // only ever reach the first box.
+    const seen=Object.create(null);
+    const put=k=>{ if(k in seen){ delete out[k]; return; } seen[k]=1; out[k]=id(k); };
+    sys.forEach((n,i)=>{ put(String(n.id)); if(i<sys.length-1) put(n.id+'>'+sys[i+1].id); });
+    return out;
+  }
   function boundaryHTML(s, lang){
+    const M=mapOf(s);
     const F=s.findings||[]; const nb={}; const lb={};
-    const ix={}; (s.systems||[]).forEach((n,i)=>ix[n.id]=i);
+    const ix={}; (M.systems||[]).forEach((n,i)=>ix[n.id]=i);
     F.forEach(f=>{
       const b='<span class="badge '+E(f.tone||'warn')+'">'+E(f.n)+'</span>';
       if(String(f.at).includes('>')){ const a=String(f.at).split('>')[0]; if(ix[a]!=null) lb[ix[a]]=(lb[ix[a]]||'')+b; }
       else nb[f.at]=(nb[f.at]||'')+b;
     });
-    let h='<div class="bmap">'+laneHTML(s.systems||[], {sub:s.sub||{}, hops:s.hops||{}, hot:[]}, 'map', lang,
-      {badges:nb, linkBadges:lb, okLinks:true})+'</div>';
+    const FM=Array.isArray(s.failures)?s.failures.filter(f=>f&&typeof f==='object'&&!Array.isArray(f)):[];
+    const plan=fmPlan(M.systems||[], FM); plan.pid=placeIds(s, M);
+    let h=mapHTML(M, FM, plan, lang, {badges:nb, linkBadges:lb, okLinks:true});
     if(F.length){
       h+='<div class="bfind">'+F.map(f=>{
         const target=secs.findIndex(x=>x.kind==='chain' && f.card && pick(x.heading,'en')===f.card);
@@ -888,7 +1085,137 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     } else {
       h+='<div class="bok">'+rich(pick(s.ok,lang))+'</div>';
     }
+    return h+failuresHTML(M, s, plan, lang, {});
+  }
+  // A runbook is the same map with its rows located on it: error code or
+  // symptom → where it happens → what on-call does.
+  function runbookHTML(s, lang){
+    const M=mapOf(s);
+    const FM=Array.isArray(s.rows)?s.rows.filter(f=>f&&typeof f==='object'&&!Array.isArray(f)):[];
+    const plan=fmPlan(M.systems||[], FM); plan.pid=placeIds(s, M);
+    return mapHTML(M, FM, plan, lang, {})+failuresHTML(M, s, plan, lang, {bare:true});
+  }
+  // The failure-mode table (boundary-review.md §3): every mode of every
+  // boundary, grouped in map order. Evidence links pass the same default-deny
+  // rule as links in text, narrowed to https, and open in a new tab.
+  // The host a reader sees must be the host the browser opens: plain ASCII
+  // labels, no port, no trailing dot, no userinfo, no percent-escape, no
+  // backslash, and no dot segment the browser would fold away (which could
+  // turn /blob/<sha>/../main/ into an unpinned branch link).
+  const REF_HOST=/^https:\/\/[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?=[\/?#]|$)/i;
+  const DOT_SEG=/\/(?:\.|%2e){1,2}(?=[\/?#]|$)/i;
+  // GitHub folds // and decodes %xx in a path, so /o//r/blob/… or /bl%6fb/
+  // would open a fork or a branch the label and the pin check never saw.
+  const EMPTY_SEG=/^https:\/\/[^\/?#]+(?:\/[^?#]*)?\/\//i;   // path from a fixed point: no quadratic backtracking
+  const GITHUB_HOST=/^https:\/\/(?:(?:www\.)?github\.com|raw\.github(?:usercontent)?\.com|media\.githubusercontent\.com)(?=[\/?#]|$)/i;
+  const GITHUB_ESC=/^https:\/\/[^\/?#]+(?:\/[^?#%]*)?%/i;
+  const REF_MAX=2048;
+  function safeRef(u){
+    if(typeof u!=='string' || u.length>REF_MAX) return null;
+    const h=safeHref(u);
+    return (h!=null && REF_HOST.test(h) && !/["'<>`\\]/.test(h) && !DOT_SEG.test(h) && !EMPTY_SEG.test(h) &&
+            !(GITHUB_HOST.test(h) && GITHUB_ESC.test(h))) ? h : null;
+  }
+  // A GitHub ref names its repository, so a fork cannot pass as the real one.
+  function refLabel(u){
+    const g=/^https:\/\/(?:www\.)?github\.com\/([^\/?#]+)\/([^\/?#]+)\/(?:blob|blame|raw)\/[^\/?#]+\/([^#?]+)(?:\?[^#]*)?(?:#L(\d+)(?:C\d+)?(?:-L(\d+)(?:C\d+)?)?)?/i.exec(u);
+    if(g){ const f=g[3].replace(/\/$/,'').split('/').pop()||g[3];
+      return g[1]+'/'+g[2]+' · '+f+(g[4]?':'+g[4]+(g[5]?'\u2060–\u2060'+g[5]:''):''); }   // the range never splits at its dash
+    const m=/^https:\/\/([^\/?#]+)([^?#]*)/i.exec(u); if(!m) return u;
+    const path=(m[2]||'').replace(/\/$/,'');
+    // Any other GitHub link still leads with its owner/repo.
+    const gh=/^https:\/\/(?:(?:www\.)?github\.com|raw\.github(?:usercontent)?\.com|media\.githubusercontent\.com\/media)\/([^\/?#]+)\/([^\/?#]+)(\/[^?#]*)?/i.exec(u);
+    if(gh){ const rest=(gh[3]||'').replace(/\/$/,''); return gh[1]+'/'+gh[2]+(rest?' · '+(rest.length>28?'…'+rest.slice(-24):rest.slice(1)):''); }
+    // Elsewhere keep the head of the path, where an owner usually sits, and the last segment.
+    const segs=path.split('/').filter(Boolean);
+    return m[1]+(path.length>28&&segs.length>3?'/'+segs[0]+'/'+segs[1]+'/…/'+segs[segs.length-1]:path);
+  }
+  function refHTML(f, lang){
+    let h;
+    if(f.ref==null) h='<span class="noref">'+pick(KL.noref,lang)+'</span>';
+    else { const href=safeRef(f.ref);
+      h=href==null?'<span class="noref">'+pick(KL.refused,lang)+'</span>':
+        '<a class="fref" href="'+E(href)+'" target="_blank" rel="noopener noreferrer" title="'+E(href)+'">'+
+        (l=>l.includes(' · ')?l.replace(' · ',' · <wbr>'):l.replace(/\//g,'/<wbr>'))(E(refLabel(href)))+'</a>'; }
+    if(f.source!=null) h+='<span class="fsrc">'+pick(KL.fsrc,lang)+(lang==='en'?' ':'')+pick(KL.q1,lang)+rich(pick(f.source,lang))+pick(KL.q2,lang)+'</span>';
     return h;
+  }
+  const FSTATE=Object.assign(Object.create(null),{handled:'ok',detected:'warn',unhandled:'risk'});
+  function failuresHTML(M, s, plan, lang, opts){
+    if(!plan.groups.length) return '';
+    const sys=M.systems||[]; const name=Object.create(null); sys.forEach(n=>name[n.id]=pick(n.name,lang));
+    const label=k=>k.includes('>')?k.split('>').map(x=>name[x]!=null?name[x]:x).join(' →\u00a0'):(name[k]!=null?name[k]:k);
+    const cols=['fmode','fdetect','fimpact','faction','fref','fstate'];
+    const C=cols.map(c=>pick(KL[c],lang));
+    let h='<div class="fmodes">'+(opts.bare?'<p class="fcap">'+pick(KL.rbcap,lang)+'</p>':
+      '<h4>'+pick(KL.fmodes,lang)+'</h4><p class="fcap">'+pick(KL.fmcap,lang)+'</p>');
+    // One table, one <tbody> per location: the columns line up down the whole list.
+    h+=tscroll(opts.bare?s.heading:KL.fmodes,lang)+'<table class="fmt" role="table"><thead role="rowgroup"><tr role="row">'+C.map(c=>'<th scope="col" role="columnheader">'+E(c)+'</th>').join('')+'</tr></thead>';
+    plan.groups.forEach(g=>{
+      const k=g.k, rows=g.rows;
+      const cnt=Object.create(null); rows.forEach(r=>{ const st=(typeof r.f.state==='string'&&FSTATE[r.f.state])?r.f.state:'unknown'; cnt[st]=(cnt[st]||0)+1; });
+      h+='<tbody class="fgroup" role="rowgroup" data-fg="'+E(k)+'"><tr class="fgh" role="row"><th colspan="'+C.length+'" scope="rowgroup" role="rowheader"><span class="fgn">'+
+        softBreaks(rich(label(k)))+'</span><span class="fct">'+
+        ['unhandled','detected','handled','unknown'].filter(x=>cnt[x]).map(x=>cnt[x]+' '+pick(KL['fs-'+x],lang)).join(' · ')+
+        '</span></th></tr>';
+      rows.forEach(r=>{
+        const f=r.f;
+        const st=(typeof f.state==='string'&&FSTATE[f.state])?f.state:'unknown';
+        const pin=f.finding!=null?'<span class="badge '+E(((s.findings||[]).find(x=>x&&x.n===f.finding)||{}).tone||'warn')+
+          '" title="'+E(pick(KL.fpin,lang)+' '+f.finding)+'">'+E(f.finding)+'</span>':'';
+        const d=pick(f.detect,lang);
+        // The row's number leads back to its place on the map (a real link:
+        // Tab and Enter reach it, and the place takes focus without a mark).
+        const pid=plan.pid&&plan.pid[k];
+        const rn=lang==='en'?pick(KL.fno,lang)+' '+r.n:'第 '+r.n+' '+pick(KL.fno,lang);
+        const no=pid?'<a class="fno '+E(FSTATE[st]||'')+'" href="#'+E(pid)+'" data-place="'+E(pid)+'" title="'+
+            E(rn+' — '+pick(KL.onmap,lang))+'" aria-label="'+
+            E(rn+' — '+pick(KL.onmap,lang)+(lang==='en'?': ':'：')+label(k).replace(/\u00a0/g,' '))+'">'+E(r.n)+'</a>':
+          '<b class="fno '+E(FSTATE[st]||'')+'" title="'+E(rn)+'">'+E(r.n)+'</b>';
+        h+='<tr role="row" data-st="'+st+'"><td role="cell" class="mode" data-l="'+E(C[0])+'">'+no+rich(pick(f.mode,lang))+pin+
+          (f.planned?'<span class="fplan">'+pick(KL.fplan,lang)+'</span>':'')+
+          // What production does today rides under the mode, not in a seventh column.
+          (f.today!=null?'<div class="ftoday"><span>'+pick(KL.ftoday,lang)+'</span>'+rich(pick(f.today,lang))+'</div>':'')+'</td>'+
+          '<td role="cell" class="det" data-l="'+E(pick(KL.fdetect,lang))+'">'+(String(d).trim()?softBreaks(rich(d)).split(/(<[^>]*>)/).map((t,i)=>i%2?t:t.replace(/[{,=]/g,'$&<wbr>')).join(''):'<span class="nosig">'+pick(KL.nosig,lang)+'</span>')+'</td>'+
+          '<td role="cell" data-l="'+E(pick(KL.fimpact,lang))+'">'+rich(pick(f.impact,lang))+'</td>'+
+          '<td role="cell" data-l="'+E(pick(KL.faction,lang))+'">'+rich(pick(f.action,lang))+'</td>'+
+          '<td role="cell" class="ev" data-l="'+E(pick(KL.fref,lang))+'">'+refHTML(f,lang)+'</td>'+
+          '<td role="cell" class="st" data-l="'+E(pick(KL.fstate,lang))+'"><span class="ktag '+(FSTATE[st]||'')+'">'+pick(KL['fs-'+st],lang)+'</span></td></tr>';
+      });
+      h+='</tbody>';
+    });
+    return h+'</table></div></div>';
+  }
+  // Clicking a system or link on the map marks its failure-mode rows; a
+  // second click on the same one clears the mark.
+  function bindFailures(kb){
+    let cur=null;
+    const gid=k=>'fg-'+kb.dataset.sec+'-'+[...k].map(c=>c.codePointAt(0).toString(36)).join('-');
+    kb.querySelectorAll('.fgroup').forEach(g=>{ g.id=gid(g.dataset.fg); });
+    const pick1=k=>{
+      cur=(cur===k)?null:k;
+      kb.querySelectorAll('.bmap .fm').forEach(x=>{ const on=x.dataset.at===cur; x.classList.toggle('on',on);
+        x.setAttribute('aria-pressed',on?'true':'false'); });
+      let first=null;
+      kb.querySelectorAll('.fgroup').forEach(g=>{ const on=g.dataset.fg===cur; g.classList.toggle('on',on); if(on&&!first) first=g; });
+      const calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if(first) first.scrollIntoView({block:'nearest',behavior:calm?'auto':'smooth'});
+    };
+    kb.querySelectorAll('.bmap .fm').forEach(el=>{
+      el.setAttribute('aria-pressed','false'); el.setAttribute('aria-controls',gid(el.dataset.at));
+      el.addEventListener('click',()=>pick1(el.dataset.at));
+      el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick1(el.dataset.at); } });
+    });
+    // A row's number moves focus to its place on the map; Enter there marks
+    // the place's rows as a click does. The jump itself never sets a mark.
+    kb.querySelectorAll('a[data-place]').forEach(a=>a.addEventListener('click',e=>{
+      const t=document.getElementById(a.dataset.place); if(!t||!kb.contains(t)) return;
+      e.preventDefault();
+      const calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+      t.scrollIntoView({block:'center',behavior:calm?'auto':'smooth'});
+      t.focus({preventScroll:true});
+      t.classList.add('flash'); clearTimeout(t._fl); t._fl=setTimeout(()=>t.classList.remove('flash'),1600);
+    }));
   }
   function compareHTML(s, lang){
     const c=s.cols||[];
@@ -1044,7 +1371,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
     }
     plot.appendChild(svg);
   }
-  const KR={chain:chainHTML, boundary:boundaryHTML, compare:compareHTML, matrix:matrixHTML, steps:stepsHTML, stats:statsHTML, chart:chartHTML};
+  const KR={chain:chainHTML, boundary:boundaryHTML, runbook:runbookHTML, compare:compareHTML, matrix:matrixHTML, steps:stepsHTML, stats:statsHTML, chart:chartHTML};
 
   function build(s){
     const el=document.createElement('article'); el.className='step';
@@ -1277,6 +1604,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
       const kb=el.querySelector('.kbox');
       if(kb){ kb.innerHTML=KR[s.kind](s,lang);
         if(s.kind==='chart') drawChart(kb,s,lang);
+        if(s.kind==='boundary'||s.kind==='runbook') bindFailures(kb);
         kb.querySelectorAll('button[data-go]').forEach(b=>b.addEventListener('click',()=>go(+b.dataset.go))); }
       const cl=el.querySelector('[data-i=claim]'); if(cl) cl.innerHTML=rich(pick(s.claim,lang));
       const h=el.querySelector('[data-i=heading]'); if(h) h.textContent=pick(s.heading,lang);
@@ -1361,12 +1689,98 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
   document.getElementById('prev').addEventListener('click',()=>go(idx-1));
   document.getElementById('next').addEventListener('click',()=>go(idx+1));
   addEventListener('keydown',e=>{
-    if(e.target.tagName==='TEXTAREA') return;
+    if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return;
+    if(e.key==='/'){ e.preventDefault(); q.focus(); q.select(); return; }
     // Arrow keys on a sideways-scrolling table scroll the table, not the page.
     if(e.target.closest&&e.target.closest('.tscroll')) return;
     if(e.key==='ArrowRight'||e.key==='j') go(idx+1);
     if(e.key==='ArrowLeft'||e.key==='k') go(idx-1);
   });
+
+
+  // ---- Full-text search over every section, in the reading language ----
+  // Units are what a reader wants to land on: a runbook or failure-mode row,
+  // a table row, a chain lane, a step, a paragraph, a figure. Runbook and
+  // failure rows rank first, so an error code pasted from an alert opens the
+  // row that says what to do, with its hop marked on the map.
+  const QL={ph:W3('Search — error code, symptom, system…','搜尋——錯誤碼、症狀、系統…','搜索——错误码、症状、系统…'),
+    none:W3('No match','沒有符合的結果','没有匹配的结果'), rb:W3('runbook','排障','排障'), fm:W3('failure mode','失效模式','失效模式')};
+  const q=document.getElementById('q'), qres=document.getElementById('qres');
+  const UNIT='tr, .lane, .hstep, .stat, .bf, .bok, .prose>p, .prose>h4, .prose li, .kv dd, figcaption, .cap, .claim, ul.findings li, .callout';
+  function units(){
+    const out=[];
+    built.forEach((el,i)=>{
+      const h=pick(secs[i].heading,lang);
+      el.querySelectorAll(UNIT).forEach(u=>{
+        if(u.closest('thead')||u.classList.contains('fgh')) return;
+        const p=u.parentElement&&u.parentElement.closest(UNIT); if(p&&p!==u) return;   // the outer unit already covers it
+        const isFm=u.matches('table.fmt tr[data-st]');
+        const g=isFm?u.closest('tbody.fgroup'):null;
+        let t=u.textContent.replace(/\s+/g,' ').trim(); if(!t) return;
+        if(g){ const gh=g.querySelector('.fgn'); if(gh) t=gh.textContent.replace(/\s+/g,' ').trim()+' · '+t; }
+        out.push({i,h,u,t,kind:isFm?(secs[i].kind==='runbook'?'rb':'fm'):'',at:g?g.dataset.fg:null});
+      });
+      el.querySelectorAll('svg').forEach(sv=>{
+        const t=[...sv.querySelectorAll('text')].map(x=>x.textContent).join(' · ').replace(/\s+/g,' ').trim();
+        if(t) out.push({i,h,u:sv.closest('figure')||sv,t,kind:''});
+      });
+      out.push({i,h,u:el.querySelector('h3')||el,t:h,kind:'',head:true});
+    });
+    return out;
+  }
+  const fold=x=>x.toLowerCase();
+  function snippet(t,terms){
+    const lt=fold(t); let at=Math.max(0,lt.indexOf(terms[0])-50);
+    let s=(at?'…':'')+t.slice(at,at+190)+(t.length>at+190?'…':'');
+    let h=E(s);
+    terms.forEach(w=>{ if(!w) return; const re=new RegExp(E(w).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      h=h.split(/(<[^>]*>)/).map((x,k)=>k%2?x:x.replace(re,m=>'<mark>'+m+'</mark>')).join(''); });
+    return h;
+  }
+  let hits=[], sel=0;
+  function search(v){
+    const terms=fold(v).split(/\s+/).filter(Boolean);
+    if(!terms.length){ qres.hidden=true; q.setAttribute('aria-expanded','false'); return; }
+    hits=units().filter(x=>terms.every(w=>fold(x.t).includes(w)))
+      .map(x=>({...x,score:(x.kind?0:x.head?1:2)*1000+(fold(x.t).indexOf(terms[0]))}))
+      .sort((a,b)=>a.score-b.score).slice(0,14);
+    sel=0;
+    qres.innerHTML=hits.length?hits.map((x,k)=>'<button type="button" role="option" data-k="'+k+'" aria-selected="'+(k===0)+'">'+
+      '<div class="qs"><b>'+String(x.i+1).padStart(2,'0')+'</b>'+E(x.h)+(x.kind?' · '+E(pick(QL[x.kind],lang)):'')+'</div>'+
+      '<div class="qt">'+snippet(x.t,terms)+'</div></button>').join(''):'<div class="qnone">'+E(pick(QL.none,lang))+'</div>';
+    qres.hidden=false; q.setAttribute('aria-expanded','true');
+  }
+  function land(x){
+    qres.hidden=true; q.setAttribute('aria-expanded','false');
+    go(x.i);
+    // paint() rebuilt the section: find the same unit again by its text.
+    const again=units().find(y=>y.i===x.i&&y.t===x.t);
+    const u=again?again.u:built[x.i];
+    if(x.at){ const m=built[x.i].querySelector('.bmap .fm[data-at="'+CSS.escape(x.at)+'"]'); if(m) m.click(); }
+    u.classList.add('qhit'); setTimeout(()=>u.classList.remove('qhit'),2600);
+    const calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+    u.scrollIntoView({block:'center',behavior:calm?'auto':'smooth'});
+  }
+  let qT=0;
+  q.addEventListener('input',()=>{ clearTimeout(qT); qT=setTimeout(()=>search(q.value),80); });
+  q.addEventListener('keydown',e=>{
+    const bs=[...qres.querySelectorAll('button')];
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); if(!bs.length) return;
+      sel=(sel+(e.key==='ArrowDown'?1:-1)+bs.length)%bs.length;
+      bs.forEach((b,k)=>b.setAttribute('aria-selected',String(k===sel))); bs[sel].scrollIntoView({block:'nearest'}); }
+    if(e.key==='Enter'&&hits[sel]){ e.preventDefault(); land(hits[sel]); }
+    if(e.key==='Escape'){ q.value=''; search(''); q.blur(); }
+  });
+  qres.addEventListener('click',e=>{ const b=e.target.closest('button[data-k]'); if(b) land(hits[+b.dataset.k]); });
+  document.addEventListener('click',e=>{ if(!e.target.closest('.qbox')){ qres.hidden=true; q.setAttribute('aria-expanded','false'); } });
+  const qPaint=()=>{ q.placeholder=pick(QL.ph,lang); q.setAttribute('aria-label',pick(QL.ph,lang)); };
+  qPaint(); document.querySelectorAll('.langs button').forEach(b=>b.addEventListener('click',qPaint));
+  // A link can carry the query: …#q=UNREGISTERED opens the first match, so an
+  // alert can point straight at its runbook row.
+  // Runs after the first paint (see the end of the script).
+  function qFromHash(){ const m=/^#q=(.+)$/.exec(location.hash||''); if(!m) return;
+    let v=''; try{ v=decodeURIComponent(m[1]); }catch(_){ return; }
+    q.value=v; search(v); if(hits[0]) land(hits[0]); }
 
   // The one action the page exists to enable, so it has to work everywhere the
   // page can be opened. A published page runs inside an iframe where the async
@@ -1507,6 +1921,7 @@ footer.foot{margin-top:3.5rem;padding:1.1rem 0 2.5rem;border-top:1px solid var(-
   paint = function(){ _paint(); relabelDiagrams(); };
 
   built[0].classList.add('on'); animate(built[0]); paint();
+  qFromHash();
 })();
 </script>
 </body>

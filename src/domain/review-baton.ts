@@ -13,9 +13,9 @@
 export const BATON_PIN = {
   /** its own id, beside any baton the captain imported (that one is the captain's skill: picked per room, confirmed) */
   id: "studio-baton", name: "baton (built in)",
-  sha256: "ee3a9f5221a1c77e10e2f8d3954d7ce558fc50ca3edd403e5a087d5ab2afce4a",
-  filesSha256: "b9e6622e7a06ee1d9674f7d589c93f9e4d6054fec7bf43647df28e4e2c1ffe06",
-  upstream: { repo: "https://github.com/BenjaminLu/baton", commit: "ba68615428b9c366eb5339778683e67b9b6c31c7" },
+  sha256: "092c6eb38310ccf2384d9a84772daacd2bc95dbebd8dded215eb5e2bd1337dcb",
+  filesSha256: "cfb08291b4fcba2feabd21d6a10d5496e1b2f87ecfc111ef08f1f849fa5d3d50",
+  upstream: { repo: "https://github.com/BenjaminLu/baton", commit: "2d7f9b9c87f16a738008e7635f5d2f23a7546d3c" },
   /** each script and the lockfile, by sha256: what the approval in advance covers (requirements.txt pins OpenCC's wheels) */
   scripts: {
     "requirements.txt": "27ff1a4089723d36f4a626cb61fbb7b759747ad6a0046773a9ad73f7c9a67bfa",
@@ -23,7 +23,7 @@ export const BATON_PIN = {
     "scripts/figures.py": "95c308384b3a97661cfc0c02faff7d91f9c96c244de00288a645a27e0a6edb96",
     "scripts/render.py": "cb6fe69da67ca9833db0322a7893941de92575273f305c71213c779ec83e4b42",
     "scripts/snapshot.py": "a385728d0609977c0e4d4bfc6159301eb7baf4c7cca7e54b189f4b04219d4800",
-    "scripts/verify.py": "ef24d889bc8dbd093f8b7b091893a4c00782c4131375ebf1a2d0aefbaac5e755",
+    "scripts/verify.py": "c55d4c06b2968c1ef67dad00a215ee5a9fceed8333768cf5e3081c932ef27f05",
   } as Record<string, string>,
 } as const;
 
@@ -37,6 +37,8 @@ export const isPinnedBaton = (p: { id: string; sha256: string; filesSha256: stri
  *  by an older built-in keeps naming its own commit in the room's version menu after an upgrade. */
 const BATON_UPSTREAM: Record<string, string> = {
   [`${BATON_PIN.sha256}:${BATON_PIN.filesSha256}`]: BATON_PIN.upstream.commit,
+  // ba68615: proof state, default-deny links, the SVG sanitizer (PR 178)
+  "ee3a9f5221a1c77e10e2f8d3954d7ce558fc50ca3edd403e5a087d5ab2afce4a:b9e6622e7a06ee1d9674f7d589c93f9e4d6054fec7bf43647df28e4e2c1ffe06": "ba68615428b9c366eb5339778683e67b9b6c31c7",
   // e74aeed: baton v2 (PR 175)
   "96d3ca8f0dc741e1fd308ed6d6d3496f8618aa8f9f12de03031ab7bf5b721cb4:745774aad1f9aded7229689dc0d1c273659d4bbaf45d0e050d001d1ea9e9937b": "e74aeed230ce8126b7b5be5c42d1dcb202d93a40",
   // c382464: the first built-in (PR 159)
@@ -71,6 +73,8 @@ A document room
 - There is no code here to check it against: say once that the room holds only the document, so nothing on the page is
   checked against code; never mark a part as built or not built. Review proof and the proof matrix are for done work: a
   proposal has none.
+- The failure modes are the ones the document describes or implies, each with its source sentence (\`source\`): no \`ref\`
+  (there is no commit here) and no \`planned\` (the page would print "not built yet", and the room cannot tell).
 - The register follows whoever the document is for (a PRD for a product reader: eli5; a design doc among engineers:
   engineer), unless the captain's instructions name the reader. The eyebrow names the document (its name and version),
   never a repository or a range; layer (c) names the specs and systems the document cites, for the reader's own agent.
@@ -109,17 +113,31 @@ Boundary review (the last section, every room)
 - The review comments under "## Boundary review" in the context are paste-ready text for the captain. You never post
   them, even when the captain's instructions ask: nothing in this run posts to GitHub or anywhere else (no review, no
   comment, no status). Do not write on the page that they were posted or will be.
+- Under the map, the failure-mode table (references/boundary-review.md section 3): every way each system and link fails,
+  exhaustive, not admission-tested. It is required: on the engineer register verify.py fails a map that crosses a boundary
+  with no \`failures\` (\`"failures": []\` only when none apply). Error codes or symptoms and what on-call does go in a
+  \`runbook\` section, never a compare or a matrix; with runbooks, every row lives in one of them and the map keeps only its
+  pins.
+- A row's \`ref\` is a permalink you build from the materials, never a URL you were given or guessed: the repository and the
+  Head commit pull-request.md names, the full 40-hex sha, https://github.com/<owner>/<repo>/blob/<sha>/<path>#La-Lb, with
+  the lines found in head/<path> (mat_read, mat_search; that is your check in place of baton's git grep and git cat-file).
+  No such repository or file in the materials: no \`ref\`. \`detect\` names a signal the materials show. A mode whose handling
+  you could not read in the materials is never \`handled\`: list it in the context's open questions as unchecked, not in the
+  table.
 
 Diagrams
 - There is no diagram-design skill to invoke. Its guidance is in this skill's folder: diagram-design/SKILL.md and a subset
   of its references (a file it names that is not there is left out; skip that part). Draw each figure as inline SVG by
   those rules and baton's embedding contract (references/diagrams.md): colours as the packet's CSS variables,
   data-node="<latin-id>" on every selectable shape, data-en / data-hant / data-hans on every <text>.
-- No external URL anywhere on the page (no Google Fonts, no CDN, no image link): it is shown in a frame with no network.
+- Nothing on the page loads from a URL (no Google Fonts, no CDN, no image link): it is shown in a frame with no network.
+  The one link baton asks for is a failure row's \`ref\`; write no other.
+- The packet has one system map (\`systems\`, references/spec.md "systems"): the boundary map and every runbook draw it,
+  and every figure with \`edges\` says its \`view\` and \`state\` and draws the same systems by the same names.
 
 Building and checking the page
 - Read references/spec.md for the packet's shape, references/components.md for the section components (chain, boundary,
-  compare, matrix, steps, stats, chart) and references/boundary-review.md for the last section; do not read render.py,
+  runbook, compare, matrix, steps, stats, chart) and references/boundary-review.md for the last section; do not read render.py,
   verify.py or the template to rediscover them.
 - A chart carries only data the materials hold (a number counted from the diff, checks.md or the record), its source
   named; never an invented or illustrative number.

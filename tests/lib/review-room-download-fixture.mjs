@@ -34,14 +34,15 @@ export const FILES = {
   3: { skill: { id: "studio-baton", v: 2, name: "baton", upstream: "ba68615" }, files: { "index.html": BATON }, summary: "Add percent, handed on" },
 };
 
-/** the room on disk: its record and its explainer's state, each version's files with the sha256 they were kept with */
-export function seedRoom(data) {
+/** the room on disk: its record and its explainer's state, each version's files with the sha256 they were kept with (FILES,
+ *  or another suite's versions in the same shape) */
+export function seedRoom(data, files = FILES) {
   const prDir = join(data, "review-room", "pr"), xdir = join(prDir, `${ID}-explain`); mkdirSync(xdir, { recursive: true });
   writeFileSync(join(prDir, `${ID}.json`), JSON.stringify({ schema: 1, run: "", card: ID, node: "", head: H, base: B, turns: [], board: [], sources: [], check: { questions: [] },
     subject: { kind: "pr", room: ID, url: `https://github.com/${REPO}/pull/7`, repository: REPO, number: 7, project: null, task: null },
     pr: { title: "Add percent", body: "", state: "open", merged: false, mergedAt: null, closedAt: null, draft: false, author: "someone", headRef: "percent", headRepo: REPO, baseRef: "main", head: H, base: B, files: [], notes: [], checkedAt: new Date().toISOString(), truncated: false } }));
   const versions = [], runs = [];
-  for (const [k, x] of Object.entries(FILES)) { const n = Number(k), dir = join(xdir, `v${n}`), list = [];
+  for (const [k, x] of Object.entries(files)) { const n = Number(k), dir = join(xdir, `v${n}`), list = [];
     for (const [p, c] of Object.entries(x.files)) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), c); list.push({ path: p, bytes: Buffer.byteLength(c), sha256: sha(c) }); }
     versions.push({ n, run: n, skill: x.skill, at: `2026-11-01T10:0${n}:00Z`, entry: "index.html", kind: "html", files: list, summary: x.summary, from: null, prompt: "" });
     runs.push({ n, kind: "generate", skill: { ...x.skill, sha256: "x", filesSha256: "x", bodySha: "x" }, status: "done", by: "captain", at: `2026-11-01T10:0${n}:00Z`, ended: `2026-11-01T10:0${n}:30Z`, provider: "claude", model: "claude-opus-5", effort: null, confirm: "c", limitMin: 120, rounds: [], cost: { usd: 0.1 * n }, error: null, progress: [], from: null, version: n, head: H }); }
@@ -50,10 +51,10 @@ export function seedRoom(data) {
 }
 
 /** a real Studio on a free port, temporary data and HOME; the caller stops it (stop()) in finally */
-export async function startStudio(tag) {
+export async function startStudio(tag, files = FILES) {
   process.env.CREW_SESSION_TOKEN ??= "test-session";
   const tmp = mkdtempSync(join(tmpdir(), `crew-${tag}-`)), data = join(tmp, "data"), home = join(tmp, "home"); mkdirSync(data); mkdirSync(home);
-  const room = seedRoom(data), port = await freePort(), tailnet = `${tag}.tailnet.example`;
+  const room = seedRoom(data, files), port = await freePort(), tailnet = `${tag}.tailnet.example`;
   const env = { ...process.env }; for (const k of ["GITHUB_TOKEN", "GH_TOKEN", "CREW_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) delete env[k];
   const app = spawn("bun", ["src/server.ts"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, DISABLE_AUTOUPDATER: "1", CREW_REVIEW_EXPLAIN_DEFAULT_SKILL: "", CREW_TAILNET_NAME: tailnet, CREW_PORT: String(port), CREW_GH: "0", CREW_READONLY: "1", CREW_DATA: data,
     CREW_CHAT_PROVIDER: "stub", CREW_RETRO_AUTO: "0", CREW_INSTALL_RUNNER: "mock", CREW_NO_REAL_INSTALL: "1", CREW_GH_NO_CLI: "1", CREW_CLAUDE_BIN: "/nonexistent/claude", CREW_CODEX_BIN: "/nonexistent/codex", HOME: home, CREW_MAIN_PROJECT: join(tmp, "proj"), CREW_FILE_ALLOW: tmp } });

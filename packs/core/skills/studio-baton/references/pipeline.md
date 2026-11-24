@@ -191,9 +191,10 @@ context tells the agent where to go; it never pretends to be the last word.
 > missing, however finished the rest looks.
 
 Layer (b) also carries a `## Boundary review` heading: the boundaries the work
-crosses, each lens's result per boundary, the facts verified and their
-sources, and — for a pull request — the paste-ready review comments
-(`boundary-review.md` §4–5). The page's last section is the short view of it.
+crosses, each lens's result per boundary, the failure-mode table that doubles
+as the runbook (mode, detect, impact, action, ref, state), the facts verified
+and their sources, and — for a pull request — the paste-ready review comments
+(`boundary-review.md` §3, §5–6). The page's last section is the short view of it.
 
 Open with the refusal declaration verbatim; `render.py` and `verify.py` both
 enforce it:
