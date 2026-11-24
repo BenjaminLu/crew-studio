@@ -354,12 +354,14 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  label, and a turn that cannot run fails with the vendor's error; Studio never switches to another tutor by itself). Its
    *  independence from the author is said, never enforced. The approved reviewer picked is the seat's own member; any other
    *  runs as the seat's adaptive member. */
-  const chosenTutor = (run: any | null, node: any | null, c: { provider: string; model: string; source: "room" | "studio" }): Tutor => {
+  const chosenTutor = (run: any | null, node: any | null, c: { provider: string; model: string; source: "room" | "studio" }, kind?: Subject["kind"]): Tutor => {
     const { effort, level, warning, unlisted } = tutorFacts(run, c), w = warning ?? { en: "", zh: "" };
     let approved: AgentPick | null = null; if (run && node && !isFreeHostRun(run)) { try { approved = (engine.deps.approvedPick?.(run, node, TUTOR_ROLE) as AgentPick | null) ?? (isHostRun(run) ? null : engine.x(run, reviewNode(run), run.nodes[reviewNode(run).id]).pick()); } catch {} }
     const own = !!approved && approved.provider === c.provider && (approved.model ?? null) === c.model;
     const by = c.source === "room" ? { en: " Picked by the captain for this room.", zh: "船長為這間審查室選的。" } : { en: " Studio's default tutor, picked by the captain.", zh: "船長選的 Studio 預設導師。" };
-    const label = level ? { en: `${LEVEL_TEXT[level].en}.${by.en}${w.en}`, zh: `${LEVEL_TEXT[level].zh}。${by.zh}${w.zh}` } : { en: `Independence from the author unknown: the change's author is outside Studio.${by.en}${w.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。${by.zh}${w.zh}` };
+    // a directory or a document has no author in Studio: independence does not apply (said so, never "unknown")
+    const free = kind === "doc" ? { en: "A document has no author in Studio, so independence does not apply.", zh: "文件在 Studio 裡沒有作者，所以不談獨立程度。" } : kind === "dir" ? { en: "A directory has no change and no author, so independence does not apply.", zh: "目錄沒有改動也沒有作者，所以不談獨立程度。" } : null;
+    const label = level ? { en: `${LEVEL_TEXT[level].en}.${by.en}${w.en}`, zh: `${LEVEL_TEXT[level].zh}。${by.zh}${w.zh}` } : free ? { en: `${free.en}${by.en}${w.en}`, zh: `${free.zh}${by.zh}${w.zh}` } : { en: `Independence from the author unknown: the change's author is outside Studio.${by.en}${w.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。${by.zh}${w.zh}` };
     return { pick: own ? approved! : { provider: c.provider, model: c.model, effort } as AgentPick, level: level as Level, adaptive: !own, outside: !own, warning, picked: true, unlisted, label };
   };
   /** a tutor the captain picks (a room's, or Studio's default): any {provider, model} of a provider Studio runs, listed or entered by hand */
@@ -371,7 +373,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     let tutors: any[] = []; if (open) { try { const o0: any = offerOf(k); tutors = tutorsOf(s?.run && !isHostRun(s.run) && !isFreeHostRun(s.run) ? s.run : null, "error" in o0 ? null : { provider: o0.provider, model: o0.model }, [...(r?.tutor ? [r.tutor] : []), ...(d ? [d] : [])]); } catch {} }
     return { tutors, tutorProviders: open ? tutorProviders() : [], tutorChoice: { room: r?.tutor ? { provider: r.tutor.provider, model: r.tutor.model } : null, studio: d, source: c?.source ?? "auto" } }; };
   /** the tutor a turn of this room runs on: the captain's pick (the room's, else Studio's default), else Studio's own (Automatic) */
-  const tutorFor = (k: Key, s: S): Tutor => { const c = choiceOf(load(k)); return c ? chosenTutor(s.run, s.node, c) : k.kind === "dir" || k.kind === "doc" ? autoDirTutor(k.kind) : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)); };
+  const tutorFor = (k: Key, s: S): Tutor => { const c = choiceOf(load(k)); return c ? chosenTutor(s.run, s.node, c, k.kind) : k.kind === "dir" || k.kind === "doc" ? autoDirTutor(k.kind) : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)); };
   /** a directory room's tutor when the captain picked none (Automatic): a model this machine runs now and has verified, the
    *  machine's default first. There is no change and no author: independence does not apply, and is not claimed. */
   const autoDirTutor = (kind: "dir" | "doc" = "dir"): Tutor => {

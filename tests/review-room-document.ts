@@ -124,6 +124,9 @@ try {
     "what only a change has is not there (a pull request's state, a diff, new commits)", JSON.stringify({ title: v.card.title, d: v.diffstat }));
   ok(v.offer?.provider === "codex" && v.offer.model === "c-1" && v.offer.independence?.level === null && /A document has no change and no author/.test(v.offer.independence.en),
     "before anything runs, the room offers its tutor: Automatic, no author to be independent from", JSON.stringify(v.offer));
+  { const pk: any = room.setTutor(id, { provider: "claude", model: "x-1" }, "captain");
+    ok(/A document has no author in Studio, so independence does not apply\. Picked by the captain for this room\./.test(pk.offer.independence.en) && !/change's author/.test(pk.offer.independence.en), "a tutor the captain picks for a document room says independence does not apply (no change, no author)", pk.offer.independence.en);
+    room.setTutor(id, null, "captain"); }
   const same: any = await room.openDoc({ title: "Reading-List", text: PROPOSAL }, "captain");
   ok(same.id === id && room.view(id).doc.versions.length === 1, "the same document sent again with the same bytes (pasted, its title its name) opens the room as it is: no new version", JSON.stringify(room.view(id).doc.versions.length));
 
