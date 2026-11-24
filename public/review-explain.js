@@ -461,7 +461,7 @@ function lineTools(r, st, v) {
     h("button", { type: "button", class: "rr-chip", "data-explain-full": "", title: T("Full screen (F)", "全螢幕（F）"), "aria-label": T("Full screen", "全螢幕"), "aria-keyshortcuts": "F", onclick: () => enterFull(id, v) }, "⛶ ", h("span", { class: "rx-tl" }, T("Full screen", "全螢幕"))),
     page ? h("button", { type: "button", class: "rr-chip", "data-explain-newtab": "", title: T("Opens this version alone in a new tab, isolated as here", "在新分頁單獨開這一版，一樣隔離"), "aria-label": T("Open in a new tab", "在新分頁開啟"), onclick: () => openTab(id, v) }, "↗ ", h("span", { class: "rx-tl" }, T("New tab", "新分頁"))) : null,
     // the file downloads on this Mac only (a paired phone reads)
-    readOnly() ? null : h("button", { type: "button", class: "rr-chip", "data-explain-download": v.n, title: T("Download this version as a file, exactly as kept; opened on its own, its own buttons work", "把這一版原封不動下載成檔案；單獨打開時，頁面自己的按鈕都能用"),
+    readOnly() ? null : h("button", { type: "button", class: "rr-chip", "data-explain-download": v.n, title: T("Download this version as a file, exactly as kept. Opened by itself, the page's buttons work.", "把這一版原封不動下載成檔案；單獨打開時，頁面自己的按鈕都能用"),
       "aria-label": T(`Download v${v.n}`, `下載 v${v.n}`), onclick: (e) => download(id, v, e.currentTarget) }, "↓ ", h("span", { class: "rx-tl" }, T("Download", "下載"))),
     h("span", { class: "rx-tag", "data-explain-isolation": "", title: media ? "" : T("The page runs in an isolated frame: no network, it cannot read Studio, storage kept by Studio in memory", "頁面在隔離框裡執行：不能連網、不能讀 Studio，儲存由 Studio 在記憶體代管") }, media ? T("Shown by Studio", "由 Studio 顯示") : T("Isolated", "隔離")));
 }
@@ -474,7 +474,7 @@ function autoNote(r, st) {
 }
 function verMenu(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), sid = st.selected?.id;
-  const keys = (e) => { const items = [...e.currentTarget.querySelectorAll("button:not([disabled]):not([data-explain-verdl])")], i = items.indexOf(document.activeElement);
+  const keys = (e) => { const items = [...e.currentTarget.querySelectorAll("button:not([disabled]):not([data-explain-verdl])")], at = document.activeElement?.closest?.("[data-explain-verdl]") ? document.activeElement.closest(".rx-verrow")?.querySelector(".rx-ver") : document.activeElement, i = items.indexOf(at);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
     else if (e.key === "Home" || e.key === "End") { e.preventDefault(); (e.key === "Home" ? items[0] : items.at(-1))?.focus(); } };
   return h("div", { class: "rx-vermenu", id: "rx-vermenu", "data-x-keep": "vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
@@ -832,12 +832,12 @@ async function openTab(id, v) {
 async function downloadPage(url, btn) {
   if (btn?.getAttribute("aria-busy") === "true") return; btn?.setAttribute("aria-busy", "true");
   try { const r = await fetch(url); if (!r.ok) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || `HTTP ${r.status}`); }
-    const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "")?.[1] || "page", u = URL.createObjectURL(await r.blob());
+    const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "")?.[1] || "page", u = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: "application/octet-stream" })); // never a text/html blob in Studio's origin
     const a = h("a", { href: u, download: name, hidden: true }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60_000); return null; }
   catch (e) { return bi(e.message); } finally { btn?.removeAttribute("aria-busy"); }
 }
 const downloadUrl = (id, n) => `/api/review-room/${enc(id)}/page/${n}/download`;
-async function download(id, v, btn) { const err = await downloadPage(downloadUrl(id, v.n), btn); if (err) { X.err.set(id, err); refresh(id); } }
+async function download(id, v, btn) { const err = await downloadPage(downloadUrl(id, v.n), btn); if (err) { X.verMenu = null; X.err.set(id, err); refresh(id); } }
 window.crewPageDownload = downloadPage;
 async function capFor(id, v) { const k = `${id}/${v.n}`, had = X.caps.get(k); if (had && had.exp > Date.now()) return had.src;
   const j = await api(`${base(id)}/cap?v=${v.n}`); const src = `${j.base}${v.entry.split("/").map(enc).join("/")}`; X.caps.set(k, { src, exp: Date.now() + 20 * 60_000 }); return src; }

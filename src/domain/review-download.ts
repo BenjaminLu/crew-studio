@@ -34,7 +34,7 @@ export function packPage(room: string, n: number, skill: string, entry: string, 
     if (sha(b) !== f.sha256) throw refuse(`v${n}'s ${f.path} changed since it was made: nothing was downloaded / v${n} 的 ${f.path} 產生後被改過：沒有下載`, "integrity");
     return { name: f.path, data: b }; });
   if (got.length === 1) { const e = extname(entry).toLowerCase(); return { name: downloadName(room, n, skill, e), type: TYPE[e] ?? "application/octet-stream", body: got[0].data }; }
-  return { name: downloadName(room, n, skill, ".zip"), type: "application/zip", body: zip(got) };
+  return { name: downloadName(room, n, skill, ".zip"), type: "application/zip", body: zip(got, { store: true }) }; // stored: pictures and videos are compressed already, and nothing is deflated on the request path
 }
 
 /** a room's version as kept (the explainer's `pages`: each version's folder and its files with their sha256) */
@@ -47,7 +47,10 @@ export function roomPageDownload(room: string, pages: { n: number; dir: string; 
 export function libraryPageDownload(store: ArtifactStore, aid: string, n: number, v: unknown): PageDownload {
   const a = store.get(aid), ver = a?.source === "room" ? store.version(aid, n) : null, f = ver ? store.file(aid, n, "room.json") : null;
   if (!f) throw refuse("No such saved room / 沒有這個存下來的審查室", "not_found");
-  const snap = JSON.parse(readFileSync(f, "utf8")), pv = Number(v), page = Array.isArray(snap?.pages) ? snap.pages.find((p: any) => p?.n === pv) : null;
+  // the manifest names the entry and the skill (the file's type and name): it is checked like the pages
+  const raw = readFileSync(f), want = ver!.files.find((x) => x.path === "room.json")?.sha256;
+  if (!want || sha(raw) !== want) throw refuse("This save's room.json changed since it was saved: nothing was downloaded / 這次存檔的 room.json 存下來之後被改過：沒有下載", "integrity");
+  const snap = JSON.parse(raw.toString("utf8")), pv = Number(v), page = Array.isArray(snap?.pages) ? snap.pages.find((p: any) => p?.n === pv) : null;
   if (!page) throw refuse("No such page version in this save / 這次存檔沒有這個頁面版本", "not_found");
   const pre = `pages/v${pv}/`, entry = String(page.entry ?? "").startsWith(pre) ? String(page.entry).slice(pre.length) : "";
   const files = ver!.files.filter((x) => x.path.startsWith(pre)).map((x) => ({ path: x.path.slice(pre.length), sha256: x.sha256,

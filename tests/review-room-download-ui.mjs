@@ -50,7 +50,9 @@ try {
     const next = await w.evaluate(() => document.activeElement?.dataset.explainVersion ?? document.activeElement?.dataset.explainVerdl ?? null);
     await w.focus('[data-explain-version="3"]'); await w.keyboard.press("Tab");
     const tab = await w.evaluate(() => document.activeElement?.dataset.explainVerdl ?? null);
-    ok(next === "2" && tab === "3", "↓ goes from v3 to v2 (not to a Download); Tab goes from v3 to its Download", JSON.stringify({ next, tab }));
+    await w.keyboard.press("ArrowDown");
+    const fromDl = await w.evaluate(() => document.activeElement?.dataset.explainVersion ?? null);
+    ok(next === "2" && tab === "3" && fromDl === "2", "↓ goes from v3 to v2 (not to a Download); Tab goes from v3 to its Download, and ↓ from there to v2", JSON.stringify({ next, tab, fromDl }));
     await w.screenshot({ path: join(shots, "2-menu-1440-light.png") });
     const f2 = await saved(w, '[data-explain-verdl="2"]'), z = unzipEntries(f2.body);
     ok(f2.name === `${ID}-v2-walkthrough.zip` && z.get("index.html")?.equals(Buffer.from(FILES[2].files["index.html"])) && z.get("fig.png")?.equals(FILES[2].files["fig.png"]),
@@ -62,13 +64,15 @@ try {
     let got = null; w.once("download", (d) => (got = d.suggestedFilename()));
     await openMenu(w); await w.click('[data-explain-verdl="1"]'); await w.waitForSelector("[data-explain-error]", { timeout: 10000 }); await w.waitForTimeout(400);
     const err = await w.$eval("[data-explain-error]", (e) => e.textContent);
-    ok(!got && /changed since it was made/.test(err) && /nothing was downloaded/.test(err), "a version whose file changed is refused: the room says why, and nothing is saved", JSON.stringify({ got, err }));
+    const menuOpen = !!(await w.$("[data-explain-vermenu]"));
+    ok(!got && !menuOpen && /changed since it was made/.test(err) && /nothing was downloaded/.test(err), "a version whose file changed is refused: the menu closes, the room says why, and nothing is saved", JSON.stringify({ got, menuOpen, err }));
     await w.screenshot({ path: join(shots, "3-refused-1440-light.png") });
     // a paired phone reads only: no Download, a note in the menu
     await w.evaluate(() => { window.__tok = window.crewRemote.token; window.crewRemote.token = () => "phone"; render(); });
     await openMenu(w); await w.waitForSelector("[data-explain-dl-desktop]");
     const ph = await w.evaluate(() => ({ line: !!document.querySelector("[data-explain-download]"), menu: document.querySelectorAll("[data-explain-verdl]").length, note: document.querySelector("[data-explain-dl-desktop]")?.textContent }));
     ok(!ph.line && !ph.menu && /download on the Mac running Studio/.test(ph.note || ""), "on a paired phone: no Download on the line or in the menu, and the menu says where pages download", JSON.stringify(ph));
+    await w.screenshot({ path: join(shots, "3b-menu-phone-1440-light.png") });
     await w.evaluate(() => { window.crewRemote.token = window.__tok; render(); });
     await c.close(); }
 
@@ -99,8 +103,16 @@ try {
       const f1 = await saved(w, '[data-saved-download="1"]');
       ok(f1.body.equals(Buffer.from(FILES[1].files["index.html"])), "the save's v1 is the page as saved, whatever the room's copy became", f1.name); }
     await w.screenshot({ path: join(shots, `6-saved-1440-${scheme}.png`) });
+    if (scheme === "dark") { // a file of the save changed since the save: refused under that version, it stays, nothing saved
+      const f = join(s.data, "artifacts", artifact, "v1", "files", "pages", "v2", "fig.png"); writeFileSync(f, Buffer.from("not the picture"));
+      let got = null; w.once("download", (d) => (got = d.suggestedFilename()));
+      await w.click('[data-saved-download="2"]'); await w.waitForSelector('[data-saved-page="2"] [data-saved-dl-error]', { timeout: 10000 }); await w.waitForTimeout(3600);
+      const e = await w.$eval('[data-saved-page="2"] [data-saved-dl-error]', (x) => ({ text: x.textContent, role: x.getAttribute("role") }));
+      ok(!got && e.role === "alert" && /changed since it was made/.test(e.text), "a saved version whose file changed is refused: the reason stays under that version (an alert), nothing is saved", JSON.stringify({ got, e }));
+      await w.screenshot({ path: join(shots, "7-saved-refused-1440-dark.png") }); }
     await w.evaluate(() => { window.__tok = window.crewRemote.token; window.crewRemote.token = () => "phone"; render(); }); await w.waitForSelector("[data-saved-dl-desktop]");
     ok(!(await w.$("[data-saved-download]")), `${scheme}: on a paired phone the saved room offers no Download, and says where pages download`);
+    await w.screenshot({ path: join(shots, `8-saved-phone-${scheme}.png`) });
     await c.close(); }
   ok(!errors.length, "no page error", JSON.stringify(errors));
 } catch (e) { fail++; console.log(`  FAIL  the suite threw: ${e?.stack ?? e}\n${s.log().slice(-3000)}`); }

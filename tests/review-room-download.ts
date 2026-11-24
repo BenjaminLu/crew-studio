@@ -29,8 +29,7 @@ try {
     ok(r.headers.get("content-disposition") === `attachment; filename="${ID}-v3-studio-baton.html"`, "as an attachment named <room>-v<n>-<skill>.html", String(r.headers.get("content-disposition")));
     ok(/^text\/html/.test(r.headers.get("content-type") ?? "") && r.headers.get("cache-control") === "no-store" && r.headers.get("x-content-type-options") === "nosniff",
       "text/html, never cached, nosniff", JSON.stringify(Object.fromEntries(r.headers)));
-    ok(/(^|;\s*)sandbox(;|$)/.test(r.headers.get("content-security-policy") ?? "") && /default-src 'none'/.test(r.headers.get("content-security-policy") ?? ""), "and sandboxed with no network, should anything ever render it in Studio's origin", String(r.headers.get("content-security-policy")));
-    ok(!body.includes(Buffer.from('data-crew-studio="storage"')), "the file is the page as kept: no storage shim or anything else of Studio's is added"); }
+    ok(/(^|;\s*)sandbox(;|$)/.test(r.headers.get("content-security-policy") ?? "") && /default-src 'none'/.test(r.headers.get("content-security-policy") ?? ""), "and sandboxed with no network, should anything ever render it in Studio's origin", String(r.headers.get("content-security-policy"))); }
   { const r = await get(url(1)), body = Buffer.from(await r.arrayBuffer());
     ok(r.status === 200 && body.equals(Buffer.from(FILES[1].files["index.html"])) && r.headers.get("content-disposition") === `attachment; filename="${ID}-v1-walk-.-through.html"`, "a skill id that needs sanitising gives a safe name; the bytes are unchanged", String(r.headers.get("content-disposition"))); }
   // ---------- several files: a zip of them, at the paths the page refers to them by ----------
@@ -60,7 +59,14 @@ try {
     // a file of the save changed since it was saved: refused, nothing downloaded
     const saved = `${s.data}/artifacts/${sj.artifact}/v1/files/pages/v3/index.html`; writeFileSync(saved, readFileSync(saved, "utf8").replace("rounds to 300", "rounds to 301"));
     const li = await get(lib(3)), lij: any = await li.json().catch(() => ({}));
-    ok(li.status === 400 && lij.code === "integrity" && !li.headers.get("content-disposition"), "a saved file changed since the save is refused: integrity, no file", `${li.status} ${JSON.stringify(lij)}`); }
+    ok(li.status === 400 && lij.code === "integrity" && !li.headers.get("content-disposition"), "a saved file changed since the save is refused: integrity, no file", `${li.status} ${JSON.stringify(lij)}`);
+    const { rmSync: rm } = await import("node:fs"); rm(`${s.data}/artifacts/${sj.artifact}/v1/files/pages/v2/fig.png`);
+    const lm = await get(lib(2)), lmj: any = await lm.json().catch(() => ({}));
+    ok(lm.status === 400 && lmj.code === "integrity" && /missing/.test(lmj.error) && !lm.headers.get("content-disposition"), "a saved file gone from the save is refused: integrity, no file", `${lm.status} ${JSON.stringify(lmj)}`);
+    // the save's manifest names the entry and the skill: an edited room.json is refused before any page is served
+    const man = `${s.data}/artifacts/${sj.artifact}/v1/files/room.json`; writeFileSync(man, readFileSync(man, "utf8").replace('"entry":"pages/v1/index.html"', '"entry":"pages/v1/other.html"'));
+    const lr = await get(lib(1)), lrj: any = await lr.json().catch(() => ({}));
+    ok(lr.status === 400 && lrj.code === "integrity" && /room\.json/.test(lrj.error), "a save whose room.json changed is refused: integrity, even for a page whose files are intact", `${lr.status} ${JSON.stringify(lrj)}`); }
   // ---------- a room's file changed on disk since it was made: refused, nothing downloaded ----------
   { writeFileSync(s.room.file(1, "index.html"), "<h1>changed</h1>");
     const r = await get(url(1)), j: any = await r.json().catch(() => ({}));

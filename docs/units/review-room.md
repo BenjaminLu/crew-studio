@@ -649,9 +649,9 @@ The output's line has Download (`[data-explain-download]`) for the version shown
 (`[data-saved-download]`). `GET /api/review-room/<room>/page/<v>/download` (the room's version) and
 `GET /api/review-room/library/<artifact>/<n>/page/<v>/download` (save n's copy, whatever the room's became) return the version's
 bytes exactly as kept: nothing of Studio's is added (no storage shim). Each file is read and checked against the sha256 it was
-kept with (the version's record; a save's manifest): one missing or changed refuses the download (`integrity`, 400, nothing sent;
-the room says why in its chat, a saved room in a toast). A version of one file (baton's page: one self-contained HTML file) is
-that file; a version of several (a page and its pictures) is a zip of them at the paths the page names them by. The file is an
+kept with (the version's record; a save's manifest, its `room.json` included): one missing or changed refuses the download (`integrity`, 400, nothing sent;
+the room closes its version menu and says why in its chat, a saved room under that version). A version of one file (baton's page: one self-contained HTML file) is
+that file; a version of several (a page and its pictures) is a zip of them (stored, not deflated) at the paths the page names them by. The file is an
 attachment (`Content-Disposition: attachment; filename="<room>-v<n>-<skill id><ext>"`, `.zip` for several; each part ASCII
 letters, digits, `.`, `_` and `-` only, no path), its own type (`text/html` for a page), `Cache-Control: no-store`,
 `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`, so it never renders in Studio's
