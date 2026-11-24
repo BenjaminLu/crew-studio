@@ -7,6 +7,7 @@ import {lanUntrusted,baseProblem,pinBase,commitPatch as lanCommitPatch} from '..
 import {taintRefusal} from '../lan/taint';
 import {installOwnClaudeGrants,ownClaudePlan} from '../providers/own-workflow-claude-refresh';
 import {installHelloWeb} from "../domain/hello-web";
+import { DOC_MAX_BYTES } from "../domain/review-doc";
 import { refusesRulesPatch } from "../operating-rules";
 import { taskTitle } from "../task-title";
 import { taskRow } from "./task-row";
@@ -410,11 +411,11 @@ export function createRuntime(d: RuntimeDeps) {
     const p = url.pathname;
     // a review room's explainer output (src/domain/review-explain.ts): a version's page for its sandboxed frame, whose opaque origin
     // sends no cookie: the short-lived capability in the path is the only credential, and the page runs under the output policy
-    { const x = !writing && /^\/rrx\/([0-9]{10,16}\.[0-9a-f]{32})\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/(\d{1,6})\/(.{1,400})$/.exec(p);
+    { const x = !writing && /^\/rrx\/([0-9]{10,16}\.[0-9a-f]{32})\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})\/(\d{1,6})\/(.{1,400})$/.exec(p);
       if (x) { const rr = engine.reviewRoom; if (!rr) return new Response("not found", { status: 404 }); let rel = ""; try { rel = decodeURIComponent(x[4]); } catch { return new Response("bad path", { status: 400 }); } return rr.explain.page(x[1], x[2], x[3], rel); }
       if (!writing && p.startsWith("/rrx/")) return new Response("invalid or expired capability", { status: 401 });
       // "Open in new tab": Studio's page framing that version's /rrx/ page (same capability, same sandbox and output CSP)
-      const t = !writing && /^\/rrxt\/([0-9]{10,16}\.[0-9a-f]{32})\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/(\d{1,6})\/?$/.exec(p);
+      const t = !writing && /^\/rrxt\/([0-9]{10,16}\.[0-9a-f]{32})\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})\/(\d{1,6})\/?$/.exec(p);
       if (t) { const rr = engine.reviewRoom; if (!rr) return new Response("not found", { status: 404 }); return rr.explain.tab(t[1], t[2], t[3]); }
       if (!writing && p.startsWith("/rrxt/")) return new Response("invalid or expired capability", { status: 401 }); }
     if (!/^\/api\/(workflow-packages|workflow-names|wf|wruns|scards|checks|policies|intake|coffee|onboarding|github-review|team|issue-triage|issue-categories|review-room)(\/|$)/.test(p)) return null;
@@ -423,6 +424,11 @@ export function createRuntime(d: RuntimeDeps) {
         const cap=12*1024*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
         if(reader){while(true){const r=await reader.read();if(r.done)break;size+=r.value.length;if(size>cap){await reader.cancel();return json({error:'Package request exceeds 12 MiB'},413);}chunks.push(r.value);}}
         try{b=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return json({error:'Invalid package request JSON'},400);}
+      }else if(p==='/api/review-room/open-doc'){
+        // a document's bytes come as base64 in the body: read up to what the largest document needs, never more
+        const cap=Math.ceil(DOC_MAX_BYTES()/3)*4+256*1024,reader=req.body?.getReader();let size=0;const chunks:Uint8Array[]=[];
+        if(reader){while(true){const r=await reader.read();if(r.done)break;size+=r.value.length;if(size>cap){await reader.cancel();return json({error:`The document is larger than ${DOC_MAX_BYTES()/1024**2} MB / 文件超過 ${DOC_MAX_BYTES()/1024**2} MB`,code:'too_large'},413);}chunks.push(r.value);}}
+        try{b=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{return json({error:'Send the document as JSON: {name, base64} or {title, text}',code:'bad_request'},400);}
       }else{try { b = await req.json(); } catch {}}
     }
     const by = who.kind === "phone" ? "captain (phone)" : "captain";
@@ -819,6 +825,14 @@ export function createRuntime(d: RuntimeDeps) {
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a directory's room / 只有這台 Mac 上的船長能開啟目錄的審查室", code: "desktopOnly" }, 403);
         try { return json(await rr.openDir(b?.url)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "not_found" ? 404 : 400); }
       }
+      // POST /api/review-room/open-doc {name, base64} | {title, text}: a document the captain uploads or pastes (a proposal),
+      // kept byte for byte by its sha256; the same document with other bytes is its room's next version. The desktop captain only
+      if (p === "/api/review-room/open-doc") {
+        const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
+        if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-doc {name, base64} or {title, text}" }, 405);
+        if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac opens a document's room / 只有這台 Mac 上的船長能開啟文件的審查室", code: "desktopOnly" }, 403);
+        try { return json(await rr.openDoc(b, by)); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, e?.code === "too_large" ? 413 : 400); }
+      }
       if (p === "/api/review-room/open-pr") {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         if (!writing || req.method !== "POST") return json({ error: "POST /api/review-room/open-pr {url}" }, 405);
@@ -841,7 +855,7 @@ export function createRuntime(d: RuntimeDeps) {
         if (!writing) return json(rr.explain.prompts());
         if (who.kind !== "desktop") return json({ error: "Only the captain on this Mac sets a skill's default instructions", code: "desktopOnly" }, 403);
         try { return json(rr.explain.setDefaultPrompt(b ?? {})); } catch (e: any) { return json({ error: String(e?.message ?? e), code: e?.code ?? null }, 400); } }
-      const xr = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})\/explain(?:\/(offer|cap|select|generate|ask|stop|media|auto))?(?:\/(\d{1,6})\/(.{1,400}))?$/.exec(p);
+      const xr = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})\/explain(?:\/(offer|cap|select|generate|ask|stop|media|auto))?(?:\/(\d{1,6})\/(.{1,400}))?$/.exec(p);
       if (xr) { const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404); const X = rr.explain, id = xr[1], op = xr[2] ?? "";
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);
         try {
@@ -866,7 +880,7 @@ export function createRuntime(d: RuntimeDeps) {
       // a room: its view (GET), Check for new commits, Save to Library, its tutor, archive (POST, the desktop captain), its record
       // as a file (GET export). A room's old whiteboard routes (turn, cite, image, check-answer, translate, images, reset, auto,
       // arrive, lesson, findings) are gone: an old room's record downloads whole instead.
-      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})(?:\/(check|save|archive|tutor|export))?$/.exec(p);
+      const room = /^\/api\/review-room\/(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})(?:\/(check|save|archive|tutor|export))?$/.exec(p);
       if (room) {
         const rr = engine.reviewRoom; if (!rr) return json({ error: "The review room is not installed" }, 404);
         const fail = (e: any) => json({ error: String(e?.message ?? e), code: e?.code ?? null, ...(e?.offer ? { offer: e.offer } : {}) }, e?.code === "not_found" ? 404 : e?.code === "confirm_required" || e?.code === "busy" ? 409 : 400);

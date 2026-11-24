@@ -49,11 +49,11 @@ loadMain();
 // A ref in an answer (task:R-162, card:SC-248, room:PR-…-1645, pr:owner/repo#1645) links to its page under a short label (R-162,
 // PR #1645); its first mention in an answer is a chip, later ones plain links. On hover or keyboard focus a small card says
 // what it is now (a Task's title and status, a card's kind) and which read tool read it in this conversation, and when.
-const REF_RE = /\b(?:task:R-\d+|card:SC-\d+|room:(?:SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})|pr:[\w.-]+\/[\w.-]+#\d+)/g;
+const REF_RE = /\b(?:task:R-\d+|card:SC-\d+|room:(?:SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})|pr:[\w.-]+\/[\w.-]+#\d+)/g;
 const refRoute = (ref) => { const k = ref.slice(0, ref.indexOf(":")), id = ref.slice(ref.indexOf(":") + 1); return k === "task" ? `#/run/${id}` : k === "card" ? `#/inbox/${id}` : k === "room" ? `#/room/${encodeURIComponent(id)}` : "#/prs"; };
 /** a ref as the captain reads it: R-162, SC-248, PR #1645 (its room), repo#1645 */
 const refLabel = (ref) => { const k = ref.slice(0, ref.indexOf(":")), id = ref.slice(ref.indexOf(":") + 1);
-  if (k === "room") { const m = /^PR-[0-9a-f]{12}-(\d+)$/.exec(id); return m ? `PR #${m[1]}` : /^DIR-/.test(id) ? T("a directory's room", "目錄審查室") : id; }
+  if (k === "room") { const m = /^PR-[0-9a-f]{12}-(\d+)$/.exec(id); return m ? `PR #${m[1]}` : /^DIR-/.test(id) ? T("a directory's room", "目錄審查室") : /^DOC-/.test(id) ? T("a document's room", "文件審查室") : id; }
   return k === "pr" ? id.replace(/^[^/]+\//, "") : id; };
 /** the last tool call before this answer, anywhere earlier in this conversation, that read the ref; `turn`: in this turn */
 function refRead(ref, log, at) {

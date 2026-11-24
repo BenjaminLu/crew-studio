@@ -383,7 +383,8 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
  // The review room's directory host (workflow review-room-dir-host): a GitHub directory of any repository has no project and no
  // crew. It runs only the tutor seat, with exactly its pinned instructions, on a member this machine can run now (the model the
  // captain picked, or Studio's Automatic pick, confirmed per turn): the receipt records that member, and the job must be it.
- const isDirHost=(run:any)=>run?.def?.kind==='review-room-dir-host';
+ // A document's host (review-room-doc-host: a proposal the captain uploaded or pasted) is the same: no project, no crew, the tutor seat only.
+ const isDirHost=(run:any)=>run?.def?.kind==='review-room-dir-host'||run?.def?.kind==='review-room-doc-host';
  function dirReceipt(x:any,id:string,system:string,provider:any,aux:any){if(!aux)throw new Error('The review room directory host runs only the tutor seat');const skill=auxSkill(id,system,aux),m=aux.member;
   const seat=engine.deps.auxiliarySeats?.[aux.seat];if(!seat?.adaptive)throw new Error('This auxiliary seat runs only on its role\'s approved member');
   if(!m||typeof m.provider!=='string'||typeof m.model!=='string'||!m.model||!(m.effort===null||typeof m.effort==='string'))throw new Error('The directory host\'s tutor names no member');
@@ -391,7 +392,7 @@ export function installStaffingGuard(engine:import('../runtime/engine').Engine,s
   if(m.picked!==true&&(!usable||!usable.some(u=>u.provider===m.provider&&u.model===m.model&&u.runnable!==false)))throw new Error('Adaptive seat member is not usable on this machine now');
   if(provider.id!==m.provider||provider.model!==m.model||(provider.reasoningEffort??null)!==m.effort)throw new Error('Actual provider differs from the tutor the captain confirmed');
   const hash=createHash('sha256').update(system).digest('hex');
-  engine.record(x,'staffing-instructions',{data:{schema:1,config:null,role:id,seat:aux.seat,skill,instructionsSha256:hash,provider:m.provider,model:m.model,effort:m.effort,directory:true,...m.picked===true?{picked:true}:{},node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null}});
+  engine.record(x,'staffing-instructions',{data:{schema:1,config:null,role:id,seat:aux.seat,skill,instructionsSha256:hash,provider:m.provider,model:m.model,effort:m.effort,...x.run.def.kind==='review-room-doc-host'?{document:true}:{directory:true},...m.picked===true?{picked:true}:{},node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null}});
   const token=Object.freeze({});jobReceipts.set(token,{x,config:'',role:id,hash,node:x.node.id,visit:x.visit,attempt:x.rn.attempt,head:x.ctx.head??null,used:false,member:{provider:m.provider,model:m.model,effort:m.effort}});return token;}
  function dirJob(run:any,provider:any,o:any,phase:'before'|'launch'){const pin=o.admissionReceipt&&jobReceipts.get(o.admissionReceipt);
   if(!pin||pin.used||o.ref!==run.id||pin.x.run!==run||!engine.owns(pin.x)||pin.node!==pin.x.node.id||pin.visit!==pin.x.rn.visits||pin.attempt!==pin.x.rn.attempt||pin.head!==(run.ctx.head??null)||!pin.member)throw new QueueRefusal('Native job staffing/owner receipt is missing, changed or consumed');

@@ -1,4 +1,4 @@
-// The review room (#/room/<merge card | Task | pull request | directory>; docs/units/review-room.md, src/domain/review-room.ts):
+// The review room (#/room/<merge card | Task | pull request | directory | document>; docs/units/review-room.md, src/domain/review-room.ts):
 // one change explained by a skill's page (baton by default, public/review-explain.js): its versions on one line, the page in an
 // isolated frame, and the room's own Q&A on the right, answered by the room's tutor. Every paid run is the captain's (a
 // generation by itself on opening, per the captain's decision; a question confirmed once). Model text only ever goes into text
@@ -128,6 +128,42 @@ function prBox(where, repository) {
     err ? h("p", { class: "rr-err", role: "alert", "data-pr-error": where }, err) : null);
 }
 const rerenderAny = () => { if (S.route?.name === "room" || S.route?.name === "project") render(); };
+// ---------- a document by its file or its text: a proposal the captain uploads or pastes (Studio keeps it byte for byte) ----------
+const DOC = { file: null, title: "", text: "", paste: false, busy: false, err: null };
+const DOC_ACCEPT = ".md,.markdown,.txt,.text,.html,.htm,.pdf", DOC_MAX = 4 * 1024 * 1024;
+const docSize = (n) => n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+const DOC_TYPE = { markdown: ["Markdown", "Markdown"], text: ["Text", "純文字"], html: ["HTML page", "HTML 頁面"], baton: ["baton page (rebuilt from its context)", "baton 頁面（從它的脈絡重建）"], pdf: ["PDF", "PDF"] };
+const docType = (t) => T(...(DOC_TYPE[t] || [t, t]));
+/** the file's bytes as base64 (FileReader: the page never reads it as a page, and never shows it) */
+const base64Of = (file) => new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).replace(/^data:[^,]*,/, "")); fr.onerror = () => no(fr.error || new Error("read failed")); fr.readAsDataURL(file); });
+function docBox() {
+  const busy = DOC.busy, f = DOC.file, pasteReady = DOC.title.trim() && DOC.text.trim(), ready = DOC.paste ? pasteReady : !!f;
+  const go = async () => { const f = DOC.file; if (DOC.busy || !(DOC.paste ? DOC.title.trim() && DOC.text.trim() : f)) return; DOC.err = null;
+    if (!DOC.paste && f.size > DOC_MAX) { DOC.err = T(`The document is larger than ${docSize(DOC_MAX)}.`, `文件超過 ${docSize(DOC_MAX)}。`); return rerenderAny(); }
+    DOC.busy = true; rerenderAny();
+    try { const body = DOC.paste ? { title: DOC.title.trim(), text: DOC.text } : { name: f.name, base64: await base64Of(f) };
+      const out = await postJ("/api/review-room/open-doc", body); RR.rooms.set(out.id, out.room);
+      Object.assign(DOC, { file: null, title: "", text: "", err: null }); location.hash = out.href; }
+    catch (e) { DOC.err = e.message; } finally { DOC.busy = false; rerenderAny(); } };
+  const tab = (paste, en, zh) => h("button", { type: "button", "aria-pressed": String(DOC.paste === paste), "data-doc-mode": paste ? "paste" : "file", disabled: busy, onclick: () => { DOC.paste = paste; DOC.err = null; rerenderAny(); } }, T(en, zh));
+  return h("form", { class: "rr-prbox rr-docbox", "data-doc-box": "", onsubmit: (e) => { e.preventDefault(); go(); } },
+    h("span", { class: "rr-prlabel" }, h("span", {}, T("Learn a proposal document: a design doc, a PRD, a spec", "學習一份提案文件：設計文件、PRD、規格"))),
+    h("div", { class: "seg rr-docmode", role: "group", "aria-label": T("How to give the document", "文件從哪裡來") }, tab(false, "Upload a file", "上傳檔案"), tab(true, "Paste its text", "貼上文字")),
+    DOC.paste ? [
+      h("label", { class: "rr-prlabel" }, h("span", {}, T("Title (it names the document: the same title again adds a version)", "標題（文件的名字：同一個標題再貼一次會成為新版本）")),
+        h("input", { class: "input", "data-doc-title": "", maxlength: 160, disabled: busy, value: DOC.title, oninput: (e) => { DOC.title = e.target.value; const b = document.querySelector("[data-doc-open]"); if (b) b.disabled = busy || !(DOC.title.trim() && DOC.text.trim()); } })),
+      h("label", { class: "rr-prlabel" }, h("span", {}, T("The document's text (Markdown or plain text)", "文件內容（Markdown 或純文字）")),
+        h("textarea", { class: "input", "data-doc-text": "", rows: 8, disabled: busy, oninput: (e) => { DOC.text = e.target.value; const b = document.querySelector("[data-doc-open]"); if (b) b.disabled = busy || !(DOC.title.trim() && DOC.text.trim()); } }, DOC.text))]
+    : h("label", { class: "rr-prlabel" }, h("span", {}, T("The document's file", "文件檔案")),
+        h("input", { class: "input", type: "file", accept: DOC_ACCEPT, "data-doc-file": "", disabled: busy, onchange: (e) => { DOC.file = e.target.files?.[0] || null; DOC.err = null; rerenderAny(); } }),
+        f ? h("span", { class: "faint", "data-doc-chosen": "" }, T(`Chosen: ${f.name} · ${docSize(f.size)}`, `已選：${f.name} · ${docSize(f.size)}`)) : null),
+    h("p", { class: "rr-paste-offer", "data-paste-offer": "doc" }, T("Opening the room starts baton by itself: one paid run on the room's tutor model, once per version of the document. Then ask the tutor about it in the room.",
+      "打開審查室就會自動用 baton 產生說明：用審查室導師的模型付費跑一次，文件的每個版本只一次。之後可以在審查室裡追問導師。")),
+    h("button", { type: "submit", class: "btn primary", "data-doc-open": "", disabled: busy || !ready }, busy ? T("Reading the document…", "正在讀取文件…") : T("Open its review room", "開啟它的審查室")),
+    h("p", { class: "faint" }, T(`Markdown, text, HTML (a page baton made before too: baton rebuilds from the context it carries) or a PDF with text, up to ${docSize(DOC_MAX)}. Studio keeps a copy byte for byte on this Mac and never shows the file itself; the document is data the tutor reads, never instructions. Upload the same document (the same name) again after it changed and it becomes the room's next version.`,
+      `Markdown、純文字、HTML（也可以是 baton 之前做的頁面：baton 會從它帶的脈絡重建）或有文字的 PDF，最大 ${docSize(DOC_MAX)}。Studio 在這台 Mac 上保留一份逐位元組相同的副本，不會直接顯示這個檔案；文件只是導師讀的資料，不是指令。文件改過之後再上傳同一份（同一個檔名），就會成為審查室的下一個版本。`)),
+    DOC.err ? h("p", { class: "rr-err", role: "alert", "data-doc-error": "" }, DOC.err) : null);
+}
 window.crewReviewRoomPrBox = (project, repository) => h("section", { class: "card x-pad", "data-project-review-room": project }, prBox(`project:${project}`, repository));
 async function checkNow(id) {
   if (PR.checking.has(id)) return; PR.checking.add(id); RR.err.delete(id); rerender();
@@ -140,6 +176,7 @@ function header(r) {
   const title = T(r.card.title?.en || r.card.id, r.card.title?.["zh-TW"] || r.card.title?.en || r.card.id);
   const sub = kind === "merge" ? T(`${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room never answers the merge card.`, `${r.task.title} · ${r.card.id}${r.pr?.id ? ` · PR #${r.pr.id}` : ""} · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不會回覆合併卡。`)
     : kind === "branch" ? T(`${r.task?.title || r.card.id} · its branch · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the room changes nothing about the Task.`, `${r.task?.title || r.card.id} · 它的分支 · head ${String(r.head || "").slice(0, 8)}。導師只讀；審查室不改變任務的任何事。`)
+    : kind === "doc" ? T(`${r.doc?.name || r.subject?.name || ""} · version ${r.doc?.n || 1} of ${r.doc?.versions?.length || 1} · head ${String(r.head || "").slice(0, 8)}. The tutor reads only; the document stays on this Mac.`, `${r.doc?.name || r.subject?.name || ""} · 第 ${r.doc?.n || 1} 版，共 ${r.doc?.versions?.length || 1} 版 · head ${String(r.head || "").slice(0, 8)}。導師只讀；文件留在這台 Mac 上。`)
     : kind === "dir" ? T(`${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · pinned at ${String(r.dir?.sha || "").slice(0, 8)}. The tutor reads only; nothing is written to GitHub.`, `${r.dir?.repository || r.subject?.repository || ""}${r.dir?.path ? `/${r.dir.path}` : ""} @ ${r.dir?.ref || ""} · 固定在 ${String(r.dir?.sha || "").slice(0, 8)}。導師只讀；不寫任何東西到 GitHub。`)
     : T(`${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}. Studio only reads GitHub; the room never comments, reviews or merges.`, `${r.subject?.repository || ""} #${r.subject?.number || ""} · head ${String(r.head || "").slice(0, 8)}。Studio 只讀 GitHub；審查室不留言、不審查、不合併。`);
   const verdicts = ps?.verdicts?.length ? ps.verdicts.map((v) => `${v.author}: ${v.state === "APPROVED" ? T("approved", "核准") : v.state === "CHANGES_REQUESTED" ? T("changes requested", "要求修改") : T("dismissed", "撤銷")}${v.current ? "" : T(" (an older head)", "（較舊的 head）")}`).join(" · ") : null;
@@ -158,6 +195,10 @@ function header(r) {
         : T(`The branch was rewritten since the last page (${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}).`, `上一頁之後分支被改寫了（${mv.from.slice(0, 8)} → ${mv.to.slice(0, 8)}）。`)) : null,
       // a directory: where it is pinned (its citations open that commit, it never moves), and whether it is private
       kind === "dir" && r.dir ? pill({ "data-dir-pin": r.dir.sha, title: T(`Read at ${r.dir.ref}, pinned at commit ${r.dir.sha}`, `讀的是 ${r.dir.ref}，固定在 commit ${r.dir.sha}`) }, T(`Pinned at ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} files`, `固定在 ${String(r.dir.sha).slice(0, 8)} · ${r.dir.files} 個檔案`), r.dir.private ? T(" · private", " · 私人") : "") : null,
+      // a document: its version (the head is its sha256), what it is and its size; a newer version since the last page
+      kind === "doc" && r.doc ? pill({ "data-doc-version": r.doc.n, title: T(`sha256 ${r.doc.sha256} · uploaded ${String(r.doc.at || "").slice(0, 16).replace("T", " ")}`, `sha256 ${r.doc.sha256} · 上傳於 ${String(r.doc.at || "").slice(0, 16).replace("T", " ")}`) },
+        T(`Version ${r.doc.n} of ${r.doc.versions?.length || 1} · ${docType(r.doc.type)} · ${docSize(r.doc.bytes)}`, `第 ${r.doc.n} 版／共 ${r.doc.versions?.length || 1} 版 · ${docType(r.doc.type)} · ${docSize(r.doc.bytes)}`), r.doc.pages ? T(` · ${r.doc.pages} pages`, ` · ${r.doc.pages} 頁`) : "") : null,
+      kind === "doc" && r.doc?.newer ? pill({ class: "warn", role: "status", "data-doc-newer": "" }, T(`A new version of the document since the last page (${r.doc.newer.from.slice(0, 8)} → ${r.doc.newer.to.slice(0, 8)}).`, `上一頁之後文件有新版本（${r.doc.newer.from.slice(0, 8)} → ${r.doc.newer.to.slice(0, 8)}）。`)) : null,
       ds ? pill({ "data-room-diffstat": "" }, h("b", { class: "add" }, `+${ds.added}`), " ", h("b", { class: "del" }, `−${ds.removed}`), T(` · ${ds.files} file${ds.files === 1 ? "" : "s"}`, ` · ${ds.files} 個檔案`)) : null,
       // who the tutor is and how independent it is from the author (another vendor, another model of the same vendor, or the same model)
       // a room that takes turns: the pill is the tutor picker (this room's pick, Studio's default, or Automatic)
@@ -265,11 +306,11 @@ routes.room = (arg) => {
   if (!arg) { if (!RR.list) { RR.list = { rooms: [], loading: true }; api("/api/review-room").then((j) => { RR.list = { rooms: j.rooms || [], settings: j.settings || null, tutors: j.tutors || [], providers: j.providers || [] }; }).catch((e) => { RR.list = { rooms: [], error: e.message }; }).finally(() => { if (onList()) render(); }); }
     else if (!RR.list.loading && !RR.list.fresh) readList();
     const rooms = RR.list.rooms || [];
-    return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, or paste a pull request's URL or a GitHub directory's.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，或貼上 pull request 或 GitHub 目錄的網址。"),
+    return page(T("Review room", "審查室"), T("Open a review room from a merge card, from a Task whose branch passed Studio's review, paste a pull request's URL or a GitHub directory's, or upload a proposal document.", "可以從合併卡、從通過 Studio 審查的任務分支開啟審查室，貼上 pull request 或 GitHub 目錄的網址，或上傳一份提案文件。"),
       h("section", { class: "card x-pad", "data-room-list": rooms.length, "data-room-list-loading": RR.list.loading ? "" : null }, h("h2", {}, T("Your review rooms", "你的審查室")),
         RR.list.loading ? h("p", { class: "faint" }, T("Loading…", "載入中…")) : rooms.length ? [
           RR.list.err ? h("p", { class: "rr-err", role: "alert", "data-room-list-err": "" }, RR.list.err) : null, roomsList(rooms)] : h("p", { class: "faint" }, T("No review room yet.", "還沒有審查室。"))),
-      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null), tutorDefault())); }
+      h("section", { class: "card x-pad", "data-review-home": "" }, prBox("home", null), readOnly() ? null : docBox(), tutorDefault())); }
   const r = RR.rooms.get(arg);
   if (!r) { load(arg, true); return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…"))); }
   if (r.error) return page(T("Review room", "審查室"), "", h("div", { class: "card x-pad rr-err", "data-room-error": "" }, r.error));

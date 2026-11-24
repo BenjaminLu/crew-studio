@@ -231,7 +231,7 @@ export function diff(a: WDef, b: WDef): DefDiff {
 export const diffEmpty = (d: DefDiff) => !d.nodesAdded.length && !d.nodesRemoved.length && !d.nodesChanged.length && !d.nodesMoved.length && !d.edgesAdded.length && !d.edgesRemoved.length && !(d.edgesChanged ?? []).length && !d.meta.length;
 
 const RETIRED_DEFAULTS=new Set(["refine-demo","trivial-lane"]);
-const INTERNAL_WORKFLOWS=new Set(["local-project-register","firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github","firstmate-grant-merge","crew-change","issue-triage","issue-categories","review-room-host","review-room-dir-host","pr-watch-apply-depends","pr-follow"]);
+const INTERNAL_WORKFLOWS=new Set(["local-project-register","firstmate-proposal","firstmate-register-project","firstmate-staffing","firstmate-connect-github","firstmate-grant-merge","crew-change","issue-triage","issue-categories","review-room-host","review-room-dir-host","review-room-doc-host","pr-watch-apply-depends","pr-follow"]);
 /** Internal workflows the Workflows page still shows, read-only, under "Built in: started by Studio" (pr-follow: the Pull
  *  requests page's follow-through). Each stays internal: no person or peer starts, edits, renames, trashes or holds it. */
 const VISIBLE_INTERNAL=new Set(["pr-follow"]);

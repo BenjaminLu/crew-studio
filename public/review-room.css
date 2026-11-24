@@ -52,7 +52,10 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rr-prlabel { display: grid; gap: 4px; }
 .rr-prbox .input { width: 100%; min-width: 0; }
 .rr-prbox .btn { justify-self: start; }
-@media (max-width: 560px) { .rr-prbox .btn { min-height: 44px; } }
+.rr-docbox { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.rr-docbox .rr-docmode { justify-self: start; }
+.rr-docbox textarea.input { min-height: 140px; resize: vertical; font: inherit; }
+@media (max-width: 560px) { .rr-prbox .btn, .rr-docbox .rr-docmode button { min-height: 44px; } }
 
 /* a narrower window: tighter edges, shorter pills */
 @media (max-width: 1100px) { .rr-room { padding: 10px 14px; }  .rr-pill { max-width: 180px; } }

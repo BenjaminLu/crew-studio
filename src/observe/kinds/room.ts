@@ -1,4 +1,4 @@
-// Review rooms (room:PR-<hash>-1645, room:SC-12, room:R-162, room:DIR-…): the room's pages (baton's by default) and the
+// Review rooms (room:PR-<hash>-1645, room:SC-12, room:R-162, room:DIR-…, room:DOC-…): the room's pages (baton's by default) and the
 // questions asked about them, as the room's page reads them (engine.reviewRoom.list / view / explain.view: the same functions
 // GET /api/review-room returns). Read with opened=false: reading never marks a room opened and never reads GitHub again.
 // Nothing here starts a run: a page and a question are paid and only the captain starts them on the room's page. A room's old
@@ -12,7 +12,9 @@ const usd = (c: any) => (c && typeof c.usd === "number" ? c.usd : 0);
 const round = (n: number) => Math.round(n * 10000) / 10000;
 
 /** A room's title as Studio words it: never a pull request's own title (its author wrote that; it is in data, untrusted). */
-export function roomTitle(row: { id: string; kind: string; title?: string; repository?: string | null }, number?: number | null): string {
+export function roomTitle(row: { id: string; kind: string; title?: string; repository?: string | null; name?: string | null }, number?: number | null): string {
+  // a document's own title is its author's words too: the room is named by the document's name, as the captain gave it
+  if (row.kind === "doc") return `Document ${String(row.name ?? row.id).slice(0, 100)}`;
   if (row.kind === "pr") { const n = number ?? Number(/-(\d+)$/.exec(row.id)?.[1] ?? 0); return `Pull request #${n}${row.repository ? ` (${row.repository})` : ""}`; }
   return String(row.title ?? row.id).slice(0, 100);
 }
@@ -24,7 +26,9 @@ function roomData(s: Sources, id: string, full: boolean): Record<string, unknown
   // what the room cost: its runs, and an old whiteboard's turns as their records kept (oldBoard.usd)
   const cost = round(runs.reduce((n: number, r: any) => n + usd(r.cost), 0) + (typeof v.oldBoard?.usd === "number" ? v.oldBoard.usd : 0));
   return {
-    id, kind: v.subject?.kind ?? null, subject: { kind: v.subject?.kind ?? null, url: v.subject?.url ?? null, repository: v.subject?.repository ?? null, number: v.subject?.number ?? null, branch: v.subject?.branch ?? null, task: v.subject?.task ?? null },
+    id, kind: v.subject?.kind ?? null, subject: { kind: v.subject?.kind ?? null, url: v.subject?.url ?? null, repository: v.subject?.repository ?? null, number: v.subject?.number ?? null, branch: v.subject?.branch ?? null, task: v.subject?.task ?? null, ...(v.subject?.kind === "doc" ? { name: v.subject?.name ?? null } : {}) },
+    // a document room: its current version (the head is its sha256) and how many versions Studio kept (never its own title: its author's words)
+    doc: v.doc ? { name: v.doc.name, type: v.doc.type, sha256: v.doc.sha256, bytes: v.doc.bytes, at: v.doc.at, version: v.doc.n, versions: (v.doc.versions ?? []).length } : null,
     task: v.task ? { id: v.task.id } : null, open: !!v.open, closed: v.closed ?? null, running: x?.running != null ? { run: x.running, kind: (x.runs ?? []).find((r: any) => r.n === x.running)?.kind ?? null } : null, archived: !!v.archived,
     pr: v.prState ? { state: v.prState.state, draft: v.prState.draft, mergedAt: v.prState.mergedAt, head: v.prState.head, headRef: v.prState.headRef, baseRef: v.prState.baseRef, author: v.prState.author, files: v.prState.files, approved: v.prState.approved,
       verdicts: (v.prState.verdicts ?? []).map((d: any) => ({ author: d.author, state: d.state, current: d.current })), title: v.prState.title } : null,
@@ -59,7 +63,7 @@ function roomLogs(s: Sources, id: string, o: { tail: number; since: string | nul
   const of = (k: string) => pg.page.filter((x) => x.k === k).map((x) => x.v);
   return { cursor: pg.cursor, updatedAt: null, data: { explain: of("explain"), events: of("event").map((e: any) => eventView(s, e, store)), more: pg.more, cost: d.cost, ...(withheld ? { withheld } : {}) } };
 }
-const ROOM_ID =/^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/;
+const ROOM_ID =/^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})$/;
 /** The Task a room belongs to: its own (R-…), its merge card's, or the one its subject names. A room of a Task whose text is
  *  withheld from Firstmate (issue text, a peer's Studio) is withheld too: its tutor's words come from that text. */
 function roomWithheld(s: Sources, id: string, data?: any): string | null {
@@ -110,5 +114,5 @@ registerKind({
     return rows.filter((r) => (filter.open !== true || r.open) && (!filter.zone || r.zone === filter.zone)).map((r) => entityOf(s, r)); },
   get: (s, id) => { const rr = rrOf(s); if (!rr || !ROOM_ID.test(id)) return null; let row: any = null; try { row = rr.list().find((r: any) => r.id === id); } catch {}
     const data = roomData(s, id, false); if (!data) return null;
-    return { id, title: roomTitle(row ?? { id, kind: (data.kind as string) ?? "", repository: (data.subject as any)?.repository }, (data.subject as any)?.number), updatedAt: row?.updatedAt ?? null, withheld: roomWithheld(s, id, data), project: roomProject(s, id, data), data, full: () => roomData(s, id, true) ?? data }; },
+    return { id, title: roomTitle(row ?? { id, kind: (data.kind as string) ?? "", repository: (data.subject as any)?.repository, name: (data.subject as any)?.name }, (data.subject as any)?.number), updatedAt: row?.updatedAt ?? null, withheld: roomWithheld(s, id, data), project: roomProject(s, id, data), data, full: () => roomData(s, id, true) ?? data }; },
 });

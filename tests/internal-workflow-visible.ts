@@ -14,7 +14,7 @@ import { FOLLOW_BRANCHES } from "../src/pr-watch-follow";
 const root = mkdtempSync(join(tmpdir(), "internal-visible-"));
 let pass = 0, fail = 0;
 const ok = (v: unknown, n: string, extra = "") => { if (v) { pass++; console.log("ok " + n); } else { fail++; console.log("FAIL " + n + (extra ? " " + extra : "")); } };
-const HIDDEN = ["local-project-register", "firstmate-proposal", "firstmate-register-project", "firstmate-staffing", "firstmate-connect-github", "firstmate-grant-merge", "crew-change", "issue-triage", "issue-categories", "review-room-host", "review-room-dir-host", "pr-watch-apply-depends"];
+const HIDDEN = ["local-project-register", "firstmate-proposal", "firstmate-register-project", "firstmate-staffing", "firstmate-connect-github", "firstmate-grant-merge", "crew-change", "issue-triage", "issue-categories", "review-room-host", "review-room-dir-host", "review-room-doc-host", "pr-watch-apply-depends"];
 try {
   const data = join(root, "data");
   const about = { label: { en: "Follow-through", zh: "跟進" }, enabled: false, startedFrom: { href: "#/prs", en: "Pull requests → Settings → Follow-through", zh: "Pull requests → 設定 → 跟進" }, branches: Object.entries(FOLLOW_BRANCHES).map(([branch, b]) => ({ branch, ...b })) };

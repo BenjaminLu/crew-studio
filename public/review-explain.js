@@ -664,9 +664,11 @@ function answerView(text) {
 }
 function msgs(r, st) {
   const id = r.card.id, a = X.ask && X.ask.id === id ? X.ask : null, out = [];
+  // what the tutor grounds on: the change's code, or (a document room) the document itself
+  const src = r.subject?.kind === "doc" ? ["the document", "文件本身"] : ["the change's code", "改動的程式碼"];
   // every message has a key (data-k) the in-place patch finds it by (patchMsgs)
   const put = (k, e) => { e.dataset.k = k; out.push(e); };
-  put("intro", h("div", { class: "rx-m sys" }, T("Ask about this page: the room's tutor answers here, from the page shown and the change's code. It never changes the page; Generate again does.", "問這一頁：審查室的導師在這裡回答，依據目前這一版頁面和改動的程式碼。它不會改頁面；要改頁面請按重新產生。")));
+  put("intro", h("div", { class: "rx-m sys" }, T(`Ask about this page: the room's tutor answers here, from the page shown and ${src[0]}. It never changes the page; Generate again does.`, `問這一頁：審查室的導師在這裡回答，依據目前這一版頁面和${src[1]}。它不會改頁面；要改頁面請按重新產生。`)));
   for (const run of st.runs) {
     const spent = [run.ended ? fmtMin(Date.parse(run.ended) - Date.parse(run.at)) : null, money(run.cost)].filter(Boolean).join(" · ");
     if (run.kind === "generate") {
@@ -694,7 +696,7 @@ function msgs(r, st) {
       h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", "data-explain-pendx": "", onclick: () => { unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Back to the ask box", "放回輸入框")),
         h("button", { type: "button", class: "btn sm primary", "data-explain-retry": "", disabled: askMode(r, st) === "ask" ? null : true, title: askMode(r, st) === "ask" ? "" : T("Wait for the skill to finish", "等 skill 做完"), onclick: () => retry(id) }, T("Retry", "重試"))))); }
   if (a) put(`confirm:${a.offer.hash}:${a.q}`, h("div", { class: "rx-m ai rx-askconfirm", "data-explain-askconfirm": "", role: "group", "aria-label": T("Confirm the paid question", "確認付費提問") },
-    h("p", {}, T(`The room's tutor answers this question: a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"}. It reads the page shown and the change's code, and never changes the page.`, `審查室的導師回答這個問題：用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 付費執行。它讀目前這一版頁面和改動的程式碼，不會改頁面。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
+    h("p", {}, T(`The room's tutor answers this question: a paid run on ${a.offer.provider} · ${a.offer.model ?? "default model"}. It reads the page shown and ${src[0]}, and never changes the page.`, `審查室的導師回答這個問題：用 ${a.offer.provider} · ${a.offer.model ?? "預設模型"} 付費執行。它讀目前這一版頁面和${src[1]}，不會改頁面。`), a.offer.billing ? h("small", { class: "faint" }, ` ${T(a.offer.billing.en, a.offer.billing.zh)}`) : null),
     h("label", {}, h("input", { type: "checkbox", "data-explain-consent": "", onchange: (e) => { if (e.target.checked) X.consent.add(id); else X.consent.delete(id); } }),
       T(" Ask the next questions here on this tutor without confirming each", " 之後在這裡問同一位導師時不用再確認")),
     h("div", { class: "rx-foot" }, h("button", { type: "button", class: "btn sm", onclick: () => { X.ask = null; if (X.pend.get(id)?.phase === "confirm") unpend(id); refresh(id); focusLater("[data-explain-q]"); } }, T("Cancel", "取消")),

@@ -38,7 +38,7 @@ tools comes from `src/observe/catalog.ts`.
 | --- | --- | --- | --- |
 | `task` | `task:R-162` | `#/run/<id>` | the Tasks list row (`src/runtime/task-row.ts`, the route's own function) and the Task's state |
 | `card` | `card:SC-248` | `#/inbox/<id>` | `engine.cards.view` (the Inbox) |
-| `room` | `room:PR-<hash>-1645` | `#/room/<id>` | `reviewRoom.list / view(id, false) / explain.view` (the room page's own reads; never opens the room, never reads GitHub) |
+| `room` | `room:PR-<hash>-1645` (also `SC-…`, `R-…`, `DIR-…`, `DOC-…`) | `#/room/<id>` | `reviewRoom.list / view(id, false) / explain.view` (the room page's own reads; never opens the room, never reads GitHub; a document's room is named by the document's name, never the title its author wrote) |
 | `pr` | `pr:owner/repo#1645` | `#/prs` | the pull request list's `view()` (the last snapshot) |
 
 | `workflow` | `workflow:code-firstmate` | `#/workflow/<id>` | `WorkflowDefs.list()` (the rows `GET /api/wf` returns); an imported package's words untrusted |
