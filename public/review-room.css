@@ -188,6 +188,12 @@ body[data-focus="room"] .main { overflow: hidden !important; padding: 0 !importa
 .rx-ver.on { border-color: var(--accent); background: var(--accent-soft); }
 .rx-ver small { color: var(--text-3); font-size: 11px; }
 .rx-ver .k { font: 600 10.5px var(--f-mono, ui-monospace, monospace); color: var(--text-3); }
+/* a version's own Download, beside it in the menu (a Library save's list too) */
+.rx-verrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: start; }
+.rx-verdl { width: 32px; height: 32px; margin-top: 4px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2, var(--text)); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.rx-verdl:hover { color: var(--text); border-color: var(--border-strong); }
+.rx-verdl:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rx-verdl[aria-busy="true"], .rr-chip[aria-busy="true"] { opacity: .6; cursor: progress; }
 .rx-again { margin-top: 6px; }
 .rx-note { font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
 .rx-stage { container-type: inline-size; position: relative; min-width: 0; min-height: 0; background: var(--surface-2); display: grid; grid-template-rows: auto minmax(0, 1fr); }

@@ -460,6 +460,9 @@ function lineTools(r, st, v) {
       onclick: () => openConfirm(r, sid, "generate", "[data-explain-regen]", v.skill.id === sid && typeof v.prompt === "string" ? v.prompt : undefined) }, "↻ ", T("Generate again", "重新產生")) : null,
     h("button", { type: "button", class: "rr-chip", "data-explain-full": "", title: T("Full screen (F)", "全螢幕（F）"), "aria-label": T("Full screen", "全螢幕"), "aria-keyshortcuts": "F", onclick: () => enterFull(id, v) }, "⛶ ", h("span", { class: "rx-tl" }, T("Full screen", "全螢幕"))),
     page ? h("button", { type: "button", class: "rr-chip", "data-explain-newtab": "", title: T("Opens this version alone in a new tab, isolated as here", "在新分頁單獨開這一版，一樣隔離"), "aria-label": T("Open in a new tab", "在新分頁開啟"), onclick: () => openTab(id, v) }, "↗ ", h("span", { class: "rx-tl" }, T("New tab", "新分頁"))) : null,
+    // the file downloads on this Mac only (a paired phone reads)
+    readOnly() ? null : h("button", { type: "button", class: "rr-chip", "data-explain-download": v.n, title: T("Download this version as a file, exactly as kept; opened on its own, its own buttons work", "把這一版原封不動下載成檔案；單獨打開時，頁面自己的按鈕都能用"),
+      "aria-label": T(`Download v${v.n}`, `下載 v${v.n}`), onclick: (e) => download(id, v, e.currentTarget) }, "↓ ", h("span", { class: "rx-tl" }, T("Download", "下載"))),
     h("span", { class: "rx-tag", "data-explain-isolation": "", title: media ? "" : T("The page runs in an isolated frame: no network, it cannot read Studio, storage kept by Studio in memory", "頁面在隔離框裡執行：不能連網、不能讀 Studio，儲存由 Studio 在記憶體代管") }, media ? T("Shown by Studio", "由 Studio 顯示") : T("Isolated", "隔離")));
 }
 /** on the line, with an older version shown: the generation Studio started for the new head did not finish (why, Try again) */
@@ -471,17 +474,21 @@ function autoNote(r, st) {
 }
 function verMenu(r, st) {
   const id = r.card.id, run = liveRun(st), cur = shownVersion(id), sid = st.selected?.id;
-  const keys = (e) => { const items = [...e.currentTarget.querySelectorAll("button:not([disabled])")], i = items.indexOf(document.activeElement);
+  const keys = (e) => { const items = [...e.currentTarget.querySelectorAll("button:not([disabled]):not([data-explain-verdl])")], i = items.indexOf(document.activeElement);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
     else if (e.key === "Home" || e.key === "End") { e.preventDefault(); (e.key === "Home" ? items[0] : items.at(-1))?.focus(); } };
   return h("div", { class: "rx-vermenu", id: "rx-vermenu", "data-x-keep": "vermenu", role: "group", "aria-label": T("Versions", "版本"), "data-explain-vermenu": "", onkeydown: keys,
       onfocusout: (e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && !e.relatedTarget.closest("[data-explain-versions]")) closeVerMenu(); } },
     h("h6", {}, T("Outputs", "產出")),
     run && run.kind === "generate" ? h("div", { class: "rx-ver gen", "data-explain-generating": "", role: "status" }, h("span", { class: "k" }, sk(run.skill)), T("Generating…", "產生中…"), h("small", {}, T(`started ${hhmm(run.at)}`, `開始於 ${hhmm(run.at)}`))) : null,
-    [...st.versions].reverse().map((v) => h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null,
+    // each version with its own Download beside it (Tab reaches it; the arrow keys walk the versions)
+    [...st.versions].reverse().map((v) => h("div", { class: "rx-verrow" }, h("button", { type: "button", class: `rx-ver${cur?.n === v.n ? " on" : ""}`, "data-explain-version": v.n, "data-skill": v.skill.id, "aria-current": cur?.n === v.n ? "true" : null,
         onclick: () => { X.verMenu = null; showVersion(r, v); focusLater("[data-explain-versions]"); } },
       h("span", { class: "k" }, `${skillName(st, v.skill.id)} v${v.n}`), v.summary || v.entry, h("small", { "data-explain-verfacts": v.n }, `${hhmm(v.at)} · ${T(...(KIND[v.kind] || KIND.text))}${skillTag(v) ? ` · ${skillTag(v)}` : ""}${runOf(st, v)?.head ? ` · ${T("head", "head")} ${short(runOf(st, v).head)}` : ""}${money(runOf(st, v)?.cost) ? ` · ${money(runOf(st, v).cost)}` : ""}${v.from ? T(` · from v${v.from}, a follow-up`, ` · 由 v${v.from} 追問改的`) : ""}`),
-      madeFrom(v) ? h("small", { class: "rx-verprompt", "data-explain-verprompt": v.n, title: madeFrom(v).full }, madeFrom(v).short) : null)),
+      madeFrom(v) ? h("small", { class: "rx-verprompt", "data-explain-verprompt": v.n, title: madeFrom(v).full }, madeFrom(v).short) : null),
+      readOnly() ? null : h("button", { type: "button", class: "rx-verdl", "data-explain-verdl": v.n, title: T(`Download v${v.n} as a file, exactly as kept`, `把 v${v.n} 原封不動下載成檔案`), "aria-label": T(`Download v${v.n}`, `下載 v${v.n}`),
+        onclick: (e) => download(id, v, e.currentTarget) }, "↓"))),
+    readOnly() ? h("p", { class: "faint rx-note", "data-explain-dl-desktop": "" }, T("Page files download on the Mac running Studio.", "頁面檔案要在執行 Studio 的 Mac 上下載。")) : null,
     // one Generate: here once an output exists; before that the stage has it
     sid && !run && r.open && !readOnly() && cur ? h("button", { type: "button", class: "btn sm rx-again", "data-explain-again": "", onclick: () => { X.verMenu = null; openConfirm(r, sid, "generate", "[data-explain-versions]", cur.skill.id === sid && typeof cur.prompt === "string" ? cur.prompt : undefined); } }, T("Generate a new version", "重新產生一版")) : null,
     h("p", { class: "faint rx-note" }, T("Every generation is kept as a version (a question never changes one): pick an older one to compare.", "每次產生都留一版（提問不會改任何一版）；點舊版可以對照。")));
@@ -819,6 +826,19 @@ async function openTab(id, v) {
   try { const j = await api(`${base(id)}/cap?v=${v.n}`); window.open(`/rrxt/${enc(j.cap)}/${enc(id)}/${v.n}`, "_blank", "noopener,noreferrer"); }
   catch (e) { X.err.set(id, bi(e.message)); refresh(id); }
 }
+/** Download: a page version as a file to keep (GET …/page/<v>/download, docs/units/review-room.md "Downloading a page"): its bytes as
+ *  Studio kept them, saved under Studio's name for it. The frame stays sandboxed; the file opened on its own runs its own buttons.
+ *  A refusal (a file changed since it was made) says why and saves nothing. Shared with a Library save's page list. */
+async function downloadPage(url, btn) {
+  if (btn?.getAttribute("aria-busy") === "true") return; btn?.setAttribute("aria-busy", "true");
+  try { const r = await fetch(url); if (!r.ok) { let j = {}; try { j = await r.json(); } catch {} throw new Error(j.error || `HTTP ${r.status}`); }
+    const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") || "")?.[1] || "page", u = URL.createObjectURL(await r.blob());
+    const a = h("a", { href: u, download: name, hidden: true }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60_000); return null; }
+  catch (e) { return bi(e.message); } finally { btn?.removeAttribute("aria-busy"); }
+}
+const downloadUrl = (id, n) => `/api/review-room/${enc(id)}/page/${n}/download`;
+async function download(id, v, btn) { const err = await downloadPage(downloadUrl(id, v.n), btn); if (err) { X.err.set(id, err); refresh(id); } }
+window.crewPageDownload = downloadPage;
 async function capFor(id, v) { const k = `${id}/${v.n}`, had = X.caps.get(k); if (had && had.exp > Date.now()) return had.src;
   const j = await api(`${base(id)}/cap?v=${v.n}`); const src = `${j.base}${v.entry.split("/").map(enc).join("/")}`; X.caps.set(k, { src, exp: Date.now() + 20 * 60_000 }); return src; }
 function mount(id, v) {
