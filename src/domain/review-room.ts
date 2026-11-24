@@ -28,6 +28,7 @@ import type { SCard } from "../runtime/cards";
 import { PROVIDERS as CREW_PROVIDERS } from "./crew";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { installExplainer } from "./review-explain";
+import { libraryPageDownload, roomPageDownload } from "./review-download";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 /** Why an old tutor turn did not end done, as the short code its room_round_failed event carries (the retro still reads old
  *  events: the explainer's runs carry their own `why`). From Studio's own words for the ending, else "failed". */
@@ -784,6 +785,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       const snap = JSON.parse(readFileSync(file, "utf8"));
       return { ...snap, artifact: aid, n: v.n, versions: vs.map((x) => ({ n: x.n, at: x.createdAt, summary: x.summary })), project: a.project, integrity: store.verify(aid, v.n) };
     },
+    /** a page version as a file (src/domain/review-download.ts): the room's, or a Library save's; its bytes checked, read only */
+    pageDownload(id: string, v: unknown) { const k = keyOf(id); return roomPageDownload(k.id, explainer.pages(k.id), v); },
+    libraryPageDownload(aid: string, n: number, v: unknown) { if (!LIB_ID.test(aid)) throw refuse("No such saved room", "not_found"); return libraryPageDownload(library(), aid, n, v); },
     /** an old whiteboard snapshot's picture, as it was saved */
     libraryAsset(aid: string, n: number, name: string) {
       if (!LIB_ID.test(aid) || !/^(B\d+-\d+\.png|cap-[0-9a-f]{16}\.png)$/.test(name)) throw refuse("No such file", "not_found");

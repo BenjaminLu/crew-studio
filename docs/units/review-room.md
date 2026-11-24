@@ -203,7 +203,8 @@ in place (a link whose own handler takes the click, or that is not http(s), is l
 ## The page and its questions
 
 - **The room is a skill's page and its questions.** The page has one line over the output: the version menu (each
-  version's head and cost), what the shown version was made from, Generate again, Full screen, New tab and the isolation tag.
+  version's head and cost), what the shown version was made from, Generate again, Full screen, New tab, Download and the
+  isolation tag.
   A new head's run keeps the version shown, with one progress strip above it. Nothing sits left of the output.
 - **Questions** are the room's own: the chat is answered by the room's tutor (the header's tutor pill: this room's pick,
   Studio's default, or Automatic), on Studio's question frame (`QA_FRAME`, pinned by sha256 on its own seat `review-room-qa`),
@@ -640,6 +641,26 @@ version as saved (its skill, time, head, model and cost, the old board's share o
 the save, and a link to read the pages in the review room itself. No paid control is there. The room's header links its
 latest save ("Library vN").
 
+### Downloading a page
+
+Every page version downloads as a file the captain keeps, in the room and from a Library save (`src/domain/review-download.ts`).
+The output's line has Download (`[data-explain-download]`) for the version shown, and the version menu one beside each version
+(`[data-explain-verdl]`: Tab reaches it, the arrow keys still walk the versions); a saved room's route has one per saved version
+(`[data-saved-download]`). `GET /api/review-room/<room>/page/<v>/download` (the room's version) and
+`GET /api/review-room/library/<artifact>/<n>/page/<v>/download` (save n's copy, whatever the room's became) return the version's
+bytes exactly as kept: nothing of Studio's is added (no storage shim). Each file is read and checked against the sha256 it was
+kept with (the version's record; a save's manifest, its `room.json` included): one missing or changed refuses the download (`integrity`, 400, nothing sent;
+the room closes its version menu and says why in its chat, a saved room under that version). A version of one file (baton's page: one self-contained HTML file) is
+that file; a version of several (a page and its pictures) is a zip of them (stored, not deflated) at the paths the page names them by. The file is an
+attachment (`Content-Disposition: attachment; filename="<room>-v<n>-<skill id><ext>"`, `.zip` for several; each part ASCII
+letters, digits, `.`, `_` and `-` only, no path), its own type (`text/html` for a page), `Cache-Control: no-store`,
+`X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`, so it never renders in Studio's
+origin. The page fetches it and saves it under that name. The room's frame keeps `sandbox="allow-scripts"` only (never
+`allow-downloads`): a page's own download buttons (baton's context, a PDF) work in the file opened on its own, where its embedded
+context is too, so Studio offers no separate context file. Downloading is read only and on this Mac only: a write is 405, no such
+room, save or version a 404, and a paired phone gets 403 `desktopOnly`; its menu and saved room say "Page files download on the
+Mac running Studio" instead of offering Download.
+
 ## The record
 
 Every run's round record header and ledger entry carry the subject: its kind, the branch or the URL (or the directory), the
@@ -812,6 +833,10 @@ Done when (each line proved by the named suite; `bun run test:review-room` runs 
 26. The chat keeps the captain's place across polls and redraws: scrolled up it does not move (a new answer shows "New
     messages"), at the end it stays at the end; the version menu's list and a phone's room keep theirs. —
     review-room-chat-scroll-ui (each rule).
+27. Every page version downloads, in the room and from a Library save: its bytes as kept and checked (a changed or missing file
+    refused, `integrity`), one file or a zip, an attachment with a safe name, never cached; the frame keeps allow-scripts only; a
+    write 405, nothing there 404, a paired phone 403 `desktopOnly` and no Download. — review-room-download (each rule);
+    review-room-download-ui (each rule).
 
 Tests: `tests/review-baton.ts`; `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub provider);
 `tests/review-room-admission.ts` (a staffed Task: the seat's receipt and native admission, the adaptive tutor on one vendor, two
@@ -819,8 +844,9 @@ vendors and one model, a member that is not usable, verification before the run,
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository, a
 host Task, a scripted skill); `tests/review-room-directory.ts` (a local bare repository standing in for GitHub);
 `tests/review-room-zones.ts`; `tests/review-room-explain.ts`; `tests/review-room-explain-scripts.ts` (a made-up skill package's
-real scripts in the real sandbox); and on the page, in a real isolated Studio and Chromium, `tests/review-room-ui.mjs`,
+real scripts in the real sandbox); `tests/review-room-download.ts` (a room seeded on disk, `tests/lib/review-room-download-fixture.mjs`,
+in a real isolated Studio); and on the page, in a real isolated Studio and Chromium, `tests/review-room-ui.mjs`,
 `tests/review-room-zones-ui.mjs`, `tests/review-room-explain-ui.mjs` (1440, 900 and 390 wide, light and dark, English and
-繁體中文) `tests/review-room-pane-ui.mjs` and `tests/review-room-chat-scroll-ui.mjs`. `tests/route-names.ts` keeps route names apart.
+繁體中文) `tests/review-room-pane-ui.mjs`, `tests/review-room-chat-scroll-ui.mjs` and `tests/review-room-download-ui.mjs`. `tests/route-names.ts` keeps route names apart.
 
 Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request.

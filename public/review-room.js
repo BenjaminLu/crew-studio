@@ -258,7 +258,14 @@ function savedPages(r) {
     h("ol", { class: "rr-saved-list" }, sp.map((v) => h("li", { "data-saved-page": v.n },
       h("b", {}, `v${v.n}`), " ", v.skill?.id === "studio-baton" ? T("baton (built in)", "baton（內建）") : (v.skill?.name || ""),
       h("span", { class: "faint" }, ` · ${String(v.at || "").slice(0, 16).replace("T", " ")}${v.head ? ` · ${String(v.head).slice(0, 8)}` : ""}${v.model ? ` · ${v.model}` : ""}${usd(v.cost)}`),
-      v.summary ? h("div", { class: "faint" }, v.summary) : null))),
+      v.summary ? h("div", { class: "faint" }, v.summary) : null,
+      // the version as saved, as a file (on this Mac only); a file changed since the save is refused, nothing saved
+      readOnly() ? null : h("button", { type: "button", class: "btn sm rr-saved-dl", "data-saved-download": v.n, "aria-label": T(`Download v${v.n}`, `下載 v${v.n}`),
+        onclick: async (e) => { const b = e.currentTarget, li = b.closest("li"); li?.querySelector("[data-saved-dl-error]")?.remove();
+          const err = await window.crewPageDownload?.(`/api/review-room/library/${enc(r.snapshot.artifact)}/${r.snapshot.n}/page/${v.n}/download`, b);
+          if (err && li) li.append(h("p", { class: "rr-err", role: "alert", "data-saved-dl-error": v.n }, err)); } },
+        ic("down"), " ", T("Download", "下載"))))),
+    readOnly() ? h("p", { class: "faint", "data-saved-dl-desktop": "" }, T("Page files download on the Mac running Studio.", "頁面檔案要在執行 Studio 的 Mac 上下載。")) : null,
     room ? h("a", { class: "btn sm", href: `#/room/${enc(room)}`, "data-saved-open-room": room }, T("Read the pages in the review room", "到審查室看這些頁面")) : null);
 }
 routes.room = (arg) => {
