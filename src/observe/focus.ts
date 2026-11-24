@@ -15,7 +15,7 @@ const clean = (v: unknown, n: number) => String(v ?? "").replace(/[\u0000-\u001f
 
 /** The page only: `#/<page>` and, when it is a Studio id, `/<id>`. A query (a list's search box writes what the captain typed
  *  into it) and any other path text are dropped, never kept. */
-export const STUDIO_ID = /^(?:R-\d+|SC-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/;
+export const STUDIO_ID = /^(?:R-\d+|SC-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})$/;
 export function cleanRoute(v: unknown): string | null {
   const m = /^#\/([\w-]{1,40})(?:\/([^?\s]*))?/.exec(String(v ?? "").trim()); if (!m) return null;
   let id = ""; try { id = decodeURIComponent(m[2] ?? ""); } catch {}

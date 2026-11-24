@@ -1,4 +1,4 @@
-# Unit review-room: learn a pull request before you merge it
+# Unit review-room: learn a pull request before you merge it, or a proposal before you build it
 
 What: every merge card carries the same prominent "Open review room" (開啟審查室) entry. The room (`#/room/<room>`,
 `public/review-room.js`, `src/domain/review-room.ts`; `#/review/<artifact>/<n>` stays the Library's artifact review,
@@ -14,8 +14,8 @@ room's own questions about that page, answered by the room's tutor in a chat bes
 - **The header** is one row: back (to the Task, the Library or the room list), the merge card (a merge card's room), where you
   are ("Review room › the room", the first a link to the list), the subject in one line, its state as pills (the pull request
   on GitHub with each reviewer's latest verdict, newer commits Studio could not fetch, a branch's review state, new commits
-  since the last page, a directory's pinned commit, the change's line counts, the tutor and its independence), Check for new
-  commits and Open on GitHub (a pull request; a directory opens its pinned commit), the room's Library link, archive or
+  since the last page, a directory's pinned commit, a document's version, the change's line counts, the tutor and its
+  independence), Check for new commits and Open on GitHub (a pull request; a directory opens its pinned commit), the room's Library link, archive or
   restore, the "Explain with" picker at its right end, and Firstmate.
 - **The body** is the page on the left (one line over the output: the version menu, Generate again, Full screen, New tab
   and the isolation tag) and the chat on the right. A splitter between them is a focusable separator: dragged, or moved with
@@ -66,6 +66,8 @@ A room has one subject and keeps one identity across that subject's heads (`ROOM
   else is refused with the reason (`bad_url`, `not_connected`) before GitHub is read.
 - **A directory of any GitHub repository** (`#/room/DIR-<12 hex of the repository>-<12 hex of its ref and path>`), opened by
   pasting its address on the Review Room's home (`POST /api/review-room/open-dir {url}`, the desktop captain only). Below.
+- **A document** (`#/room/DOC-<12 hex of its name>`): a proposal (a design doc, a PRD, a spec) the captain uploads or pastes on
+  the Review Room's home (`POST /api/review-room/open-doc {name, base64} | {title, text}`, the desktop captain only). Below.
 
 The paste box says, before anything is pasted, what opening the room starts: baton, by itself, one paid run on the room's
 tutor model, once per head; Studio only reads GitHub. Open sends the address only.
@@ -127,6 +129,40 @@ its line counts. Its header says where it is pinned (`[data-dir-pin]`) and opens
 in a directory room are the directory's own files at the pinned commit (`head/`), and `pull-request.md` says it is a
 directory with no diff.
 
+**A document.** On the Review Room's home, "Learn a proposal document" (a card of its own) takes a file (Upload a file: Studio's
+own Choose button, the chosen file named beside it) or pasted text and a title (Paste its text); a paired phone does not show
+it. Open with nothing chosen, or a file over the limit, says why and sends nothing. What it accepts (`src/domain/review-doc.ts` `readDocument`): Markdown
+(`.md`, `.markdown`), plain text (`.txt`, `.text`), HTML (`.html`, `.htm`) and PDF, at most 4 MB (`CREW_REVIEW_DOC_MB`; the
+route reads no more of the body than that needs, 413 `too_large` past it). Pasted text is always Markdown, named by its title (its slashes kept). Its
+bytes must be what its name says: a PDF starts `%PDF-`, anything else is UTF-8 text; an executable, an archive, a picture, any
+other extension (a script, `.svg`, `.docx`), an empty document, one with no name or a name with nothing of its own (`.md`,
+`_.txt`), or bytes that are not base64 is refused, saying why (`bad_type`, `empty`, `bad_name`, `bad_request`), before
+anything is kept. A text must be UTF-8 from its first byte to its last, with no NUL anywhere. Its text is read once, at the upload: Markdown and text as they
+are; an HTML page as its visible text (no script, no hidden part; read with linear scans only, so crafted HTML cannot hold
+Studio's one thread); a PDF by Studio's own reader (`pdfText`, up to 1.5 million characters: a PDF with no text, a scanned one,
+is refused `no_text`); a **page baton made before** (an HTML page carrying `<script id="baton-data">` and
+`baton-context`) as its packet and its context (render.py's `<\/script` escapes undone), so baton rebuilds from the context,
+which carries the document whole, never from the rendered page. The room's identity is the document's name without its
+extension, letter case folded and spaces, hyphens and underscores alike (`docRoomId`): sent again with other bytes, the same
+document is the room's **next version**, its head that version's sha256; the same bytes again open the room as it is, and a
+version sent before becomes the current one again, keeping its number. The answer says which version it is (`added: {n, of,
+existing, again}`) and the room says so once when the upload went into a room already there ("Added as version 2 of 2 …";
+rename the file for a room of its own). At most 50 versions are kept; an older one goes with its files.
+Every version is kept byte for byte (`data/review-room/doc/<id>-heads/<sha256>/`: `original.<ext>`, `text.md`, and a baton
+page's `baton-data.json` and `baton-context.md`, each by its sha256 in the room's file); a run reads them checked against
+those hashes, and a file changed on disk since the upload fails the run (`integrity`) rather than being read in its place.
+Studio never shows the document itself (the explainer's isolated frame shows only what a skill made) and never fetches
+anything for it. A skill's materials in a document room are `document.md` (Studio's header: the name, the type, the version,
+the head; then, fenced as untrusted, the title the document gives itself and its whole text), `document/` (the original when it is text, a baton page's
+packet and context), `versions.md` (every version kept) and `previous/document.md` (the version before, when there is one;
+one changed on disk is withheld, and README.md says so):
+never a diff, a commit or a review. Studio's frame, the question frame and baton's adapter say what a document room is:
+baton takes its document route (layer proposal, the shapes the document's kind wants, nothing claimed as built, what changed
+since the version before), and the tutor grounds on the document as it would on the code. Its header shows the version
+(`[data-doc-version]`: "Version n of m", its type, its size; its sha256 in the title) and, when a version came after the last
+page, "Version n is newer than the last page" (`[data-doc-newer]`, the two hashes in its title); its subtitle is the
+document's name and sha256. What only a change has is not there.
+
 **Who hosts a room's paid runs.** A merge card's runs belong to the merge card's live node. A branch's or a pull request's
 run on the reviewer seat of the Task that made it (a pull request: the newest Task whose recorded pull request is that URL):
 the Task's review node, held through an **auxiliary owner** (`engine.auxOwner`): `owns()` accepts it while the Task is kept
@@ -149,13 +185,15 @@ the team's staffing version is written only when the captain's confirmed run mak
 captain (`by`). The host Task's page links back to the pull request's room.
 
 A directory's runs run on a host Task Studio makes on the first confirmed (or first opening's) run: the internal workflow
-`review-room-dir-host` (one hook node, no agent, nothing written), with no project and no crew. The tutor is the model the
+`review-room-dir-host` (one hook node, no agent, nothing written), with no project and no crew; a document's the same, on
+`review-room-doc-host` (its receipt says `document: true`). The tutor is the model the
 captain picked (the room's or Studio's default), else Studio's Automatic pick for a directory (a model this machine runs now
-and has verified, its default first; a directory has no author, so independence does not apply and is not claimed). Staffing
+and has verified, its default first; a directory has no author, so independence does not apply and is not claimed; a document
+likewise). Staffing
 admits only the room's own seats there, on that member: its receipt (`directory: true`) names it; any other instructions get
 no receipt. The host Task's page links back to the room.
 
-Making a host is refused while a sandbox-off grant is open (for the project; any for a directory) or Studio is in local
+Making a host is refused while a sandbox-off grant is open (for the project; any for a directory or a document) or Studio is in local
 unrestricted mode (`sandbox`), and while the same room's host is being made (`busy`). A host is one hook node: it ends at once,
 and its end aborts what listens to its signal, so `ensureHost` waits (up to 30 seconds) for the host Task to end before the
 run is admitted, and refuses with `busy` when it has not; the first run is never cancelled by its own host finishing.
@@ -171,8 +209,8 @@ four zones (`roomZone`, `ROOM_ZONES`), each grouped by repository (letter case d
 - **審查中**: a page or a question is running, or the captain has read the page at this head and the change is still open.
   A question that failed leaves the room here: only a page waits for the captain.
 - **已結論**: the merge card is answered, the pull request is merged or closed (its state decides: reopened on GitHub, it
-  leaves), the Task ended, or a directory's pinned commit has its page and the captain read it (a directory has no result of
-  its own).
+  leaves), the Task ended, or a directory's pinned commit (a document's version) has its page and the captain read it (neither
+  has a result of its own).
 - **封存**: the captain archived it (`POST /api/review-room/<room>/archive {archived}`, on the row and in the room's header;
   `{archived: false}` restores it to the zone it belongs in; anything but a boolean is refused). Only by hand: a merge never
   archives a room, because merged is not deployed. It is `room.archived`, in the room's own file, so it survives a restart and
@@ -278,8 +316,8 @@ Quality first: a skill's run is not one model round.
   else "no estimate yet"), the skill and its version, the materials it gets, "no round cap", the expected time (the median of
   this skill's earlier finished runs here, else "not known yet"), the safety limit, and the isolation. `POST …/explain/generate
   {skill, confirm, prompt}` starts only with that offer's hash; a changed tutor, skill version, limit, scripts plan, decision or
-  instructions asks again (`confirm_required`, 409, with the new offer). A pull request or directory room no Task hosts yet
-  makes its host Task once, after this confirmation (`ensureHost`). The server answers once the run is admitted (a model it
+  instructions asks again (`confirm_required`, 409, with the new offer). A pull request, directory or document room no Task hosts
+  yet makes its host Task once, after this confirmation (`ensureHost`). The server answers once the run is admitted (a model it
   verifies again can take a minute): until then Confirm reads "Starting…" / 開始中… (`aria-busy`), a line says Studio is
   checking the model and starting the run (`[data-explain-starting]`), and the dialog is not dismissed (Esc, Cancel, the
   backdrop) nor sent twice. Its answer acts on that dialog only: started, it closes, and a push or poll never brings it back;
@@ -663,18 +701,19 @@ Mac running Studio" instead of offering Download.
 
 ## The record
 
-Every run's round record header and ledger entry carry the subject: its kind, the branch or the URL (or the directory), the
-head and the base (merge cards too). A merge card's room is `data/runs/<task>/review-room/<card>.json`; a branch's
+Every run's round record header and ledger entry carry the subject: its kind, the branch or the URL (or the directory, or the
+document's name), the head and the base (merge cards too). A merge card's room is `data/runs/<task>/review-room/<card>.json`; a branch's
 `data/runs/<task>/review-room/R-n.json`; a pull request's `data/review-room/pr/<id>.json`, its objects in
 `data/review-room/cache/<hash>.git`; a directory's `data/review-room/dir/<id>.json`, its objects in
-`data/review-room/cache/dir-<hash>.git`. A room's file holds its subject, the heads it saw, `seen`, a pull request's last read
-or a directory's pinned snapshot, its host Task, its Library link, `finished`, the captain's tutor pick, the archive mark and
+`data/review-room/cache/dir-<hash>.git`; a document's `data/review-room/doc/<id>.json`, its versions in
+`data/review-room/doc/<id>-heads/<sha256>/`. A room's file holds its subject, the heads it saw, `seen`, a pull request's last read,
+a directory's pinned snapshot or a document's versions, its host Task, its Library link, `finished`, the captain's tutor pick, the archive mark and
 the read mark; its explainer's state is beside it (`<room>-explain/`, above). A merge card's room has no file until its first
 page (or an archive, or a tutor pick) gives it one. The Studio-wide settings are `data/review-room-settings.json` (the default tutor) and
 `data/review-room-explain.json` (above).
 
 `data/review-room-stats.json`, one entry per subject (a merge card keyed by its Task, a branch as `branch:R-n`, a pull request
-as `pr:<id>`, a directory as `dir:<id>`): card, kind, project, pull request, head and when the room was first opened (the
+as `pr:<id>`, a directory as `dir:<id>`, a document as `doc:<id>`): card, kind, project, pull request, head and when the room was first opened (the
 desktop page). The `turns` and `check` counts an older room recorded stay as they were. Kept for a later comparison with
 reverts and reopens; no analysis here.
 
@@ -682,7 +721,8 @@ Studio's observability reads rooms the way the page does, never marking a room o
 (`src/observe/kinds/room.ts`, kind `room`, desktop viewer): `studio_get room:<id>` gives the subject, open or closed, running,
 archived, the pull request's state and verdicts, the questions and pages with their runs (skill, status, provider, model,
 rounds, cost, why, decision, prepare, version) and versions, the old board, the cost, recent errors and the reviewers' notes
-(their words marked untrusted); `studio_logs room:<id>` is each run oldest first with its status, cost and why, and the room's
+(their words marked untrusted), and a document's version (`doc`: its type, sha256, size, version and how many versions, its
+name marked untrusted; never the title its author wrote: the room is named by the document's name); `studio_logs room:<id>` is each run oldest first with its status, cost and why, and the room's
 events. A room of a Task whose text is withheld from Firstmate is withheld too. `src/observe/now.ts` lists rooms with a new page
 or a run in the last hour.
 
@@ -837,12 +877,19 @@ Done when (each line proved by the named suite; `bun run test:review-room` runs 
     refused, `integrity`), one file or a zip, an attachment with a safe name, never cached; the frame keeps allow-scripts only; a
     write 405, nothing there 404, a paired phone 403 `desktopOnly` and no Download. — review-room-download (each rule);
     review-room-download-ui (each rule).
+28. A document has a room: only a document's types, its bytes what its name says, within the size limit, refused with why;
+    kept byte for byte by its sha256, the same name with other bytes its next version; a baton page rebuilt from its packet
+    and context; its runs on a host Task with no crew, the receipt naming the confirmed member; its materials the document,
+    fenced, hash-checked, never a diff; a question grounded on the document and the page; once per version on opening; the
+    Library and the list keep it. — review-room-document (each rule); review-room-ui "the Review room's home takes a document
+    …", "a document's room …".
 
 Tests: `tests/review-baton.ts`; `tests/review-room.ts` (a real code-firstmate Task to its merge card, a scripted stub provider);
 `tests/review-room-admission.ts` (a staffed Task: the seat's receipt and native admission, the adaptive tutor on one vendor, two
 vendors and one model, a member that is not usable, verification before the run, the tutor picker);
 `tests/review-room-anywhere.ts` (two real code-firstmate Tasks, one tainted; the GitHub simulator with a bare repository, a
 host Task, a scripted skill); `tests/review-room-directory.ts` (a local bare repository standing in for GitHub);
+`tests/review-room-document.ts` (neutral sample proposals: Markdown, pasted text, HTML, a baton page, a PDF);
 `tests/review-room-zones.ts`; `tests/review-room-explain.ts`; `tests/review-room-explain-scripts.ts` (a made-up skill package's
 real scripts in the real sandbox); `tests/review-room-download.ts` (a room seeded on disk, `tests/lib/review-room-download-fixture.mjs`,
 in a real isolated Studio); and on the page, in a real isolated Studio and Chromium, `tests/review-room-ui.mjs`,

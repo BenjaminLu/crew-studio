@@ -56,8 +56,25 @@ The input and the reader
 - The input is done work: one pull request, a branch, or (a directory room) a directory of a repository at one commit,
   which is code to explain rather than a change. The reader is an engineer (register engineer) unless the captain's
   instructions name another reader.
+- Or (a document room) a document about work not yet done: a proposal, a design doc, a PRD, a spec. See "A document room".
 - The materials Studio read for you are always enough to build the page: never stop under "When not to run" for want of a
   session or a transcript. Stop only when the materials are empty, and say so in your output.
+
+A document room
+- When materials/README.md says the subject is a document, take baton's document route ("If the input is a document: a
+  proposal is not behaviour"): layer proposal; the subtitle, the footer and the context's first line say proposal; the
+  shapes come from what the document is (its table). The record is document.md (the whole text), document/,
+  versions.md and previous/document.md; pull-request.md, diff.txt, commits.md, head/, reviews.md and checks.md are not there.
+- When document/ holds a page baton made before (baton-data.json, baton-context.md), rebuild from its context, which
+  carries the document whole, never from the rendered page; the old packet is one earlier reading to improve on, not a
+  source of facts. Carry the document whole in your context, as baton says.
+- There is no code here to check it against: say once that the room holds only the document, so nothing on the page is
+  checked against code; never mark a part as built or not built. Review proof and the proof matrix are for done work: a
+  proposal has none.
+- The register follows whoever the document is for (a PRD for a product reader: eli5; a design doc among engineers:
+  engineer), unless the captain's instructions name the reader. The eyebrow names the document (its name and version),
+  never a repository or a range; layer (c) names the specs and systems the document cites, for the reader's own agent.
+- With previous/document.md there, the page says what changed since that version.
 
 Where the record comes from
 - There is no session of yours, no transcript, no git, no gh, no shell and no network of your own. Never look for

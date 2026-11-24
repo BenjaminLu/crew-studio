@@ -750,10 +750,10 @@ const FOCUS_PAGES = { board: ["Board", "看板"], inbox: ["Inbox", "收件匣"],
   crew: ["Crew", "船員"], team: ["Crew", "船員"], activity: ["Activity", "事件"], workflow: ["Workflow", "流程"], workflows: ["Workflows", "流程"], library: ["Library", "成品庫"], settings: ["Settings", "設定"],
   terminals: ["Terminals", "終端機"], doctor: ["Doctor", "健康檢查"], projects: ["Projects", "專案"], project: ["Project", "專案"], skills: ["Skills", "技能"], firstmate: ["Firstmate", "Firstmate"] };
 /** a room's id as the captain reads it: PR #1645, a directory, or the card or Task it belongs to */
-const roomShort = (id) => { const m = /^PR-[0-9a-f]{12}-(\d+)$/.exec(id); return m ? `PR #${m[1]}` : /^DIR-/.test(id) ? T("Directory", "目錄") : id; };
+const roomShort = (id) => { const m = /^PR-[0-9a-f]{12}-(\d+)$/.exec(id); return m ? `PR #${m[1]}` : /^DIR-/.test(id) ? T("Directory", "目錄") : /^DOC-/.test(id) ? T("Document", "文件") : id; };
 function focusNow() {
   const { v, rest } = hashRoute(); let id = ""; try { id = rest.map(decodeURIComponent).join("/"); } catch {}
-  const ref = v === "run" && /^R-\d+$/.test(id) ? `task:${id}` : v === "inbox" && /^SC-\d+$/.test(id) ? `card:${id}` : v === "room" && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/.test(id) ? `room:${id}` : null;
+  const ref = v === "run" && /^R-\d+$/.test(id) ? `task:${id}` : v === "inbox" && /^SC-\d+$/.test(id) ? `card:${id}` : v === "room" && /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-\d+|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})$/.test(id) ? `room:${id}` : null;
   const label = [FOCUS_PAGES[v] ? T(...FOCUS_PAGES[v]) : v, v === "room" ? roomShort(id) : ref ? id : "", FOCUS.sel?.label].filter(Boolean).join(" · ").slice(0, 80);
   // the page and its Studio id only: a list writes its search box into the address (?q=…), which is never sent
   return { route: `#/${v}${ref ? `/${id}` : ""}`, ref, selection: FOCUS.sel, dialog: FOCUS.dialog, label, tab: TAB_ID, visible: document.visibilityState !== "hidden" };

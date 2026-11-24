@@ -1,0 +1,8 @@
+{
+ "id":"review-room-doc-host","name":"Review room document host","kind":"review-room-doc-host","version":1,
+ "description":"Hosts the review room's runs on a document the captain uploaded or pasted (a proposal, kept byte for byte): one node the room's auxiliary owner holds. It writes nothing and runs no agent; the tutor runs on the model the captain picked (or Studio's Automatic pick), confirmed per run.",
+ "params":{"doc":{"label":"Document"},"room":{"label":"Review room"}},
+ "roles":[],"nodes":[
+  {"id":"review-room","kind":"hook","label":"Review room host","x":160,"y":140}
+ ],"edges":[]
+}

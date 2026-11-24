@@ -224,6 +224,39 @@ try {
     await ctx.close(); }
 
 
+  // ---------- a document: the home takes a file or pasted text; the real route keeps it and opens its room ----------
+  { const { ctx, p } = await open(1440, "en"); const sent = [];
+    await p.route(/\/api\/review-room$/, (r) => r.fulfill({ json: { rooms: [], settings: { tutor: null }, tutors: [], providers: [] } }));
+    await p.route(/\/api\/review-room\/open-doc$/, (r) => { sent.push(JSON.parse(r.request().postData() || "{}")); r.fulfill({ status: 400, json: { error: "Only a document opens a room: .md, .markdown, .txt, .text, .html, .htm, .pdf", code: "bad_type" } }); });
+    await p.goto(`${base}/#/room`); await p.waitForSelector("[data-doc-box]", { timeout: 15000 });
+    const home = await p.evaluate(() => ({ line: document.querySelector('[data-paste-offer="doc"]')?.textContent || "", h: document.querySelector("[data-doc-box] h2")?.textContent, open: document.querySelector("[data-doc-open]")?.textContent, accept: document.querySelector("[data-doc-file]")?.getAttribute("accept"), seg: !!document.querySelector("[data-doc-box] .seg [data-doc-mode=file][aria-pressed=true]"), own: !document.querySelector("[data-doc-section] [data-pr-box]") }));
+    await p.click("[data-doc-open]"); const none = await p.textContent("[data-doc-error]").catch(() => "");
+    ok(/one paid run on the room's tutor model\. A new version runs it again/.test(home.line) && home.h === "Learn a proposal document" && home.open === "Open the document's room" && home.own && home.accept === ".md,.markdown,.txt,.text,.html,.htm,.pdf" && home.seg && /Choose a file first/.test(none) && !sent.length,
+      "the Review room's home takes a document in a card of its own: a file of a document's type (or pasted text), saying what opening its room and a new version start; Open with nothing chosen says why and sends nothing", JSON.stringify({ home, none }));
+    const bytes = Buffer.from("# A proposal\n\nBuild a reading list.\n");
+    await p.setInputFiles("[data-doc-file]", { name: "proposal.md", mimeType: "text/markdown", buffer: bytes }); await p.waitForSelector("[data-doc-chosen]");
+    ok(/^proposal\.md · 1 KB$/.test(await p.textContent("[data-doc-chosen]")), "the chosen file is named beside Studio's own Choose button");
+    await p.click("[data-doc-open]"); await p.waitForSelector("[data-doc-error]", { timeout: 5000 });
+    ok(sent.length === 1 && sent[0].name === "proposal.md" && Buffer.from(sent[0].base64, "base64").equals(bytes) && Object.keys(sent[0]).sort().join() === "base64,name" && /Only a document opens a room/.test(await p.textContent("[data-doc-error]")),
+      "a file goes as its name and its bytes, nothing else; a refusal stays on the form with why", JSON.stringify(sent.map((x) => x.name)));
+    await p.click("[data-doc-mode=paste]"); await p.fill("[data-doc-title]", "Reading list"); await p.fill("[data-doc-text]", "# Reading list\n\nA plan."); await p.click("[data-doc-open]");
+    await p.waitForFunction(() => document.querySelector("[data-doc-error]"), null, { timeout: 5000 });
+    ok(sent.length === 2 && sent[1].title === "Reading list" && sent[1].text === "# Reading list\n\nA plan." && !("base64" in sent[1]), "pasted text goes as its title and its text", JSON.stringify(sent[1]));
+    await p.unroute(/\/api\/review-room\/open-doc$/); await p.unroute(/\/api\/review-room$/);
+    // the real route: kept, its room opened; refused types and an oversize body said so
+    const real = await p.evaluate(async () => { const post = async (b) => { const r = await fetch("/api/review-room/open-doc", { method: "POST", headers: { "content-type": "application/json" }, body: typeof b === "string" ? b : JSON.stringify(b) }); let j = {}; try { j = await r.json(); } catch {} return [r.status, j.code ?? null, j.id ?? null]; };
+      return [await post({ name: "Reading list.md", base64: btoa("# Reading list\n\nA small service for a team's reading list.\n") }), await post({ name: "tool.exe", base64: btoa("MZ") }), await post("x".repeat(6 * 1024 * 1024 + 300000))]; });
+    ok(real[0][0] === 200 && /^DOC-[0-9a-f]{12}$/.test(real[0][2]) && real[1][0] === 400 && real[1][1] === "bad_type" && real[2][0] === 413 && real[2][1] === "too_large", "the real route keeps a document and opens its room; another type is refused; a body past the size limit is not read", JSON.stringify(real));
+    const dl = await p.evaluate(async (id) => { const r = await fetch(`/api/review-room/${id}/page/1/download`); let j = {}; try { j = await r.json(); } catch {} return [r.status, j.code ?? null]; }, real[0][2]);
+    ok(dl[0] === 404 && dl[1] === "not_found", "a document room's page download route is a real route (no page yet: not found, said by the room, not an unknown route)", JSON.stringify(dl));
+    await p.goto(`${base}/#/room/${real[0][2]}`); await p.waitForSelector("[data-doc-version]", { timeout: 15000 });
+    const head = await p.evaluate(() => ({ kind: document.querySelector("[data-room-subject]")?.getAttribute("data-room-subject"), pill: document.querySelector("[data-doc-version]")?.textContent || "", title: document.querySelector(".rr-htitle b")?.textContent || "", gh: !!document.querySelector("[data-room-github]"), check: !!document.querySelector("[data-room-check]") }));
+    ok(head.kind === "doc" && /^Version 1 of 1 · Markdown · 1 KB/.test(head.pill) && head.title === "Document Reading list" && !head.gh && !head.check, "a document's room: its header names the document and its version, with no GitHub link and no Check for new commits", JSON.stringify(head));
+    for (const scheme of ["light", "dark"]) { await p.emulateMedia({ colorScheme: scheme }); await p.screenshot({ path: join(shots, `doc-room-1440-${scheme}.png`) }); }
+    await p.setViewportSize({ width: 390, height: 844 }); await p.goto(`${base}/#/room`); await p.waitForSelector("[data-doc-box]");
+    ok(await noScroll(p), "390 px: the home's document box never scrolls sideways"); await p.screenshot({ path: join(shots, "doc-home-390.png"), fullPage: true });
+    await ctx.close(); }
+
   // ---------- the real routes: a card that does not exist, a write needs the desktop session ----------
   { const ctx = await browser.newContext(); const p = await ctx.newPage(); await p.goto(`${base}/#/board`);
     const r = await p.evaluate(async () => { const a = await fetch("/api/review-room/SC-999"); const b = await fetch("/api/review-room/SC-999/archive", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); return [a.status, b.status, (await b.json()).code]; });

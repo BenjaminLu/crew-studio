@@ -1,15 +1,17 @@
 // The review room (docs/units/review-room.md): one room per change, where the captain reads a skill's page about it (baton by
 // default, src/domain/review-explain.ts) and asks the room's tutor about it before answering its merge card. A room has one of
-// four subjects, each one room across its heads: a merge card (SC-n), a Task's local branch once Studio's review passed at its
+// five subjects, each one room across its heads: a merge card (SC-n), a Task's local branch once Studio's review passed at its
 // head (R-n), a GitHub pull request of a connected project read by its URL (PR-<repository hash>-<n>: GitHub is only read, with
 // GET, and the head's objects are fetched into a bare repository Studio owns under its data folder), or a GitHub directory read
-// at one commit (DIR-…). The room never answers the merge card and never changes merge readiness: the card only shows a summary
+// at one commit (DIR-…), or a document the captain uploaded or pasted (DOC-…: a proposal, kept byte for byte, each version a
+// head by its sha256). The room never answers the merge card and never changes merge readiness: the card only shows a summary
 // of it (baton's versions and what they cost). The paid runs (a page, a question) are the explainer's, on the room tutor's seat.
 // A room from before keeps its whiteboard (turns, scenes, drawings) on disk exactly as it was: Studio reads none of it any more,
 // and offers the room's whole record as a file (exportRoom).
 //   data/runs/<task>/review-room/<card or R-n>.json        the room: subject, heads seen, the captain's tutor and archive marks
 //   data/review-room/pr/<PR-…>.json                         a pull request's room; data/review-room/cache/<hash>.git its objects
 //   data/review-room/dir/<DIR-…>.json                       a directory's room, pinned at its commit
+//   data/review-room/doc/<DOC-…>.json                       a document's room; <DOC-…>-heads/<sha256>/ each version's files
 //   <room>-explain/                                         the explainer's state, versions and runs (src/domain/review-explain.ts)
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -28,6 +30,7 @@ import type { SCard } from "../runtime/cards";
 import { PROVIDERS as CREW_PROVIDERS } from "./crew";
 import { bestOf, defaultEffort, degradedWhy, levelAgainst, required, LEVEL_TEXT, type Level, type Usable } from "./independence";
 import { installExplainer } from "./review-explain";
+import { docRoomId, readDocument } from "./review-doc";
 import { libraryPageDownload, roomPageDownload } from "./review-download";
 import { OperatingRules, jobInstructions } from "../operating-rules";
 /** Why an old tutor turn did not end done, as the short code its room_round_failed event carries (the retro still reads old
@@ -42,10 +45,17 @@ export function parseDirUrl(u: unknown): { repository: string; rest: string[] } 
   return { repository: `${m[1]}/${m[2]}`, rest };
 }
 export const dirRoomId = (repository: string, ref: string, path: string) => `DIR-${sha(repository.toLowerCase()).slice(0, 12)}-${sha(`${ref}\0${path}`).slice(0, 12)}`;
-export type Subject = { kind: "merge" | "branch" | "pr" | "dir"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null; ref?: string; path?: string };
+export type Subject = { kind: "merge" | "branch" | "pr" | "dir" | "doc"; room: string; task?: string | null; branch?: string | null; url?: string | null; repository?: string; number?: number; project?: string | null; ref?: string; path?: string;
+  /** a document room: the document's name as the captain gave it (its file's name, or the title of pasted text) */
+  name?: string };
 /** a GitHub directory as Studio read it, pinned at one commit (the ref named in its address, resolved once; the room never moves) */
 type DirSnap = { repository: string; ref: string; refKind: "branch" | "tag" | "commit" | "default"; sha: string; path: string; private: boolean; files: number; bytes: number;
   parts: { name: string; kind: "dir" | "file"; files: number; bytes: number }[]; readme: string | null; fetchedAt: string; truncated: boolean };
+/** one version of a document as Studio kept it: the bytes as uploaded (original), the text Studio read from them, and a baton
+ *  page's packet and context when the document is one; each file by its sha256. The version's head is the original's sha256. */
+export type DocSnap = { name: string; title: string; type: DocType; sha256: string; bytes: number; at: string; by: string;
+  files: { path: string; sha256: string; bytes: number }[]; chars: number; pages?: number | null; truncated: boolean };
+export type DocType = "markdown" | "text" | "html" | "baton" | "pdf";
 type Note = { id: string; kind: "review" | "inline" | "comment"; author: string; body: string; at: string | null; url: string | null; state?: string; commit?: string | null; path?: string | null; line?: number | null; outdated?: boolean };
 /** a pull request as Studio last read it on GitHub (GET only); every text in it is untrusted, cleaned and fenced */
 type PrSnap = { title: string; body: string; state: "open" | "closed"; merged: boolean; mergedAt: string | null; closedAt: string | null; draft: boolean; author: string; headRef: string; headRepo: string; baseRef: string;
@@ -65,6 +75,9 @@ export type Room = { schema: 1; run: string; card: string; node: string; head: s
   pr?: PrSnap;
   /** a directory room: the directory, pinned at its commit */
   dir?: DirSnap;
+  /** a document room: its current version, and every version it had, oldest first (the current one last) */
+  doc?: DocSnap;
+  docs?: DocSnap[];
   /** the host Task Studio made for a pull request no Task made (workflow review-room-host), on its first paid turn */
   host?: string;
   /** the room's Library artifact (a version per save: its pages) */
@@ -108,7 +121,7 @@ export function parsePrUrl(u: unknown): { repository: string; n: number; url: st
   return { repository, n: Number(m[3]), url: `https://github.com/${repository}/pull/${m[3]}` };
 }
 /** a room's id: a merge card, a Task (its reviewed branch), or a pull request by its repository and number */
-export const ROOM_ID = /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12})$/;
+export const ROOM_ID = /^(SC-\d+|R-\d+|PR-[0-9a-f]{12}-[1-9]\d{0,8}|DIR-[0-9a-f]{12}-[0-9a-f]{12}|DOC-[0-9a-f]{12})$/;
 export const prRoomId = (repository: string, n: number) => `PR-${sha(repository.toLowerCase()).slice(0, 12)}-${n}`;
 const glyph = (t: unknown) => String(t ?? "").replace(/</g, "‹").replace(/>/g, "›");
 const untrusted = (t: unknown, max: number) => glyph(cleanText(t, max));
@@ -144,6 +157,15 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  tutor runs on the model the captain picked or Studio's Automatic pick, confirmed per turn) */
   const dirDir = join(o.dataDir, "review-room", "dir"), dirFile = (id: string) => join(dirDir, `${id}.json`), dirCache = (repository: string) => join(o.dataDir, "review-room", "cache", `dir-${sha(repository.toLowerCase()).slice(0, 16)}.git`);
   const DIR_HOST_WORKFLOW = "review-room-dir-host", isDirHostRun = (run: any) => run?.def?.kind === DIR_HOST_WORKFLOW;
+  /** a document room (DOC-…): its file, each version's files (<id>-heads/<sha256>/), and the host Task Studio makes on its first
+   *  paid run (workflow review-room-doc-host: like a directory's, one node an auxiliary owner holds, no agent, no crew) */
+  const docDir = join(o.dataDir, "review-room", "doc"), docFile = (id: string) => join(docDir, `${id}.json`), docHeadDir = (id: string, head: string) => join(docDir, `${id}-heads`, head);
+  const DOC_HOST_WORKFLOW = "review-room-doc-host", isDocHostRun = (run: any) => run?.def?.kind === DOC_HOST_WORKFLOW;
+  /** a host with no project, no crew and no author: a directory's or a document's */
+  const isFreeHostRun = (run: any) => isDirHostRun(run) || isDocHostRun(run);
+  const docHostInto = (k: Key, room: Room | null) => { const made = room?.host ? engine.get(room.host) : null, host = made && isDocHostRun(made) && made.params?.room === k.id ? made : null;
+    k.run = host?.id ?? null; k.node = host ? HOST_NODE : null; return host; };
+  const docKeyOf = (id: string): Key => { const k: Key = { id, kind: "doc", run: null, node: null, file: docFile(id), dir: join(docDir, `${id}-images`), stat: `doc:${id}`, open: () => !!load(k)?.doc?.sha256 }; return k; };
   const dirHostInto = (k: Key, room: Room | null) => { const made = room?.host ? engine.get(room.host) : null, host = made && isDirHostRun(made) && made.params?.dir === room?.subject?.url ? made : null;
     k.run = host?.id ?? null; k.node = host ? HOST_NODE : null; return host; };
   /** a pull request room's host: the Task that published it, else the host Task Studio made for it on its first paid turn */
@@ -156,6 +178,8 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       return { id, kind: "merge", run: c.run, node: c.node, ...inRun(c.run, id), stat: c.run, open: () => engine.cards.get(id)?.status === "open", card: c }; }
     if (id.startsWith("R-")) { const run = engine.get(id); if (!run) throw refuse("No such Task", "not_found"); const n = reviewNode(run); if (!n) throw refuse("This Task has no reviewed code branch / 這個任務沒有經過審查的程式分支", "no_change");
       return { id, kind: "branch", run: id, node: n.id, ...inRun(id, id), stat: `branch:${id}`, open: () => !!engine.get(id) }; }
+    if (id.startsWith("DOC-")) { if (!existsSync(docFile(id))) throw refuse("Upload or paste the document to open its room / 請上傳或貼上文件來開啟審查室", "not_found");
+      const k = docKeyOf(id); docHostInto(k, load(k)); return k; }
     if (id.startsWith("DIR-")) { const f = dirFile(id); if (!existsSync(f)) throw refuse("Paste the directory's GitHub address to open its room / 請貼上目錄的 GitHub 網址來開啟審查室", "not_found");
       const k: Key = { id, kind: "dir", run: null, node: null, file: f, dir: join(dirDir, `${id}-images`), stat: `dir:${id}`, open: () => !!load(k)?.dir?.sha };
       dirHostInto(k, load(k)); return k; }
@@ -179,7 +203,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   const save = (k: Key, r: Room) => { if (startedOver.has(r)) return; r.rev = (r.rev ?? 0) + 1; cache.set(k.file, r); mkdirSync(join(k.file, ".."), { recursive: true }); writeFileSync(k.file + ".tmp", JSON.stringify(r)); renameSync(k.file + ".tmp", k.file); };
   const cardOf = (id: string) => { const c = engine.cards.get(id); if (!c) throw refuse("No such card", "not_found"); return c; };
   /** dir: a directory room's directory (its path, and its files, the room's "changed files": what a citation may name) */
-  type S = { key: Key; run: any; wt: string; head: string; base: string; node: any; dir?: { path: string; files: string[] } };
+  type S = { key: Key; run: any; wt: string; head: string; base: string; node: any; dir?: { path: string; files: string[] };
+    /** doc: a document room's version (its files in dir) and every version it had, each with its folder */
+    doc?: { snap: DocSnap; dir: string; history: { snap: DocSnap; dir: string }[] } };
   const dirFilesMemo = new Map<string, string[]>();
   /** the files under a directory at its pinned commit (at most 5000), read once per commit and path */
   const dirFiles = (wt: string, at: string, path: string) => { const key = `${wt}\0${at}\0${path}`, had = dirFilesMemo.get(key); if (had) return had;
@@ -188,6 +214,13 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   /** the room's subject: where its git objects are read (the worktree, the repository once it is cleaned, or the pull
    *  request's cache), its head and base, and the Task and node that host its turns (none for a pull request no Task published) */
   const subjectOf = (k: Key): S => {
+    if (k.kind === "doc") {
+      const room = load(k), d = room?.doc; if (!d?.sha256) throw refuse("This document has not been read yet", "no_change");
+      const dir = docHeadDir(k.id, d.sha256); if (!d.files.every((f) => existsSync(join(dir, f.path)))) throw refuse("The document's files are not in Studio's copy any more: upload it again / Studio 的文件副本不見了：請再上傳一次", "no_change");
+      const run = k.run ? engine.get(k.run) : null;
+      return { key: k, run, wt: "", head: d.sha256, base: d.sha256, node: run ? run.def.nodes.find((n: any) => n.id === k.node) : null,
+        doc: { snap: d, dir, history: (room!.docs ?? [d]).map((x) => ({ snap: x, dir: docHeadDir(k.id, x.sha256) })) } };
+    }
     if (k.kind === "dir") {
       const room = load(k); if (!room?.dir?.sha) throw refuse("This directory has not been read yet", "no_change");
       const wt = dirCache(room.dir.repository); if (!existsSync(wt) || !git(wt, ["cat-file", "-e", `${room.dir.sha}^{commit}`]).ok) throw refuse("The directory's commit is not in Studio's copy: paste its address again to read it", "no_change");
@@ -212,7 +245,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   const reviewed = (run: any, head: string) => { const t = engine.trusted(run.id); if (!t.ok) return false; const e: any = t.entries.filter((e: any) => e.run === run.id && e.check === "firstmate/review-verdict").at(-1);
     return (e?.verdict === "pass" && e.head === head) || (run.ctx.taintedReady?.head === head && t.entries.some((x: any) => x.record === "tainted-ready" && x.head === head)); };
   const subjectRecord = (k: Key, s: { run: any; head: string; base: string }, room: Room | null): Subject & { head: string; base: string } =>
-    k.kind === "pr" || k.kind === "dir" ? { ...(room?.subject ?? { kind: k.kind, room: k.id }), task: s.run?.id ?? null, head: s.head, base: s.base }
+    k.kind === "pr" || k.kind === "dir" || k.kind === "doc" ? { ...(room?.subject ?? { kind: k.kind, room: k.id }), task: s.run?.id ?? null, head: s.head, base: s.base }
     : { kind: k.kind, room: k.id, task: s.run?.id ?? null, branch: s.run?.ctx.branch ?? null, url: s.run?.ctx.pr?.url ?? null, head: s.head, base: s.base };
   type Tutor = { pick: AgentPick; level: Level; adaptive: boolean; outside: boolean; label: { en: string; zh: string }; warning?: { en: string; zh: string } | null;
     /** picked: the captain picked it (a room's, Studio's default, a regeneration); unlisted: not on this machine's model list */
@@ -282,7 +315,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  by hand), listed after it with why. */
   const tutorsOf = (run: any, current: { provider: string; model: string | null } | null, extra: { provider: string; model: string }[] = []) => {
     const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null;
-    const group = run && !isHostRun(run) && !isDirHostRun(run) ? makersOf(run, usable) : [];
+    const group = run && !isHostRun(run) && !isFreeHostRun(run) ? makersOf(run, usable) : [];
     const cur = (p: string, m: string | null) => !!current && current.provider === p && (current.model ?? null) === m;
     const listed = (usable ?? []).map((u) => { const backoff = !!engine.deps.verifyBackoff?.({ provider: u.provider, model: u.model } as AgentPick);
       return { provider: u.provider, model: u.model, effort: defaultEffort(u), verified: !!u.verified, listed: true, runnable: !!u.runnable && !!u.verified && !backoff,
@@ -308,7 +341,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  when it is held, not verified or not listed, what to expect (said in its label; the turn then runs and fails with the
    *  vendor's own error if it cannot run, it is never refused up front nor swapped for another) */
   const tutorFacts = (run: any | null, p: { provider: string; model: string }) => {
-    const host = run && !isHostRun(run) && !isDirHostRun(run) ? run : null, u = tutorsOf(host, null, [p]).find((x) => x.provider === p.provider && x.model === p.model)!;
+    const host = run && !isHostRun(run) && !isFreeHostRun(run) ? run : null, u = tutorsOf(host, null, [p]).find((x) => x.provider === p.provider && x.model === p.model)!;
     const warning = u.runnable ? null : !u.listed ? { en: ` Not reported by ${p.provider} on this machine (entered by hand); the vendor decides: Studio passes the id as given, and the turn fails with ${p.provider}'s error if it rejects it.`, zh: `${p.provider} 在這台機器上沒有回報這個模型（手動輸入），由供應商決定：Studio 原樣傳給它，不接受時這一回合會失敗並顯示 ${p.provider} 的錯誤。` }
       : u.held === "not verified on this machine yet" ? { en: " Not verified on this machine yet: Studio verifies it with one bounded request before the paid round, and the turn fails with the reason if it does not pass.", zh: "這台機器還沒驗證：付費回合前 Studio 會先用一次有限請求驗證，沒通過時這一回合會失敗並說明原因。" }
       : { en: ` Held now (${u.held}): the turn may fail with ${p.provider}'s error.`, zh: `目前暫停（${u.held}）：這一回合可能失敗並顯示 ${p.provider} 的錯誤。` };
@@ -321,12 +354,14 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  label, and a turn that cannot run fails with the vendor's error; Studio never switches to another tutor by itself). Its
    *  independence from the author is said, never enforced. The approved reviewer picked is the seat's own member; any other
    *  runs as the seat's adaptive member. */
-  const chosenTutor = (run: any | null, node: any | null, c: { provider: string; model: string; source: "room" | "studio" }): Tutor => {
+  const chosenTutor = (run: any | null, node: any | null, c: { provider: string; model: string; source: "room" | "studio" }, kind?: Subject["kind"]): Tutor => {
     const { effort, level, warning, unlisted } = tutorFacts(run, c), w = warning ?? { en: "", zh: "" };
-    let approved: AgentPick | null = null; if (run && node && !isDirHostRun(run)) { try { approved = (engine.deps.approvedPick?.(run, node, TUTOR_ROLE) as AgentPick | null) ?? (isHostRun(run) ? null : engine.x(run, reviewNode(run), run.nodes[reviewNode(run).id]).pick()); } catch {} }
+    let approved: AgentPick | null = null; if (run && node && !isFreeHostRun(run)) { try { approved = (engine.deps.approvedPick?.(run, node, TUTOR_ROLE) as AgentPick | null) ?? (isHostRun(run) ? null : engine.x(run, reviewNode(run), run.nodes[reviewNode(run).id]).pick()); } catch {} }
     const own = !!approved && approved.provider === c.provider && (approved.model ?? null) === c.model;
     const by = c.source === "room" ? { en: " Picked by the captain for this room.", zh: "船長為這間審查室選的。" } : { en: " Studio's default tutor, picked by the captain.", zh: "船長選的 Studio 預設導師。" };
-    const label = level ? { en: `${LEVEL_TEXT[level].en}.${by.en}${w.en}`, zh: `${LEVEL_TEXT[level].zh}。${by.zh}${w.zh}` } : { en: `Independence from the author unknown: the change's author is outside Studio.${by.en}${w.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。${by.zh}${w.zh}` };
+    // a directory or a document has no author in Studio: independence does not apply (said so, never "unknown")
+    const free = kind === "doc" ? { en: "A document has no author in Studio, so independence does not apply.", zh: "文件在 Studio 裡沒有作者，所以不談獨立程度。" } : kind === "dir" ? { en: "A directory has no change and no author, so independence does not apply.", zh: "目錄沒有改動也沒有作者，所以不談獨立程度。" } : null;
+    const label = level ? { en: `${LEVEL_TEXT[level].en}.${by.en}${w.en}`, zh: `${LEVEL_TEXT[level].zh}。${by.zh}${w.zh}` } : free ? { en: `${free.en}${by.en}${w.en}`, zh: `${free.zh}${by.zh}${w.zh}` } : { en: `Independence from the author unknown: the change's author is outside Studio.${by.en}${w.en}`, zh: `和作者的獨立程度未知：改動的作者不在 Studio 裡。${by.zh}${w.zh}` };
     return { pick: own ? approved! : { provider: c.provider, model: c.model, effort } as AgentPick, level: level as Level, adaptive: !own, outside: !own, warning, picked: true, unlisted, label };
   };
   /** a tutor the captain picks (a room's, or Studio's default): any {provider, model} of a provider Studio runs, listed or entered by hand */
@@ -335,18 +370,20 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  from the author, the current one marked; a pick entered by hand listed after them), whose pick it is (this room's,
    *  Studio's default, or Studio's own), and the providers a model may be entered by hand for */
   const tutorView = (k: Key, s: S | null, r: Room | null, open: boolean) => { const c = choiceOf(r), d = settings().tutor;
-    let tutors: any[] = []; if (open) { try { const o0: any = offerOf(k); tutors = tutorsOf(s?.run && !isHostRun(s.run) && !isDirHostRun(s.run) ? s.run : null, "error" in o0 ? null : { provider: o0.provider, model: o0.model }, [...(r?.tutor ? [r.tutor] : []), ...(d ? [d] : [])]); } catch {} }
+    let tutors: any[] = []; if (open) { try { const o0: any = offerOf(k); tutors = tutorsOf(s?.run && !isHostRun(s.run) && !isFreeHostRun(s.run) ? s.run : null, "error" in o0 ? null : { provider: o0.provider, model: o0.model }, [...(r?.tutor ? [r.tutor] : []), ...(d ? [d] : [])]); } catch {} }
     return { tutors, tutorProviders: open ? tutorProviders() : [], tutorChoice: { room: r?.tutor ? { provider: r.tutor.provider, model: r.tutor.model } : null, studio: d, source: c?.source ?? "auto" } }; };
   /** the tutor a turn of this room runs on: the captain's pick (the room's, else Studio's default), else Studio's own (Automatic) */
-  const tutorFor = (k: Key, s: S): Tutor => { const c = choiceOf(load(k)); return c ? chosenTutor(s.run, s.node, c) : k.kind === "dir" ? autoDirTutor() : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)); };
+  const tutorFor = (k: Key, s: S): Tutor => { const c = choiceOf(load(k)); return c ? chosenTutor(s.run, s.node, c, k.kind) : k.kind === "dir" || k.kind === "doc" ? autoDirTutor(k.kind) : s.run ? seatPick(s.run, s.node) : crewTutor(crewPick(load(k)?.subject?.project)); };
   /** a directory room's tutor when the captain picked none (Automatic): a model this machine runs now and has verified, the
    *  machine's default first. There is no change and no author: independence does not apply, and is not claimed. */
-  const autoDirTutor = (): Tutor => {
+  const autoDirTutor = (kind: "dir" | "doc" = "dir"): Tutor => {
     const usable = (engine.deps.usableModels?.() ?? null) as Usable[] | null, list = tutorsOf(null, null).filter((u) => u.runnable);
     const u = list.find((x) => usable?.some((y) => y.provider === x.provider && y.model === x.model && y.isDefault)) ?? list[0];
-    if (!u) throw refuse("No model this machine runs now and has verified can be this directory's tutor: sign in, or pick a tutor / 這台機器目前沒有已驗證、能用的模型可當這個目錄的導師：請登入，或選一位導師", "no_tutor");
+    const what = kind === "doc" ? { en: "document", zh: "文件" } : { en: "directory", zh: "目錄" };
+    if (!u) throw refuse(`No model this machine runs now and has verified can be this ${what.en}'s tutor: sign in, or pick a tutor / 這台機器目前沒有已驗證、能用的模型可當這個${what.zh}的導師：請登入，或選一位導師`, "no_tutor");
     return { pick: { provider: u.provider, model: u.model, effort: u.effort ?? null } as AgentPick, level: null as unknown as Level, adaptive: true, outside: true,
-      label: { en: "Automatic: Studio picked it from the models this machine runs. A directory has no change and no author, so independence does not apply.", zh: "自動：Studio 從這台機器能跑的模型中挑的。目錄沒有改動也沒有作者，所以不談獨立程度。" } }; };
+      label: kind === "doc" ? { en: "Automatic: Studio picked it from the models this machine runs. A document has no change and no author in Studio, so independence does not apply.", zh: "自動：Studio 從這台機器能跑的模型中挑的。文件在 Studio 裡沒有改動也沒有作者，所以不談獨立程度。" }
+        : { en: "Automatic: Studio picked it from the models this machine runs. A directory has no change and no author, so independence does not apply.", zh: "自動：Studio 從這台機器能跑的模型中挑的。目錄沒有改動也沒有作者，所以不談獨立程度。" } }; };
   /** the seat a turn runs on: the hosting Task's reviewer (tutorPick); on a review-room-host Task, the project's approved crew reviewer */
   const crewTutor = (pick: AgentPick): Tutor => ({ pick, level: null as unknown as Level, adaptive: false, outside: false,
     label: { en: "The project's crew reviewer. The change's author is outside Studio, so its independence is not measured.", zh: "專案船員的審查者。改動的作者不在 Studio 裡，所以不衡量獨立程度。" } });
@@ -366,7 +403,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     throw none(why); };
   const noHost = () => refuse("No Studio Task made this pull request, so no reviewer seat can host a tutor here: the room shows the pull request, its reviewers' comments and what changed, without paid turns / 這個 pull request 不是 Studio 的任務開的，沒有審查座位可以當導師：審查室只顯示 PR、審查者的意見和改了什麼，不能付費提問", "no_host");
   const offerOf = (k: Key) => {
-    try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr" && k.kind !== "dir") throw noHost();
+    try { const s = subjectOf(k); if ((!s.run || !s.node) && k.kind !== "pr" && k.kind !== "dir" && k.kind !== "doc") throw noHost();
       if (k.kind === "branch" && !reviewed(s.run, s.head)) throw refuse("Studio's review has not passed at this head yet / Studio 的審查還沒在這個 head 通過", "not_reviewed");
       // a pull request no Task made: the project's crew reviewer, until the first paid turn makes its host Task
       const t = tutorFor(k, s), p = t.pick, effort = p.effort ?? null, c = choiceOf(load(k));
@@ -382,14 +419,17 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   const fresh = (k: Key, s: { run: any; head: string; base: string }): Room => ({ schema: 1, run: s.run?.id ?? "", card: k.id, node: k.node ?? "", head: s.head, base: s.base, turns: [], board: [], sources: [], check: { questions: [] },
     ...(k.kind === "merge" ? {} : { subject: subjectRecord(k, s, null), seen: { head: s.head, at: new Date().toISOString() }, heads: [{ head: s.head, base: s.base, at: new Date().toISOString() }] }) });
   async function ensureHost(k: Key, by: string) {
-    const room0 = load(k)!, project = k.kind === "dir" ? null : room0.subject?.project ?? null;
-    if (engine.grants.open("sandbox-off", project)) throw refuse(k.kind === "dir" ? "The tutor runs only in the round sandbox: an open sandbox-off grant is in effect; end it first" : "The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
+    const room0 = load(k)!, free = k.kind === "dir" || k.kind === "doc", project = free ? null : room0.subject?.project ?? null;
+    if (engine.grants.open("sandbox-off", project)) throw refuse(free ? "The tutor runs only in the round sandbox: an open sandbox-off grant is in effect; end it first" : "The tutor runs only in the round sandbox: this project has an open sandbox-off grant; end it first", "sandbox");
     if (localUnrestricted()) throw refuse("The tutor runs only in the round sandbox: Studio is in local unrestricted mode (CREW_LOCAL_UNRESTRICTED)", "sandbox");
     if (live.has(k.id)) throw refuse("The room's host is being made: try again in a moment / 審查室的主機正在建立，請稍候再試", "busy");
-    const had = room0.host ? engine.get(room0.host) : null; if (had && (k.kind === "dir" ? isDirHostRun(had) : isHostRun(had))) return;
+    const had = room0.host ? engine.get(room0.host) : null; if (had && (k.kind === "dir" ? isDirHostRun(had) : k.kind === "doc" ? isDocHostRun(had) && had.params?.room === k.id : isHostRun(had))) return;
     live.set(k.id, -1);
     try {
-      if (k.kind === "dir") {
+      if (k.kind === "doc") {
+        try { const h = engine.start({ workflow: DOC_HOST_WORKFLOW, text: `Review room host for the document ${room0.subject?.name ?? k.id}`, params: { doc: String(room0.subject?.name ?? "").slice(0, 160), room: k.id }, by } as any); room0.host = h.id; save(k, room0); }
+        catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_host"); }
+      } else if (k.kind === "dir") {
         try { const h = engine.start({ workflow: DIR_HOST_WORKFLOW, text: `Review room host for ${room0.subject?.url}`, params: { dir: String(room0.subject?.url ?? ""), room: k.id }, by } as any); room0.host = h.id; save(k, room0); }
         catch (e: any) { throw refuse(`The tutor's host could not start: ${String(e?.message ?? e).slice(0, 300)}`, e?.code ?? "no_host"); }
       } else {
@@ -551,6 +591,43 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     })();
     reading.set(key, job); try { return await job; } finally { reading.delete(key); }
   }
+  /** A document the captain uploaded or pasted (src/domain/review-doc.ts reads and checks it): kept byte for byte by its sha256,
+   *  the version's head, with the text a run reads and a baton page's packet and context beside it. The same document (its name
+   *  without its extension) sent again with other bytes is a new version of the same room, its head that version's sha256; the
+   *  same bytes again open the room as it is. Nothing is fetched and nothing is rendered. */
+  const docOpening = new Map<string, Promise<string>>();
+  /** returns the room and what this upload did: the version it is, of how many, whether the room (and the version) was there before */
+  type Added = { n: number; of: number; existing: boolean; again: boolean } | null;
+  async function readDoc(input: any, by: string): Promise<{ id: string; added: Added }> {
+    const d = readDocument(input), id = docRoomId(d.name), k = docKeyOf(id);
+    // one upload of a document at a time: a second waits for the first, then reads what it kept
+    const job = (docOpening.get(id) ?? Promise.resolve(null)).catch(() => null).then(async (): Promise<{ id: string; added: Added }> => {
+      const prior = load(k), now = new Date().toISOString();
+      const ext = (/\.[A-Za-z0-9]{1,10}$/.exec(d.name)?.[0] ?? "").toLowerCase(), dir = docHeadDir(id, d.sha256), tmp = `${dir}.tmp-${process.pid}-${Date.now()}`;
+      // the version's files: the original byte for byte, the text a run reads, and a baton page's packet and context
+      const files: { path: string; data: Buffer }[] = [{ path: `original${ext}`, data: d.original }, { path: "text.md", data: Buffer.from(d.text, "utf8") }, ...d.extra];
+      const kept = (f: { path: string; data: Buffer }) => { try { return sha(readFileSync(join(dir, f.path)) as any) === sha(f.data as any); } catch { return false; } };
+      if (prior?.doc?.sha256 === d.sha256 && files.every(kept)) { const vs = prior.docs ?? [prior.doc]; return { id, added: { n: vs.findIndex((x) => x.sha256 === d.sha256) + 1, of: vs.length, existing: true, again: true } }; }
+      // written aside and moved in whole; a version already kept exactly as it is stays untouched (a run may be reading it)
+      if (!files.every(kept)) { rmSync(tmp, { recursive: true, force: true }); mkdirSync(tmp, { recursive: true, mode: 0o700 });
+        for (const f of files) writeFileSync(join(tmp, f.path), f.data, { mode: 0o600 });
+        rmSync(dir, { recursive: true, force: true }); mkdirSync(dirname(dir), { recursive: true }); renameSync(tmp, dir); }
+      const snap: DocSnap = { name: glyph(d.name), title: d.title, type: d.type, sha256: d.sha256, bytes: d.original.length, at: now, by: String(by ?? "captain").slice(0, 80),
+        files: files.map((f) => ({ path: f.path, sha256: sha(f.data as any), bytes: f.data.length })), chars: d.text.length, pages: d.pages, truncated: d.truncated };
+      const room: Room = prior ?? { schema: 1, run: "", card: id, node: "", head: d.sha256, base: d.sha256, turns: [], board: [], sources: [], check: { questions: [] },
+        subject: { kind: "doc", room: id, url: null, name: snap.name, project: null, task: null }, seen: { head: d.sha256, at: now }, heads: [] };
+      // a version sent before comes back as the current one (its files written again), never as a second entry
+      // a version sent before keeps its number (its place in the list); a new one is added last; past 50, the oldest go with their files
+      const had = (room.docs ?? []).findIndex((x) => x.sha256 === d.sha256);
+      const docs = had >= 0 ? (room.docs ?? []).map((x, i) => (i === had ? snap : x)) : [...(room.docs ?? []), snap];
+      for (const gone of docs.slice(0, Math.max(0, docs.length - 50))) if (gone.sha256 !== d.sha256) rmSync(docHeadDir(id, gone.sha256), { recursive: true, force: true });
+      room.docs = docs.slice(-50); room.doc = snap; room.head = d.sha256; room.base = d.sha256;
+      room.subject = { ...(room.subject ?? { kind: "doc", room: id }), name: snap.name } as Subject;
+      if (!(room.heads ?? []).some((h) => h.head === d.sha256)) room.heads = [...(room.heads ?? []), { head: d.sha256, base: d.sha256, at: now }];
+      save(k, room); notify(k); return { id, added: { n: room.docs.findIndex((x) => x.sha256 === d.sha256) + 1, of: room.docs.length, existing: !!prior, again: had >= 0 } };
+    });
+    docOpening.set(id, job); try { return await job; } finally { if (docOpening.get(id) === job) docOpening.delete(id); }
+  }
   // ---------- the per-pull-request record, kept for later comparison with reverts and reopens (no analysis here) ----------
   const statsFile = join(o.dataDir, "review-room-stats.json");
   let statsMemo: Record<string, any> | null = null;
@@ -562,7 +639,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   const stat = (k: Key, patch: Record<string, any>) => { try { const all = stats(), run = k.run ? engine.get(k.run) : null, prev = all[k.stat] ?? {}, room = k.kind === "pr" ? load(k) : null;
     all[k.stat] = { card: k.id, ...(k.kind === "merge" ? {} : { kind: k.kind }), project: run?.params?.project ?? run?.ctx.project ?? room?.subject?.project ?? null,
       pr: k.kind === "pr" ? { id: String(room?.subject?.number ?? ""), url: room?.subject?.url ?? null } : run?.ctx.pr ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null,
-      head: k.kind === "pr" ? room?.pr?.head ?? null : k.kind === "branch" ? run?.ctx.taintedReady?.head ?? run?.ctx.head ?? null : run?.ctx.pr?.head ?? run?.ctx.head ?? null,
+      head: k.kind === "pr" ? room?.pr?.head ?? null : k.kind === "doc" ? load(k)?.doc?.sha256 ?? null : k.kind === "branch" ? run?.ctx.taintedReady?.head ?? run?.ctx.head ?? null : run?.ctx.pr?.head ?? run?.ctx.head ?? null,
       openedAt: null, turns: 0, check: { asked: 0, graded: 0, correct: 0 }, ...prev, ...patch, updatedAt: new Date().toISOString() };
     statsMemo = all; mkdirSync(o.dataDir, { recursive: true }); writeFileSync(statsFile + ".tmp", JSON.stringify(all, null, 1)); renameSync(statsFile + ".tmp", statsFile); } catch {} };
   const notify = (k: Key, turn?: number) => { try { if (k.card) engine.deps.send("scard", { id: k.id, run: k.run, status: engine.cards.get(k.id)?.status }); engine.deps.send("review-room", { card: k.id, run: k.run, turn: turn ?? null }); } catch {} };
@@ -570,7 +647,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   /** a directory room's title: the directory (or the repository's root) and where it is */
   const dirTitle = (r: Room | null) => { const d = r?.dir, where = d ? `${d.repository}${d.path ? `/${d.path}` : ""}` : r?.subject?.repository ?? "";
     return { en: `Directory ${where} @ ${d?.ref ?? ""}`, "zh-TW": `目錄 ${where} @ ${d?.ref ?? ""}` }; };
-  const closedText = (k: Key, room: Room | null) => k.kind === "dir" ? { en: "Studio has not read this directory's commit (paste its address again): the room stays readable and takes no turn.", zh: "Studio 還沒讀到這個目錄的 commit（請再貼一次網址）：審查室仍可閱讀，不能提問。" } : k.kind === "merge" ? { en: "The merge card is answered: this room is read-only now.", zh: "合併卡已回覆：審查室現在只能閱讀。" }
+  /** a document room's title: the document as it calls itself (someone else's words, glyphs for angle brackets) */
+  const docTitle = (r: Room | null) => { const d = r?.doc, t = d?.title || d?.name || r?.subject?.name || ""; return { en: `Document ${t}`, "zh-TW": `文件 ${t}` }; };
+  const closedText = (k: Key, room: Room | null) => k.kind === "doc" ? { en: "Studio does not hold this document's files any more (upload it again): the room stays readable and takes no turn.", zh: "Studio 已經沒有這份文件的檔案（請再上傳一次）：審查室仍可閱讀，不能提問。" } : k.kind === "dir" ? { en: "Studio has not read this directory's commit (paste its address again): the room stays readable and takes no turn.", zh: "Studio 還沒讀到這個目錄的 commit（請再貼一次網址）：審查室仍可閱讀，不能提問。" } : k.kind === "merge" ? { en: "The merge card is answered: this room is read-only now.", zh: "合併卡已回覆：審查室現在只能閱讀。" }
     : k.kind === "pr" ? (room?.pr?.state === "open" && !room.pr.merged ? (/larger than the review room keeps/.test(room.pr.stale?.error ?? "")
         ? { en: `Studio cannot keep this pull request's commits (${room.pr.stale!.error}): the room stays readable and takes no turn.`, zh: `Studio 無法保存這個 pull request 的 commit（${room.pr.stale!.error}）：審查室仍可閱讀，不能提問。` }
         : { en: `Studio has not read this pull request's commits yet${room.pr.stale?.error ? ` (${room.pr.stale.error})` : ""}: the room takes turns once it has. Check for new commits to try again.`, zh: `Studio 還沒讀到這個 pull request 的 commit${room.pr.stale?.error ? `（${room.pr.stale.error}）` : ""}：讀到之後審查室才能提問。按「檢查新的 commit」再試一次。` })
@@ -601,7 +680,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
   let libMemo: ArtifactStore | null = null;
   const library = () => o.artifacts ?? (libMemo ??= new ArtifactStore(o.dataDir));
   /** a room's Library artifact id: room-<the room's id> */
-  const libId = (id: string) => `room-${id.toLowerCase()}`, LIB_ID = /^room-(sc-\d+|r-\d+|pr-[0-9a-f]{12}-[1-9]\d{0,8}|dir-[0-9a-f]{12}-[0-9a-f]{12})$/;
+  const libId = (id: string) => `room-${id.toLowerCase()}`, LIB_ID = /^room-(sc-\d+|r-\d+|pr-[0-9a-f]{12}-[1-9]\d{0,8}|dir-[0-9a-f]{12}-[0-9a-f]{12}|doc-[0-9a-f]{12})$/;
   const saving = new Map<string, Promise<any>>();
   /** every Library save runs after the one before it, whatever its room: two saves never race for a version number */
   let saveChain: Promise<unknown> = Promise.resolve();
@@ -624,9 +703,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       const known = pages.every((v) => typeof v.run?.cost?.usd === "number"), ob = oldBoard(room);
       const usd = known ? round4(pages.reduce((n, v) => n + v.run!.cost.usd, 0) + (ob?.usd ?? 0)) : null, savedAt = new Date().toISOString();
       const snap = { schema: 2, kind: "review-room-pages", room: k.id, savedAt, reason, cost: { usd }, oldBoard: ob,
-        subject: { kind: k.kind, room: k.id, repository: room?.subject?.repository ?? null, number: room?.subject?.number ?? (view.pr?.id ?? null), url: room?.subject?.url ?? view.pr?.url ?? null, head: room?.head ?? view.head ?? null, title: view.card?.title ?? null },
+        subject: { kind: k.kind, room: k.id, repository: room?.subject?.repository ?? null, number: room?.subject?.number ?? (view.pr?.id ?? null), url: room?.subject?.url ?? view.pr?.url ?? null, head: room?.head ?? view.head ?? null, title: view.card?.title ?? null, ...(k.kind === "doc" ? { name: room?.subject?.name ?? null } : {}) },
         pages: pages.map((v) => ({ n: v.n, skill: v.skill, at: v.at, entry: `pages/v${v.n}/${v.entry}`, kind: v.kind, summary: v.summary, prompt: v.prompt ?? null, head: v.run?.head ?? null, provider: v.run?.provider ?? null, model: v.run?.model ?? null, cost: v.run?.cost ?? null })),
-        view: { card: view.card, subject: view.subject, task: view.task, pr: view.pr, head: view.head, base: view.base, dir: view.dir ?? null, open: false, closed: { en: "Saved in the Library: its pages, read only.", zh: "存在成品庫：它的頁面，唯讀。" } } };
+        view: { card: view.card, subject: view.subject, task: view.task, pr: view.pr, head: view.head, base: view.base, dir: view.dir ?? null, doc: view.doc ?? null, open: false, closed: { en: "Saved in the Library: its pages, read only.", zh: "存在成品庫：它的頁面，唯讀。" } } };
       writeFileSync(join(dir, "room.json"), JSON.stringify(snap));
       const store = library(), aid = libId(k.id), title = `Review room · ${(view.card?.title?.en ?? k.id)}`.slice(0, 200);
       const project = String(engine.get(room?.run ?? "")?.params?.project ?? engine.get(room?.run ?? "")?.ctx.project ?? room?.subject?.project ?? "") || "firstmate-workflow";
@@ -659,9 +738,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
    *  room waits for the captain while its head has no page yet, or a page came since they last looked. */
   const zoneFacts = (k: Key, r: Room): ZoneFacts => {
     const run = k.run ? engine.get(k.run) : null, b = explainer.brief(k.id);
-    const head = k.kind === "pr" ? r.pr?.stale?.head ?? r.pr?.head ?? r.head : k.kind === "dir" ? r.dir?.sha ?? r.head : run?.ctx.taintedReady?.head ?? run?.ctx.head ?? r.head;
+    const head = k.kind === "pr" ? r.pr?.stale?.head ?? r.pr?.head ?? r.head : k.kind === "dir" ? r.dir?.sha ?? r.head : k.kind === "doc" ? r.doc?.sha256 ?? r.head : run?.ctx.taintedReady?.head ?? run?.ctx.head ?? r.head;
     const waiting = k.kind === "merge" ? k.open() : !(b?.heads ?? []).includes(head) || !!unread(k, r);
-    const concluded = k.kind === "merge" ? !k.open() : k.kind === "pr" ? !!r.pr && r.pr.state !== "open" : k.kind === "dir" ? !waiting : !run || ["succeeded", "failed", "cancelled"].includes(run.status);
+    const concluded = k.kind === "merge" ? !k.open() : k.kind === "pr" ? !!r.pr && r.pr.state !== "open" : k.kind === "dir" || k.kind === "doc" ? !waiting : !run || ["succeeded", "failed", "cancelled"].includes(run.status);
     return { archived: !!r.archived, running: !!b?.running, concluded, waiting };
   };
   const markRead = (k: Key) => { const r = load(k); if (r && unread(k, r)) { r.read = new Date().toISOString(); save(k, r); notify(k); } };
@@ -683,6 +762,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     github: (k, room) => { const repo = room?.subject?.repository; let p: any = repo ? connected(repo) : null;
       if (!p) { const run = k.run ? engine.get(k.run) : null, pid = run?.params?.project; if (pid && run?.ctx?.pr?.adapter === "github") p = (o.projects as any)?.get?.(pid) ?? null; }
       if (!p) return null; const a = o.github?.(p) ?? null; return a && (!repo || String(a.grant.repository).toLowerCase() === String(repo).toLowerCase()) ? a : null; } });
+  const docView = (d: DocSnap) => ({ name: d.name, title: d.title, type: d.type, sha256: d.sha256, bytes: d.bytes, at: d.at, chars: d.chars, pages: d.pages ?? null, truncated: d.truncated, baton: d.type === "baton" });
   const libraryView = (r: Room | null) => r?.library && library().get(r.library.artifact) ? { artifact: r.library.artifact, versions: r.library.versions } : null;
   return (self = {
     /** the room's "Explain with" (src/domain/review-explain.ts): the picker's skills, its runs and versions, a version's page */
@@ -694,6 +774,7 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     },
     /** A Task's entry to the room on its reviewed branch (the Task page): once Studio's review passed at its head, or a room exists. */
     taskEntry(run: any) {
+      if (isDocHostRun(run)) { const id = String(run.params?.room ?? ""); return ROOM_ID.test(id) && id.startsWith("DOC-") ? { href: `#/room/${id}`, host: true, pr: null, doc: String(run.params?.doc ?? ""), reviewed: true, head: null, branch: null, local: false, versions: 0, moved: false } : null; }
       if (isDirHostRun(run)) { const id = String(run.params?.room ?? ""); return ROOM_ID.test(id) && id.startsWith("DIR-") ? { href: `#/room/${id}`, host: true, pr: null, dir: String(run.params?.dir ?? ""), reviewed: true, head: null, branch: null, local: false, versions: 0, moved: false } : null; }
       if (isHostRun(run)) { const p = parsePrUrl(run.params?.pr); return p ? { href: `#/room/${prRoomId(p.repository, p.n)}`, host: true, pr: p.url, reviewed: true, head: null, branch: null, local: false, versions: 0, moved: false } : null; }
       try { if (!run?.ctx?.repo || !reviewNode(run)) return null; const k = keyOf(run.id), head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? ""), ok = SHA.test(head) && reviewed(run, head), room = load(k);
@@ -713,30 +794,35 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
       }
       if (k.kind === "branch") { const run = engine.get(k.run!)!, head = String(run.ctx.taintedReady?.head ?? run.ctx.head ?? "");
         if (!load(k) && !(SHA.test(head) && reviewed(run, head))) throw refuse("Studio's review has not passed on this Task's branch yet: its room opens once it has / 這個任務的分支還沒通過 Studio 的審查：通過後才能開審查室", "not_reviewed"); }
-      let s: S | null = null; try { s = subjectOf(k); } catch (e) { if (k.kind !== "pr" && k.kind !== "dir") throw e; }
+      let s: S | null = null; try { s = subjectOf(k); } catch (e) { if (k.kind !== "pr" && k.kind !== "dir" && k.kind !== "doc") throw e; }
       if (k.kind === "branch" && opened && !load(k)) save(k, fresh(k, s!));
       if (opened) { if (!stats()[k.stat]?.openedAt) stat(k, { openedAt: new Date().toISOString() }); markRead(k);
         // re-entering a pull request's room reads it again on GitHub (in the background, at most once a minute)
         const pr = k.kind === "pr" ? load(k) : null; if (pr?.subject?.url && Date.now() - Date.parse(pr.pr?.attemptedAt ?? pr.pr?.checkedAt ?? "0") > PR_RECHECK_MS) void readPr(pr.subject.url).catch(() => {}); }
       const r = load(k), run = k.run ? engine.get(k.run) : null, open = k.open() && !!s, sub = r?.subject ?? (s ? subjectRecord(k, s, r) : { kind: k.kind, room: k.id });
-      const title = k.kind === "branch" ? { en: `Branch ${run?.ctx.branch ?? k.id}`, "zh-TW": `分支 ${run?.ctx.branch ?? k.id}` } : k.kind === "dir" ? dirTitle(r) : { en: `Pull request #${sub.number}: ${r?.pr?.title ?? ""}`, "zh-TW": `Pull request #${sub.number}：${r?.pr?.title ?? ""}` };
+      const title = k.kind === "branch" ? { en: `Branch ${run?.ctx.branch ?? k.id}`, "zh-TW": `分支 ${run?.ctx.branch ?? k.id}` } : k.kind === "dir" ? dirTitle(r) : k.kind === "doc" ? docTitle(r) : { en: `Pull request #${sub.number}: ${r?.pr?.title ?? ""}`, "zh-TW": `Pull request #${sub.number}：${r?.pr?.title ?? ""}` };
       return { ...tutorView(k, s, r, open), card: { id: k.id, run: k.run, node: k.node, title, status: open ? "open" : "closed" }, subject: sub, task: run ? { id: run.id, title: run.title ?? run.id } : null,
         pr: k.kind === "pr" ? { id: String(sub.number ?? ""), url: sub.url ?? null } : run?.ctx.pr?.adapter === "github" ? { id: run.ctx.pr.id ?? null, url: run.ctx.pr.url ?? null } : null, prState: prState(r), stale: r?.pr?.stale ?? null, checking: refreshing.has(k.id),
-        head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
+        head: s?.head ?? r?.head ?? null, base: s?.base ?? r?.base ?? null, reviewed: k.kind === "branch" && s ? reviewed(s.run, s.head) : null, local: !!run?.ctx.taintedReady, moved: k.kind === "doc" ? null : movedOf(s, r), seen: r?.seen ?? null, heads: r?.heads ?? [],
         open, closed: open ? null : closedText(k, r), running: explainer.running(k.id) ? -1 : null, offer: open ? offerOf(k) : null,
         notes: [...(r?.pr?.notes ?? [])].reverse().slice(0, 200).map((x) => ({ ...x, bot: isBot(x) })),
-        diffstat: k.kind === "dir" ? null : diffstatOf(s, r), summary: null, archived: !!r?.archived, oldBoard: oldBoard(r), library: libraryView(r),
+        diffstat: k.kind === "dir" || k.kind === "doc" ? null : diffstatOf(s, r), summary: null, archived: !!r?.archived, oldBoard: oldBoard(r), library: libraryView(r),
         // a directory room: the directory, pinned at its commit (no pull request, diff, check for new commits or moved head)
-        dir: k.kind === "dir" && r?.dir ? { repository: r.dir.repository, ref: r.dir.ref, refKind: r.dir.refKind, sha: r.dir.sha, path: r.dir.path, private: r.dir.private, files: r.dir.files, bytes: r.dir.bytes, parts: r.dir.parts, truncated: r.dir.truncated, fetchedAt: r.dir.fetchedAt, url: r.subject?.url ?? null, readme: !!r.dir.readme } : null };
+        dir: k.kind === "dir" && r?.dir ? { repository: r.dir.repository, ref: r.dir.ref, refKind: r.dir.refKind, sha: r.dir.sha, path: r.dir.path, private: r.dir.private, files: r.dir.files, bytes: r.dir.bytes, parts: r.dir.parts, truncated: r.dir.truncated, fetchedAt: r.dir.fetchedAt, url: r.subject?.url ?? null, readme: !!r.dir.readme } : null,
+        // a document room: its current version (the head), every version kept, and whether a newer one came since the last page
+        doc: k.kind === "doc" && r?.doc ? { ...docView(r.doc), versions: (r.docs ?? [r.doc]).map(docView), n: Math.max(1, (r.docs ?? []).findIndex((x) => x.sha256 === r.doc!.sha256) + 1),
+          newer: (() => { const vs = r.docs ?? [r.doc], from = vs.findIndex((x) => x.sha256 === r.seen?.head), to = vs.findIndex((x) => x.sha256 === r.doc!.sha256);
+            return r.seen?.head && from >= 0 && to > from && explainer.brief(k.id)?.heads?.includes(r.seen.head) ? { from: r.seen.head, to: r.doc!.sha256 } : null; })() } : null };
     },
     /** every review room on this machine (merge cards, branches, pull requests, directories), each with its zone, open ones first,
      *  then the most recent: all of them, since the page searches this list. A room's time is its latest page's or run's */
     list() { const out: any[] = [], push = (id: string, file: string) => { try { const k = keyOf(id), r = load(k); if (!r) return; const st = statSync(file), b = explainer.brief(id);
-        const title = k.kind === "merge" ? (k.card?.title?.en ?? id) : k.kind === "branch" ? `Branch ${engine.get(k.run!)?.ctx.branch ?? id}` : k.kind === "dir" ? dirTitle(r).en : `Pull request #${r.subject?.number ?? ""}: ${r.pr?.title ?? ""}`;
-        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : title, open: k.open(), running: !!b?.running, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(id, r),
-          oldBoard: oldBoard(r), repository: repositoryOf(k, r), zone: roomZone(zoneFacts(k, r)), updatedAt: b?.updatedAt ?? st.mtime.toISOString() }); } catch {} };
+        const title = k.kind === "merge" ? (k.card?.title?.en ?? id) : k.kind === "branch" ? `Branch ${engine.get(k.run!)?.ctx.branch ?? id}` : k.kind === "dir" ? dirTitle(r).en : k.kind === "doc" ? docTitle(r).en : `Pull request #${r.subject?.number ?? ""}: ${r.pr?.title ?? ""}`;
+        out.push({ id, kind: k.kind, title, titleZh: k.kind === "merge" ? (k.card?.title?.["zh-TW"] ?? title) : k.kind === "dir" ? dirTitle(r)["zh-TW"] : k.kind === "doc" ? docTitle(r)["zh-TW"] : title, open: k.open(), running: !!b?.running, versions: b?.versions ?? 0, questions: b?.questions ?? 0, usd: costOf(id, r),
+          ...(k.kind === "doc" ? { name: r.subject?.name ?? r.doc?.name ?? null } : {}), oldBoard: oldBoard(r), repository: repositoryOf(k, r), zone: roomZone(zoneFacts(k, r)), updatedAt: b?.updatedAt ?? st.mtime.toISOString() }); } catch {} };
       try { for (const f of readdirSync(prDir)) if (/^PR-[0-9a-f]{12}-\d+\.json$/.test(f)) push(f.slice(0, -5), join(prDir, f)); } catch {}
       try { for (const f of readdirSync(dirDir)) if (/^DIR-[0-9a-f]{12}-[0-9a-f]{12}\.json$/.test(f)) push(f.slice(0, -5), join(dirDir, f)); } catch {}
+      try { for (const f of readdirSync(docDir)) if (/^DOC-[0-9a-f]{12}\.json$/.test(f)) push(f.slice(0, -5), join(docDir, f)); } catch {}
       for (const run of engine.list()) { const d = join(engine.rdir(run.id), "review-room"); if (!existsSync(d)) continue; try { for (const f of readdirSync(d)) if (/^(SC-\d+|R-\d+)\.json$/.test(f)) push(f.slice(0, -5), join(d, f)); } catch {} }
       return out.sort((a, b) => Number(b.open) - Number(a.open) || String(b.updatedAt).localeCompare(String(a.updatedAt))); },
     /** Archive a room or restore it (the captain, on this Mac): it moves between 封存 and its own zone, and nothing else about it
@@ -750,6 +836,9 @@ export function installReviewRoom(engine: Engine, o: { dataDir: string;
     /** Paste a GitHub directory's address (any repository: a public one, or a private one the captain's gh login reads): Studio
      *  reads it, pins its commit and opens its room */
     async openDir(url: unknown) { const id = await readDir(String(url ?? "").slice(0, 800)); return { id, href: `#/room/${id}`, room: this.view(id) }; },
+    /** Upload or paste a document (a proposal: Markdown, text, HTML, a baton page, a PDF with text): Studio keeps it byte for byte
+     *  by its sha256 and opens its room; the same document with other bytes is the room's next version */
+    async openDoc(input: unknown, by: string) { const { id, added } = await readDoc(input, by); return { id, href: `#/room/${id}`, added, room: this.view(id) }; },
     /** A room's record exactly as kept (an old room's whiteboard: its turns, scenes and drawings), for the captain to download.
      *  Read only; nothing in the file is changed or removed. */
     exportRoom(id: string) { const k = keyOf(id), r = load(k); if (!r) throw refuse("No such review room", "not_found");

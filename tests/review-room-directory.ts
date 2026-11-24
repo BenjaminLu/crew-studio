@@ -126,7 +126,7 @@ try {
 
   // ---------- the tutor the captain picks: the room's own pick runs its next page ----------
   const picked: any = room.setTutor(opened.id, { provider: "claude", model: "x-1" }, "captain");
-  ok(picked.offer.provider === "claude" && picked.offer.picked === "room", "the tutor picker works in a directory's room", JSON.stringify(picked.offer));
+  ok(picked.offer.provider === "claude" && picked.offer.picked === "room" && /A directory has no change and no author, so independence does not apply\. Picked by the captain/.test(picked.offer.independence.en) && !/change.s author is outside/.test(picked.offer.independence.en), "the tutor picker works in a directory's room; a picked tutor there says independence does not apply", JSON.stringify(picked.offer));
   // a captain pick this machine does not list (entered by hand), or lists as held, still gets the directory host's receipt, marked picked
   for (const [pick, usable] of [[{ provider: "claude", model: "x-hand-3" }, null], [{ provider: "claude", model: "x-held" }, { provider: "claude", model: "x-held", efforts: [], verified: true, runnable: false, held: "claude is out of quota" }]] as const) {
     const real = (E.deps as any).usableModels; if (usable) (E.deps as any).usableModels = () => [...real(), usable];
