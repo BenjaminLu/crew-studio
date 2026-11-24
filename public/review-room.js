@@ -333,7 +333,7 @@ routes.room = (arg) => {
   XP?.ensure(arg);
   const note = RR.note.get(arg);
   return h("div", { class: "rr-room rx-room", "data-review-room": r.card.id }, header(r), oldBoard(r),
-    note ? h("p", { class: "rr-paste-offer", role: "status", "data-doc-added": "" }, note, " ", h("button", { type: "button", class: "btn sm", onclick: () => { RR.note.delete(arg); rerender(); } }, T("OK", "知道了"))) : null,
+    note ? h("p", { class: "rr-paste-offer", "data-doc-added": "" }, note, " ", h("button", { type: "button", class: "btn sm", onclick: () => { RR.note.delete(arg); rerender(); } }, T("OK", "知道了"))) : null,
     err ? h("p", { class: "rr-err", role: "alert", "data-room-err": "" }, err) : null,
     XP ? XP.view(r) : h("div", { class: "card x-pad faint" }, T("Loading…", "載入中…")));
 };
