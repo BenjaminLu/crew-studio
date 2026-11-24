@@ -44,7 +44,7 @@ ok(third.includes("packs/core/skills/studio-baton/") && third.includes(BATON_PIN
 // the adapter
 ok(/never run or imitate git or gh/.test(BATON_ADAPTER) && /mat_list, mat_read, mat_search/.test(BATON_ADAPTER) && /transcript/.test(BATON_ADAPTER) && /diagram-design\/SKILL\.md/.test(BATON_ADAPTER)
   && /explain_done \{entry: "index\.html"/.test(BATON_ADAPTER) && /no network/.test(BATON_ADAPTER),
-  "the adapter: the room's materials, never git, gh or a transcript; diagram-design from the folder; no external URL; index.html as the entry");
+  "the adapter: the room's materials, never git, gh or a transcript; diagram-design from the folder; nothing loaded from a URL; index.html as the entry");
 ok(/scripts\/render\.py \["\.baton\/packet\.json", "-o", "index\.html"\]/.test(BATON_ADAPTER) && /scripts\/verify\.py/.test(BATON_ADAPTER) && /scripts\/snapshot\.py/.test(BATON_ADAPTER),
   "the adapter runs baton's own scripts (render, verify, snapshot) through skill_run");
 
@@ -63,8 +63,37 @@ ok(!/proof chip/.test(BATON_ADAPTER) && /no default; a chip without one fails `v
 ok(batonUpstreamOf(BATON_PIN) === BATON_PIN.upstream.commit
   && batonUpstreamOf({ id: "studio-baton", sha256: "9eef584142c1dd243fe8b2395cf03482e7d3c5dcefd5d1b44bbb8e220fe828f1", filesSha256: "7688fcaa6672ed7d483f8b299dce2cebc7debfd5ccdef91bbf4ba179020d6ae9" }) === "c382464ab02a14ad3dda364143c74bff58ddbcfc"
   && batonUpstreamOf({ id: "studio-baton", sha256: "96d3ca8f0dc741e1fd308ed6d6d3496f8618aa8f9f12de03031ab7bf5b721cb4", filesSha256: "745774aad1f9aded7229689dc0d1c273659d4bbaf45d0e050d001d1ea9e9937b" }) === "e74aeed230ce8126b7b5be5c42d1dcb202d93a40"
+  && batonUpstreamOf({ id: "studio-baton", sha256: "ee3a9f5221a1c77e10e2f8d3954d7ce558fc50ca3edd403e5a087d5ab2afce4a", filesSha256: "b9e6622e7a06ee1d9674f7d589c93f9e4d6054fec7bf43647df28e4e2c1ffe06" }) === "ba68615428b9c366eb5339778683e67b9b6c31c7"
   && batonUpstreamOf({ id: "studio-baton", sha256: BATON_PIN.sha256, filesSha256: "0".repeat(64) }) === null && batonUpstreamOf({ id: "baton", sha256: BATON_PIN.sha256, filesSha256: BATON_PIN.filesSha256 }) === null,
-  "the upstream commit of a built-in version, by both hashes: the current pin, e74aeed and c382464; a changed file or another skill has none");
+  "the upstream commit of a built-in version, by both hashes: the current pin, ba68615, e74aeed and c382464; a changed file or another skill has none");
+
+// 2d7f9b9: the failure-mode table under the boundary map (the runbook), one system map drawn everywhere, full-text search. The
+// adapter says what upstream now requires and how the room does what upstream does with git; each rule it names is upstream's
+// own (the vendored verify.py holds it), so none is idle. tests/review-baton-page-ui.mjs runs verify.py on a packet so shaped.
+{ const vp = readFileSync(join(dir, "scripts/verify.py"), "utf8"), br = readFileSync(join(dir, "references/boundary-review.md"), "utf8"), sk = readFileSync(join(dir, "SKILL.md"), "utf8");
+  ok(/the boundary map has no `failures`/.test(vp) && /register == "engineer"/.test(vp) && /`handled` needs `ref`/.test(vp) && /not pinned to a commit/.test(vp) && /def check_system_map/.test(vp),
+    "upstream verify.py requires the failure modes on the engineer register, evidence for a handled row, commit-pinned GitHub links and one system map");
+  ok(/git grep -n/.test(br) && /git cat-file -e/.test(br) && /`#q=<code>`/.test(sk),
+    "upstream checks a row's ref with git grep and git cat-file, and its page has #q= deep links (the room has no git: the adapter says what stands in)"); }
+ok(/failure-mode table/.test(BATON_ADAPTER) && /It is required: on the engineer register verify\.py fails a map that crosses a boundary\s+with no `failures`/.test(BATON_ADAPTER)
+  && /`runbook` section, never a compare or a matrix/.test(BATON_ADAPTER) && /runbook, compare, matrix/.test(BATON_ADAPTER),
+  "the adapter: the failure-mode table is required under the map; error codes go in a runbook section (listed among the components)");
+ok(/Head commit pull-request\.md names, the full 40-hex sha/.test(BATON_ADAPTER) && /blob\/<sha>\/<path>#La-Lb/.test(BATON_ADAPTER) && /lines found in head\/<path>/.test(BATON_ADAPTER)
+  && /in place of baton's git grep and git cat-file/.test(BATON_ADAPTER) && /never a URL you were given or guessed/.test(BATON_ADAPTER),
+  "the adapter: a row's ref is a permalink at the room's head commit, its lines found in head/ (in place of git grep and git cat-file)");
+ok(/The table stays exhaustive: a mode is listed even when its handling is not in the materials/.test(BATON_ADAPTER) && /Then it is never `handled`: no `ref`/.test(BATON_ADAPTER)
+  && /among the open questions/.test(BATON_ADAPTER) && /`detect` names a signal the materials show/.test(BATON_ADAPTER) && /`"failures": \[\]` only when no mode applies/.test(BATON_ADAPTER),
+  "the adapter: the table stays exhaustive (upstream's rule), but a mode whose handling is outside the materials is never handled and is an open question");
+ok(/each with its source sentence \(`source`\) and no\s+`ref` \(there is no commit here\)/.test(BATON_ADAPTER) && /Set `planned` where the document itself says that part is still to be built/.test(BATON_ADAPTER),
+  "the adapter: a document room's failure modes cite the document's sentence, no ref; planned only where the document says it is to be built");
+ok(/one system map \(`systems`/.test(BATON_ADAPTER) && /says its `view` and `state`/.test(BATON_ADAPTER),
+  "the adapter: one system map, and every figure with edges says its view and state");
+// the old blanket rule is gone: upstream now asks for links (a row's evidence, spec.md's code links), all head-commit permalinks; nothing on the page may load from a URL
+ok(!/No external URL anywhere on the page/.test(BATON_ADAPTER) && /Nothing on the page loads from a URL/.test(BATON_ADAPTER) && /a failure row's `ref` and\s+the code links references\/spec\.md asks for; never another URL/.test(BATON_ADAPTER)
+  && /Code links — clickable/.test(readFileSync(join(dir, "references/spec.md"), "utf8")),
+  "the adapter: nothing loads from a URL; links are head-commit permalinks (a row's ref, spec.md's code links), never another URL");
+ok(/except a failure row's `action`: write its hans by hand/.test(BATON_ADAPTER) && /Write `hans` for `action` by hand/.test(readFileSync(join(dir, "references/boundary-review.md"), "utf8")),
+  "the adapter: a failure row's action carries its own hans (upstream: OpenCC mistranslates on-call paging)");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

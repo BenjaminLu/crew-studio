@@ -287,7 +287,14 @@ Quality first: a skill's run is not one model round.
   says so. A room once set to the old tutor's board (`state.tutor`) is explained with the default skill like any other. baton
   (the built-in, or the captain's own copy by the id `baton`) runs with Studio's adapter (`BATON_ADAPTER`), pinned with it: the
   room's materials are its record (never git, gh or a session transcript), diagram-design is read from the skill's folder, and
-  its render, verify and snapshot scripts run through `skill_run`.
+  its render, verify and snapshot scripts run through `skill_run`. baton's failure-mode table (its runbook, under the boundary
+  map) is required, as upstream's `verify.py` requires it on the engineer register: a row's evidence is a permalink at the
+  room's head commit (`/blob/<sha>/<path>#La-Lb`, the lines found in `head/`, in place of upstream's `git grep`), a mode whose
+  handling the materials do not show stays in the table but is never `handled` and is an open question, and a document room
+  cites the document's sentence instead (`planned` only where the document says so). Such head-commit permalinks (a row's
+  evidence, upstream's code links) are the only links the page carries; in the room's frame (no `allow-popups`) they open no
+  window, so they are read there by their label and open from the downloaded page. The page's own search (`/`), its `#q=<code>`
+  deep link and its row-to-map links work inside the frame.
 - **Opening a room starts it** (the captain's decision): when `autoRun` is on (default) and the room is explained with the
   default skill, opening it (`POST …/explain/auto`, sent once per room and head by the page; never from a paired phone)
   starts that skill's generation for the room's head without a paid confirmation, on the room tutor's model and the skill's
@@ -819,7 +826,8 @@ Done when (each line proved by the named suite; `bun run test:review-room` runs 
     starts nothing more …", "the captain picked another skill …", "off: opening the room starts nothing"; review-room-zones
     "an archived room starts no page by itself on opening"; review-room-explain-scripts "the captain's own baton, even made the
     default, never starts by itself …"; review-room-explain-ui "opening a room explained with baton starts its generation by
-    itself …", "it failed: the stage says why and offers Try again …".
+    itself …", "it failed: the stage says why and offers Try again …"; review-baton-page-ui (the adapter's failure-mode rules are
+    the ones the vendored verify.py holds; the page's search, `#q=` and row links in the room's frame).
 17. A generation: paid and confirmed on exact terms, as many rounds as it needs, materials read-only, a version per
     generation, Stop, the stall guard, the output limit, the safety limit, on the ledger. — review-room-explain "a generation
     without the confirmation is refused …", "a wrong confirmation is refused", "the skill kept going for a second round …",
@@ -894,6 +902,7 @@ host Task, a scripted skill); `tests/review-room-directory.ts` (a local bare rep
 real scripts in the real sandbox); `tests/review-room-download.ts` (a room seeded on disk, `tests/lib/review-room-download-fixture.mjs`,
 in a real isolated Studio); and on the page, in a real isolated Studio and Chromium, `tests/review-room-ui.mjs`,
 `tests/review-room-zones-ui.mjs`, `tests/review-room-explain-ui.mjs` (1440, 900 and 390 wide, light and dark, English and
-繁體中文) `tests/review-room-pane-ui.mjs`, `tests/review-room-chat-scroll-ui.mjs` and `tests/review-room-download-ui.mjs`. `tests/route-names.ts` keeps route names apart.
+繁體中文) `tests/review-room-pane-ui.mjs`, `tests/review-room-chat-scroll-ui.mjs`, `tests/review-room-download-ui.mjs` and
+`tests/review-baton-page-ui.mjs` (a packet shaped by the adapter, built and checked by the vendored scripts with python3). `tests/route-names.ts` keeps route names apart.
 
 Not in this unit: Firstmate offering to open a room from its chat; background polling of a pull request.

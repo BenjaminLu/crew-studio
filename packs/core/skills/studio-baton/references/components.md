@@ -14,7 +14,8 @@ that fits, never by trimming words until the counter stops.
 | you are showing | component | limits |
 |---|---|---|
 | a change, a fix, a claim, a failure path | `chain` | 3–6 nodes, code labels ≤ 24 chars, hop labels ≤ 16 |
-| where systems meet and what is wrong there | `boundary` (always last) | ≥ 2 systems, every pin links a `chain` |
+| where systems meet, what is wrong there, and how each one fails | `boundary` (always last) | ≥ 2 systems, every pin links a `chain`, a `failures` row per failure mode |
+| error codes or symptoms and what on-call does | `runbook` | system map above, every row has `at`; never a `compare` (spec.md § runbook) |
 | old vs new, option vs option | `compare` | ≤ 6 rows of [dimension, from, to] |
 | cases × properties, claims × proof | `matrix` | ≤ 12 rows, one mark per cell |
 | an order of operations, a rollout | `steps` | 3–5 steps |
@@ -68,6 +69,18 @@ Rules:
 
 ## boundary — the map that ends every packet
 
+The systems come from the packet's one `systems` map (spec.md § systems) —
+the target state when the packet has an after architecture — so the boundary
+map, the runbooks and the architecture / sequence figures show the same boxes.
+Every failure row is numbered, and the number is printed on the map where the
+row fails; in the table, the number links back to that place.
+
+**One row per failure mode, one place.** When the packet has `runbook`
+sections, every failure row lives in a runbook and the boundary map keeps only
+its pins (design gaps) — `verify.py` refuses `failures` on the map beside
+runbooks, and the same mode (`at` + its name before " — ") twice across
+runbooks. Without runbooks, the rows stay in the map's `failures`.
+
 The systems the work crosses, left to right, with each finding as a numbered
 pin on the node or the link where it lives. Links without a finding render
 green: checked and fine. See `boundary-review.md` for how findings are chosen.
@@ -78,8 +91,46 @@ green: checked and fine. See `boundary-review.md` for how findings are chosen.
  "sub":{"app":"X-INSTALL-ID"}, "hops":{"0":"HTTPS"},
  "findings":[{"n":1,"at":"res" | "res>dev","lens":"coexist","tone":"warn",
               "title":i18n,"card":"<en heading of the chain card that draws it>"}],
- "ok":i18n}                                   // only when findings is empty
+ "ok":i18n,                                   // only when findings is empty
+ "failures":[{"at":"push>fcm",               // a system id, or "a>b" for a link the map draws (a next to b)
+              "mode":i18n,                    // what fails
+              "detect":i18n,                  // the signal before a user complains; omit → "no signal today"
+              "impact":i18n,                  // what the user sees
+              "action":i18n,                  // the runbook step
+              "ref":"https://github.com/<owner>/<repo>/blob/<sha>/<path>#L12-L18",  // omit → "no code reference"
+              "state":"handled|detected|unhandled",
+              "introduced":true,              // optional: this work opened the mode
+              "finding":1,                    // the pin that draws it — required when introduced + unhandled
+              "source":i18n,                  // proposal route: the document sentence it comes from
+              "planned":true}]}               // proposal route: the code does not exist yet
 ```
+
+`failures` is the failure-mode table (`boundary-review.md` §3): exhaustive,
+one row per way a boundary fails, rendered under the map grouped by
+boundary as mode · signal · user impact · runbook · evidence · state.
+Clicking a system or link on the map highlights its rows.
+
+- `state` is one of `handled` (needs `ref` or, on a proposal, `source`),
+  `detected` (needs `detect`), `unhandled`. No default.
+- `ref` is `https://` only, at most 2048 characters, and opens in a new tab through the page's link
+  sanitizer (`rel="noopener noreferrer"`). The host must be the one the
+  browser opens: plain ASCII, no port, trailing dot, userinfo or
+  percent-escape, and no backslash, empty (`//`) or `.` / `..` segment
+  anywhere; a GitHub path carries no `%` escape (GitHub folds `//` and
+  decodes `%xx`, which would open a fork or a branch the checks never saw). A
+  GitHub `blob` / `blame` / `raw` link, or a `raw.githubusercontent.com`
+  (or `raw.github.com`, or a `media.githubusercontent.com/media/` LFS) one, must be a file permalink pinned to a commit SHA,
+  never a branch (write the full 40-hex SHA: a short one is accepted, and a
+  branch named like hex would pass for it) — tree, edit and history routes are
+  refused; the page labels it
+  `owner/repo · file:La–Lb`, and any other GitHub link also leads with
+  `owner/repo`, so a fork cannot pass for the real repository.
+- `finding` names a pin on the **same** boundary (`at` equal to the row's).
+- Required on the `engineer` register (`verify.py` fails a boundary section
+  without the key; on `eli5` it warns). `[]` is allowed and warns for each
+  link that no row — on the link or on either end system — and no `ok`
+  covers (with pins on the map `ok` is not allowed, so add the rows). A packet written before this field gets that one clear message,
+  never a crash.
 
 ## compare, matrix, steps, stats
 

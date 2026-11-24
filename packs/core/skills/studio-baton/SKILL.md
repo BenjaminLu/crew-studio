@@ -89,7 +89,18 @@ or "✗ blocked" is the card title restated; `verify.py` rejects it.
 end-to-end checks, logs, source reads — each explicitly marked `verified`,
 `code-only` or `absent` (no default; a chip without one fails `verify.py`). A pull request packet opens with a proof matrix (claims ×
 evidence type) so a reviewer sees in one glance what is shown and what is only
-asserted (`## Pull requests: review proof` below).
+asserted (`**One system map, drawn the same everywhere.** The packet declares its
+systems once (`systems`, spec.md § systems). For a change or a proposal it is
+the **target** system, not production today. The boundary map and every
+runbook draw it; the architecture and sequence figures of that state must
+show the same boxes under the same names (`verify.py` § system map fails a
+missing box, an extra one, or a renamed one). A runbook or failure-mode table
+always sits under that map with each row numbered where it fails — a bare
+table of error codes is refused. With runbooks present the boundary map carries only its
+pins; each failure mode is one row in one runbook, never repeated. Pages carry full-text search; `#q=<code>`
+deep-links an alert to its runbook row.
+
+## Pull requests: review proof` below).
 
 **Do not guess.** The reader cannot tell your inferences from your facts, so
 do not mix them. Deployment state — whether a migration ran, whether users
@@ -108,7 +119,14 @@ six lenses: identity, truth, effect, dependency, coexist (old/new versions),
 edges (`references/boundary-review.md`). Each real finding is a numbered pin
 on the node or link where it lives and has its own `chain` card; links with
 no finding render green. When nothing is wrong, the map says what was checked
-and that it is fine — never a padded finding. For a pull request, findings are
+and that it is fine — never a padded finding. Under the map sits the **failure-mode
+table** — for every system and link: each way it fails (down, slow, partial,
+error codes, dropped / duplicated / reordered messages, stale data, expiry,
+version skew), the signal that fires before a user complains ("no signal
+today" when none does), what the user sees, the runbook action, a SHA-pinned
+code reference, and `handled` / `detected` / `unhandled`. It is exhaustive,
+not admission-tested; a mode that is unhandled *and* introduced by this work
+is also a pin. For a pull request, findings are
 also written as paste-ready review comments in the context; posting them is
 outward-facing and waits for the user to ask.
 
@@ -221,6 +239,7 @@ then how to pull more: the specs it cites, the code that would implement it.
      open questions
    - *Boundary map* — always last, every route
      (`references/boundary-review.md`); "no issue" is a complete answer
+     for findings, never for the failure-mode table under it
 5. **Verify** — `verify.py --register <engineer|eli5>`; fix by finding a real
    word, never by deleting the sentence. Then the real-browser check, pipeline
    §6 — non-skippable; a packet once shipped on script checks alone was

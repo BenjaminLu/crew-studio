@@ -26,6 +26,7 @@ Path("packet.json").write_text(json.dumps(spec, ensure_ascii=False))
 | `repo` / `branch` / `range` | strings | joined with `·` into the eyebrow; omit any that don't apply |
 | `title` / `subtitle` | i18n | page header |
 | `sections` | array | one entry per outline step, kinds below |
+| `systems` | object | **the one system map** — `{state, systems, sub, hops, groups}`; drawn by the boundary map and every `runbook`, and checked against the architecture and sequence figures (§ systems below). Required once a packet has a figure with `edges` or more than one map |
 | `context` | string or list of strings | the three-layer markdown; **must contain the refusal declaration** (`render.py` and `verify.py` both hard-check for "say you do not know" / 「說不知道」/「说不知道」) |
 
 **i18n values:** any human-facing string may be `"plain"` or
@@ -84,10 +85,60 @@ prose.
 | `{"bars": {"rows": [{"k": i18n, "v": 5000, "label": "5s", "tone": …?}]}}` | magnitude bars, scaled to the largest `v` |
 | `{"kv": [[i18n, i18n], …]}` | definition pairs; also works as a numbered list with `"1"`, `"2"` … as keys |
 
+### systems — one map, the same everywhere
+
+```json
+"systems":{"state":"after",                       // "after": the system this work leaves behind; "today": as it runs now
+  "systems":[{"id":"api","name":{"en":"Gateway API"},"kind":"service"}, ...],   // left → right, as the request flows
+  "sub":{"api":":9001"}, "hops":{"0":"gRPC"},      // short: the map is one row of up to 8 boxes
+  "groups":{"gw":{"name":{"en":"Push Gateway"},"parts":["api","db","worker"]}}} // one coarser box in a view
+```
+
+- **The map draws the target.** When the packet has an `"after"` figure,
+  `state` is `"after"` — the boundary map and runbooks show the system after
+  the change, never production as it is today (`verify.py` fails it).
+- **Every view of the same state draws the same systems.** Each figure with
+  `edges` declares `"view": "architecture" | "sequence"` and
+  `"state": "before" | "after" | "today"`. For the figures whose state equals
+  `systems.state`, `verify.py` requires: every map system is drawn (by its id,
+  or by a `groups` id covering it); every node the figure draws is on the map,
+  in a group, or listed in the figure's `"context": [...]` (周邊 boxes such as
+  an ops console); and each node's SVG label contains the map name.
+  Node ids come from `"nodes": [...]` when given, else from the `edges` ends.
+- Boundary and runbook sections omit `systems` and inherit this map; if one
+  carries its own it must equal it.
+
+### runbook — error code or symptom → where it happens → what to do
+
+```json
+{"kind":"runbook","heading":i18n,"caption":i18n,
+ "rows":[{"at":"worker>fcm",            // a system id or "a>b" link on the map — required
+          "mode":i18n,                 // the error code or symptom, as on-call sees it
+          "today":i18n,                // optional: what production does now (shown under the mode)
+          "detect":i18n,"impact":i18n,"action":i18n,
+          "ref":"https://github.com/<o>/<r>/blob/<sha>/<path>#La-Lb",
+          "state":"handled|detected|unhandled"}]}
+```
+
+The page draws the system map, numbers every row, and prints those numbers at
+the system or link where the row fails; selecting a place marks its rows, and
+a row's number is a link back to its place on the map (focus moves there; Enter
+then marks it).
+Rows follow the boundary `failures` rules (`components.md` § boundary). A
+runbook, failure-mode or error-code table is **never** a `compare` or
+`matrix` — `verify.py` fails one by its heading or columns.
+
+**Search.** Every page has full-text search (`/` focuses it): runbook and
+failure rows rank first, and opening a hit marks the row and its place on the
+map. `page.html#q=UNREGISTERED` opens the first hit, so an alert can link
+straight to its runbook row.
+
 ### figure
 
 ```json
 {"kind":"figure", "heading":…, "caption":…, "svg":"<svg …>…</svg>",
+ "view":"architecture|sequence", "state":"before|after|today",   // required with edges (§ systems)
+ "context":["ops"],                                               // nodes deliberately off the system map
  "edges":[{"from":"nodeA","to":"nodeB","evidence":"where this line comes from"}]}
 ```
 

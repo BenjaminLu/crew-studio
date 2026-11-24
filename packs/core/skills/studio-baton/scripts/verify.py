@@ -38,7 +38,7 @@ REFUSAL = ("say you do not know", "say you don't know", "說不知道", "说不�
 SKIP_KEYS = {"mermaid", "svg", "id", "kind", "tone", "filename", "range",
              "repo", "branch", "format_version", "layer", "glossary",
              "layer_note", "k", "was", "now", "method", "table", "op",
-             "guard", "summary", "ref"}
+             "guard", "summary", "ref", "at", "state"}
 
 
 def load(path):
@@ -177,6 +177,17 @@ def _en(v):
 
 def _ids(nodes):
     return {n.get("id") for n in nodes or []}
+
+
+def _map(data, sec):
+    """The systems a map section draws: its own, else the packet's `systems`."""
+    own = sec.get("systems") if isinstance(sec, dict) else None
+    if isinstance(own, list) and own:
+        return own
+    reg = (data or {}).get("systems") if isinstance(data, dict) else None
+    if isinstance(reg, dict) and isinstance(reg.get("systems"), list):
+        return reg["systems"]
+    return []
 
 
 def check_components(data):
@@ -319,7 +330,7 @@ def check_boundary_review(html, data):
                 "saying what was checked"]
     sec = sections[-1]
     problems = []
-    ids = _ids(sec.get("systems"))
+    ids = _ids(_map(data, sec))
     if len(ids) < 2:
         problems.append("the boundary map needs at least two systems")
     chains = {_en(s.get("heading")) for s in sections if s.get("kind") == "chain"}
@@ -344,6 +355,198 @@ def check_boundary_review(html, data):
     return problems
 
 
+FAILURE_STATES = {"handled", "detected", "unhandled"}
+GITHUB_CODE = re.compile(r"(?ai)^https://(?:www\.)?github\.com/[^/?#]+/[^/?#]+/(?:blob|blame|tree|raw|edit|commits|history)/")
+GITHUB_HOST = re.compile(r"(?ai)^https://(?:(?:www\.)?github\.com|raw\.github(?:usercontent)?\.com|"
+                         r"media\.githubusercontent\.com)(?=[/?#]|$)")
+GITHUB_RAW = re.compile(r"(?ai)^https://(?:raw\.github(?:usercontent)?\.com|media\.githubusercontent\.com/media)"
+                        r"/[^/?#]+/[^/?#]+/([^/?#]+)/")
+GITHUB_BLOB = re.compile(r"(?ai)^https://(?:www\.)?github\.com/([^/?#]+/[^/?#]+)/(?:blob|blame|raw)/([^/?#]+)/[^#]+"
+                         r"(#L\d+(?:C\d+)?(?:-L\d+(?:C\d+)?)?)?$")
+
+
+REF_HOST = re.compile(r"(?ai)^https://[a-z0-9-]+(?:\.[a-z0-9-]+)*(?=[/?#]|$)")
+DOT_SEG = re.compile(r"(?ai)/(?:\.|%2e){1,2}(?=[/?#]|$)")
+# The path is matched from a fixed point after the host, so a long host
+# cannot make these backtrack quadratically.
+EMPTY_SEG = re.compile(r"(?ai)^https://[^/?#]+(?:/[^?#]*)?//")       # GitHub folds // away
+GITHUB_ESC = re.compile(r"(?ai)^https://[^/?#]+(?:/[^?#%]*)?%")       # and decodes %xx in the path
+REF_MAX = 2048
+
+
+def safe_ref(url):
+    """A failure mode's evidence link: https only, no control character or
+    space, no raw quote / angle bracket / backtick (the page's safeRef())."""
+    if not isinstance(url, str) or len(url) > REF_MAX or safe_href(url) is None or not re.match(r"(?ai)^https://", url):
+        return None
+    # The host shown must be the host opened (the page's REF_HOST / DOT_SEG):
+    # ASCII labels only, no port, trailing dot, userinfo or percent-escape; no
+    # backslash; no dot segment that would fold /blob/<sha>/../main/ away.
+    if re.search(r"[\"'<>`\\]", url) or not REF_HOST.match(url) or DOT_SEG.search(url):
+        return None
+    # GitHub serves /o//r/blob/… and /o/r/bl%6fb/… as the plain path, which would
+    # slip a fork or a branch past the pin check and the owner/repo label.
+    if EMPTY_SEG.search(url) or (GITHUB_HOST.match(url) and GITHUB_ESC.search(url)):
+        return None
+    return url
+
+
+def _js_str(v):
+    """String(v) as the page computes it, so an id compares the same here."""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def _text(v):
+    """Text the page would print for an i18n field: a string or an i18n dict."""
+    if isinstance(v, dict):
+        return v["en"] if isinstance(v.get("en"), str) else ""
+    return v if isinstance(v, str) else ""
+
+
+def _links(systems):
+    """The links the map draws, as (key, a, b): each system to the next one."""
+    ids = [_js_str(n.get("id")) for n in systems or [] if isinstance(n, dict)]
+    return [(f"{a}>{b}", a, b) for a, b in zip(ids, ids[1:])]
+
+
+def _check_rows(rows, systems, pins, problems, warnings, what="failure mode"):
+    """Row checks shared by the boundary `failures` and every `runbook`."""
+    covered = set()
+    ids = {_js_str(n.get("id")) for n in systems if isinstance(n, dict)}
+    hashable = lambda v: isinstance(v, (int, str)) and not isinstance(v, bool)
+    drawn = {k for k, _, _ in _links(systems)}
+    for i, f in enumerate(rows):
+        if not isinstance(f, dict):
+            problems.append(f"{what} {i+1}: must be an object")
+            continue
+        label = f'{what} {i+1} ("{_en(f.get("mode"))[:40]}")'
+        at = f.get("at")
+        at = _js_str(at) if isinstance(at, (str, int)) and not isinstance(at, bool) else ""
+        if not (at in ids or at in drawn):
+            problems.append(f'{label}: `at` "{at}" is not a system id or an "a>b" link drawn on the map '
+                            "(each system to the next, in map order)")
+        else:
+            covered.add(at)
+        for key in ("mode", "impact", "action"):
+            if not _text(f.get(key)).strip():
+                problems.append(f"{label}: `{key}` is required")
+        st = f.get("state")
+        if st in (None, ""):
+            problems.append(f"{label}: no `state` — set one of {sorted(FAILURE_STATES)}; there is no default")
+        elif not isinstance(st, str) or st not in FAILURE_STATES:
+            problems.append(f'{label}: state "{st}" is not one of {sorted(FAILURE_STATES)}')
+        ref = f.get("ref")
+        if ref is not None:
+            if safe_ref(ref) is None:
+                problems.append(f"{label}: `ref` {str(ref)[:60]!r} is not a plain https:// URL — the page "
+                                "refuses it: https only, at most 2048 characters; an ASCII host with no port, trailing dot, userinfo or %; no control "
+                                "character, space, quote or backslash; no empty, . or .. segment; no % in a GitHub path")
+            else:
+                m = GITHUB_BLOB.match(ref)
+                raw = GITHUB_RAW.match(ref)
+                if raw and not re.fullmatch(r"(?ai)[0-9a-f]{7,40}", raw.group(1)):
+                    problems.append(f"{label}: `ref` is a raw GitHub link not pinned to a commit — use "
+                                    "raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>")
+                if GITHUB_CODE.match(ref):
+                    if not m:
+                        problems.append(f"{label}: `ref` is not a GitHub file permalink — use "
+                                        "/blob/<sha>/<path>#La-Lb")
+                    elif not re.fullmatch(r"(?ai)[0-9a-f]{7,40}", m.group(2)):
+                        problems.append(f"{label}: `ref` is a GitHub link not pinned to a commit — use "
+                                        "/blob/<sha>/<path>#La-Lb; a branch link drifts")
+                    elif not m.group(3):
+                        warnings.append(f"{label}: `ref` names a file but no lines — add #La-Lb")
+        if st == "handled" and ref is None and not _text(f.get("source")).strip():
+            problems.append(f"{label}: `handled` needs `ref` — the code line that handles it "
+                            "(or, on a proposal, the `source` sentence)")
+        if st == "detected" and not _text(f.get("detect")).strip():
+            problems.append(f"{label}: `detected` needs `detect` — the signal that notices it")
+        if f.get("finding") is not None:
+            if not (hashable(f["finding"]) and f["finding"] in pins):
+                problems.append(f"{label}: `finding` {f['finding']!r} is not a pin on the map")
+            elif pins[f["finding"]] != at:
+                problems.append(f'{label}: `finding` {f["finding"]} is pinned at "{pins[f["finding"]]}", '
+                                f'not at this row\'s "{at}" — point it at the pin on the same boundary')
+        if f.get("introduced") and st == "unhandled" and f.get("finding") is None:
+            problems.append(f"{label}: unhandled and introduced by this work — that is a finding; "
+                            "give it a pin and set `finding` to its number")
+    return covered
+
+
+def check_failures(data, register="engineer"):
+    """The failure-mode table under the boundary map (boundary-review.md §3).
+
+    Returns (problems, warnings). Problems fail the run; warnings print and
+    leave the exit code alone. A packet written before `failures` existed gets
+    one clear sentence telling the author what to add, never a traceback.
+    """
+    sections = (data or {}).get("sections") if isinstance(data, dict) else None
+    if not isinstance(sections, list) or not sections or not isinstance(sections[-1], dict) \
+            or sections[-1].get("kind") != "boundary":
+        return [], []          # check_boundary_review already reports the missing map
+    sec = sections[-1]
+    problems, warnings = [], []
+    systems = _map(data, sec)
+    ids = {_js_str(n.get("id")) for n in systems if isinstance(n, dict)}
+    for i in sorted(i for i in ids if ">" in i):
+        problems.append(f'system id "{i[:40]}" contains ">" — it would make an `at` link ambiguous; rename it')
+    hashable = lambda v: isinstance(v, (int, str)) and not isinstance(v, bool)
+    finds = sec.get("findings") if isinstance(sec.get("findings"), list) else []
+    pins = {f.get("n"): ("" if f.get("at") is None else _js_str(f.get("at")))
+            for f in finds if isinstance(f, dict) and hashable(f.get("n"))}
+    runbooks = [x for x in sections if isinstance(x, dict) and x.get("kind") == "runbook"]
+    covered, seen = set(), {}
+    # One place per failure mode. With runbooks, every row lives in a runbook
+    # and the boundary map keeps only its pins: the same row twice is the
+    # overlap a reader has to reconcile by hand.
+    if runbooks:
+        if sec.get("failures"):
+            problems.append("the packet has runbooks, so the boundary map keeps only its pins — move its "
+                            "`failures` rows into the runbooks (each row once) and drop the key")
+        for x in runbooks:
+            name = _en(x.get("heading")) or "runbook"
+            rows = x.get("rows") if isinstance(x.get("rows"), list) else []
+            if not rows:
+                problems.append(f'"{name}": a runbook needs `rows`')
+            covered |= _check_rows(rows, _map(data, x), pins, problems, warnings, what=f'"{name}" row')
+            for i, r in enumerate(rows):
+                if not isinstance(r, dict):
+                    continue
+                m = _en(r.get("mode"))
+                # The mode's name: the text before " — ", without links, (…) and punctuation.
+                head = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m.split(" — ")[0])
+                head = re.sub(r"[（(][^)）]*[)）]", " ", head)
+                key = (_js_str(r.get("at")), re.sub(r"\W+", " ", head).strip().lower())
+                if key[1] and key in seen:
+                    problems.append(f'"{name}" row {i+1} repeats {seen[key]} ("{m[:40]}" at "{key[0]}") — '
+                                    "one failure mode, one row")
+                else:
+                    seen[key] = f'"{name}" row {i+1}'
+    else:
+        if "failures" not in sec:
+            msg = ("the boundary map has no `failures` — list every failure mode per system and link "
+                   "(mode, detect, impact, action, ref, state; boundary-review.md §3) in `failures` or in "
+                   '`runbook` sections, or `"failures": []` when none apply')
+            (problems if register == "engineer" and len(ids) >= 2 else warnings).append(msg)
+            return problems, warnings
+        rows = sec.get("failures")
+        if not isinstance(rows, list):
+            return ["`failures` must be a list of failure modes"], warnings
+        covered = _check_rows(rows, systems, pins, problems, warnings)
+    if not _en(sec.get("ok")):
+        for link, a, b in _links(systems):
+            if not covered & {link, a, b}:
+                warnings.append(f'link "{link}" has no failure mode listed — list how it fails' +
+                                ("" if sec.get("findings") else ", or say in `ok` why nothing can"))
+    return problems, warnings
+
+
 # The page's link rule (templates/packet.html rich() / safeHref()), mirrored:
 # default-deny. Only http(s):// and mailto: render as links, and a URL with
 # any control character or space is refused, because browsers strip leading
@@ -355,7 +558,7 @@ LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\t\n\x0b\f\r ]+)\)")   # same class as t
 def safe_href(url):
     if re.search(r"[\x00-\x20\x7f]", url):
         return None
-    return url if re.match(r"(?i)^(https?://|mailto:)", url) else None
+    return url if re.match(r"(?ai)^(https?://|mailto:)", url) else None   # ASCII, like the page's /i
 
 
 # The page's SVG allow-list (templates/packet.html safeSVG()), mirrored, so a
@@ -465,6 +668,131 @@ def check_links(data):
     walk(data or {})
     return problems
 
+RUNBOOK_WORDS = re.compile(r"(?i)run ?book|failure[- ]mode|error code|排障|失效模式|故障|錯誤碼|错误码|處置|处置")
+
+
+def _fig_nodes(sec):
+    """Node ids a figure draws: `nodes` if given, else every edge end."""
+    if isinstance(sec.get("nodes"), list):
+        return [_js_str(x) for x in sec["nodes"]]
+    out = []
+    for e in sec.get("edges") or []:
+        if isinstance(e, dict):
+            for k in ("from", "to"):
+                v = e.get(k)
+                if v is not None and _js_str(v) not in out:
+                    out.append(_js_str(v))
+    return out
+
+
+def _svg_texts(svg):
+    if not isinstance(svg, str):
+        return set()
+    t = set(re.findall(r'data-(?:en|hant|hans)="([^"]*)"', svg))
+    t |= {x.strip() for x in re.findall(r">([^<>]+)<", svg) if x.strip()}
+    return {html_unescape(x) for x in t}
+
+
+def html_unescape(x):
+    import html as _h
+    return _h.unescape(x)
+
+
+def check_system_map(data):
+    """One system map, drawn the same everywhere (spec.md § systems).
+
+    The boundary map, every runbook map, and the architecture and sequence
+    figures of the same state must draw the same components under the same
+    names; a runbook or failure-mode table is never a bare table.
+    """
+    problems = []
+    if not isinstance(data, dict):
+        return problems
+    sections = [x for x in data.get("sections") or [] if isinstance(x, dict)]
+    reg = data.get("systems")
+    maps = [x for x in sections if x.get("kind") in ("boundary", "runbook")]
+    figs = [x for x in sections if x.get("kind") == "figure" and x.get("edges")]
+
+    # 1. Runbooks and failure modes are located on the map, never a bare table.
+    for x in sections:
+        if x.get("kind") in ("compare", "matrix"):
+            words = " ".join(_text(v) if not isinstance(v, dict) else " ".join(str(t) for t in v.values())
+                             for v in [x.get("heading")] + list(x.get("cols") or []))
+            if RUNBOOK_WORDS.search(words):
+                problems.append(f'"{_en(x.get("heading"))}": a runbook or failure-mode table must be a '
+                                '`runbook` section (or the boundary map\'s `failures`) — each row needs `at`, '
+                                "the system or link where it fails, drawn on the system map above it")
+
+    # 2. Figures that draw systems say which view and which state they are.
+    for x in figs:
+        name = _en(x.get("heading")) or "figure"
+        if x.get("view") not in ("architecture", "sequence"):
+            problems.append(f'"{name}": a figure with `edges` needs `"view": "architecture"|"sequence"` '
+                            "so its nodes are checked against the system map")
+        if x.get("state") not in ("before", "after", "today"):
+            problems.append(f'"{name}": a figure with `edges` needs `"state": "before"|"after"|"today"`')
+
+    if not maps and not figs:
+        return problems
+    if not isinstance(reg, dict) or not isinstance(reg.get("systems"), list) or len(reg["systems"]) < 2:
+        if len(maps) + len(figs) == 1 and maps and _map(data, maps[0]):
+            return problems    # one map, nothing to agree with
+        problems.append("the packet needs a top-level `systems` map ({state, systems, sub, hops, groups}) — "
+                        "the boundary map, every runbook and the architecture/sequence figures all draw it")
+        return problems
+    state = reg.get("state")
+    if state not in ("after", "today"):
+        problems.append('`systems.state` must be "after" (the architecture this work leaves behind) or "today"')
+    if any(x.get("state") == "after" for x in figs) and state != "after":
+        problems.append('the packet draws an "after" architecture, so `systems.state` must be "after": the '
+                        "boundary map and runbooks show the target system, not production today")
+    ids = [_js_str(n.get("id")) for n in reg["systems"] if isinstance(n, dict)]
+    if len(ids) > 8:
+        problems.append(f"the system map has {len(ids)} systems — at most 8 fit one row; group the "
+                        "internals (`systems.groups`) or move peripheral boxes to a figure's `context`")
+    names = {_js_str(n.get("id")): _en(n.get("name")) for n in reg["systems"] if isinstance(n, dict)}
+    groups = reg.get("groups") if isinstance(reg.get("groups"), dict) else {}
+    for g, spec in groups.items():
+        parts = spec.get("parts") if isinstance(spec, dict) else None
+        if not isinstance(parts, list) or not parts or not all(_js_str(p) in ids for p in parts):
+            problems.append(f'systems.groups "{g}": `parts` must list system ids on the map')
+
+    # 3. Map sections draw exactly the registry.
+    for x in maps:
+        own = x.get("systems")
+        if isinstance(own, list) and own:
+            if [_js_str(n.get("id")) for n in own if isinstance(n, dict)] != ids:
+                problems.append(f'"{_en(x.get("heading"))}": its `systems` differ from the packet map — drop '
+                                "them and let the section draw `systems`")
+
+    # 4. Figures of the map's state draw the same systems, by the same names.
+    for x in figs:
+        if x.get("state") != state:
+            continue
+        name = _en(x.get("heading")) or "figure"
+        nodes = _fig_nodes(x)
+        ctx = {_js_str(c) for c in x.get("context") or []}
+        drawn = set()
+        for n in nodes:
+            if n in ids:
+                drawn.add(n)
+            elif n in groups:
+                drawn |= {_js_str(p) for p in groups[n].get("parts") or []}
+            elif n not in ctx:
+                problems.append(f'"{name}": draws "{n}", which is not on the system map — add it to '
+                                "`systems`, map it with `systems.groups`, or list it in the figure's `context`")
+        for m in ids:
+            if m not in drawn:
+                problems.append(f'"{name}": the system map has "{m}" ({names.get(m)}) but this {x.get("view")} '
+                                "does not draw it — every view of the same state shows the same systems")
+        texts = _svg_texts(x.get("svg"))
+        if texts:
+            for n in nodes:
+                want = names.get(n) or (_en(groups[n].get("name")) if n in groups and isinstance(groups[n], dict) else "")
+                if want and not any(want in t for t in texts):
+                    problems.append(f'"{name}": node "{n}" should be labelled "{want}" as on the system map')
+    return problems
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -474,17 +802,26 @@ def main():
     a = ap.parse_args()
 
     html, data = load(a.packet)
+    fail_problems, fail_warnings = check_failures(data, a.register)
     groups = [("context", check_context(html)), ("before/after", check_before_after(data)),
               ("components", check_components(data)),
               ("boundary review", check_boundary_review(html, data)),
+              ("failure modes", fail_problems),
+              ("system map", check_system_map(data)),
               ("links", check_links(data)), ("svg", check_svg(data))]
     if a.register == "eli5":
         groups.append(("register",
                        check_register(data, (data or {}).get("glossary", []))))
 
     total = sum(len(p) for _, p in groups)
+    if fail_warnings:
+        print(f"baton: {len(fail_warnings)} warning(s) — failure modes:", file=sys.stderr)
+        for w in fail_warnings[:12]:
+            print(f"    - {w}", file=sys.stderr)
+        if len(fail_warnings) > 12:
+            print(f"    … and {len(fail_warnings) - 12} more", file=sys.stderr)
     if not total:
-        print("ok — context, components, before/after, boundary map and register checked. "
+        print("ok — context, components, before/after, boundary map, failure modes and register checked. "
               "Diagrams are checked in the browser (pipeline §6).")
         return 0
 
